@@ -112,7 +112,7 @@ describe("FileExplorerPanel", () => {
     await click(button(view.container, "刷新文件列表"));
     await click(button(view.container, "上级目录"));
     await click(button(view.container, "新建文件夹"));
-    await click(button(view.container, "上传文件"));
+    await click(button(view.container, "上传"));
     await click(button(view.container, "下载"));
     await click(button(view.container, "重命名"));
     await click(button(view.container, "删除"));
@@ -125,7 +125,7 @@ describe("FileExplorerPanel", () => {
     expect(onRefresh).toHaveBeenCalled();
     expect(onParent).toHaveBeenCalled();
     expect(onMkdir).toHaveBeenCalled();
-    expect(onUpload).toHaveBeenCalledWith("files");
+    expect(onUpload).toHaveBeenCalledWith();
     expect(onDownload).toHaveBeenCalledWith([entries[1]]);
     expect(onRename).toHaveBeenCalledWith("/home/ops/deploy.sh");
     expect(onDelete).toHaveBeenCalledWith(["/home/ops/deploy.sh"], false);
@@ -267,7 +267,7 @@ describe("FileExplorerPanel", () => {
     });
 
     const menuItems = Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim());
-    expect(menuItems).toEqual(["上传文件", "上传文件夹", "新建目录", "刷新目录", "显示隐藏文件"]);
+    expect(menuItems).toEqual(["上传", "新建目录", "刷新目录", "显示隐藏文件"]);
 
     await click(button(view.container, "显示隐藏文件"));
     expect(view.container.textContent).toContain(".env");
@@ -277,13 +277,7 @@ describe("FileExplorerPanel", () => {
         new MouseEvent("contextmenu", { bubbles: true, clientX: 12, clientY: 18 }),
       );
     });
-    await click(button(view.container, "上传文件"));
-    await act(async () => {
-      view.container.querySelector(".zt-file-panel")?.dispatchEvent(
-        new MouseEvent("contextmenu", { bubbles: true, clientX: 12, clientY: 18 }),
-      );
-    });
-    await click(button(view.container, "上传文件夹"));
+    await click(button(view.container, "上传"));
     await act(async () => {
       view.container.querySelector(".zt-file-panel")?.dispatchEvent(
         new MouseEvent("contextmenu", { bubbles: true, clientX: 12, clientY: 18 }),
@@ -297,9 +291,8 @@ describe("FileExplorerPanel", () => {
     });
     await click(button(view.container, "刷新目录"));
 
-    expect(onUpload).toHaveBeenCalledTimes(2);
-    expect(onUpload).toHaveBeenNthCalledWith(1, "files");
-    expect(onUpload).toHaveBeenNthCalledWith(2, "directories");
+    expect(onUpload).toHaveBeenCalledTimes(1);
+    expect(onUpload).toHaveBeenCalledWith();
     expect(onMkdir).toHaveBeenCalledTimes(1);
     expect(onRefresh).toHaveBeenCalledTimes(1);
 

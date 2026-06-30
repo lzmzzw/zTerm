@@ -21,7 +21,7 @@ interface FileExplorerPanelProps {
   onRefresh: () => Promise<void> | void;
   onParent: () => Promise<void> | void;
   onMkdir: () => Promise<void> | void;
-  onUpload: (kind: "files" | "directories") => Promise<void> | void;
+  onUpload: () => Promise<void> | void;
   onUploadDropped: (paths: string[]) => Promise<void> | void;
   onDownload: (entries: FileEntry[]) => Promise<void> | void;
   onRename: (path: string) => Promise<void> | void;
@@ -139,8 +139,7 @@ export function FileExplorerPanel({
         onRefresh={onRefresh}
         onParent={onParent}
         onMkdir={onMkdir}
-        onUploadFiles={() => onUpload("files")}
-        onUploadDirectories={() => onUpload("directories")}
+        onUpload={onUpload}
         onDownload={() => {
           if (selectedEntries.length > 0) return onDownload(selectedEntries);
         }}
@@ -209,11 +208,8 @@ export function FileExplorerPanel({
       ) : null}
       {contextMenu ? (
         <div className="zt-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-          <button type="button" role="menuitem" disabled={disabled || loading} onClick={() => void onUpload("files")}>
-            上传文件
-          </button>
-          <button type="button" role="menuitem" disabled={disabled || loading} onClick={() => void onUpload("directories")}>
-            上传文件夹
+          <button type="button" role="menuitem" disabled={disabled || loading} onClick={() => void onUpload()}>
+            上传
           </button>
           <button type="button" role="menuitem" disabled={disabled || loading} onClick={() => void onMkdir()}>
             新建目录

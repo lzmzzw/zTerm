@@ -33,16 +33,17 @@ describe("remoteFileActions", () => {
     expect(deps.mkdir).toHaveBeenCalledWith("session-1", "/home/ops/new-folder");
   });
 
-  it("selects local files and enqueues upload plans under the current remote directory", async () => {
+  it("selects local paths and enqueues upload plans under the current remote directory", async () => {
     const deps = dependencies({
       filePath: "/tmp",
-      uploadFiles: ["C:\\build\\bundle.zip"],
+      uploadPaths: ["C:\\build\\bundle.zip", "C:\\build\\release-folder"],
     });
     const actions = createRemoteFileActions(deps);
 
-    await actions.uploadPath("files");
+    await actions.uploadPath();
 
-    expect(deps.classifyLocalPaths).toHaveBeenCalledWith(["C:\\build\\bundle.zip"]);
+    expect(deps.selectUploadPaths).toHaveBeenCalled();
+    expect(deps.classifyLocalPaths).toHaveBeenCalledWith(["C:\\build\\bundle.zip", "C:\\build\\release-folder"]);
     expect(deps.checkTransferConflicts).toHaveBeenCalledWith("session-1", [
       {
         direction: "upload",
@@ -50,9 +51,19 @@ describe("remoteFileActions", () => {
         remotePath: "/tmp/bundle.zip",
         kind: "file",
       },
+      {
+        direction: "upload",
+        localPath: "C:\\build\\release-folder",
+        remotePath: "/tmp/release-folder",
+        kind: "directory",
+      },
     ]);
     expect(deps.upload).toHaveBeenCalledWith("session-1", "C:\\build\\bundle.zip", "/tmp/bundle.zip", {
       kind: "file",
+      conflictPolicy: "overwrite",
+    });
+    expect(deps.upload).toHaveBeenCalledWith("session-1", "C:\\build\\release-folder", "/tmp/release-folder", {
+      kind: "directory",
       conflictPolicy: "overwrite",
     });
   });
@@ -87,7 +98,7 @@ describe("remoteFileActions", () => {
     const deps = dependencies({ activeSshSessionId: null });
     const actions = createRemoteFileActions(deps);
 
-    await actions.uploadPath("files");
+    await actions.uploadPath();
     await actions.createRemoteDirectory();
     await actions.downloadRemotePaths([]);
     await actions.renameRemotePath("/tmp/file.txt");
@@ -106,8 +117,7 @@ function dependencies({
   activeSshSessionId = "session-1",
   filePath = ".",
   textInputResults = [],
-  uploadFiles = [],
-  uploadDirectories = [],
+  uploadPaths = [],
   downloadDirectory = null,
   conflicts = [],
   conflictPolicy = "overwrite",
@@ -115,8 +125,7 @@ function dependencies({
   activeSshSessionId?: string | null;
   filePath?: string;
   textInputResults?: Array<string | null>;
-  uploadFiles?: string[];
-  uploadDirectories?: string[];
+  uploadPaths?: string[];
   downloadDirectory?: string | null;
   conflicts?: Array<{ direction: "upload" | "download"; path: string }>;
   conflictPolicy?: "overwrite" | "skip" | "rename" | null;
@@ -141,8 +150,7 @@ function dependencies({
       })),
     ),
     checkTransferConflicts: vi.fn(async () => conflicts),
-    selectUploadFiles: vi.fn(async () => uploadFiles),
-    selectUploadDirectories: vi.fn(async () => uploadDirectories),
+    selectUploadPaths: vi.fn(async () => uploadPaths),
     selectDownloadDirectory: vi.fn(async () => downloadDirectory),
   };
 }

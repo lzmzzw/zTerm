@@ -44,8 +44,7 @@ interface RemoteFileActionDependencies {
   renamePath: (savedSessionId: string, from: string, to: string) => Promise<unknown> | unknown;
   classifyLocalPaths: (paths: string[]) => Promise<LocalPathInfo[]>;
   checkTransferConflicts: (savedSessionId: string, items: TransferConflictCheckItem[]) => Promise<TransferConflict[]>;
-  selectUploadFiles?: () => Promise<string[]>;
-  selectUploadDirectories?: () => Promise<string[]>;
+  selectUploadPaths?: () => Promise<string[]>;
   selectDownloadDirectory?: () => Promise<string | null>;
 }
 
@@ -63,8 +62,7 @@ export function createRemoteFileActions({
   renamePath,
   classifyLocalPaths,
   checkTransferConflicts,
-  selectUploadFiles = defaultSelectUploadFiles,
-  selectUploadDirectories = defaultSelectUploadDirectories,
+  selectUploadPaths = defaultSelectUploadPaths,
   selectDownloadDirectory = defaultSelectDownloadDirectory,
 }: RemoteFileActionDependencies) {
   async function refreshFiles(path = filePath) {
@@ -94,9 +92,9 @@ export function createRemoteFileActions({
     await mkdir(activeSshSessionId, path);
   }
 
-  async function uploadPath(kind: "files" | "directories") {
+  async function uploadPath() {
     if (!activeSshSessionId) return;
-    const paths = kind === "files" ? await selectUploadFiles() : await selectUploadDirectories();
+    const paths = await selectUploadPaths();
     await uploadLocalPaths(paths);
   }
 
@@ -191,21 +189,11 @@ export function createRemoteFileActions({
   }
 }
 
-async function defaultSelectUploadFiles() {
+async function defaultSelectUploadPaths() {
   const selected = await open({
-    title: "选择要上传的文件",
+    title: "选择要上传的文件或文件夹",
     multiple: true,
     directory: false,
-  });
-  return normalizeDialogSelection(selected);
-}
-
-async function defaultSelectUploadDirectories() {
-  const selected = await open({
-    title: "选择要上传的文件夹",
-    multiple: true,
-    directory: true,
-    recursive: true,
   });
   return normalizeDialogSelection(selected);
 }

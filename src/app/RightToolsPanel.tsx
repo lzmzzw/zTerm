@@ -77,7 +77,7 @@ interface RightToolsPanelProps {
     onRefresh: () => Promise<void> | void;
     onRename: (path: string) => Promise<void> | void;
     onSelect: (path: string | null, event?: FileSelectionEvent, orderedEntries?: FileEntry[]) => void;
-    onUpload: (kind: "files" | "directories") => Promise<void> | void;
+    onUpload: () => Promise<void> | void;
     onUploadDropped: (paths: string[]) => Promise<void> | void;
   };
   history: {
