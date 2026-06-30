@@ -102,6 +102,7 @@ describe("SettingsPage", () => {
     expect(view.container.textContent).toContain("General");
     expect(view.container.textContent).toContain("Save");
     expect(view.container.textContent).not.toContain("保存通用设置");
+    expect(view.container.textContent).not.toContain("Default Right Tool");
 
     view.unmount();
   });

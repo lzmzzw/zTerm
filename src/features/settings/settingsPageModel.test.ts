@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import {
   fallbackSettings,
   languageOptions,
-  rightToolOptions,
   settingsShortcutPatchFor,
   settingsTabs,
   themeOptions,
@@ -34,12 +33,6 @@ describe("settingsPageModel", () => {
       { value: "dark", label: "Dark" },
       { value: "light", label: "Light" },
       { value: "system", label: "System" },
-    ]);
-    expect(rightToolOptions).toEqual([
-      { value: "agent", label: "Agent" },
-      { value: "files", label: "SFTP" },
-      { value: "history", label: "History" },
-      { value: "transfer", label: "Transfer" },
     ]);
     expect(workspaceRestoreStrategyOptions).toEqual([
       { value: "visible_first", labelKey: "restoreVisibleFirst" },

@@ -183,12 +183,20 @@ impl AppSettings {
 pub fn shortcut_registry() -> Vec<ShortcutDefinition> {
     vec![
         ShortcutDefinition::new("settings.open", "打开设置", "Ctrl+,"),
-        ShortcutDefinition::new("terminal.new_tab", "新建终端标签", "Ctrl+Shift+T"),
-        ShortcutDefinition::new("terminal.close_tab", "关闭终端标签", "Ctrl+Shift+W"),
-        ShortcutDefinition::new("terminal.split_horizontal", "水平分屏", "Ctrl+Shift+D"),
-        ShortcutDefinition::new("terminal.split_vertical", "垂直分屏", "Ctrl+Shift+E"),
-        ShortcutDefinition::new("right_tool.files", "打开 SFTP", "Ctrl+Alt+F"),
-        ShortcutDefinition::new("right_tool.history", "打开历史命令", "Ctrl+Alt+H"),
+        ShortcutDefinition::new("terminal.new_tab", "新建终端标签", "Ctrl+N"),
+        ShortcutDefinition::new("terminal.close_tab", "关闭终端标签", "Ctrl+W"),
+        ShortcutDefinition::new(
+            "terminal.split_horizontal",
+            "水平分屏",
+            "Ctrl+Shift+Arrowright",
+        ),
+        ShortcutDefinition::new(
+            "terminal.split_vertical",
+            "垂直分屏",
+            "Ctrl+Shift+Arrowdown",
+        ),
+        ShortcutDefinition::new("right_tool.files", "打开 SFTP", "Ctrl+Shift+S"),
+        ShortcutDefinition::new("right_tool.history", "打开历史命令", "Ctrl+H"),
     ]
 }
 
@@ -278,6 +286,33 @@ mod tests {
             current.workspace_restore_strategy
         );
         assert_eq!(reset.shortcuts, AppSettings::default().shortcuts);
+    }
+
+    #[test]
+    fn shortcut_registry_matches_application_defaults() {
+        let defaults = shortcut_registry()
+            .into_iter()
+            .map(|definition| (definition.action_id, definition.default_accelerator))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            defaults,
+            vec![
+                ("settings.open".to_string(), "Ctrl+,".to_string()),
+                ("terminal.new_tab".to_string(), "Ctrl+N".to_string()),
+                ("terminal.close_tab".to_string(), "Ctrl+W".to_string()),
+                (
+                    "terminal.split_horizontal".to_string(),
+                    "Ctrl+Shift+Arrowright".to_string()
+                ),
+                (
+                    "terminal.split_vertical".to_string(),
+                    "Ctrl+Shift+Arrowdown".to_string()
+                ),
+                ("right_tool.files".to_string(), "Ctrl+Shift+S".to_string()),
+                ("right_tool.history".to_string(), "Ctrl+H".to_string()),
+            ]
+        );
     }
 
     #[test]

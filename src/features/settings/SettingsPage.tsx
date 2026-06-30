@@ -8,7 +8,6 @@ import { useDomI18n } from "./domI18n";
 import {
   fallbackSettings,
   languageOptions,
-  rightToolOptions,
   settingsShortcutPatchFor,
   settingsTabs,
   themeOptions,
@@ -211,15 +210,6 @@ function GeneralSettings({
               step={1}
               value={draft.terminal_font_size}
               onChange={(value) => onDraftChange({ ...draft, terminal_font_size: value })}
-            />
-          </label>
-          <label>
-            <span>{t(language, "defaultRightTool")}</span>
-            <ZtSelect
-              ariaLabel={t(language, "defaultRightTool")}
-              value={draft.default_right_tool ?? "agent"}
-              options={rightToolOptions}
-              onChange={(nextValue) => onDraftChange({ ...draft, default_right_tool: nextValue })}
             />
           </label>
           <label>

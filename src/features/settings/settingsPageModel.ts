@@ -33,13 +33,6 @@ export const themeOptions: Array<{ value: AppTheme; label: string }> = [
   { value: "system", label: "System" },
 ];
 
-export const rightToolOptions = [
-  { value: "agent", label: "Agent" },
-  { value: "files", label: "SFTP" },
-  { value: "history", label: "History" },
-  { value: "transfer", label: "Transfer" },
-];
-
 export const workspaceRestoreStrategyOptions: Array<{
   value: WorkspaceRestoreStrategy;
   labelKey: I18nKey;

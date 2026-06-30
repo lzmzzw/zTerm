@@ -25,11 +25,22 @@ fn app_settings_have_expected_defaults() {
         settings.workspace_restore_strategy,
         WorkspaceRestoreStrategy::VisibleFirst
     );
-    assert!(settings
-        .shortcuts
-        .iter()
-        .any(|binding| binding.action_id == "terminal.new_tab"
-            && binding.accelerator == "Ctrl+Shift+T"));
+    assert_eq!(
+        settings
+            .shortcuts
+            .iter()
+            .map(|binding| (binding.action_id.as_str(), binding.accelerator.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("settings.open", "Ctrl+,"),
+            ("terminal.new_tab", "Ctrl+N"),
+            ("terminal.close_tab", "Ctrl+W"),
+            ("terminal.split_horizontal", "Ctrl+Shift+Arrowright"),
+            ("terminal.split_vertical", "Ctrl+Shift+Arrowdown"),
+            ("right_tool.files", "Ctrl+Shift+S"),
+            ("right_tool.history", "Ctrl+H"),
+        ]
+    );
 }
 
 #[test]
