@@ -1,0 +1,497 @@
+// Author: Liz
+import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
+import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+
+import { scheduleNextTask } from "../../lib/renderScheduling";
+import type { CommandCompletionCandidate } from "./terminalStore";
+
+interface XtermPaneProps {
+  data?: string;
+  liveData?: string | null;
+  liveSerial?: number | null;
+  replayKey?: number | string | null;
+  streamId?: string | null;
+  contextMenuEnabled?: boolean;
+  onCompletionRequest?: (input: string, cursor: number) => Promise<CommandCompletionCandidate[]>;
+  onDisconnect?: () => void;
+  onInput?: (data: string) => void;
+  onReconnect?: () => void;
+  onResize?: (cols: number, rows: number) => void;
+}
+
+// Keep xterm's palette aligned with the shell surface; CSS controls the surrounding chrome.
+const KERMINAL_DARK_TERMINAL_THEME = {
+  background: "#1f1f21",
+  foreground: "rgba(245, 245, 247, 0.9)",
+  cursor: "rgba(245, 245, 247, 0.9)",
+  black: "rgba(38, 38, 42, 0.96)",
+  red: "rgba(255, 95, 86, 0.94)",
+  green: "rgba(48, 209, 88, 0.94)",
+  yellow: "rgba(255, 214, 10, 0.94)",
+  blue: "rgba(100, 210, 255, 0.94)",
+  magenta: "rgba(191, 90, 242, 0.94)",
+  cyan: "rgba(100, 210, 255, 0.88)",
+  white: "rgba(245, 245, 247, 0.86)",
+  brightBlack: "rgba(150, 150, 158, 0.9)",
+  brightRed: "rgba(249, 38, 114, 0.94)",
+  brightGreen: "rgba(50, 215, 75, 0.94)",
+  brightYellow: "rgba(255, 214, 10, 0.94)",
+  brightBlue: "rgba(10, 132, 255, 0.94)",
+  brightMagenta: "rgba(191, 90, 242, 0.94)",
+  brightCyan: "rgba(102, 217, 239, 0.94)",
+  brightWhite: "rgba(255, 255, 255, 0.92)",
+};
+
+const KERMINAL_LIGHT_TERMINAL_THEME = {
+  background: "#f7f7fa",
+  foreground: "#1d1d1f",
+  cursor: "#1d1d1f",
+  black: "#1d1d1f",
+  red: "#d70015",
+  green: "#248a3d",
+  yellow: "#b25000",
+  blue: "#0066cc",
+  magenta: "#af52de",
+  cyan: "#0071a4",
+  white: "#f5f5f7",
+  brightBlack: "#6e6e73",
+  brightRed: "#ff3b30",
+  brightGreen: "#34c759",
+  brightYellow: "#ff9500",
+  brightBlue: "#0a84ff",
+  brightMagenta: "#bf5af2",
+  brightCyan: "#32ade6",
+  brightWhite: "#ffffff",
+};
+const MAX_REPLAY_OUTPUT_CHARS = 16_000;
+const TERMINAL_STATUS_QUERY_PATTERN = /\x1b\[[0-9?;]*n/g;
+
+export function XtermPane({
+  data = "",
+  liveData = null,
+  liveSerial,
+  replayKey = null,
+  streamId = null,
+  contextMenuEnabled = true,
+  onCompletionRequest,
+  onDisconnect,
+  onInput,
+  onReconnect,
+  onResize,
+}: XtermPaneProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const writtenLengthRef = useRef(0);
+  const streamIdRef = useRef<string | null>(streamId);
+  const replayKeyRef = useRef<number | string | null>(null);
+  const liveSerialRef = useRef<number | null>(null);
+  const completionRequestIdRef = useRef(0);
+  const ghostCandidateRef = useRef<CommandCompletionCandidate | null>(null);
+  const lastResizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const replayingOutputRef = useRef(false);
+  const lineInputRef = useRef("");
+  const onInputRef = useRef(onInput);
+  const onResizeRef = useRef(onResize);
+  const [ghostCandidate, setGhostCandidate] = useState<CommandCompletionCandidate | null>(null);
+  const [ghostPosition, setGhostPosition] = useState<CSSProperties>({ bottom: 8, left: 10 });
+  const [lineInput, setLineInput] = useState("");
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    onInputRef.current = onInput;
+    onResizeRef.current = onResize;
+  }, [onInput, onResize]);
+
+  useEffect(() => {
+    ghostCandidateRef.current = ghostCandidate;
+  }, [ghostCandidate]);
+
+  useEffect(() => {
+    lineInputRef.current = lineInput;
+  }, [lineInput]);
+
+  useEffect(() => {
+    if (!onCompletionRequest || !lineInput.trim()) {
+      setGhostCandidate(null);
+      return;
+    }
+
+    const requestId = (completionRequestIdRef.current += 1);
+    void onCompletionRequest(lineInput, countChars(lineInput))
+      .then((candidates) => {
+        if (completionRequestIdRef.current !== requestId) return;
+        const candidate = normalizedCandidateForInput(candidates, lineInput);
+        setGhostPosition(resolveGhostPosition(terminalRef.current, containerRef.current));
+        setGhostCandidate(candidate);
+      })
+      .catch(() => {
+        if (completionRequestIdRef.current === requestId) {
+          setGhostCandidate(null);
+        }
+      });
+  }, [lineInput, onCompletionRequest]);
+
+  const handleTerminalInput = useCallback(
+    (value: string) => {
+      if (replayingOutputRef.current) {
+        return;
+      }
+
+      const candidate = ghostCandidateRef.current;
+      if (value === "\t" && candidate) {
+        onInputRef.current?.(candidate.suffix);
+        lineInputRef.current = candidate.replacement_text;
+        ghostCandidateRef.current = null;
+        setLineInput(candidate.replacement_text);
+        setGhostCandidate(null);
+        return;
+      }
+      if (value === "\x1b" && candidate) {
+        ghostCandidateRef.current = null;
+        setGhostCandidate(null);
+        return;
+      }
+
+      onInputRef.current?.(value);
+      const currentInput = lineInputRef.current;
+      const nextInput = applyTerminalInput(currentInput, value);
+      if (nextInput !== currentInput) {
+        setLineInput(nextInput);
+      } else if (value !== "\t") {
+        setGhostCandidate(null);
+      }
+    },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    return () => {
+      containerRef.current?.replaceChildren();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current) return undefined;
+
+    const terminal = new Terminal({
+      cursorBlink: true,
+      fontFamily:
+        'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Microsoft YaHei Mono", Consolas, "Liberation Mono", monospace',
+      fontSize: resolveConfiguredTerminalFontSize(),
+      theme: resolveTerminalTheme(),
+    });
+    const fitAddon = new FitAddon();
+    const searchAddon = new SearchAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.loadAddon(searchAddon);
+    terminal.loadAddon(new WebLinksAddon());
+    terminal.open(containerRef.current);
+    fitAddon.fit();
+    terminalRef.current = terminal;
+    searchAddonRef.current = searchAddon;
+
+    const inputDisposable = terminal.onData(handleTerminalInput);
+    const resizeDisposable = terminal.onResize((size) => {
+      const previousSize = lastResizeRef.current;
+      if (previousSize?.cols === size.cols && previousSize.rows === size.rows) {
+        return;
+      }
+      lastResizeRef.current = { cols: size.cols, rows: size.rows };
+      onResizeRef.current?.(size.cols, size.rows);
+    });
+    const fit = () => fitAddon.fit();
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fit);
+    resizeObserver?.observe(containerRef.current);
+    window.addEventListener("resize", fit);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", fit);
+      inputDisposable.dispose();
+      resizeDisposable.dispose();
+      terminalRef.current = null;
+      searchAddonRef.current = null;
+      writtenLengthRef.current = 0;
+      lastResizeRef.current = null;
+      scheduleNextTask(() => terminal.dispose());
+    };
+  }, [handleTerminalInput]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+
+    if (liveSerial !== undefined) {
+      const streamChanged = streamIdRef.current !== streamId;
+      const replayChanged = replayKeyRef.current !== replayKey;
+      if (!streamChanged && !replayChanged) return;
+      streamIdRef.current = streamId;
+      replayKeyRef.current = replayKey;
+      liveSerialRef.current = liveSerial ?? null;
+      writtenLengthRef.current = data.length;
+      terminal.clear();
+      if (data) {
+        writeTerminalOutput(terminal, data, !isOnlyTerminalStatusQuery(data), replayingOutputRef);
+      }
+      return;
+    }
+
+    const streamChanged = streamIdRef.current !== streamId;
+    if (streamChanged) {
+      streamIdRef.current = streamId;
+      writtenLengthRef.current = 0;
+      terminal.clear();
+      if (data) {
+        writeTerminalOutput(terminal, data, !isOnlyTerminalStatusQuery(data), replayingOutputRef);
+      }
+      writtenLengthRef.current = data.length;
+      return;
+    }
+
+    if (!data) return;
+    const previousLength = writtenLengthRef.current;
+    if (data.length >= previousLength) {
+      const nextChunk = data.slice(previousLength);
+      if (nextChunk) {
+        const suppressGeneratedInput = previousLength === 0 && !isOnlyTerminalStatusQuery(nextChunk);
+        writeTerminalOutput(terminal, nextChunk, suppressGeneratedInput, replayingOutputRef);
+      }
+    } else {
+      terminal.clear();
+      writeTerminalOutput(terminal, data, !isOnlyTerminalStatusQuery(data), replayingOutputRef);
+    }
+    writtenLengthRef.current = data.length;
+  }, [data, liveSerial, replayKey, streamId]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal || liveSerial === undefined || liveSerial === null || !liveData) return;
+    if (liveSerialRef.current === liveSerial) return;
+    writeTerminalOutput(terminal, liveData, false, replayingOutputRef);
+    liveSerialRef.current = liveSerial;
+    writtenLengthRef.current += liveData.length;
+  }, [liveData, liveSerial]);
+
+  return (
+    <div
+      className="zt-xterm-pane"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        if (!contextMenuEnabled) return;
+        setContextMenu({ x: event.clientX, y: event.clientY });
+      }}
+    >
+      <TerminalContextMenu
+        menu={contextMenu}
+        onClear={() => terminalRef.current?.clear()}
+        onCopy={() => {
+          const selection = terminalRef.current?.getSelection();
+          if (selection) void navigator.clipboard?.writeText(selection);
+        }}
+        onDisconnect={onDisconnect}
+        onPaste={() => {
+          void navigator.clipboard?.readText().then((text) => {
+            if (text) onInputRef.current?.(text);
+          });
+        }}
+        onReconnect={onReconnect}
+        onSearch={() => {
+          const term = window.prompt("搜索");
+          if (term) searchAddonRef.current?.findNext(term);
+        }}
+        onClose={() => setContextMenu(null)}
+      />
+      <div className="zt-xterm-host" ref={containerRef} />
+      {ghostCandidate ? (
+        <div className="zt-command-ghost" aria-hidden="true" style={ghostPosition}>
+          {ghostCandidate.suffix}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function TerminalContextMenu({
+  menu,
+  onClear,
+  onCopy,
+  onDisconnect,
+  onClose,
+  onPaste,
+  onReconnect,
+  onSearch,
+}: {
+  menu: { x: number; y: number } | null;
+  onClear: () => void;
+  onCopy: () => void;
+  onDisconnect?: () => void;
+  onClose: () => void;
+  onPaste: () => void;
+  onReconnect?: () => void;
+  onSearch: () => void;
+}) {
+  useEffect(() => {
+    if (!menu) return undefined;
+    window.addEventListener("click", onClose);
+    return () => window.removeEventListener("click", onClose);
+  }, [menu, onClose]);
+
+  if (!menu) return null;
+  const hasConnectionActions = Boolean(onReconnect || onDisconnect);
+
+  return (
+    <div className="zt-context-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
+      <button type="button" role="menuitem" onClick={onCopy}>
+        复制
+      </button>
+      <button type="button" role="menuitem" onClick={onPaste}>
+        粘贴
+      </button>
+      <button type="button" role="menuitem" onClick={onClear}>
+        清屏
+      </button>
+      <button type="button" role="menuitem" onClick={onSearch}>
+        搜索
+      </button>
+      {hasConnectionActions ? (
+        <>
+          <div className="zt-context-menu-separator" role="separator" />
+          {onReconnect ? (
+            <button type="button" role="menuitem" onClick={onReconnect}>
+              重新连接
+            </button>
+          ) : null}
+          {onDisconnect ? (
+            <button type="button" role="menuitem" onClick={onDisconnect}>
+              断开连接
+            </button>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function resolveConfiguredTerminalFontSize() {
+  const value = window
+    .getComputedStyle(document.documentElement)
+    .getPropertyValue("--zt-terminal-font-size")
+    .trim();
+  const size = Number.parseInt(value, 10);
+  return Number.isFinite(size) ? size : 13;
+}
+
+function resolveTerminalTheme() {
+  return document.documentElement.dataset.ztTheme === "light"
+    ? KERMINAL_LIGHT_TERMINAL_THEME
+    : KERMINAL_DARK_TERMINAL_THEME;
+}
+
+function applyTerminalInput(current: string, value: string) {
+  if (value.startsWith("\x1b")) {
+    return current;
+  }
+  let next = current;
+  for (const character of value) {
+    if (character === "\r" || character === "\n" || character === "\x03") {
+      next = "";
+    } else if (character === "\b" || character === "\x7f") {
+      next = Array.from(next).slice(0, -1).join("");
+    } else if (character === "\t") {
+      continue;
+    } else if (!isControlCharacter(character)) {
+      next += character;
+    }
+  }
+  return next;
+}
+
+function writeTerminalOutput(
+  terminal: Terminal,
+  data: string,
+  suppressGeneratedInput: boolean,
+  replayingOutputRef: { current: boolean },
+) {
+  if (!suppressGeneratedInput) {
+    terminal.write(data);
+    return;
+  }
+
+  const replayOutput = prepareReplayOutput(data);
+  if (!replayOutput) {
+    replayingOutputRef.current = false;
+    return;
+  }
+  replayingOutputRef.current = true;
+  terminal.write(replayOutput, () => {
+    replayingOutputRef.current = false;
+  });
+}
+
+function prepareReplayOutput(data: string) {
+  const tail = data.length > MAX_REPLAY_OUTPUT_CHARS ? data.slice(-MAX_REPLAY_OUTPUT_CHARS) : data;
+  return tail.replace(TERMINAL_STATUS_QUERY_PATTERN, "");
+}
+
+function isOnlyTerminalStatusQuery(data: string) {
+  const withoutQueries = data.replace(TERMINAL_STATUS_QUERY_PATTERN, "");
+  return withoutQueries.trim().length === 0 && withoutQueries !== data;
+}
+
+function isControlCharacter(character: string) {
+  return character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127;
+}
+
+function countChars(value: string) {
+  return Array.from(value).length;
+}
+
+function resolveGhostPosition(terminal: Terminal | null, container: HTMLElement | null): CSSProperties {
+  if (!terminal || !container) {
+    return { bottom: 8, left: 10 };
+  }
+  const rows = container.querySelector<HTMLElement>(".xterm-rows");
+  const firstRow = rows?.querySelector<HTMLElement>("div");
+  const rowsRect = rows?.getBoundingClientRect();
+  const rowRect = firstRow?.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const fontSize = Number(terminal.options.fontSize) || resolveConfiguredTerminalFontSize();
+  const cellWidth = Math.max(6, estimateCellWidth(firstRow, fontSize));
+  const rowHeight = Math.max(fontSize * 1.2, rowRect?.height || fontSize * 1.35);
+  const cursorX = Math.max(0, terminal.buffer.active.cursorX);
+  const cursorY = Math.max(0, terminal.buffer.active.cursorY);
+  if (!rowsRect || rowsRect.height === 0) {
+    return { bottom: 8, left: 10 + cursorX * cellWidth };
+  }
+  return {
+    left: Math.min(containerRect.width - 20, 4 + cursorX * cellWidth),
+    top: Math.max(0, rowsRect.top - containerRect.top + cursorY * rowHeight),
+    bottom: "auto",
+  };
+}
+
+function estimateCellWidth(row: HTMLElement | null | undefined, fontSize: number) {
+  if (!row) return fontSize * 0.62;
+  const textLength = row.textContent ? Array.from(row.textContent).length : 0;
+  const width = row.getBoundingClientRect().width;
+  if (textLength > 0 && width > 0) {
+    return width / textLength;
+  }
+  return fontSize * 0.62;
+}
+
+function normalizedCandidateForInput(candidates: CommandCompletionCandidate[], input: string) {
+  const candidate = candidates.find(
+    (item) => item.replacement_text !== input && item.replacement_text.startsWith(input),
+  );
+  if (!candidate) return null;
+  return {
+    ...candidate,
+    suffix: candidate.replacement_text.slice(input.length),
+  };
+}

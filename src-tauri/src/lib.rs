@@ -1,0 +1,102 @@
+// Author: Liz
+use tauri::Manager;
+
+pub mod commands;
+pub mod error;
+pub mod models;
+pub mod paths;
+pub mod security;
+pub mod services;
+pub mod state;
+pub mod storage;
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .setup(setup_app_state)
+        .invoke_handler(tauri::generate_handler![
+            commands::sessions::sessions_list,
+            commands::sessions::sessions_save_group,
+            commands::sessions::sessions_delete_group,
+            commands::sessions::sessions_save_session,
+            commands::sessions::sessions_delete_session,
+            commands::sessions::sessions_test_connection,
+            commands::settings::settings_get,
+            commands::settings::settings_save,
+            commands::settings::settings_reset,
+            commands::settings::shortcut_registry_list,
+            commands::terminal_profile::terminal_profile_list,
+            commands::terminal_profile::terminal_profile_detect,
+            commands::terminal_profile::terminal_profile_set_default,
+            commands::command_completion::command_completion_suggest,
+            commands::history::history_search,
+            commands::history::history_clear,
+            commands::history::history_command_group_list,
+            commands::history::history_command_group_save,
+            commands::history::history_command_group_delete,
+            commands::credential::credentials_list,
+            commands::credential::credentials_save,
+            commands::credential::credentials_read_secret,
+            commands::credential::credentials_delete,
+            commands::credential::credentials_test,
+            commands::credential::llm_provider_list,
+            commands::credential::llm_provider_save,
+            commands::credential::llm_provider_delete,
+            commands::credential::llm_provider_test,
+            commands::credential::llm_provider_test_draft,
+            commands::ai::ai_chat,
+            commands::ai::ai_terminal_context_snapshot,
+            commands::ai::ai_tool_registry_list,
+            commands::ai::ai_tool_prepare,
+            commands::ai::ai_tool_confirm,
+            commands::ai::ai_tool_pending,
+            commands::ai::ai_tool_audit,
+            commands::ai::ai_conversation_create,
+            commands::ai::ai_conversation_list,
+            commands::ai::ai_conversation_get,
+            commands::ai::ai_conversation_delete,
+            commands::ai::ai_set_conversation_approval_mode,
+            commands::ai::ai_conversation_message_append,
+            commands::sftp::sftp_list,
+            commands::sftp::sftp_mkdir,
+            commands::sftp::sftp_upload,
+            commands::sftp::sftp_download,
+            commands::sftp::sftp_delete,
+            commands::sftp::sftp_rename,
+            commands::sftp::transfer_list,
+            commands::sftp::transfer_retry,
+            commands::server_info::server_info_snapshot,
+            commands::workspace::workspace_list,
+            commands::workspace::workspace_get,
+            commands::workspace::workspace_save,
+            commands::workspace::workspace_delete,
+            commands::terminal::terminal_open,
+            commands::terminal::terminal_open_default_local,
+            commands::terminal::terminal_write,
+            commands::terminal::terminal_write_bytes,
+            commands::terminal::terminal_zmodem_read_files,
+            commands::terminal::terminal_zmodem_save_file,
+            commands::terminal::terminal_resize,
+            commands::terminal::terminal_close,
+        ])
+        .run(tauri::generate_context!())
+        .expect("failed to run zTerm");
+}
+
+fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let paths = paths::AppPaths::default_for_install()?;
+    paths.ensure_dirs()?;
+    let storage = storage::sqlite::SqliteStore::open(paths.db_path())?;
+    app.manage(state::AppState::new(storage));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn crate_metadata_matches_project() {
+        assert_eq!(env!("CARGO_PKG_NAME"), "zterm");
+        assert_eq!(env!("CARGO_PKG_VERSION"), "0.1.0");
+    }
+}

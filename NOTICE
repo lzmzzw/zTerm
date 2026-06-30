@@ -1,0 +1,10 @@
+zTerm
+Copyright 2026 zTerm contributors
+
+zTerm is licensed under the GNU General Public License version 3.0 only.
+
+This project is designed as a Tauri desktop terminal workspace for SSH, SFTP,
+command history, server monitoring, and AI-assisted operations.
+
+Third-party dependency and reference notices are recorded in
+THIRD_PARTY_NOTICES.md.

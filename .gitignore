@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+.vite/
+coverage/
+
+# Tauri / Rust build output
+src-tauri/target/
+src-tauri/gen/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+*.local
+
+# Local AI / agent configuration and internal project notes
+.agent/
+.agents/
+.codex/
+.codex-run/
+.superpowers/
+AGENTS.md
+docs/
+
+# Runtime data and local test state
+*.db
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Editor and OS files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.swp

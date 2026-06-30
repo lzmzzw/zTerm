@@ -1,0 +1,175 @@
+// Author: Liz
+import { act, type ReactElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { describe, expect, it, vi } from "vitest";
+
+import { AppTextInputDialog, ConnectionPickerDialog, type ConnectionChoice } from "./AppShellDialogs";
+import type { SavedSession } from "../features/sessions/types";
+
+function render(ui: ReactElement) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root: Root = createRoot(container);
+
+  act(() => {
+    root.render(ui);
+  });
+
+  return {
+    container,
+    unmount() {
+      act(() => root.unmount());
+      container.remove();
+    },
+  };
+}
+
+function button(container: ParentNode, label: string) {
+  const match = container.querySelector(`button[aria-label="${label}"]`);
+  if (!match) {
+    throw new Error(`Button not found: ${label}`);
+  }
+  return match as HTMLButtonElement;
+}
+
+function input(container: ParentNode, label: string) {
+  const match = container.querySelector(`input[aria-label="${label}"]`);
+  if (!match) {
+    throw new Error(`Input not found: ${label}`);
+  }
+  return match as HTMLInputElement;
+}
+
+function change(element: HTMLInputElement, value: string) {
+  act(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value");
+    descriptor?.set?.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+function click(element: HTMLElement) {
+  act(() => {
+    element.click();
+  });
+}
+
+function session(overrides: Partial<SavedSession>): SavedSession {
+  return {
+    id: "session",
+    name: "Session",
+    type: "ssh",
+    group_id: null,
+    host: "127.0.0.1",
+    port: 22,
+    username: "user",
+    auth_mode: "none",
+    credential_ref: null,
+    description: null,
+    tags: [],
+    sort_order: 0,
+    created_at_ms: 1,
+    updated_at_ms: 1,
+    last_used_at_ms: null,
+    ...overrides,
+  };
+}
+
+describe("AppShellDialogs", () => {
+  it("trims text input before submit and rejects blank values", () => {
+    const onSubmit = vi.fn();
+    const view = render(
+      <AppTextInputDialog
+        title="新建工作区"
+        label="工作区名称"
+        initialValue="运维巡检 副本"
+        requiredMessage="请输入工作区名称"
+        confirmLabel="确认新建工作区"
+        onCancel={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    change(input(view.container, "工作区名称"), "   ");
+    click(button(view.container, "确认新建工作区"));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(view.container.textContent).toContain("请输入工作区名称");
+
+    change(input(view.container, "工作区名称"), "  发布窗口  ");
+    click(button(view.container, "确认新建工作区"));
+
+    expect(onSubmit).toHaveBeenCalledWith("发布窗口");
+    view.unmount();
+  });
+
+  it("sorts saved sessions by sort order then name", () => {
+    const view = render(
+      <ConnectionPickerDialog
+        sessions={[
+          session({ id: "zeta", name: "Zeta", sort_order: 2, type: "ssh" }),
+          session({ id: "beta", name: "Beta", sort_order: 1, type: "rdp" }),
+          session({ id: "alpha", name: "Alpha", sort_order: 1, type: "local" }),
+        ]}
+        opening={false}
+        error={null}
+        onCancel={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(Array.from(view.container.querySelectorAll(".zt-connection-choice strong")).map((node) => node.textContent)).toEqual([
+      "默认本地终端",
+      "Alpha",
+      "Beta",
+      "Zeta",
+    ]);
+    expect(Array.from(view.container.querySelectorAll(".zt-connection-choice span")).map((node) => node.textContent)).toEqual([
+      "Local",
+      "Local",
+      "RDP",
+      "SSH",
+    ]);
+    view.unmount();
+  });
+
+  it("disables cancel and connection choices while opening", () => {
+    const view = render(
+      <ConnectionPickerDialog
+        sessions={[session({ id: "ssh", name: "SSH Prod", sort_order: 0 })]}
+        opening={true}
+        error="正在打开连接"
+        onCancel={vi.fn()}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(button(view.container, "关闭选择连接").disabled).toBe(true);
+    expect(button(view.container, "取消选择连接").disabled).toBe(true);
+    expect(button(view.container, "选择默认本地终端").disabled).toBe(true);
+    expect(button(view.container, "选择连接 SSH Prod").disabled).toBe(true);
+    expect(view.container.textContent).toContain("正在打开连接");
+    view.unmount();
+  });
+
+  it("emits default local and saved session choices", () => {
+    const selected: ConnectionChoice[] = [];
+    const sshSession = session({ id: "ssh", name: "SSH Prod", sort_order: 0 });
+    const view = render(
+      <ConnectionPickerDialog
+        sessions={[sshSession]}
+        opening={false}
+        error={null}
+        onCancel={vi.fn()}
+        onSelect={(choice) => selected.push(choice)}
+      />,
+    );
+
+    click(button(view.container, "选择默认本地终端"));
+    click(button(view.container, "选择连接 SSH Prod"));
+
+    expect(selected).toEqual([{ kind: "default_local" }, { kind: "saved_session", session: sshSession }]);
+    view.unmount();
+  });
+});

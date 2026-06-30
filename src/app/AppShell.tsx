@@ -1,0 +1,1290 @@
+// Author: Liz
+import { Bot, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
+
+import { AppTextInputDialog, ConnectionPickerDialog, type ConnectionChoice } from "./AppShellDialogs";
+import { RightToolsPanel } from "./RightToolsPanel";
+import { PanelHeader, ToolButton } from "./ShellControls";
+import { TitleBar } from "./TitleBar";
+import { WorkspaceStage } from "./WorkspaceStage";
+import { createRemoteFileActions } from "./remoteFileActions";
+import { createTerminalActions } from "./terminalActions";
+import type { RightTool } from "./rightTools";
+import { useAppShortcutKeys } from "./useAppShortcutKeys";
+import { useAppTextInputDialog } from "./useAppTextInputDialog";
+import { useWorkspaceVisualSwitch } from "./useWorkspaceVisualSwitch";
+import { useAiStore } from "../features/ai/aiStore";
+import { buildAiTerminalContext } from "../features/ai/aiTerminalContextModel";
+import { useFileStore } from "../features/files/fileStore";
+import type { CommandHistoryView } from "../features/history/CommandHistoryPanel";
+import { resolveHistoryScope } from "../features/history/historyScopeModel";
+import { useHistoryStore } from "../features/history/historyStore";
+import { ModelManagerPanel } from "../features/models/ModelManagerPanel";
+import { SessionTree } from "../features/sessions/SessionTree";
+import { SessionGroupDialog } from "../features/sessions/SessionTreeDialogs";
+import { useSessionStore } from "../features/sessions/sessionStore";
+import { SettingsPage } from "../features/settings/SettingsPage";
+import { applyAppSettings } from "../features/settings/applyAppSettings";
+import { useDomI18n } from "../features/settings/domI18n";
+import { useSettingsStore } from "../features/settings/settingsStore";
+import { useTerminalStore } from "../features/terminal/terminalStore";
+import { SplitPaneView } from "../features/workspace/SplitPaneView";
+import { WorkspaceManagerPanel } from "../features/workspace/WorkspaceManagerPanel";
+import { WorkspacePreviewDialog } from "../features/workspace/WorkspacePreviewDialog";
+import { definitionFromDraft } from "../features/workspace/workspacePreviewModel";
+import { workspaceDelete, workspaceGet, workspaceList, workspaceSave } from "../features/workspace/workspacePersistence";
+import { findPane, getActiveTerminalTab } from "../features/workspace/workspaceLayout";
+import { markWorkspaceRestoreQueued, runWorkspaceRestoreQueue } from "../features/workspace/workspaceRestoreScheduler";
+import {
+  definitionFromRuntime,
+  hasRuntimeTabs,
+  isReusableConnectionTab,
+  mergeWorkspaceSidebarItems,
+  nextWorkspaceSortOrder,
+} from "../features/workspace/workspaceShellModel";
+import { useWorkspaceStore } from "../features/workspace/workspaceStore";
+import type {
+  WorkspaceDefinition,
+  WorkspaceDefinitionDraft,
+  WorkspaceRuntime,
+  WorkspaceSummary,
+} from "../features/workspace/types";
+import { scheduleAfterPaintDelay, scheduleIdleTask } from "../lib/renderScheduling";
+import { fallbackOnlyErrorMessage } from "../lib/unknownErrorMessage";
+
+type LeftTool = "workspace" | "sessions" | "models";
+
+type ConnectionDialogTarget = {
+  workspaceId: string;
+  workspaceTabId: string;
+  paneId: string;
+};
+
+type WorkspaceEditorState = {
+  mode: "create" | "edit";
+  workspace: WorkspaceDefinition;
+};
+
+const DEFAULT_MAX_RUNNING_WORKSPACES = 5;
+
+const EMPTY_AI_PANEL_STATE = {
+  aiConversations: [],
+  activeConversationId: null,
+  aiApprovalMode: "safe" as const,
+  aiMessages: [],
+  aiPendingInvocations: [],
+  aiContextSnapshot: null,
+  agentLoading: false,
+  agentError: null,
+};
+
+const EMPTY_FILE_PANEL_STATE = {
+  fileEntries: [],
+  filePath: ".",
+  selectedPath: null,
+  filesLoading: false,
+  fileError: null,
+};
+
+const EMPTY_TRANSFER_PANEL_STATE = {
+  transfers: [],
+};
+
+const EMPTY_HISTORY_PANEL_STATE = {
+  historyEntries: [],
+  commandGroups: [],
+  historyLoading: false,
+  historyError: null,
+  historyGroupLoading: false,
+  historyGroupError: null,
+};
+
+const EMPTY_WORKSPACE_SIDEBAR_STATE = {
+  workspaceRuntimes: [] as WorkspaceRuntime[],
+  workspaceDefinitions: {} as Record<string, WorkspaceDefinition>,
+};
+
+export function AppShell() {
+  const {
+    workspaceSwitchOverlay,
+    workspaceVisualSwitchActive,
+    beginWorkspaceVisualSwitch,
+    isWorkspaceSwitchEpochCurrent,
+    markWorkspaceSwitchMetric,
+    startWorkspaceSwitchMetrics,
+  } = useWorkspaceVisualSwitch();
+  const {
+    groups,
+    sessions,
+    sessionError,
+    loadSessions,
+    saveGroup,
+    saveSession,
+    testSession,
+    deleteGroup,
+    deleteSession,
+  } = useSessionStore(
+    useShallow((state) => ({
+      groups: state.groups,
+      sessions: state.sessions,
+      sessionError: state.error,
+      loadSessions: state.loadSessions,
+      saveGroup: state.saveGroup,
+      saveSession: state.saveSession,
+      testSession: state.testSession,
+      deleteGroup: state.deleteGroup,
+      deleteSession: state.deleteSession,
+    })),
+  );
+  const {
+    appSettings,
+    providers,
+    terminalProfiles,
+    shortcutDefinitions,
+    settingsLoading,
+    settingsError,
+    loadSettings,
+    saveAppSettings,
+    resetAppSettingsSection,
+    saveCredential,
+    readCredentialSecret,
+    saveProvider,
+    deleteProvider,
+    testProviderDraft,
+    detectTerminalProfiles,
+    setDefaultTerminalProfile,
+  } = useSettingsStore(
+    useShallow((state) => ({
+      appSettings: state.appSettings,
+      providers: state.providers,
+      terminalProfiles: state.terminalProfiles,
+      shortcutDefinitions: state.shortcutDefinitions,
+      settingsLoading: state.loading,
+      settingsError: state.error,
+      loadSettings: state.loadSettings,
+      saveAppSettings: state.saveAppSettings,
+      resetAppSettingsSection: state.resetAppSettingsSection,
+      saveCredential: state.saveCredential,
+      readCredentialSecret: state.readCredentialSecret,
+      saveProvider: state.saveProvider,
+      deleteProvider: state.deleteProvider,
+      testProviderDraft: state.testProviderDraft,
+      detectTerminalProfiles: state.detectTerminalProfiles,
+      setDefaultTerminalProfile: state.setDefaultTerminalProfile,
+    })),
+  );
+  const [terminalError, setTerminalError] = useState<string | null>(null);
+  const [sessionActionError, setSessionActionError] = useState<string | null>(null);
+  const [sessionFolderDialogOpen, setSessionFolderDialogOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"workbench" | "settings">("workbench");
+  const [activeLeftTool, setActiveLeftTool] = useState<LeftTool | null>(null);
+  const [activeTool, setActiveTool] = useState<RightTool | null>(null);
+  const [workspaceSummaries, setWorkspaceSummaries] = useState<WorkspaceSummary[]>([]);
+  const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
+  const [workspaceEditor, setWorkspaceEditor] = useState<WorkspaceEditorState | null>(null);
+  const { textInputDialog, requestTextInput, resolveTextInputDialog } = useAppTextInputDialog();
+  const [connectionDialogTarget, setConnectionDialogTarget] = useState<ConnectionDialogTarget | null>(null);
+  const [connectionDialogError, setConnectionDialogError] = useState<string | null>(null);
+  const [connectionOpening, setConnectionOpening] = useState(false);
+  const restoringWorkspaceIdsRef = useRef<Set<string>>(new Set());
+  const autoClosingWorkspaceIdsRef = useRef<Set<string>>(new Set());
+  const activeContextTokenRef = useRef(0);
+  const [historyView, setHistoryView] = useState<CommandHistoryView>("history");
+  const [historyQuery, setHistoryQuery] = useState("");
+  const {
+    loadConversations,
+    loadPendingInvocations,
+    captureContext,
+    sendChat,
+    setApprovalMode,
+    selectConversation,
+    newConversation,
+    deleteConversation,
+    confirmTool,
+  } = useAiStore(
+    useShallow((state) => ({
+      loadConversations: state.loadConversations,
+      loadPendingInvocations: state.loadPendingInvocations,
+      captureContext: state.captureContext,
+      sendChat: state.sendChat,
+      setApprovalMode: state.setApprovalMode,
+      selectConversation: state.selectConversation,
+      newConversation: state.newConversation,
+      deleteConversation: state.deleteConversation,
+      confirmTool: state.confirmTool,
+    })),
+  );
+  const {
+    aiConversations,
+    activeConversationId,
+    aiApprovalMode,
+    aiMessages,
+    aiPendingInvocations,
+    aiContextSnapshot,
+    agentLoading,
+    agentError,
+  } = useAiStore(
+    useShallow((state) =>
+      activeTool === "agent"
+        ? {
+            aiConversations: state.conversations,
+            activeConversationId: state.activeConversationId,
+            aiApprovalMode: state.approvalMode,
+            aiMessages: state.messages,
+            aiPendingInvocations: state.pendingInvocations,
+            aiContextSnapshot: state.contextSnapshot,
+            agentLoading: state.loading,
+            agentError: state.error,
+          }
+        : EMPTY_AI_PANEL_STATE,
+    ),
+  );
+  const {
+    setPath: setFilePath,
+    selectPath,
+    clearFiles,
+    listFiles,
+    mkdir,
+    upload,
+    download,
+    deletePath,
+    renamePath,
+    bindTransferEvents,
+    loadTransfers,
+    retryTransfer,
+  } = useFileStore(
+    useShallow((state) => ({
+      setPath: state.setPath,
+      selectPath: state.selectPath,
+      clearFiles: state.clearFiles,
+      listFiles: state.listFiles,
+      mkdir: state.mkdir,
+      upload: state.upload,
+      download: state.download,
+      deletePath: state.deletePath,
+      renamePath: state.renamePath,
+      bindTransferEvents: state.bindTransferEvents,
+      loadTransfers: state.loadTransfers,
+      retryTransfer: state.retryTransfer,
+    })),
+  );
+  const {
+    fileEntries,
+    filePath,
+    selectedPath,
+    filesLoading,
+    fileError,
+  } = useFileStore(
+    useShallow((state) =>
+      activeTool === "files"
+        ? {
+            fileEntries: state.entries,
+            filePath: state.path,
+            selectedPath: state.selectedPath,
+            filesLoading: state.loading,
+            fileError: state.error,
+          }
+        : EMPTY_FILE_PANEL_STATE,
+    ),
+  );
+  const { transfers } = useFileStore(
+    useShallow((state) => (activeTool === "transfer" ? { transfers: state.transfers } : EMPTY_TRANSFER_PANEL_STATE)),
+  );
+  const {
+    searchHistory,
+    clearHistory,
+    loadCommandGroups,
+    saveCommandGroup,
+    deleteCommandGroup,
+  } = useHistoryStore(
+    useShallow((state) => ({
+      searchHistory: state.searchHistory,
+      clearHistory: state.clearHistory,
+      loadCommandGroups: state.loadCommandGroups,
+      saveCommandGroup: state.saveCommandGroup,
+      deleteCommandGroup: state.deleteCommandGroup,
+    })),
+  );
+  const {
+    historyEntries,
+    commandGroups,
+    historyLoading,
+    historyError,
+    historyGroupLoading,
+    historyGroupError,
+  } = useHistoryStore(
+    useShallow((state) =>
+      activeTool === "history"
+        ? {
+            historyEntries: state.entries,
+            commandGroups: state.commandGroups,
+            historyLoading: state.loading,
+            historyError: state.error,
+            historyGroupLoading: state.groupLoading,
+            historyGroupError: state.groupError,
+          }
+        : EMPTY_HISTORY_PANEL_STATE,
+    ),
+  );
+  const {
+    activeWorkspaceId,
+    tabs,
+    activeTabId,
+  } = useWorkspaceStore(
+    useShallow((state) => ({
+      activeWorkspaceId: state.activeWorkspaceId,
+      tabs: state.tabs,
+      activeTabId: state.activeTabId,
+    })),
+  );
+  const {
+    workspaceRuntimes,
+    workspaceDefinitions,
+  } = useWorkspaceStore(
+    useShallow((state) =>
+      activeLeftTool === "workspace"
+        ? {
+            workspaceRuntimes: state.workspaces,
+            workspaceDefinitions: state.workspaceDefinitions,
+          }
+        : EMPTY_WORKSPACE_SIDEBAR_STATE,
+    ),
+  );
+  const runningWorkspaceCapWorkspaces = useWorkspaceStore((state) => state.workspaces);
+  const {
+    selectWorkspace,
+    upsertWorkspaceDefinition,
+    updateWorkspaceRuntimeMetadata,
+    freezeWorkspaceRuntimeVisualSnapshots,
+    cacheWorkspaceDefinition,
+    loadCachedWorkspaceDefinition,
+    prefetchWorkspaceDefinitions,
+    buildActiveWorkspaceDraft,
+    getWorkspaceRuntimeSessionIds,
+    closeWorkspaceRuntime,
+    updatePaneTerminalTab,
+    selectTab,
+    addPaneTab,
+    closePaneTab,
+    selectPaneTab,
+    setActivePane,
+    bindRuntimeToPaneTab,
+    splitActivePane,
+    resizeSplitPane,
+    closeActivePane,
+  } = useWorkspaceStore(
+    useShallow((state) => ({
+      selectWorkspace: state.selectWorkspace,
+      upsertWorkspaceDefinition: state.upsertWorkspaceDefinition,
+      updateWorkspaceRuntimeMetadata: state.updateWorkspaceRuntimeMetadata,
+      freezeWorkspaceRuntimeVisualSnapshots: state.freezeWorkspaceRuntimeVisualSnapshots,
+      cacheWorkspaceDefinition: state.cacheWorkspaceDefinition,
+      loadCachedWorkspaceDefinition: state.loadWorkspaceDefinition,
+      prefetchWorkspaceDefinitions: state.prefetchWorkspaceDefinitions,
+      buildActiveWorkspaceDraft: state.buildActiveWorkspaceDraft,
+      getWorkspaceRuntimeSessionIds: state.getWorkspaceRuntimeSessionIds,
+      closeWorkspaceRuntime: state.closeWorkspaceRuntime,
+      updatePaneTerminalTab: state.updatePaneTerminalTab,
+      selectTab: state.selectTab,
+      addPaneTab: state.addPaneTab,
+      closePaneTab: state.closePaneTab,
+      selectPaneTab: state.selectPaneTab,
+      setActivePane: state.setActivePane,
+      bindRuntimeToPaneTab: state.bindRuntimeToPaneTab,
+      splitActivePane: state.splitActivePane,
+      resizeSplitPane: state.resizeSplitPane,
+      closeActivePane: state.closeActivePane,
+    })),
+  );
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
+  const activePane = activeTab ? findPane(activeTab.root, activeTab.active_pane_id) : null;
+  const activeLeaf = activePane?.kind === "leaf" ? activePane : null;
+  const activePaneTab = activeLeaf ? getActiveTerminalTab(activeLeaf) : null;
+  const activeSavedSessionId = activePaneTab?.saved_session_id ?? null;
+  const activeSavedSession = activeSavedSessionId ? sessions.find((session) => session.id === activeSavedSessionId) ?? null : null;
+  const activeSshSessionId = activeSavedSession?.type === "ssh" ? activeSavedSession.id : null;
+  const activeRuntimeSessionId = activePaneTab?.runtime_session_id ?? null;
+  const bindTerminalEvents = useTerminalStore((state) => state.bindTerminalEvents);
+  const openTerminal = useTerminalStore((state) => state.openTerminal);
+  const openDefaultLocalTerminal = useTerminalStore((state) => state.openDefaultLocalTerminal);
+  const closeTerminal = useTerminalStore((state) => state.closeTerminal);
+  const writeTerminal = useTerminalStore((state) => state.writeTerminal);
+  const activeRuntimeInfo = useTerminalStore((state) =>
+    activeRuntimeSessionId ? (state.runtimes[activeRuntimeSessionId] ?? null) : null,
+  );
+  const activeTerminalOutput = useTerminalStore((state) =>
+    activeTool === "agent" && !workspaceVisualSwitchActive && activeRuntimeSessionId
+      ? (state.output[activeRuntimeSessionId] ?? "")
+      : "",
+  );
+  const activeHistoryScope = resolveHistoryScope({
+    runtimeScopeKind: activeRuntimeInfo?.history_scope_kind,
+    runtimeScopeId: activeRuntimeInfo?.history_scope_id,
+    savedSessionId: activeSavedSessionId,
+    savedSessionType: activeSavedSession?.type,
+    savedSessionLocalProfileId: activeSavedSession?.local_options?.profile_id,
+    defaultLocalProfileId: terminalProfiles.find((profile) => profile.is_default)?.id,
+  });
+  const activeHistoryScopeKind = activeHistoryScope.scopeKind;
+  const activeHistoryScopeId = activeHistoryScope.scopeId;
+  const language = appSettings?.language ?? "zhCN";
+  const workspaceRestoreStrategy = appSettings?.workspace_restore_strategy ?? "visible_first";
+  const recentTerminalOutput = activeTerminalOutput.slice(-4000);
+  const aiTerminalContext = useMemo(
+    () =>
+      buildAiTerminalContext({
+        runtimeSessionId: activeRuntimeSessionId,
+        savedSessionId: activeSavedSessionId,
+        paneId: activeTab?.active_pane_id ?? null,
+        title: activePaneTab?.title ?? activePane?.id ?? null,
+        cwd: activePaneTab?.path ?? null,
+        recentOutput: recentTerminalOutput,
+        activeTool,
+      }),
+    [
+      activePane?.id,
+      activePaneTab?.path,
+      activePaneTab?.title,
+      activeRuntimeSessionId,
+      activeSavedSessionId,
+      activeTab?.active_pane_id,
+      activeTool,
+      recentTerminalOutput,
+    ],
+  );
+
+  useDomI18n(language);
+
+  useEffect(() => {
+    void loadSessions();
+    void loadSettings();
+    void loadConversations();
+    void loadPendingInvocations();
+    void refreshWorkspaceSummaries();
+  }, [loadConversations, loadPendingInvocations, loadSessions, loadSettings]);
+
+  useEffect(() => {
+    if (!appSettings) return;
+    applyAppSettings(appSettings);
+  }, [appSettings]);
+
+  useEffect(() => {
+    let mounted = true;
+    let cleanup: (() => void) | null = null;
+    void bindTerminalEvents().then((unlisten) => {
+      if (mounted) {
+        cleanup = unlisten;
+      } else {
+        unlisten();
+      }
+    });
+    return () => {
+      mounted = false;
+      cleanup?.();
+    };
+  }, [bindTerminalEvents]);
+
+  useEffect(() => {
+    let mounted = true;
+    let cleanup: (() => void) | null = null;
+    void bindTransferEvents().then((unlisten) => {
+      if (mounted) {
+        cleanup = unlisten;
+      } else {
+        unlisten();
+      }
+    });
+    return () => {
+      mounted = false;
+      cleanup?.();
+    };
+  }, [bindTransferEvents]);
+
+  useEffect(() => {
+    if (workspaceVisualSwitchActive) return;
+    if (activeTool === "files" && activeSshSessionId) {
+      void listFiles(activeSshSessionId, filePath);
+      return;
+    }
+    if (activeTool === "files") {
+      clearFiles();
+    }
+  }, [activeSshSessionId, activeTool, clearFiles, filePath, listFiles, workspaceVisualSwitchActive]);
+
+  useEffect(() => {
+    if (workspaceVisualSwitchActive) {
+      return;
+    }
+    if (activeTool !== "history") {
+      return;
+    }
+    if (historyView !== "groups") {
+      void searchHistory({
+        query: historyQuery,
+        scopeKind: activeHistoryScopeKind,
+        scopeId: activeHistoryScopeId,
+        deduplicate: historyView === "deduplicated",
+      });
+    }
+    void loadCommandGroups(activeHistoryScopeKind, activeHistoryScopeId);
+  }, [
+    activeTool,
+    activeHistoryScopeId,
+    activeHistoryScopeKind,
+    historyQuery,
+    historyView,
+    loadCommandGroups,
+    searchHistory,
+    workspaceVisualSwitchActive,
+  ]);
+
+  useEffect(() => {
+    if (workspaceVisualSwitchActive) return;
+    if (activeTool === "transfer") {
+      void loadTransfers(activeSshSessionId);
+    }
+  }, [activeSshSessionId, activeTool, loadTransfers, workspaceVisualSwitchActive]);
+
+  useEffect(() => {
+    if (workspaceVisualSwitchActive || activeTool !== "agent") {
+      activeContextTokenRef.current += 1;
+      return undefined;
+    }
+
+    const token = activeContextTokenRef.current + 1;
+    activeContextTokenRef.current = token;
+    const context = aiTerminalContext;
+    const timer = window.setTimeout(() => {
+      if (activeContextTokenRef.current !== token) return;
+      void captureContext(context);
+    }, 120);
+
+    return () => {
+      window.clearTimeout(timer);
+      if (activeContextTokenRef.current === token) {
+        activeContextTokenRef.current += 1;
+      }
+    };
+  }, [
+    aiTerminalContext,
+    activeTool,
+    captureContext,
+    workspaceVisualSwitchActive,
+  ]);
+
+  useAppShortcutKeys(
+    appSettings?.shortcuts ?? [],
+    {
+      activePaneId: activeLeaf?.id ?? null,
+      activePaneTabId: activePaneTab?.id ?? null,
+      newTabPaneId: activeTab?.active_pane_id ?? null,
+    },
+    {
+      onOpenSettings: () => setViewMode("settings"),
+      onAddTerminalTab: addPaneTab,
+      onCloseTerminalTab: (paneId, paneTabId) => void closePaneTab(paneId, paneTabId),
+      onSplitPane: splitActivePane,
+      onToggleRightTool: toggleRightTool,
+    },
+  );
+
+  async function refreshWorkspaceSummaries() {
+    try {
+      const summaries = await workspaceList();
+      setWorkspaceSummaries(summaries);
+    } catch (error) {
+      setWorkspaceActionError(fallbackOnlyErrorMessage(error, "加载工作区失败"));
+    }
+  }
+
+  async function closeWorkspaceRuntimeForCap(workspaceId: string) {
+    if (autoClosingWorkspaceIdsRef.current.has(workspaceId)) return;
+    autoClosingWorkspaceIdsRef.current.add(workspaceId);
+    try {
+      const runtimeSessionIds = getWorkspaceRuntimeSessionIds(workspaceId);
+      const closeResults = await Promise.allSettled(
+        runtimeSessionIds.map((runtimeSessionId) => closeTerminal(runtimeSessionId)),
+      );
+      const failedClose = closeResults.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (failedClose) {
+        setWorkspaceActionError(fallbackOnlyErrorMessage(failedClose.reason, "自动关闭后台工作区失败"));
+        return;
+      }
+      closeWorkspaceRuntime(workspaceId);
+    } finally {
+      autoClosingWorkspaceIdsRef.current.delete(workspaceId);
+    }
+  }
+
+  function handleCreateWorkspace() {
+    const initialDraft = buildActiveWorkspaceDraft();
+    if (!initialDraft) {
+      setWorkspaceActionError("当前没有可保存的工作区");
+      return;
+    }
+
+    setWorkspaceActionError(null);
+    setWorkspaceEditor({
+      mode: "create",
+      workspace: definitionFromDraft({
+        ...initialDraft,
+        id: null,
+        name: `${initialDraft.name} 副本`,
+        status: "closed",
+        sort_order: nextWorkspaceSortOrder(workspaceSidebarItems),
+      }),
+    });
+  }
+
+  async function handleEditWorkspace(workspaceId: string) {
+    setWorkspaceActionError(null);
+    try {
+      const definition = await resolveWorkspaceDefinition(workspaceId);
+      setWorkspaceEditor({
+        mode: "edit",
+        workspace: definition,
+      });
+    } catch (error) {
+      setWorkspaceActionError(fallbackOnlyErrorMessage(error, "加载工作区编辑失败"));
+    }
+  }
+
+  function freezeActiveWorkspaceBeforeSwitch(nextWorkspaceId: string) {
+    const state = useWorkspaceStore.getState();
+    const leavingWorkspaceId = state.activeWorkspaceId;
+    if (!leavingWorkspaceId || leavingWorkspaceId === nextWorkspaceId) return;
+    const leavingWorkspace = state.workspaces.find(
+      (workspace) => workspace.id === leavingWorkspaceId && workspace.status === "running",
+    );
+    if (!leavingWorkspace) return;
+    freezeWorkspaceRuntimeVisualSnapshots(
+      leavingWorkspaceId,
+      useTerminalStore.getState().visualOutputTail,
+      Date.now(),
+    );
+  }
+
+  async function handleSelectWorkspace(workspaceId: string) {
+    const runtime = workspaceRuntimes.find((workspace) => workspace.id === workspaceId);
+    if (runtime?.status === "running") {
+      startWorkspaceSwitchMetrics(workspaceId);
+      freezeActiveWorkspaceBeforeSwitch(workspaceId);
+      selectWorkspace(workspaceId);
+      markWorkspaceSwitchMetric(workspaceId, "store_committed");
+      scheduleAfterPaintDelay(() => {
+        markWorkspaceSwitchMetric(workspaceId, "snapshot_visible");
+        markWorkspaceSwitchMetric(workspaceId, "layout_visible");
+        markWorkspaceSwitchMetric(workspaceId, "active_xterm_live");
+        markWorkspaceSwitchMetric(workspaceId, "first_visible_connected");
+        markWorkspaceSwitchMetric(workspaceId, "all_visible_connected");
+        markWorkspaceSwitchMetric(workspaceId, "all_scheduled_done");
+      }, 0);
+      return;
+    }
+    await handleRestoreWorkspace(workspaceId);
+  }
+
+  async function handleWorkspaceEditorSave(draft: WorkspaceDefinitionDraft) {
+    setWorkspaceActionError(null);
+    try {
+      const saved = await workspaceSave(draft);
+      cacheWorkspaceDefinition(saved);
+      updateWorkspaceRuntimeMetadata(saved);
+      setWorkspaceEditor(null);
+      await refreshWorkspaceSummaries();
+    } catch (error) {
+      setWorkspaceActionError(fallbackOnlyErrorMessage(error, "保存工作区失败"));
+    }
+  }
+
+  async function handleCloseWorkspace(workspaceId: string) {
+    setWorkspaceActionError(null);
+    const runtimeSessionIds = getWorkspaceRuntimeSessionIds(workspaceId);
+    const closeResults = await Promise.allSettled(
+      runtimeSessionIds.map((runtimeSessionId) => closeTerminal(runtimeSessionId)),
+    );
+    const failedClose = closeResults.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failedClose) {
+      const reason = failedClose.reason;
+      setWorkspaceActionError(fallbackOnlyErrorMessage(reason, "关闭工作区运行时失败"));
+      return;
+    }
+
+    closeWorkspaceRuntime(workspaceId);
+
+    try {
+      await workspaceDelete(workspaceId);
+      await refreshWorkspaceSummaries();
+    } catch (error) {
+      setWorkspaceActionError(fallbackOnlyErrorMessage(error, "关闭工作区失败"));
+    }
+  }
+
+  async function handleRestoreWorkspace(workspaceId: string) {
+    startWorkspaceSwitchMetrics(workspaceId);
+    setWorkspaceActionError(null);
+    if (restoringWorkspaceIdsRef.current.has(workspaceId)) {
+      const runtime = workspaceRuntimes.find((workspace) => workspace.id === workspaceId);
+      if (runtime) {
+        beginWorkspaceVisualSwitch(runtime, {
+          commit: () => selectWorkspace(workspaceId),
+          completeMetricsOnCommit: true,
+        });
+      }
+      return;
+    }
+    restoringWorkspaceIdsRef.current.add(workspaceId);
+    try {
+      const definition = await resolveWorkspaceDefinition(workspaceId);
+      const runningDefinition = markWorkspaceRestoreQueued({ ...definition, status: "running" as const });
+      const epoch = beginWorkspaceVisualSwitch(runningDefinition, {
+        commit: () => {
+          freezeActiveWorkspaceBeforeSwitch(workspaceId);
+          upsertWorkspaceDefinition(runningDefinition);
+          selectWorkspace(runningDefinition.id);
+          selectTab(runningDefinition.active_tab_id);
+        },
+        onLive: () => {
+          markWorkspaceSwitchMetric(workspaceId, "restore_queue_started");
+          void (async () => {
+            try {
+              await restoreWorkspaceTerminals(runningDefinition, epoch ?? undefined);
+              await refreshWorkspaceSummaries();
+            } catch (error) {
+              setWorkspaceActionError(fallbackOnlyErrorMessage(error, "恢复工作区失败"));
+            } finally {
+              restoringWorkspaceIdsRef.current.delete(workspaceId);
+            }
+          })();
+        },
+        onCancel: () => {
+          restoringWorkspaceIdsRef.current.delete(workspaceId);
+        },
+      });
+      if (epoch === null) {
+        restoringWorkspaceIdsRef.current.delete(workspaceId);
+      }
+    } catch (error) {
+      setWorkspaceActionError(fallbackOnlyErrorMessage(error, "恢复工作区失败"));
+      restoringWorkspaceIdsRef.current.delete(workspaceId);
+    }
+  }
+
+  async function resolveWorkspaceDefinition(workspaceId: string): Promise<WorkspaceDefinition> {
+    const runtime = workspaceRuntimes.find((workspace) => workspace.id === workspaceId);
+    if (workspaceId === activeWorkspaceId) {
+      const draft = buildActiveWorkspaceDraft();
+      if (draft?.id === workspaceId) {
+        return definitionFromDraft(draft, runtime);
+      }
+    }
+    if (runtime && hasRuntimeTabs(runtime)) {
+      return definitionFromRuntime(runtime);
+    }
+    return loadCachedWorkspaceDefinition(workspaceId, workspaceGet);
+  }
+
+  async function restoreWorkspaceTerminals(workspace: WorkspaceDefinition, switchEpoch?: number) {
+    await runWorkspaceRestoreQueue({
+      workspace,
+      sessions,
+      strategy: workspaceRestoreStrategy,
+      isCancelled: () => switchEpoch !== undefined && !isWorkspaceSwitchEpochCurrent(switchEpoch),
+      openTerminal,
+      openDefaultLocalTerminal,
+      writeTerminal,
+      closeTerminal,
+      updatePaneTerminalTab,
+      metrics: {
+        onFirstVisibleConnected: () =>
+          markWorkspaceSwitchMetric(workspace.id, "first_visible_connected"),
+        onAllVisibleConnected: () =>
+          markWorkspaceSwitchMetric(workspace.id, "all_visible_connected"),
+        onAllScheduledDone: () =>
+          markWorkspaceSwitchMetric(workspace.id, "all_scheduled_done"),
+      },
+    });
+  }
+
+  function handleRequestPaneConnection(paneId: string) {
+    if (!activeTab) return;
+    setActivePane(paneId);
+    setConnectionDialogTarget({
+      workspaceId: activeWorkspaceId,
+      workspaceTabId: activeTab.id,
+      paneId,
+    });
+    setConnectionDialogError(null);
+  }
+
+  async function handleCreatePaneConnection(choice: ConnectionChoice) {
+    if (!connectionDialogTarget || connectionOpening) return;
+    const target = connectionDialogTarget;
+    const state = useWorkspaceStore.getState();
+    const targetTab =
+      state.activeWorkspaceId === target.workspaceId
+        ? state.tabs.find((tab) => tab.id === target.workspaceTabId)
+        : state.workspaces
+            .find((workspace) => workspace.id === target.workspaceId)
+            ?.tabs.find((tab) => tab.id === target.workspaceTabId);
+    const targetPane = targetTab ? findPane(targetTab.root, target.paneId) : null;
+    const activeTargetPaneTab = targetPane?.kind === "leaf" ? getActiveTerminalTab(targetPane) : null;
+    if (!targetTab || !activeTargetPaneTab) {
+      setConnectionDialogError("目标分栏不存在");
+      return;
+    }
+
+    setConnectionOpening(true);
+    setConnectionDialogError(null);
+    setTerminalError(null);
+    try {
+      const targetPaneTab = isReusableConnectionTab(activeTargetPaneTab)
+        ? activeTargetPaneTab
+        : addPaneTab(target.paneId);
+      const runtime =
+        choice.kind === "default_local"
+          ? await openDefaultLocalTerminal(target.paneId)
+          : await openTerminal(choice.session.id, target.paneId);
+      bindRuntimeToPaneTab(target.workspaceId, target.workspaceTabId, target.paneId, targetPaneTab.id, runtime);
+      setConnectionDialogTarget(null);
+    } catch (openError) {
+      const message = fallbackOnlyErrorMessage(openError, "打开终端失败");
+      setConnectionDialogError(message);
+      setTerminalError(message);
+    } finally {
+      setConnectionOpening(false);
+    }
+  }
+
+  async function handleCloseActivePane() {
+    closeActivePane();
+  }
+
+  function handleSplitPane(direction: "horizontal" | "vertical") {
+    splitActivePane(direction);
+  }
+
+  function toggleRightTool(tool: RightTool) {
+    setActiveTool((current) => (current === tool ? null : tool));
+  }
+
+  function toggleLeftTool(tool: LeftTool) {
+    setActiveLeftTool((current) => (current === tool ? null : tool));
+  }
+
+  const terminalActions = createTerminalActions({
+    activeWorkspaceId,
+    activeWorkspaceTabId: activeTabId,
+    activePaneTab,
+    activeTab,
+    setTerminalError,
+    addPaneTab,
+    bindRuntimeToPaneTab,
+    updatePaneTerminalTab,
+    openTerminal,
+    closeTerminal,
+    writeTerminal,
+    activeRuntimeSessionId,
+  });
+
+  async function createSessionFolder(name: string) {
+    setSessionActionError(null);
+    try {
+      await saveGroup({
+        parent_id: null,
+        name,
+        expanded: true,
+        sort_order: groups.length,
+      });
+      setSessionFolderDialogOpen(false);
+    } catch (error) {
+      setSessionActionError(fallbackOnlyErrorMessage(error, "保存文件夹失败"));
+    }
+  }
+
+  const remoteFileActions = createRemoteFileActions({
+    activeSshSessionId,
+    filePath,
+    setFilePath,
+    requestTextInput,
+    listFiles,
+    mkdir,
+    upload,
+    download,
+    deletePath,
+    renamePath,
+  });
+
+  const workspaceSidebarItems = useMemo(
+    () => mergeWorkspaceSidebarItems(workspaceSummaries, workspaceRuntimes, workspaceDefinitions),
+    [workspaceDefinitions, workspaceRuntimes, workspaceSummaries],
+  );
+
+  useEffect(() => {
+    if (activeLeftTool !== "workspace") return;
+
+    for (const workspace of workspaceSidebarItems) {
+      if (workspace.status !== "closed") continue;
+      if (workspace.preview_root) continue;
+      void loadCachedWorkspaceDefinition(workspace.id, workspaceGet)
+        .catch((error) => {
+          setWorkspaceActionError(fallbackOnlyErrorMessage(error, "加载工作区缩略图失败"));
+        });
+    }
+  }, [activeLeftTool, loadCachedWorkspaceDefinition, workspaceSidebarItems]);
+
+  useEffect(() => {
+    const recentClosedWorkspaceIds = [...workspaceSummaries]
+      .filter((workspace) => workspace.status === "closed" && !workspaceDefinitions[workspace.id])
+      .sort((left, right) => right.updated_at_ms - left.updated_at_ms)
+      .slice(0, 3)
+      .map((workspace) => workspace.id);
+    if (recentClosedWorkspaceIds.length === 0) return undefined;
+    return scheduleIdleTask(() => {
+      void prefetchWorkspaceDefinitions(recentClosedWorkspaceIds, workspaceGet);
+    });
+  }, [prefetchWorkspaceDefinitions, workspaceDefinitions, workspaceSummaries]);
+
+  useEffect(() => {
+    const runningWorkspaces = runningWorkspaceCapWorkspaces.filter(
+      (workspace) => workspace.status === "running" && Array.isArray(workspace.tabs) && workspace.tabs.length > 0,
+    );
+    if (runningWorkspaces.length <= DEFAULT_MAX_RUNNING_WORKSPACES) return;
+
+    const overflow = runningWorkspaces.length - DEFAULT_MAX_RUNNING_WORKSPACES;
+    const candidates = runningWorkspaces
+      .filter(
+        (workspace) =>
+          workspace.id !== activeWorkspaceId && !autoClosingWorkspaceIdsRef.current.has(workspace.id),
+      )
+      .sort(
+        (left, right) =>
+          left.updated_at_ms - right.updated_at_ms ||
+          left.sort_order - right.sort_order ||
+          left.name.localeCompare(right.name),
+      )
+      .slice(0, overflow);
+
+    for (const workspace of candidates) {
+      void closeWorkspaceRuntimeForCap(workspace.id);
+    }
+  }, [activeWorkspaceId, runningWorkspaceCapWorkspaces]);
+
+  if (viewMode === "settings") {
+    return (
+      <div className="zt-workbench zt-workbench-settings" onContextMenu={(event) => event.preventDefault()}>
+        <TitleBar />
+        <SettingsPage
+          settings={appSettings}
+          terminalProfiles={terminalProfiles}
+          shortcutDefinitions={shortcutDefinitions}
+          loading={settingsLoading}
+          error={settingsError}
+          onClose={() => setViewMode("workbench")}
+          onSaveSettings={saveAppSettings}
+          onResetSettings={resetAppSettingsSection}
+          onDetectTerminalProfiles={detectTerminalProfiles}
+          onSetDefaultTerminalProfile={setDefaultTerminalProfile}
+        />
+      </div>
+    );
+  }
+
+  const workbenchClassName = [
+    "zt-workbench",
+    activeLeftTool ? "" : "zt-workbench-left-collapsed",
+    activeTool ? "" : "zt-workbench-right-collapsed",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={workbenchClassName} onContextMenu={(event) => event.preventDefault()}>
+      <TitleBar />
+
+      <aside
+        className={
+          activeLeftTool
+            ? "zt-sidebar zt-sidebar-left zt-left-tools"
+            : "zt-sidebar zt-sidebar-left zt-left-tools zt-left-tools-collapsed"
+        }
+        aria-label="左侧管理"
+      >
+        <nav className="zt-left-rail" aria-label="左侧管理切换">
+          <ToolButton
+            label="工作区"
+            active={activeLeftTool === "workspace"}
+            icon={<PanelsTopLeft size={16} aria-hidden="true" />}
+            onClick={() => toggleLeftTool("workspace")}
+          />
+          <ToolButton
+            label="会话"
+            active={activeLeftTool === "sessions"}
+            icon={<Terminal size={16} aria-hidden="true" />}
+            onClick={() => toggleLeftTool("sessions")}
+          />
+          <ToolButton
+            label="模型"
+            active={activeLeftTool === "models"}
+            icon={<Bot size={16} aria-hidden="true" />}
+            onClick={() => toggleLeftTool("models")}
+          />
+          <ToolButton
+            label="打开设置"
+            active={false}
+            className="zt-left-rail-settings"
+            icon={<LayoutGrid size={16} aria-hidden="true" />}
+            onClick={() => setViewMode("settings")}
+          />
+        </nav>
+
+        {activeLeftTool ? (
+          <div className="zt-left-tool-panel">
+            {activeLeftTool === "workspace" ? (
+              <WorkspaceManagerPanel
+                workspaces={workspaceSidebarItems}
+                sessions={sessions}
+                activeWorkspaceId={activeWorkspaceId}
+                error={workspaceActionError}
+                onCreateWorkspace={handleCreateWorkspace}
+                onSelectWorkspace={(workspaceId) => void handleSelectWorkspace(workspaceId)}
+                onEditWorkspace={(workspaceId) => void handleEditWorkspace(workspaceId)}
+                onRestoreWorkspace={(workspaceId) => void handleRestoreWorkspace(workspaceId)}
+                onCloseWorkspace={(workspaceId) => void handleCloseWorkspace(workspaceId)}
+              />
+            ) : null}
+
+            {activeLeftTool === "sessions" ? (
+              <section className="zt-session-panel" aria-label="会话管理">
+                <PanelHeader
+                  title="Session"
+                  action={
+                    <button
+                      type="button"
+                      aria-label="添加文件夹"
+                      title="添加文件夹"
+                      onClick={() => setSessionFolderDialogOpen(true)}
+                    >
+                      <FolderPlus size={14} aria-hidden="true" />
+                    </button>
+                  }
+                />
+                {sessionError || sessionActionError ? (
+                  <div className="zt-empty-line">{sessionError ?? sessionActionError}</div>
+                ) : null}
+                <SessionTree
+                  groups={groups}
+                  sessions={sessions}
+                  onSaveGroup={saveGroup}
+                  onSaveSession={saveSession}
+                  onTestSession={testSession}
+                  onSaveCredential={saveCredential}
+                  onReadCredential={readCredentialSecret}
+                  terminalProfiles={terminalProfiles}
+                  onDeleteGroup={deleteGroup}
+                  onDeleteSession={deleteSession}
+                  onOpenSession={terminalActions.openSession}
+                />
+              </section>
+            ) : null}
+
+            {activeLeftTool === "models" ? (
+              <ModelManagerPanel
+                providers={providers}
+                loading={settingsLoading}
+                error={settingsError}
+                onSaveProvider={saveProvider}
+                onDeleteProvider={deleteProvider}
+                onTestProviderDraft={testProviderDraft}
+              />
+            ) : null}
+          </div>
+        ) : null}
+      </aside>
+
+      {sessionFolderDialogOpen ? (
+        <SessionGroupDialog
+          title="新建组"
+          initialName=""
+          onCancel={() => setSessionFolderDialogOpen(false)}
+          onSave={createSessionFolder}
+        />
+      ) : null}
+
+      {workspaceEditor ? (
+        <WorkspacePreviewDialog
+          mode={workspaceEditor.mode}
+          workspace={workspaceEditor.workspace}
+          sessions={sessions}
+          onCancel={() => setWorkspaceEditor(null)}
+          onSave={(draft) => void handleWorkspaceEditorSave(draft)}
+        />
+      ) : null}
+
+      {textInputDialog ? (
+        <AppTextInputDialog
+          key={textInputDialog.id}
+          title={textInputDialog.title}
+          label={textInputDialog.label}
+          initialValue={textInputDialog.initialValue}
+          requiredMessage={textInputDialog.requiredMessage}
+          confirmLabel={textInputDialog.confirmLabel}
+          onCancel={() => resolveTextInputDialog(null)}
+          onSubmit={resolveTextInputDialog}
+        />
+      ) : null}
+
+      {connectionDialogTarget ? (
+        <ConnectionPickerDialog
+          sessions={sessions}
+          opening={connectionOpening}
+          error={connectionDialogError}
+          onCancel={() => {
+            if (connectionOpening) return;
+            setConnectionDialogTarget(null);
+            setConnectionDialogError(null);
+          }}
+          onSelect={(choice) => void handleCreatePaneConnection(choice)}
+        />
+      ) : null}
+
+      <main className="zt-main">
+        {terminalError ? <div className="zt-terminal-error">{terminalError}</div> : null}
+        <WorkspaceStage
+          activeWorkspaceId={activeWorkspaceId}
+          onActivatePane={setActivePane}
+          onAddPaneTab={handleRequestPaneConnection}
+          onSelectPaneTab={selectPaneTab}
+          onClosePaneTab={(paneId, paneTabId) => closePaneTab(paneId, paneTabId)}
+          onSplitPane={handleSplitPane}
+          onResizeSplit={resizeSplitPane}
+          onClosePane={() => void handleCloseActivePane()}
+          onDisconnectTerminal={(paneId, paneTabId, runtimeSessionId) =>
+            void terminalActions.disconnectTerminal(paneId, paneTabId, runtimeSessionId)
+          }
+          onReconnectTerminal={(paneId, paneTabId, savedSessionId, runtimeSessionId) =>
+            void terminalActions.reconnectTerminal(paneId, paneTabId, savedSessionId, runtimeSessionId)
+          }
+        />
+        {workspaceSwitchOverlay ? (
+          <div className="zt-workspace-switch-overlay" aria-hidden="true">
+            <SplitPaneView
+              key={`overlay-${workspaceSwitchOverlay.id}`}
+              root={workspaceSwitchOverlay.root}
+              activePaneId={workspaceSwitchOverlay.activePaneId}
+              onActivatePane={() => undefined}
+              onAddPaneTab={() => undefined}
+              onSelectPaneTab={() => undefined}
+              onClosePaneTab={() => undefined}
+              onSplitPane={() => undefined}
+              onResizeSplit={() => undefined}
+              onClosePane={() => undefined}
+              visualMode="snapshot"
+            />
+          </div>
+        ) : null}
+      </main>
+
+      <RightToolsPanel
+        activeTool={activeTool}
+        agent={{
+          activeRuntimeSessionId,
+          activePaneId: activeTab?.active_pane_id ?? null,
+          activePaneTitle: activePaneTab?.title ?? activePane?.id ?? null,
+          activeSavedSessionId,
+          approvalMode: aiApprovalMode,
+          error: agentError,
+          loading: agentLoading,
+          providersAvailable: providers.some((provider) => provider.enabled),
+          recentTerminalOutput,
+          conversations: aiConversations,
+          activeConversationId,
+          messages: aiMessages,
+          contextSnapshot: aiContextSnapshot,
+          pendingInvocations: aiPendingInvocations,
+          language: appSettings?.language ?? "zhCN",
+          onApprovalModeChange: setApprovalMode,
+          onConfirmTool: confirmTool,
+          onDeleteConversation: deleteConversation,
+          onNewConversation: newConversation,
+          onSelectConversation: selectConversation,
+          onSendChat: (message) => sendChat(message, aiTerminalContext),
+        }}
+        files={{
+          entries: fileEntries,
+          error: fileError,
+          loading: filesLoading,
+          path: filePath,
+          savedSessionId: activeSshSessionId,
+          selectedPath,
+          onDelete: remoteFileActions.deleteRemotePath,
+          onDownload: remoteFileActions.downloadRemotePath,
+          onMkdir: remoteFileActions.createRemoteDirectory,
+          onOpenDirectory: (path) => {
+            void remoteFileActions.openDirectory(path);
+          },
+          onParent: remoteFileActions.openParentDirectory,
+          onPathChange: setFilePath,
+          onRefresh: () => remoteFileActions.refreshFiles(),
+          onRename: remoteFileActions.renameRemotePath,
+          onSelect: selectPath,
+          onUpload: remoteFileActions.uploadPath,
+        }}
+        history={{
+          activeView: historyView,
+          commandGroups,
+          entries: historyEntries,
+          error: historyError,
+          groupError: historyGroupError,
+          groupLoading: historyGroupLoading,
+          language: appSettings?.language ?? "zhCN",
+          loading: historyLoading,
+          query: historyQuery,
+          historyScopeKind: activeHistoryScopeKind,
+          historyScopeId: activeHistoryScopeId,
+          onClear: () => {
+            if (!activeHistoryScopeKind || !activeHistoryScopeId) return;
+            void clearHistory(activeHistoryScopeKind, activeHistoryScopeId);
+          },
+          onCopy: (command) => void navigator.clipboard?.writeText(command),
+          onDeleteCommandGroup: (groupId) => deleteCommandGroup(groupId),
+          onQueryChange: setHistoryQuery,
+          onSaveCommandGroup: (draft) => saveCommandGroup(draft),
+          onSearch: (options) => {
+            if (!activeHistoryScopeKind || !activeHistoryScopeId) return;
+            void searchHistory({
+              query: historyQuery,
+              scopeKind: activeHistoryScopeKind,
+              scopeId: activeHistoryScopeId,
+              deduplicate: options?.deduplicate ?? historyView === "deduplicated",
+            });
+          },
+          onSend: (command) => void terminalActions.sendCommand(command),
+          onViewChange: setHistoryView,
+        }}
+        monitor={{
+          target: activeSavedSession?.type === "ssh"
+            ? {
+                id: activeSavedSession.id,
+                name: activeSavedSession.name,
+                host: activeSavedSession.host,
+                port: activeSavedSession.port,
+                username: activeSavedSession.username,
+              }
+            : null,
+        }}
+        transfers={{
+          tasks: transfers,
+          onRetry: (taskId) => void retryTransfer(taskId),
+        }}
+        language={language}
+        onActiveToolChange={toggleRightTool}
+      />
+    </div>
+  );
+}

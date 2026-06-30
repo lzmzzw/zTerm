@@ -1,0 +1,25 @@
+// Author: Liz
+interface TerminalPlaceholderProps {
+  mode?: "terminal" | "rdp";
+  message?: string;
+}
+
+export function TerminalPlaceholder({ mode = "terminal", message }: TerminalPlaceholderProps) {
+  return (
+    <div className="zt-terminal-surface">
+      {mode === "rdp" ? (
+        <div className="zt-terminal-placeholder">
+          <strong>RDP 连接能力将在第二阶段启用</strong>
+          <span>{message ?? "当前仅保存并展示 RDP 会话配置。"}</span>
+        </div>
+      ) : message ? (
+        <div className="zt-terminal-placeholder">
+          <strong>{message}</strong>
+          <span>连接建立后终端会自动显示。</span>
+        </div>
+      ) : (
+        <div className="zt-terminal-empty" aria-label="空终端分栏" />
+      )}
+    </div>
+  );
+}

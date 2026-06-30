@@ -1,0 +1,31 @@
+[package]
+name = "zterm"
+version = "0.1.0"
+description = "Windows-first Tauri terminal workspace for SSH, SFTP, command history, and AI-assisted operations."
+authors = ["zTerm contributors"]
+edition = "2021"
+license = "GPL-3.0-only"
+
+[lib]
+name = "zterm_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+dirs = "6"
+keyring = "4"
+portable-pty = "0.9"
+russh = { version = "0.61", default-features = false, features = ["flate2", "ring", "rsa"] }
+russh-sftp = { package = "bssh-russh-sftp", version = "2.3" }
+reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
+tauri-plugin-dialog = "2.7.1"

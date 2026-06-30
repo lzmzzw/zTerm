@@ -1,0 +1,132 @@
+// Author: Liz
+import type { RuntimeSessionInfo } from "../features/terminal/terminalStore";
+import type { PaneTerminalTab, WorkspaceTab } from "../features/workspace/types";
+import type { SavedSession } from "../features/sessions/types";
+import { fallbackOnlyErrorMessage } from "../lib/unknownErrorMessage";
+
+interface TerminalActionDependencies {
+  activeWorkspaceId: string;
+  activeWorkspaceTabId: string | null;
+  activePaneTab: PaneTerminalTab | null;
+  activeTab: WorkspaceTab | null | undefined;
+  setTerminalError: (message: string | null) => void;
+  addPaneTab: (paneId: string) => PaneTerminalTab;
+  bindRuntimeToPaneTab: (
+    workspaceId: string,
+    workspaceTabId: string,
+    paneId: string,
+    paneTabId: string,
+    runtime: RuntimeSessionInfo,
+  ) => void;
+  updatePaneTerminalTab: (
+    workspaceId: string,
+    workspaceTabId: string,
+    paneId: string,
+    paneTabId: string,
+    patch: Partial<PaneTerminalTab>,
+  ) => void;
+  openTerminal: (savedSessionId: string, paneId: string) => Promise<RuntimeSessionInfo>;
+  closeTerminal: (runtimeSessionId: string) => Promise<void>;
+  writeTerminal: (runtimeSessionId: string, data: string) => Promise<void>;
+  activeRuntimeSessionId: string | null;
+}
+
+export function createTerminalActions({
+  activeWorkspaceId,
+  activeWorkspaceTabId,
+  activePaneTab,
+  activeTab,
+  setTerminalError,
+  addPaneTab,
+  bindRuntimeToPaneTab,
+  updatePaneTerminalTab,
+  openTerminal,
+  closeTerminal,
+  writeTerminal,
+  activeRuntimeSessionId,
+}: TerminalActionDependencies) {
+  async function openSession(session: SavedSession) {
+    if (!activeTab || !activePaneTab) return;
+    const targetWorkspaceId = activeWorkspaceId;
+    const targetWorkspaceTabId = activeTab.id;
+    const targetPaneId = activeTab.active_pane_id;
+    const targetPaneTab = activePaneTab.runtime_session_id ? addPaneTab(targetPaneId) : activePaneTab;
+    setTerminalError(null);
+    try {
+      const runtime = await openTerminal(session.id, targetPaneId);
+      bindRuntimeToPaneTab(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, runtime);
+    } catch (openError) {
+      setTerminalError(fallbackOnlyErrorMessage(openError, "打开终端失败"));
+    }
+  }
+
+  async function disconnectTerminal(paneId: string, paneTabId: string, runtimeSessionId: string) {
+    if (!activeWorkspaceTabId) return;
+    setTerminalError(null);
+    try {
+      await closeTerminal(runtimeSessionId);
+      updatePaneTerminalTab(activeWorkspaceId, activeWorkspaceTabId, paneId, paneTabId, {
+        runtime_session_id: null,
+        restore_status: "failed",
+        restore_error: "已断开连接",
+      });
+    } catch (error) {
+      setTerminalError(fallbackOnlyErrorMessage(error, "断开连接失败"));
+    }
+  }
+
+  async function reconnectTerminal(
+    paneId: string,
+    paneTabId: string,
+    savedSessionId: string,
+    runtimeSessionId: string,
+  ) {
+    if (!activeWorkspaceTabId) return;
+    setTerminalError(null);
+    try {
+      await closeTerminal(runtimeSessionId);
+      updatePaneTerminalTab(activeWorkspaceId, activeWorkspaceTabId, paneId, paneTabId, {
+        runtime_session_id: null,
+        restore_status: "pending",
+        restore_error: null,
+      });
+      const runtime = await openTerminal(savedSessionId, paneId);
+      updatePaneTerminalTab(activeWorkspaceId, activeWorkspaceTabId, paneId, paneTabId, {
+        runtime_session_id: runtime.runtime_session_id,
+        saved_session_id: runtime.saved_session_id,
+        title: runtime.title,
+        restore_status: "connected",
+        restore_error: null,
+      });
+    } catch (error) {
+      const message = fallbackOnlyErrorMessage(error, "重新连接失败");
+      updatePaneTerminalTab(activeWorkspaceId, activeWorkspaceTabId, paneId, paneTabId, {
+        restore_status: "failed",
+        restore_error: message,
+      });
+      setTerminalError(message);
+    }
+  }
+
+  async function sendCommand(command: string) {
+    if (!activeRuntimeSessionId) {
+      setTerminalError("当前没有活动终端");
+      return;
+    }
+    const value = command.trim();
+    if (!value) return;
+    setTerminalError(null);
+    try {
+      await writeTerminal(activeRuntimeSessionId, `${value}\r`);
+    } catch (sendError) {
+      setTerminalError(fallbackOnlyErrorMessage(sendError, "发送命令失败"));
+    }
+  }
+
+  return {
+    openSession,
+    disconnectTerminal,
+    reconnectTerminal,
+    sendCommand,
+  };
+}

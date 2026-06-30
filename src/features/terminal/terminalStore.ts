@@ -1,0 +1,212 @@
+// Author: Liz
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { create } from "zustand";
+
+import {
+  consumeTerminalZmodemData,
+  releaseTerminalZmodemRuntime,
+} from "./zmodemTransfer";
+
+type RuntimeSessionKind = "local" | "ssh" | "rdp_placeholder";
+type HistoryScopeKind = "saved_session" | "local_profile";
+
+export interface RuntimeSessionInfo {
+  runtime_session_id: string;
+  saved_session_id: string | null;
+  history_scope_kind: HistoryScopeKind | null;
+  history_scope_id: string | null;
+  pane_id: string;
+  title: string;
+  kind: RuntimeSessionKind;
+  cols: number;
+  rows: number;
+}
+
+export interface CommandCompletionCandidate {
+  provider: "history" | "system";
+  replacement_text: string;
+  suffix: string;
+  replacement_range: {
+    start: number;
+    end: number;
+  };
+  score: number;
+  source_label: string;
+}
+
+interface TerminalDataEvent {
+  runtime_session_id: string;
+  data: string;
+  data_base64?: string;
+}
+
+interface TerminalOutputChunk {
+  serial: number;
+  data: string;
+}
+
+interface TerminalExitEvent {
+  runtime_session_id: string;
+  exit_code: number | null;
+  message: string | null;
+}
+
+const MAX_TERMINAL_OUTPUT_CHARS = 50_000;
+const MAX_TERMINAL_VISUAL_TAIL_CHARS = 8_000;
+
+interface TerminalState {
+  runtimes: Record<string, RuntimeSessionInfo>;
+  output: Record<string, string>;
+  outputChunks: Record<string, TerminalOutputChunk>;
+  visualOutputTail: Record<string, string>;
+  bindTerminalEvents: () => Promise<UnlistenFn>;
+  openTerminal: (savedSessionId: string, paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>;
+  openDefaultLocalTerminal: (paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>;
+  writeTerminal: (runtimeSessionId: string, data: string) => Promise<void>;
+  suggestCompletion: (runtimeSessionId: string, input: string, cursor: number) => Promise<CommandCompletionCandidate[]>;
+  resizeTerminal: (runtimeSessionId: string, cols: number, rows: number) => Promise<void>;
+  closeTerminal: (runtimeSessionId: string) => Promise<void>;
+  appendOutput: (runtimeSessionId: string, data: string) => void;
+}
+
+let terminalEventBinding: Promise<UnlistenFn> | null = null;
+let terminalEventSubscribers = 0;
+
+export const useTerminalStore = create<TerminalState>((set, get) => ({
+  runtimes: {},
+  output: {},
+  outputChunks: {},
+  visualOutputTail: {},
+  bindTerminalEvents() {
+    terminalEventSubscribers += 1;
+    if (!terminalEventBinding) {
+      terminalEventBinding = Promise.all([
+        listen<TerminalDataEvent>("terminal:data", (event) => {
+          consumeTerminalZmodemData(
+            {
+              runtimeSessionId: event.payload.runtime_session_id,
+              data: event.payload.data,
+              dataBase64: event.payload.data_base64,
+            },
+            {
+              appendOutput: get().appendOutput,
+            },
+          );
+        }),
+        listen<TerminalExitEvent>("terminal:exit", (event) => {
+          const suffix = event.payload.message ? `\r\n[已断开] ${event.payload.message}\r\n` : "\r\n[已断开]\r\n";
+          get().appendOutput(event.payload.runtime_session_id, suffix);
+        }),
+      ]).then(([unlistenData, unlistenExit]) => () => {
+        unlistenData();
+        unlistenExit();
+      });
+    }
+    let released = false;
+    return Promise.resolve(() => {
+      if (released) return;
+      released = true;
+      terminalEventSubscribers = Math.max(0, terminalEventSubscribers - 1);
+      if (terminalEventSubscribers === 0) {
+        void terminalEventBinding?.then((unlisten) => {
+          if (terminalEventSubscribers === 0) {
+            unlisten();
+            terminalEventBinding = null;
+          }
+        });
+      }
+    });
+  },
+  async openTerminal(savedSessionId, paneId, workingDirectory) {
+    const runtime = await invoke<RuntimeSessionInfo>("terminal_open", {
+      savedSessionId,
+      paneId,
+      workingDirectory,
+    });
+    set((state) => ({
+      runtimes: { ...state.runtimes, [runtime.runtime_session_id]: runtime },
+    }));
+    return runtime;
+  },
+  async openDefaultLocalTerminal(paneId, workingDirectory) {
+    const runtime = await invoke<RuntimeSessionInfo>("terminal_open_default_local", {
+      paneId,
+      workingDirectory,
+    });
+    set((state) => ({
+      runtimes: { ...state.runtimes, [runtime.runtime_session_id]: runtime },
+    }));
+    return runtime;
+  },
+  async writeTerminal(runtimeSessionId, data) {
+    await invoke("terminal_write", { runtimeSessionId, data });
+  },
+  async suggestCompletion(runtimeSessionId, input, cursor) {
+    return invoke<CommandCompletionCandidate[]>("command_completion_suggest", {
+      request: {
+        runtime_session_id: runtimeSessionId,
+        input,
+        cursor,
+        limit: 8,
+      },
+    });
+  },
+  async resizeTerminal(runtimeSessionId, cols, rows) {
+    await invoke("terminal_resize", { runtimeSessionId, cols, rows });
+    set((state) => {
+      const runtime = state.runtimes[runtimeSessionId];
+      if (!runtime) return state;
+      return {
+        runtimes: {
+          ...state.runtimes,
+          [runtimeSessionId]: { ...runtime, cols, rows },
+        },
+      };
+    });
+  },
+  async closeTerminal(runtimeSessionId) {
+    await invoke("terminal_close", { runtimeSessionId });
+    releaseTerminalZmodemRuntime(runtimeSessionId);
+    set((state) => {
+      const { [runtimeSessionId]: _runtime, ...runtimes } = state.runtimes;
+      const { [runtimeSessionId]: _output, ...output } = state.output;
+      const { [runtimeSessionId]: _outputChunk, ...outputChunks } = state.outputChunks;
+      const { [runtimeSessionId]: _visualOutputTail, ...visualOutputTail } = state.visualOutputTail;
+      return { runtimes, output, outputChunks, visualOutputTail };
+    });
+  },
+  appendOutput(runtimeSessionId, data) {
+    set((state) => ({
+      output: {
+        ...state.output,
+        [runtimeSessionId]: trimTerminalOutput(`${state.output[runtimeSessionId] ?? ""}${data}`),
+      },
+      outputChunks: {
+        ...state.outputChunks,
+        [runtimeSessionId]: {
+          serial: (state.outputChunks[runtimeSessionId]?.serial ?? 0) + 1,
+          data,
+        },
+      },
+      visualOutputTail: {
+        ...state.visualOutputTail,
+        [runtimeSessionId]: trimTerminalVisualTail(`${state.visualOutputTail[runtimeSessionId] ?? ""}${data}`),
+      },
+    }));
+  },
+}));
+
+function trimTerminalOutput(output: string) {
+  if (output.length <= MAX_TERMINAL_OUTPUT_CHARS) {
+    return output;
+  }
+  return output.slice(-MAX_TERMINAL_OUTPUT_CHARS);
+}
+
+function trimTerminalVisualTail(output: string) {
+  if (output.length <= MAX_TERMINAL_VISUAL_TAIL_CHARS) {
+    return output;
+  }
+  return output.slice(-MAX_TERMINAL_VISUAL_TAIL_CHARS);
+}
