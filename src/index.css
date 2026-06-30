@@ -1937,6 +1937,7 @@ button {
 }
 
 .zt-file-panel {
+  position: relative;
   display: grid;
   grid-template-rows: 48px 36px auto minmax(0, 1fr) auto;
   min-height: 0;
@@ -1944,16 +1945,8 @@ button {
 
 .zt-file-path {
   display: grid;
-  gap: 3px;
+  align-items: center;
   padding: 6px 8px 4px;
-}
-
-.zt-file-path span {
-  overflow: hidden;
-  color: var(--zt-text-muted);
-  font-size: var(--zt-font-size-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .zt-file-path input {
@@ -1976,7 +1969,7 @@ button {
 
 .zt-file-toolbar {
   display: grid;
-  grid-template-columns: repeat(7, 28px);
+  grid-template-columns: repeat(8, 28px);
   gap: 4px;
   padding: 4px 8px;
   border-bottom: 1px solid var(--zt-border-subtle);
@@ -2025,6 +2018,24 @@ button {
 .zt-file-toolbar button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.zt-file-panel-drag-active {
+  outline: 1px solid var(--zt-accent);
+  outline-offset: -1px;
+}
+
+.zt-file-drop-overlay {
+  position: absolute;
+  inset: 90px 8px 10px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--zt-accent);
+  border-radius: var(--zt-radius-control);
+  background: color-mix(in srgb, var(--zt-bg-base) 76%, var(--zt-accent) 24%);
+  color: var(--zt-text-primary);
+  font-size: var(--zt-font-size-ui);
+  pointer-events: none;
 }
 
 .zt-file-list {
@@ -2104,6 +2115,36 @@ button {
   min-height: 0;
   overflow: auto;
   padding: 8px;
+}
+
+.zt-transfer-conflict-body {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  color: var(--zt-text-primary);
+  font-size: var(--zt-font-size-ui);
+}
+
+.zt-transfer-conflict-body p {
+  margin: 0;
+}
+
+.zt-transfer-conflict-body ul {
+  display: grid;
+  gap: 4px;
+  max-height: 140px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.zt-transfer-conflict-body li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--zt-text-muted);
+  font-family: var(--zt-font-mono);
 }
 
 .zt-transfer-row {

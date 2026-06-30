@@ -1,6 +1,7 @@
 // Author: Liz
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import type { TransferConflict, TransferConflictPolicy } from "../features/files/fileStore";
 import type { SavedSession } from "../features/sessions/types";
 
 export type ConnectionChoice =
@@ -132,6 +133,51 @@ export function ConnectionPickerDialog({
         {error ? <p className="zt-session-error">{error}</p> : null}
         <footer>
           <button type="button" aria-label="取消选择连接" disabled={opening} onClick={onCancel}>
+            取消
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+export function AppTransferConflictDialog({
+  conflicts,
+  onCancel,
+  onSelect,
+}: {
+  conflicts: TransferConflict[];
+  onCancel: () => void;
+  onSelect: (policy: TransferConflictPolicy) => void;
+}) {
+  return (
+    <div className="zt-session-modal-backdrop">
+      <div className="zt-session-dialog zt-transfer-conflict-dialog" role="dialog" aria-modal="true" aria-label="传输冲突">
+        <header>
+          <strong>传输冲突</strong>
+          <button type="button" aria-label="关闭传输冲突" onClick={onCancel}>
+            ×
+          </button>
+        </header>
+        <div className="zt-transfer-conflict-body">
+          <p>检测到 {conflicts.length} 个同名目标。</p>
+          <ul>
+            {conflicts.slice(0, 5).map((conflict) => (
+              <li key={`${conflict.direction}:${conflict.path}`}>{conflict.path}</li>
+            ))}
+          </ul>
+        </div>
+        <footer>
+          <button type="button" aria-label="覆盖冲突项" onClick={() => onSelect("overwrite")}>
+            覆盖
+          </button>
+          <button type="button" aria-label="跳过冲突项" onClick={() => onSelect("skip")}>
+            跳过
+          </button>
+          <button type="button" aria-label="自动重命名冲突项" onClick={() => onSelect("rename")}>
+            自动重命名
+          </button>
+          <button type="button" aria-label="取消传输冲突" onClick={onCancel}>
             取消
           </button>
         </footer>

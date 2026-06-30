@@ -46,6 +46,57 @@ impl TransferDirection {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum TransferKind {
+    File,
+    Directory,
+}
+
+impl TransferKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Directory => "directory",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "file" => Some(Self::File),
+            "directory" => Some(Self::Directory),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferConflictPolicy {
+    Overwrite,
+    Skip,
+    Rename,
+}
+
+impl TransferConflictPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Overwrite => "overwrite",
+            Self::Skip => "skip",
+            Self::Rename => "rename",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "overwrite" => Some(Self::Overwrite),
+            "skip" => Some(Self::Skip),
+            "rename" => Some(Self::Rename),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TransferStatus {
     Queued,
     Running,
@@ -87,6 +138,8 @@ pub struct TransferTask {
     pub direction: TransferDirection,
     pub local_path: String,
     pub remote_path: String,
+    pub kind: Option<TransferKind>,
+    pub conflict_policy: TransferConflictPolicy,
     pub total_bytes: u64,
     pub transferred_bytes: u64,
     pub status: TransferStatus,
@@ -108,4 +161,25 @@ pub struct SftpRenameResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SftpMkdirResult {
     pub created: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalPathInfo {
+    pub path: String,
+    pub kind: TransferKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferConflictCheckItem {
+    pub direction: TransferDirection,
+    pub local_path: String,
+    pub remote_path: String,
+    pub kind: TransferKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransferConflict {
+    pub direction: TransferDirection,
+    pub path: String,
 }

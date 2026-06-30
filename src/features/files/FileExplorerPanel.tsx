@@ -1,8 +1,11 @@
 // Author: Liz
-import { useEffect, useMemo, useState } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { FileToolbar } from "./FileToolbar";
 import type { FileEntry } from "./fileStore";
+import type { FileSelectionEvent } from "./fileSelectionModel";
+import { resolveFileDragDropEvent } from "./fileDragDropModel";
 import { formatFileModifiedTime, resolveFileIcon } from "./fileExplorerPresentation";
 import { formatBytes } from "../../lib/byteFormatters";
 
@@ -10,18 +13,19 @@ interface FileExplorerPanelProps {
   savedSessionId: string | null;
   path: string;
   entries: FileEntry[];
-  selectedPath: string | null;
+  selectedPaths: string[];
   loading: boolean;
   error: string | null;
   onPathChange: (path: string) => void;
-  onSelect: (path: string | null) => void;
+  onSelect: (path: string | null, event?: FileSelectionEvent, orderedEntries?: FileEntry[]) => void;
   onRefresh: () => Promise<void> | void;
   onParent: () => Promise<void> | void;
   onMkdir: () => Promise<void> | void;
-  onUpload: () => Promise<void> | void;
-  onDownload: (path: string) => Promise<void> | void;
+  onUpload: (kind: "files" | "directories") => Promise<void> | void;
+  onUploadDropped: (paths: string[]) => Promise<void> | void;
+  onDownload: (entries: FileEntry[]) => Promise<void> | void;
   onRename: (path: string) => Promise<void> | void;
-  onDelete: (path: string, recursive: boolean) => Promise<void> | void;
+  onDelete: (paths: string[], recursive: boolean) => Promise<void> | void;
   onOpenDirectory?: (path: string) => Promise<void> | void;
 }
 
@@ -29,7 +33,7 @@ export function FileExplorerPanel({
   savedSessionId,
   path,
   entries,
-  selectedPath,
+  selectedPaths,
   loading,
   error,
   onPathChange,
@@ -38,31 +42,35 @@ export function FileExplorerPanel({
   onParent,
   onMkdir,
   onUpload,
+  onUploadDropped,
   onDownload,
   onRename,
   onDelete,
   onOpenDirectory,
 }: FileExplorerPanelProps) {
-  const [confirmDeletePath, setConfirmDeletePath] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [confirmDeletePaths, setConfirmDeletePaths] = useState<string[] | null>(null);
   const [showHiddenFiles, setShowHiddenFiles] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const visibleEntries = useMemo(
     () => (showHiddenFiles ? entries : entries.filter((entry) => !entry.name.startsWith("."))),
     [entries, showHiddenFiles],
   );
-  const selectedEntry = useMemo(
-    () => entries.find((entry) => entry.path === selectedPath) ?? null,
-    [entries, selectedPath],
+  const selectedEntries = useMemo(
+    () => entries.filter((entry) => selectedPaths.includes(entry.path)),
+    [entries, selectedPaths],
   );
   const disabled = !savedSessionId;
 
   function requestDelete() {
-    if (!selectedEntry) return;
-    if (selectedEntry.kind === "directory") {
-      setConfirmDeletePath(selectedEntry.path);
+    if (selectedEntries.length === 0) return;
+    const paths = selectedEntries.map((entry) => entry.path);
+    if (selectedEntries.some((entry) => entry.kind === "directory")) {
+      setConfirmDeletePaths(paths);
       return;
     }
-    void onDelete(selectedEntry.path, false);
+    void onDelete(paths, false);
   }
 
   useEffect(() => {
@@ -72,16 +80,46 @@ export function FileExplorerPanel({
     return () => window.removeEventListener("click", closeMenu);
   }, [contextMenu]);
 
+  useEffect(() => {
+    let mounted = true;
+    let cleanup: (() => void) | null = null;
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (!mounted || disabled) return;
+        const decision = resolveFileDragDropEvent(event.payload, panelRef.current);
+        if (decision.kind === "hover") {
+          setDragActive(decision.active);
+        } else if (decision.kind === "clear") {
+          setDragActive(false);
+        } else if (decision.kind === "upload") {
+          setDragActive(false);
+          void onUploadDropped(decision.paths);
+        }
+      })
+      .then((unlisten) => {
+        if (mounted) {
+          cleanup = unlisten;
+        } else {
+          unlisten();
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+      cleanup?.();
+    };
+  }, [disabled, onUploadDropped]);
+
   return (
     <div
-      className="zt-file-panel"
+      ref={panelRef}
+      className={dragActive ? "zt-file-panel zt-file-panel-drag-active" : "zt-file-panel"}
       onContextMenu={(event) => {
         event.preventDefault();
         setContextMenu({ x: event.clientX, y: event.clientY });
       }}
     >
       <div className="zt-file-path">
-        <span>{path}</span>
         <input
           type="text"
           aria-label="远程路径"
@@ -96,16 +134,18 @@ export function FileExplorerPanel({
       <FileToolbar
         disabled={disabled}
         loading={loading}
-        hasSelection={Boolean(selectedEntry)}
+        hasSelection={selectedEntries.length > 0}
+        canRename={selectedEntries.length === 1}
         onRefresh={onRefresh}
         onParent={onParent}
         onMkdir={onMkdir}
-        onUpload={onUpload}
+        onUploadFiles={() => onUpload("files")}
+        onUploadDirectories={() => onUpload("directories")}
         onDownload={() => {
-          if (selectedEntry) return onDownload(selectedEntry.path);
+          if (selectedEntries.length > 0) return onDownload(selectedEntries);
         }}
         onRename={() => {
-          if (selectedEntry) return onRename(selectedEntry.path);
+          if (selectedEntries.length === 1) return onRename(selectedEntries[0].path);
         }}
         onDelete={requestDelete}
       />
@@ -119,8 +159,15 @@ export function FileExplorerPanel({
             type="button"
             role="listitem"
             key={entry.path}
-            className={entry.path === selectedPath ? "active" : ""}
-            onClick={() => onSelect(entry.path)}
+            aria-selected={selectedPaths.includes(entry.path)}
+            className={selectedPaths.includes(entry.path) ? "active" : ""}
+            onClick={(event) =>
+              onSelect(
+                entry.path,
+                { ctrlKey: event.ctrlKey, metaKey: event.metaKey, shiftKey: event.shiftKey },
+                visibleEntries,
+              )
+            }
             onDoubleClick={() => {
               if (entry.kind === "directory") {
                 if (onOpenDirectory) {
@@ -141,30 +188,31 @@ export function FileExplorerPanel({
           </button>
         ))}
       </div>
-      {confirmDeletePath ? (
+      {dragActive ? <div className="zt-file-drop-overlay">释放以上传到当前目录</div> : null}
+      {confirmDeletePaths ? (
         <div className="zt-confirm-inline">
-          <span>确认删除文件夹</span>
+          <span>确认删除选中的 {confirmDeletePaths.length} 个项目</span>
           <button
             type="button"
             onClick={() => {
-              const pathToDelete = confirmDeletePath;
-              setConfirmDeletePath(null);
-              void onDelete(pathToDelete, true);
+              const pathsToDelete = confirmDeletePaths;
+              setConfirmDeletePaths(null);
+              void onDelete(pathsToDelete, true);
             }}
           >
             确认删除
           </button>
-          <button type="button" onClick={() => setConfirmDeletePath(null)}>
+          <button type="button" onClick={() => setConfirmDeletePaths(null)}>
             取消
           </button>
         </div>
       ) : null}
       {contextMenu ? (
         <div className="zt-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-          <button type="button" role="menuitem" disabled={disabled || loading} onClick={() => void onUpload()}>
+          <button type="button" role="menuitem" disabled={disabled || loading} onClick={() => void onUpload("files")}>
             上传文件
           </button>
-          <button type="button" role="menuitem" disabled={disabled || loading} onClick={() => void onUpload()}>
+          <button type="button" role="menuitem" disabled={disabled || loading} onClick={() => void onUpload("directories")}>
             上传文件夹
           </button>
           <button type="button" role="menuitem" disabled={disabled || loading} onClick={() => void onMkdir()}>

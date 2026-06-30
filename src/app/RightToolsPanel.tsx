@@ -12,6 +12,7 @@ import type {
 import { FileExplorerPanel } from "../features/files/FileExplorerPanel";
 import { TransferPanel } from "../features/files/TransferPanel";
 import type { FileEntry, TransferTask } from "../features/files/fileStore";
+import type { FileSelectionEvent } from "../features/files/fileSelectionModel";
 import { CommandHistoryPanel } from "../features/history/CommandHistoryPanel";
 import type {
   CommandHistoryEntry,
@@ -66,17 +67,18 @@ interface RightToolsPanelProps {
     loading: boolean;
     path: string;
     savedSessionId: string | null;
-    selectedPath: string | null;
-    onDelete: (path: string, recursive: boolean) => Promise<void> | void;
-    onDownload: (path: string) => Promise<void> | void;
+    selectedPaths: string[];
+    onDelete: (paths: string[], recursive: boolean) => Promise<void> | void;
+    onDownload: (entries: FileEntry[]) => Promise<void> | void;
     onMkdir: () => Promise<void> | void;
     onOpenDirectory: (path: string) => Promise<void> | void;
     onParent: () => Promise<void> | void;
     onPathChange: (path: string) => void;
     onRefresh: () => Promise<void> | void;
     onRename: (path: string) => Promise<void> | void;
-    onSelect: (path: string | null) => void;
-    onUpload: () => Promise<void> | void;
+    onSelect: (path: string | null, event?: FileSelectionEvent, orderedEntries?: FileEntry[]) => void;
+    onUpload: (kind: "files" | "directories") => Promise<void> | void;
+    onUploadDropped: (paths: string[]) => Promise<void> | void;
   };
   history: {
     activeView: CommandHistoryView;
@@ -169,7 +171,7 @@ export function RightToolsPanel({
                 savedSessionId={files.savedSessionId}
                 path={files.path}
                 entries={files.entries}
-                selectedPath={files.selectedPath}
+                selectedPaths={files.selectedPaths}
                 loading={files.loading}
                 error={files.error}
                 onPathChange={files.onPathChange}
@@ -182,6 +184,7 @@ export function RightToolsPanel({
                 onRename={files.onRename}
                 onDelete={files.onDelete}
                 onOpenDirectory={files.onOpenDirectory}
+                onUploadDropped={files.onUploadDropped}
               />
             </>
           ) : null}

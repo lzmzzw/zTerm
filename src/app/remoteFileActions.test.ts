@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createRemoteFileActions } from "./remoteFileActions";
+import type { LocalPathInfo } from "../features/files/fileStore";
 
 describe("remoteFileActions", () => {
   it("opens the parent directory and refreshes it for the active SSH session", async () => {
@@ -32,38 +33,65 @@ describe("remoteFileActions", () => {
     expect(deps.mkdir).toHaveBeenCalledWith("session-1", "/home/ops/new-folder");
   });
 
-  it("prompts for local and remote paths before uploading", async () => {
+  it("selects local files and enqueues upload plans under the current remote directory", async () => {
     const deps = dependencies({
       filePath: "/tmp",
-      textInputResults: ["C:\\build\\bundle.zip", "/tmp/bundle.zip"],
+      uploadFiles: ["C:\\build\\bundle.zip"],
     });
     const actions = createRemoteFileActions(deps);
 
-    await actions.uploadPath();
+    await actions.uploadPath("files");
 
-    expect(deps.requestTextInput).toHaveBeenNthCalledWith(1, {
-      title: "上传",
-      label: "本地上传路径",
-      requiredMessage: "请填写本地上传路径",
+    expect(deps.classifyLocalPaths).toHaveBeenCalledWith(["C:\\build\\bundle.zip"]);
+    expect(deps.checkTransferConflicts).toHaveBeenCalledWith("session-1", [
+      {
+        direction: "upload",
+        localPath: "C:\\build\\bundle.zip",
+        remotePath: "/tmp/bundle.zip",
+        kind: "file",
+      },
+    ]);
+    expect(deps.upload).toHaveBeenCalledWith("session-1", "C:\\build\\bundle.zip", "/tmp/bundle.zip", {
+      kind: "file",
+      conflictPolicy: "overwrite",
     });
-    expect(deps.requestTextInput).toHaveBeenNthCalledWith(2, {
-      title: "上传目标",
-      label: "远程目标路径",
-      initialValue: "/tmp/bundle.zip",
-      requiredMessage: "请填写远程目标路径",
+  });
+
+  it("uses a batch conflict policy for downloads", async () => {
+    const deps = dependencies({
+      downloadDirectory: "D:\\Downloads",
+      conflicts: [{ direction: "download", path: "D:\\Downloads\\logs" }],
+      conflictPolicy: "rename",
     });
-    expect(deps.upload).toHaveBeenCalledWith("session-1", "C:\\build\\bundle.zip", "/tmp/bundle.zip");
+    const actions = createRemoteFileActions(deps);
+
+    await actions.downloadRemotePaths([
+      {
+        name: "logs",
+        path: "/var/logs",
+        kind: "directory",
+        size: 0,
+        modified_at_ms: null,
+        permissions: null,
+      },
+    ]);
+
+    expect(deps.requestConflictPolicy).toHaveBeenCalledWith([{ direction: "download", path: "D:\\Downloads\\logs" }]);
+    expect(deps.download).toHaveBeenCalledWith("session-1", "/var/logs", "D:\\Downloads\\logs", {
+      kind: "directory",
+      conflictPolicy: "rename",
+    });
   });
 
   it("does not prompt or mutate when there is no active SSH session", async () => {
     const deps = dependencies({ activeSshSessionId: null });
     const actions = createRemoteFileActions(deps);
 
-    await actions.uploadPath();
+    await actions.uploadPath("files");
     await actions.createRemoteDirectory();
-    await actions.downloadRemotePath("/tmp/file.txt");
+    await actions.downloadRemotePaths([]);
     await actions.renameRemotePath("/tmp/file.txt");
-    await actions.deleteRemotePath("/tmp/file.txt", false);
+    await actions.deleteRemotePaths(["/tmp/file.txt"], false);
 
     expect(deps.requestTextInput).not.toHaveBeenCalled();
     expect(deps.upload).not.toHaveBeenCalled();
@@ -78,10 +106,20 @@ function dependencies({
   activeSshSessionId = "session-1",
   filePath = ".",
   textInputResults = [],
+  uploadFiles = [],
+  uploadDirectories = [],
+  downloadDirectory = null,
+  conflicts = [],
+  conflictPolicy = "overwrite",
 }: {
   activeSshSessionId?: string | null;
   filePath?: string;
   textInputResults?: Array<string | null>;
+  uploadFiles?: string[];
+  uploadDirectories?: string[];
+  downloadDirectory?: string | null;
+  conflicts?: Array<{ direction: "upload" | "download"; path: string }>;
+  conflictPolicy?: "overwrite" | "skip" | "rename" | null;
 } = {}) {
   const pendingInputs = [...textInputResults];
   return {
@@ -89,11 +127,22 @@ function dependencies({
     filePath,
     setFilePath: vi.fn(),
     requestTextInput: vi.fn(async () => pendingInputs.shift() ?? null),
+    requestConflictPolicy: vi.fn(async () => conflictPolicy),
     listFiles: vi.fn(async () => undefined),
     mkdir: vi.fn(async () => undefined),
     upload: vi.fn(async () => undefined),
     download: vi.fn(async () => undefined),
     deletePath: vi.fn(async () => undefined),
     renamePath: vi.fn(async () => undefined),
+    classifyLocalPaths: vi.fn(async (paths: string[]): Promise<LocalPathInfo[]> =>
+      paths.map((path) => ({
+        path,
+        kind: path.toLowerCase().includes("folder") || path.toLowerCase().includes("release") ? "directory" : "file",
+      })),
+    ),
+    checkTransferConflicts: vi.fn(async () => conflicts),
+    selectUploadFiles: vi.fn(async () => uploadFiles),
+    selectUploadDirectories: vi.fn(async () => uploadDirectories),
+    selectDownloadDirectory: vi.fn(async () => downloadDirectory),
   };
 }

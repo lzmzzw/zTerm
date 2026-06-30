@@ -2,7 +2,8 @@
 use zterm_lib::{
     models::session::{AuthMode, SavedSession, SessionType, SshOptions},
     services::sftp_service::{
-        build_sftp_cache_key, sftp_uses_cached_session_for, SftpOperationKind,
+        build_sftp_auth_material, build_sftp_cache_key, numbered_conflict_candidate_name,
+        sftp_uses_cached_session_for, SftpAuthMaterial, SftpOperationKind,
     },
 };
 
@@ -61,6 +62,81 @@ fn sftp_short_operations_use_cache_but_transfers_use_dedicated_sessions() {
     assert!(sftp_uses_cached_session_for(SftpOperationKind::Delete));
     assert!(!sftp_uses_cached_session_for(SftpOperationKind::Upload));
     assert!(!sftp_uses_cached_session_for(SftpOperationKind::Download));
+}
+
+#[test]
+fn sftp_key_auth_material_requires_identity_file_and_rejects_agent() {
+    let mut key_session = ssh_session("sftp-key", "files.example.test", "ops");
+    key_session.auth_mode = AuthMode::Key;
+    let missing_identity = build_sftp_auth_material(&key_session)
+        .expect_err("key auth without identity_file should fail before connecting");
+    assert!(missing_identity.to_string().contains("identity_file"));
+
+    key_session.ssh_options = Some(SshOptions {
+        connect_timeout_ms: None,
+        keepalive_interval_ms: None,
+        proxy_command: None,
+        identity_file: Some("C:/Users/Ops/.ssh/id_ed25519".to_string()),
+        jump_hosts: Vec::new(),
+        tunnels: Vec::new(),
+        container: None,
+    });
+    assert_eq!(
+        build_sftp_auth_material(&key_session).expect("key auth material should build"),
+        SftpAuthMaterial::PrivateKey {
+            identity_file: "C:/Users/Ops/.ssh/id_ed25519".into(),
+            passphrase: None,
+        },
+    );
+
+    let mut agent_session = key_session;
+    agent_session.auth_mode = AuthMode::Agent;
+    let agent_error =
+        build_sftp_auth_material(&agent_session).expect_err("agent auth is not in this phase");
+    assert!(agent_error.to_string().contains("agent"));
+}
+
+#[test]
+fn sftp_rejects_jump_and_proxy_for_this_phase() {
+    let mut session = ssh_session("sftp-jump", "files.example.test", "ops");
+    session.ssh_options = Some(SshOptions {
+        connect_timeout_ms: None,
+        keepalive_interval_ms: None,
+        proxy_command: Some("ssh -W %h:%p jump".to_string()),
+        identity_file: None,
+        jump_hosts: Vec::new(),
+        tunnels: Vec::new(),
+        container: None,
+    });
+    let proxy_error =
+        build_sftp_auth_material(&session).expect_err("proxy command should be rejected");
+    assert!(proxy_error.to_string().contains("ProxyCommand"));
+
+    let mut jump_session = session;
+    jump_session
+        .ssh_options
+        .as_mut()
+        .expect("options")
+        .proxy_command = None;
+    jump_session
+        .ssh_options
+        .as_mut()
+        .expect("options")
+        .jump_hosts
+        .push("jump".to_string());
+    let jump_error =
+        build_sftp_auth_material(&jump_session).expect_err("jump host should be rejected");
+    assert!(jump_error.to_string().contains("跳板机"));
+}
+
+#[test]
+fn conflict_candidate_names_preserve_file_extensions() {
+    assert_eq!(
+        numbered_conflict_candidate_name("deploy.tar.gz", 1),
+        "deploy.tar (1).gz"
+    );
+    assert_eq!(numbered_conflict_candidate_name("logs", 2), "logs (2)");
+    assert_eq!(numbered_conflict_candidate_name(".env", 3), ".env (3)");
 }
 
 fn ssh_session(id: &str, host: &str, username: &str) -> SavedSession {

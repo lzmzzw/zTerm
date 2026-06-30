@@ -6,7 +6,9 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    models::sftp::{TransferDirection, TransferStatus, TransferTask},
+    models::sftp::{
+        TransferConflictPolicy, TransferDirection, TransferKind, TransferStatus, TransferTask,
+    },
     storage::sqlite::SqliteStore,
 };
 
@@ -18,6 +20,8 @@ pub fn insert_transfer_task(
     direction: TransferDirection,
     local_path: &str,
     remote_path: &str,
+    kind: Option<TransferKind>,
+    conflict_policy: TransferConflictPolicy,
     total_bytes: u64,
 ) -> AppResult<TransferTask> {
     let saved_session_id = required_text("会话 ID", saved_session_id)?;
@@ -32,9 +36,10 @@ pub fn insert_transfer_task(
             "
             insert into transfer_tasks (
               id, saved_session_id, direction, local_path, remote_path,
-              total_bytes, transferred_bytes, status, error_message, created_at_ms, updated_at_ms
+              kind, conflict_policy, total_bytes, transferred_bytes, status,
+              error_message, created_at_ms, updated_at_ms
             )
-            values (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, null, ?8, ?9)
+            values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, null, ?10, ?11)
             ",
             params![
                 id,
@@ -42,6 +47,8 @@ pub fn insert_transfer_task(
                 direction.as_str(),
                 local_path,
                 remote_path,
+                kind.map(TransferKind::as_str),
+                conflict_policy.as_str(),
                 total_bytes,
                 TransferStatus::Queued.as_str(),
                 now,
@@ -59,7 +66,7 @@ pub fn get_transfer_task(store: &SqliteStore, id: &str) -> AppResult<TransferTas
             .query_row(
                 "
                 select id, saved_session_id, direction, local_path, remote_path,
-                       total_bytes, transferred_bytes, status, error_message,
+                       kind, conflict_policy, total_bytes, transferred_bytes, status, error_message,
                        created_at_ms, updated_at_ms
                 from transfer_tasks
                 where id = ?1
@@ -84,7 +91,7 @@ pub fn list_transfer_tasks(
             let mut statement = connection.prepare(
                 "
                 select id, saved_session_id, direction, local_path, remote_path,
-                       total_bytes, transferred_bytes, status, error_message,
+                       kind, conflict_policy, total_bytes, transferred_bytes, status, error_message,
                        created_at_ms, updated_at_ms
                 from transfer_tasks
                 where saved_session_id = ?1
@@ -100,7 +107,7 @@ pub fn list_transfer_tasks(
             let mut statement = connection.prepare(
                 "
                 select id, saved_session_id, direction, local_path, remote_path,
-                       total_bytes, transferred_bytes, status, error_message,
+                       kind, conflict_policy, total_bytes, transferred_bytes, status, error_message,
                        created_at_ms, updated_at_ms
                 from transfer_tasks
                 order by created_at_ms desc
@@ -137,6 +144,48 @@ pub fn update_transfer_task(
             where id = ?1
             ",
             params![id, status.as_str(), transferred_bytes, error_message, now,],
+        )?;
+        if changed == 0 {
+            return Err(AppError::not_found(format!(
+                "transfer task not found: {id}"
+            )));
+        }
+        get_transfer_task_in_transaction(transaction, &id)
+    })
+}
+
+pub fn update_transfer_task_progress(
+    store: &SqliteStore,
+    id: &str,
+    transferred_bytes: u64,
+    total_bytes: Option<u64>,
+) -> AppResult<TransferTask> {
+    let id = required_text("传输任务 ID", id)?;
+    let transferred_bytes = u64_to_i64(transferred_bytes)?;
+    let total_bytes = total_bytes.map(u64_to_i64).transpose()?;
+    let now = now_ms();
+
+    store.write_transaction(|transaction| {
+        let changed = transaction.execute(
+            "
+            update transfer_tasks
+            set status = ?2,
+                transferred_bytes = ?3,
+                total_bytes = case
+                    when ?4 is null then total_bytes
+                    else max(total_bytes, ?4)
+                end,
+                error_message = null,
+                updated_at_ms = ?5
+            where id = ?1
+            ",
+            params![
+                id,
+                TransferStatus::Running.as_str(),
+                transferred_bytes,
+                total_bytes,
+                now,
+            ],
         )?;
         if changed == 0 {
             return Err(AppError::not_found(format!(
@@ -187,7 +236,7 @@ fn get_transfer_task_in_transaction(
         .query_row(
             "
             select id, saved_session_id, direction, local_path, remote_path,
-                   total_bytes, transferred_bytes, status, error_message,
+                   kind, conflict_policy, total_bytes, transferred_bytes, status, error_message,
                    created_at_ms, updated_at_ms
             from transfer_tasks
             where id = ?1
@@ -201,7 +250,9 @@ fn get_transfer_task_in_transaction(
 
 fn map_transfer_task(row: &Row<'_>) -> rusqlite::Result<TransferTask> {
     let direction_value: String = row.get(2)?;
-    let status_value: String = row.get(7)?;
+    let kind_value: Option<String> = row.get(5)?;
+    let conflict_policy_value: String = row.get(6)?;
+    let status_value: String = row.get(9)?;
     Ok(TransferTask {
         id: row.get(0)?,
         saved_session_id: row.get(1)?,
@@ -209,13 +260,28 @@ fn map_transfer_task(row: &Row<'_>) -> rusqlite::Result<TransferTask> {
             .ok_or_else(|| conversion_error(2, format!("invalid direction: {direction_value}")))?,
         local_path: row.get(3)?,
         remote_path: row.get(4)?,
-        total_bytes: i64_to_u64(5, row.get(5)?)?,
-        transferred_bytes: i64_to_u64(6, row.get(6)?)?,
+        kind: kind_value
+            .as_deref()
+            .map(|value| {
+                TransferKind::from_db(value)
+                    .ok_or_else(|| conversion_error(5, format!("invalid transfer kind: {value}")))
+            })
+            .transpose()?,
+        conflict_policy: TransferConflictPolicy::from_db(&conflict_policy_value).ok_or_else(
+            || {
+                conversion_error(
+                    6,
+                    format!("invalid conflict policy: {conflict_policy_value}"),
+                )
+            },
+        )?,
+        total_bytes: i64_to_u64(7, row.get(7)?)?,
+        transferred_bytes: i64_to_u64(8, row.get(8)?)?,
         status: TransferStatus::from_db(&status_value)
-            .ok_or_else(|| conversion_error(7, format!("invalid status: {status_value}")))?,
-        error_message: row.get(8)?,
-        created_at_ms: row.get(9)?,
-        updated_at_ms: row.get(10)?,
+            .ok_or_else(|| conversion_error(9, format!("invalid status: {status_value}")))?,
+        error_message: row.get(10)?,
+        created_at_ms: row.get(11)?,
+        updated_at_ms: row.get(12)?,
     })
 }
 

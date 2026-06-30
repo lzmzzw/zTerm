@@ -150,6 +150,90 @@ fn migrations_add_history_scope_columns_and_reset_workspace_status() {
 }
 
 #[test]
+fn transfer_tasks_schema_adds_kind_and_conflict_policy_columns() {
+    let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
+
+    run_migrations(&mut connection).expect("migrations should run on an empty database");
+
+    assert!(column_exists(&connection, "transfer_tasks", "kind"));
+    assert!(column_exists(
+        &connection,
+        "transfer_tasks",
+        "conflict_policy"
+    ));
+}
+
+#[test]
+fn migrations_upgrade_legacy_transfer_tasks_with_default_conflict_policy() {
+    let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
+    connection
+        .execute_batch(
+            "
+            create table saved_sessions (
+                id text primary key,
+                name text not null,
+                type text not null,
+                group_id text null,
+                host text not null,
+                port integer not null,
+                username text not null,
+                auth_mode text not null,
+                credential_ref text null,
+                description text null,
+                tags_json text not null default '[]',
+                sort_order integer not null default 0,
+                created_at_ms integer not null,
+                updated_at_ms integer not null,
+                last_used_at_ms integer null,
+                ssh_options_json text null,
+                rdp_options_json text null,
+                local_options_json text null
+            );
+            insert into saved_sessions (
+              id, name, type, group_id, host, port, username, auth_mode, credential_ref,
+              description, tags_json, sort_order, created_at_ms, updated_at_ms,
+              last_used_at_ms, ssh_options_json, rdp_options_json, local_options_json
+            ) values (
+              'ssh-1', 'SSH', 'ssh', null, 'example.test', 22, 'ops', 'password', 'cred',
+              null, '[]', 0, 1, 1, null, null, null, null
+            );
+            create table transfer_tasks (
+                id text primary key,
+                saved_session_id text not null references saved_sessions(id) on delete cascade,
+                direction text not null,
+                local_path text not null,
+                remote_path text not null,
+                total_bytes integer not null default 0,
+                transferred_bytes integer not null default 0,
+                status text not null,
+                error_message text null,
+                created_at_ms integer not null,
+                updated_at_ms integer not null
+            );
+            insert into transfer_tasks (
+              id, saved_session_id, direction, local_path, remote_path, total_bytes,
+              transferred_bytes, status, error_message, created_at_ms, updated_at_ms
+            ) values (
+              'transfer-1', 'ssh-1', 'download', 'C:/tmp/a.txt', '/tmp/a.txt', 0,
+              4, 'failed', 'old failure', 1, 2
+            );
+            ",
+        )
+        .expect("legacy transfer schema should prepare");
+
+    run_migrations(&mut connection).expect("migrations should upgrade legacy transfer tasks");
+
+    let row: (Option<String>, String) = connection
+        .query_row(
+            "select kind, conflict_policy from transfer_tasks where id = 'transfer-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("upgraded transfer task should read");
+    assert_eq!(row, (None, "overwrite".to_string()));
+}
+
+#[test]
 fn command_history_schema_uses_scope_without_saved_session_column() {
     let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
 

@@ -402,8 +402,9 @@ vi.mock("../features/ai/aiStore", () => {
 vi.mock("../features/files/fileStore", () => {
   const fileState = () => ({
     entries: [],
-    path: ".",
-    selectedPath: null,
+    path: "/",
+    selectedPaths: [],
+    selectionAnchorPath: null,
     loading: false,
     error: null,
     transfers: [],
@@ -416,6 +417,8 @@ vi.mock("../features/files/fileStore", () => {
     download: storeMocks.asyncNoop,
     deletePath: storeMocks.asyncNoop,
     renamePath: storeMocks.asyncNoop,
+    classifyLocalPaths: vi.fn(async () => []),
+    checkTransferConflicts: vi.fn(async () => []),
     bindTransferEvents: storeMocks.bindEvents,
     loadTransfers: storeMocks.loadTransfers,
     retryTransfer: storeMocks.asyncNoop,

@@ -4,11 +4,12 @@ use tauri::{AppHandle, Emitter, State};
 use crate::{
     error::AppResult,
     models::sftp::{
-        FileEntry, SftpDeleteResult, SftpMkdirResult, SftpRenameResult, TransferDirection,
-        TransferTask,
+        FileEntry, LocalPathInfo, SftpDeleteResult, SftpMkdirResult, SftpRenameResult,
+        TransferConflict, TransferConflictCheckItem, TransferConflictPolicy, TransferDirection,
+        TransferKind, TransferTask,
     },
     services::{
-        sftp_service::local_path_total_bytes, sftp_service::SftpService,
+        sftp_service::{local_path_total_bytes, SftpService, TransferProgressUpdate},
         transfer_queue::TransferQueue,
     },
     state::AppState,
@@ -75,16 +76,21 @@ pub async fn sftp_upload(
     saved_session_id: String,
     local_path: String,
     remote_path: String,
+    kind: Option<TransferKind>,
+    conflict_policy: Option<TransferConflictPolicy>,
 ) -> AppResult<TransferTask> {
     let storage = state.storage();
     let session = get_session(storage.as_ref(), &saved_session_id)?;
     let queue = state.transfer_queue();
     let total_bytes = local_path_total_bytes(&local_path).await?;
+    let conflict_policy = conflict_policy.unwrap_or(TransferConflictPolicy::Overwrite);
     let task = queue.enqueue(
         &saved_session_id,
         TransferDirection::Upload,
         &local_path,
         &remote_path,
+        kind,
+        conflict_policy,
         total_bytes,
     )?;
     spawn_transfer(app, state.sftp_service(), queue, session, task.clone());
@@ -98,19 +104,41 @@ pub async fn sftp_download(
     saved_session_id: String,
     remote_path: String,
     local_path: String,
+    kind: Option<TransferKind>,
+    conflict_policy: Option<TransferConflictPolicy>,
 ) -> AppResult<TransferTask> {
     let storage = state.storage();
     let session = get_session(storage.as_ref(), &saved_session_id)?;
     let queue = state.transfer_queue();
+    let conflict_policy = conflict_policy.unwrap_or(TransferConflictPolicy::Overwrite);
     let task = queue.enqueue(
         &saved_session_id,
         TransferDirection::Download,
         &local_path,
         &remote_path,
+        kind,
+        conflict_policy,
         0,
     )?;
     spawn_transfer(app, state.sftp_service(), queue, session, task.clone());
     Ok(task)
+}
+
+#[tauri::command]
+pub fn sftp_classify_local_paths(paths: Vec<String>) -> AppResult<Vec<LocalPathInfo>> {
+    crate::services::sftp_service::classify_local_paths(paths)
+}
+
+#[tauri::command]
+pub async fn sftp_check_transfer_conflicts(
+    state: State<'_, AppState>,
+    saved_session_id: String,
+    items: Vec<TransferConflictCheckItem>,
+) -> AppResult<Vec<TransferConflict>> {
+    let storage = state.storage();
+    let session = get_session(storage.as_ref(), &saved_session_id)?;
+    let service = state.sftp_service();
+    service.check_transfer_conflicts(&session, items).await
 }
 
 #[tauri::command]
@@ -161,8 +189,12 @@ fn spawn_transfer(
         let progress_queue = queue.clone();
         let progress_app = app.clone();
         let progress_task_id = task.id.clone();
-        let mut progress = move |transferred_bytes: u64| -> AppResult<()> {
-            let updated = progress_queue.mark_progress(&progress_task_id, transferred_bytes)?;
+        let mut progress = move |update: TransferProgressUpdate| -> AppResult<()> {
+            let updated = progress_queue.mark_progress_with_total(
+                &progress_task_id,
+                update.transferred_bytes,
+                update.total_bytes,
+            )?;
             let _ = progress_app.emit("transfer:progress", updated);
             Ok(())
         };
@@ -170,12 +202,26 @@ fn spawn_transfer(
         let result = match task.direction {
             TransferDirection::Upload => {
                 service
-                    .upload_path(&session, &task.local_path, &task.remote_path, &mut progress)
+                    .upload_path(
+                        &session,
+                        &task.local_path,
+                        &task.remote_path,
+                        task.kind,
+                        task.conflict_policy,
+                        &mut progress,
+                    )
                     .await
             }
             TransferDirection::Download => {
                 service
-                    .download_path(&session, &task.remote_path, &task.local_path, &mut progress)
+                    .download_path(
+                        &session,
+                        &task.remote_path,
+                        &task.local_path,
+                        task.kind,
+                        task.conflict_policy,
+                        &mut progress,
+                    )
                     .await
             }
         };

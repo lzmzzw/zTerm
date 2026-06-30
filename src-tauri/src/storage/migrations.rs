@@ -104,6 +104,8 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
             direction text not null check (direction in ('upload', 'download')),
             local_path text not null,
             remote_path text not null,
+            kind text null check (kind in ('file', 'directory')),
+            conflict_policy text not null default 'overwrite' check (conflict_policy in ('overwrite', 'skip', 'rename')),
             total_bytes integer not null default 0 check (total_bytes >= 0),
             transferred_bytes integer not null default 0 check (transferred_bytes >= 0),
             status text not null check (status in ('queued', 'running', 'paused', 'done', 'failed', 'cancelled')),
@@ -230,11 +232,45 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
         create index if not exists idx_session_command_group_items_group_sort on session_command_group_items(group_id, sort_order);
         ",
     )?;
+    ensure_transfer_task_strategy_columns(&transaction)?;
     reset_workspace_runtime_status(&transaction)?;
     drop_legacy_agent_runs(&transaction)?;
     drop_source_reuse_records(&transaction)?;
     transaction.commit()?;
     Ok(())
+}
+
+fn ensure_transfer_task_strategy_columns(transaction: &rusqlite::Transaction<'_>) -> AppResult<()> {
+    if !sqlite_column_exists(transaction, "transfer_tasks", "kind")? {
+        transaction.execute("alter table transfer_tasks add column kind text null", [])?;
+    }
+    if !sqlite_column_exists(transaction, "transfer_tasks", "conflict_policy")? {
+        transaction.execute(
+            "alter table transfer_tasks add column conflict_policy text not null default 'overwrite'",
+            [],
+        )?;
+    }
+    transaction.execute(
+        "update transfer_tasks set conflict_policy = 'overwrite' where conflict_policy is null or trim(conflict_policy) = ''",
+        [],
+    )?;
+    Ok(())
+}
+
+fn sqlite_column_exists(
+    transaction: &rusqlite::Transaction<'_>,
+    table_name: &str,
+    column_name: &str,
+) -> AppResult<bool> {
+    let mut statement = transaction.prepare(&format!("pragma table_info({table_name})"))?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column_name {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn reset_workspace_runtime_status(transaction: &rusqlite::Transaction<'_>) -> AppResult<()> {

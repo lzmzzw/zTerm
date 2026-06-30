@@ -6,6 +6,12 @@ import { describe, expect, it, vi } from "vitest";
 import { FileExplorerPanel } from "./FileExplorerPanel";
 import type { FileEntry } from "./fileStore";
 
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: vi.fn(async () => vi.fn()),
+  }),
+}));
+
 function render(ui: ReactElement) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -87,7 +93,7 @@ describe("FileExplorerPanel", () => {
         savedSessionId="session-1"
         path="/home/ops"
         entries={entries}
-        selectedPath="/home/ops/deploy.sh"
+        selectedPaths={["/home/ops/deploy.sh"]}
         loading={false}
         error={null}
         onPathChange={vi.fn()}
@@ -96,6 +102,7 @@ describe("FileExplorerPanel", () => {
         onParent={onParent}
         onMkdir={onMkdir}
         onUpload={onUpload}
+        onUploadDropped={vi.fn()}
         onDownload={onDownload}
         onRename={onRename}
         onDelete={onDelete}
@@ -105,20 +112,23 @@ describe("FileExplorerPanel", () => {
     await click(button(view.container, "刷新文件列表"));
     await click(button(view.container, "上级目录"));
     await click(button(view.container, "新建文件夹"));
-    await click(button(view.container, "上传"));
+    await click(button(view.container, "上传文件"));
     await click(button(view.container, "下载"));
     await click(button(view.container, "重命名"));
     await click(button(view.container, "删除"));
 
-    expect(view.container.textContent).toContain("/home/ops");
+    const pathControl = view.container.querySelector(".zt-file-path");
+    const pathInput = pathControl?.querySelector("input");
+    expect(pathControl?.querySelector("span")).toBeNull();
+    expect(pathInput?.value).toBe("/home/ops");
     expect(view.container.textContent).toContain("deploy.sh");
     expect(onRefresh).toHaveBeenCalled();
     expect(onParent).toHaveBeenCalled();
     expect(onMkdir).toHaveBeenCalled();
-    expect(onUpload).toHaveBeenCalled();
-    expect(onDownload).toHaveBeenCalledWith("/home/ops/deploy.sh");
+    expect(onUpload).toHaveBeenCalledWith("files");
+    expect(onDownload).toHaveBeenCalledWith([entries[1]]);
     expect(onRename).toHaveBeenCalledWith("/home/ops/deploy.sh");
-    expect(onDelete).toHaveBeenCalledWith("/home/ops/deploy.sh", false);
+    expect(onDelete).toHaveBeenCalledWith(["/home/ops/deploy.sh"], false);
 
     view.unmount();
   });
@@ -129,7 +139,7 @@ describe("FileExplorerPanel", () => {
         savedSessionId="session-1"
         path="/home/ops"
         entries={entries}
-        selectedPath={null}
+        selectedPaths={[]}
         loading={false}
         error={null}
         onPathChange={vi.fn()}
@@ -138,6 +148,7 @@ describe("FileExplorerPanel", () => {
         onParent={vi.fn()}
         onMkdir={vi.fn()}
         onUpload={vi.fn()}
+        onUploadDropped={vi.fn()}
         onDownload={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
@@ -168,7 +179,7 @@ describe("FileExplorerPanel", () => {
             permissions: "644",
           },
         ]}
-        selectedPath={null}
+        selectedPaths={[]}
         loading={false}
         error={null}
         onPathChange={vi.fn()}
@@ -177,6 +188,7 @@ describe("FileExplorerPanel", () => {
         onParent={vi.fn()}
         onMkdir={vi.fn()}
         onUpload={vi.fn()}
+        onUploadDropped={vi.fn()}
         onDownload={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
@@ -195,7 +207,7 @@ describe("FileExplorerPanel", () => {
         savedSessionId="session-1"
         path="/home/ops"
         entries={entries}
-        selectedPath="/home/ops/logs"
+        selectedPaths={["/home/ops/logs"]}
         loading={false}
         error={null}
         onPathChange={vi.fn()}
@@ -204,6 +216,7 @@ describe("FileExplorerPanel", () => {
         onParent={vi.fn()}
         onMkdir={vi.fn()}
         onUpload={vi.fn()}
+        onUploadDropped={vi.fn()}
         onDownload={vi.fn()}
         onRename={vi.fn()}
         onDelete={onDelete}
@@ -212,10 +225,10 @@ describe("FileExplorerPanel", () => {
 
     await click(button(view.container, "删除"));
     expect(onDelete).not.toHaveBeenCalled();
-    expect(view.container.textContent).toContain("确认删除文件夹");
+    expect(view.container.textContent).toContain("确认删除选中的 1 个项目");
 
     await click(button(view.container, "确认删除"));
-    expect(onDelete).toHaveBeenCalledWith("/home/ops/logs", true);
+    expect(onDelete).toHaveBeenCalledWith(["/home/ops/logs"], true);
 
     view.unmount();
   });
@@ -229,7 +242,7 @@ describe("FileExplorerPanel", () => {
         savedSessionId="session-1"
         path="/home/ops"
         entries={entries}
-        selectedPath={null}
+        selectedPaths={[]}
         loading={false}
         error={null}
         onPathChange={vi.fn()}
@@ -238,6 +251,7 @@ describe("FileExplorerPanel", () => {
         onParent={vi.fn()}
         onMkdir={onMkdir}
         onUpload={onUpload}
+        onUploadDropped={vi.fn()}
         onDownload={vi.fn()}
         onRename={vi.fn()}
         onDelete={vi.fn()}
@@ -284,6 +298,8 @@ describe("FileExplorerPanel", () => {
     await click(button(view.container, "刷新目录"));
 
     expect(onUpload).toHaveBeenCalledTimes(2);
+    expect(onUpload).toHaveBeenNthCalledWith(1, "files");
+    expect(onUpload).toHaveBeenNthCalledWith(2, "directories");
     expect(onMkdir).toHaveBeenCalledTimes(1);
     expect(onRefresh).toHaveBeenCalledTimes(1);
 

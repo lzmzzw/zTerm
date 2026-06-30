@@ -7,10 +7,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use russh::keys::{load_secret_key, PrivateKey, PrivateKeyWithHashAlg};
 use russh::{client, keys::ssh_key, ChannelId};
 use russh_sftp::{
+    client::fs::File as SftpFile,
     client::SftpSession as RusshSftpSession,
-    protocol::{FileAttributes, FileType},
+    protocol::{FileAttributes, FileType, OpenFlags},
 };
 use tokio::{
     fs,
@@ -22,7 +24,10 @@ use crate::{
     error::{AppError, AppResult},
     models::{
         session::{AuthMode, SavedSession, SessionType},
-        sftp::{FileEntry, FileKind},
+        sftp::{
+            FileEntry, FileKind, LocalPathInfo, TransferConflict, TransferConflictCheckItem,
+            TransferConflictPolicy, TransferDirection, TransferKind,
+        },
     },
     services::credential_service::read_system_secret,
 };
@@ -31,6 +36,19 @@ const TRANSFER_BUFFER_SIZE: usize = 64 * 1024;
 const SFTP_CACHE_IDLE_TTL: Duration = Duration::from_secs(90);
 const SFTP_CACHE_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
 const SFTP_CACHE_MAX_ENTRIES: usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransferProgressUpdate {
+    pub total_bytes: Option<u64>,
+    pub transferred_bytes: u64,
+}
+
+fn progress_update(transferred_bytes: u64, total_bytes: Option<u64>) -> TransferProgressUpdate {
+    TransferProgressUpdate {
+        total_bytes,
+        transferred_bytes,
+    }
+}
 
 #[derive(Clone)]
 pub struct SftpService {
@@ -61,7 +79,7 @@ impl SftpService {
     }
 
     pub async fn list(&self, session: &SavedSession, path: &str) -> AppResult<Vec<FileEntry>> {
-        let path = required_path(path)?;
+        let path = required_remote_path(path)?;
         let lease = self.cached_sftp_session(session).await?;
         let sftp = lease.entry.sftp.lock().await;
         let mut entries = sftp
@@ -85,7 +103,7 @@ impl SftpService {
     }
 
     pub async fn create_dir(&self, session: &SavedSession, path: &str) -> AppResult<()> {
-        let path = required_path(path)?;
+        let path = validate_destructive_remote_path(path)?;
         let lease = self.cached_sftp_session(session).await?;
         let sftp = lease.entry.sftp.lock().await;
         create_remote_dir_all(&sftp, &path).await.map_err(|error| {
@@ -95,8 +113,8 @@ impl SftpService {
     }
 
     pub async fn rename(&self, session: &SavedSession, from: &str, to: &str) -> AppResult<()> {
-        let from = required_path(from)?;
-        let to = required_path(to)?;
+        let from = validate_destructive_remote_path(from)?;
+        let to = validate_destructive_remote_path(to)?;
         let lease = self.cached_sftp_session(session).await?;
         let sftp = lease.entry.sftp.lock().await;
         sftp.rename(from, to).await.map_err(|error| {
@@ -111,7 +129,7 @@ impl SftpService {
         path: &str,
         recursive: bool,
     ) -> AppResult<()> {
-        let path = required_path(path)?;
+        let path = validate_destructive_remote_path(path)?;
         let lease = self.cached_sftp_session(session).await?;
         let sftp = lease.entry.sftp.lock().await;
         let metadata = sftp.symlink_metadata(path.clone()).await.map_err(|error| {
@@ -144,20 +162,30 @@ impl SftpService {
         session: &SavedSession,
         local_path: &str,
         remote_path: &str,
+        _kind: Option<TransferKind>,
+        conflict_policy: TransferConflictPolicy,
         mut on_progress: F,
     ) -> AppResult<()>
     where
-        F: FnMut(u64) -> AppResult<()>,
+        F: FnMut(TransferProgressUpdate) -> AppResult<()>,
     {
         let local_path = PathBuf::from(required_path(local_path)?);
-        let remote_path = required_path(remote_path)?;
+        let remote_path = validate_destructive_remote_path(remote_path)?;
         let metadata = fs::metadata(&local_path).await?;
         let sftp = connect_sftp(session).await?;
         let mut transferred = 0_u64;
 
         if metadata.is_dir() {
-            create_remote_dir_all(&sftp, &remote_path).await?;
-            let mut stack = vec![(local_path, remote_path)];
+            let total_bytes = local_path_total_bytes(local_path.to_string_lossy().as_ref()).await?;
+            let Some(remote_root) =
+                prepare_remote_directory_root(&sftp, &remote_path, conflict_policy).await?
+            else {
+                transferred = transferred.saturating_add(total_bytes);
+                on_progress(progress_update(transferred, None))?;
+                let _ = sftp.close().await;
+                return Ok(());
+            };
+            let mut stack = vec![(local_path, remote_root)];
             while let Some((local_dir, remote_dir)) = stack.pop() {
                 let mut entries = fs::read_dir(&local_dir).await?;
                 while let Some(entry) = entries.next_entry().await? {
@@ -166,13 +194,14 @@ impl SftpService {
                     let remote_entry = join_remote_path(&remote_dir, &entry_name);
                     let entry_metadata = entry.metadata().await?;
                     if entry_metadata.is_dir() {
-                        create_remote_dir_all(&sftp, &remote_entry).await?;
+                        ensure_remote_directory(&sftp, &remote_entry).await?;
                         stack.push((entry_path, remote_entry));
                     } else {
                         transferred = upload_file(
                             &sftp,
                             &entry_path,
                             &remote_entry,
+                            conflict_policy,
                             transferred,
                             &mut on_progress,
                         )
@@ -185,13 +214,14 @@ impl SftpService {
                 &sftp,
                 &local_path,
                 &remote_path,
+                conflict_policy,
                 transferred,
                 &mut on_progress,
             )
             .await?;
         }
 
-        on_progress(transferred)?;
+        on_progress(progress_update(transferred, None))?;
         let _ = sftp.close().await;
         Ok(())
     }
@@ -201,12 +231,14 @@ impl SftpService {
         session: &SavedSession,
         remote_path: &str,
         local_path: &str,
+        _kind: Option<TransferKind>,
+        conflict_policy: TransferConflictPolicy,
         mut on_progress: F,
     ) -> AppResult<()>
     where
-        F: FnMut(u64) -> AppResult<()>,
+        F: FnMut(TransferProgressUpdate) -> AppResult<()>,
     {
-        let remote_path = required_path(remote_path)?;
+        let remote_path = required_remote_path(remote_path)?;
         let local_path = PathBuf::from(required_path(local_path)?);
         let sftp = connect_sftp(session).await?;
         let metadata = sftp
@@ -216,8 +248,13 @@ impl SftpService {
         let mut transferred = 0_u64;
 
         if metadata.file_type().is_dir() {
-            fs::create_dir_all(&local_path).await?;
-            let mut stack = vec![(remote_path, local_path)];
+            let Some(local_root) =
+                prepare_local_directory_root(&local_path, conflict_policy).await?
+            else {
+                let _ = sftp.close().await;
+                return Ok(());
+            };
+            let mut stack = vec![(remote_path, local_root)];
             while let Some((remote_dir, local_dir)) = stack.pop() {
                 fs::create_dir_all(&local_dir).await?;
                 let entries = sftp
@@ -234,6 +271,7 @@ impl SftpService {
                             &sftp,
                             &remote_entry,
                             &local_entry,
+                            conflict_policy,
                             transferred,
                             &mut on_progress,
                         )
@@ -246,15 +284,65 @@ impl SftpService {
                 &sftp,
                 &remote_path,
                 &local_path,
+                conflict_policy,
                 transferred,
                 &mut on_progress,
             )
             .await?;
         }
 
-        on_progress(transferred)?;
+        on_progress(progress_update(transferred, None))?;
         let _ = sftp.close().await;
         Ok(())
+    }
+
+    pub async fn check_transfer_conflicts(
+        &self,
+        session: &SavedSession,
+        items: Vec<TransferConflictCheckItem>,
+    ) -> AppResult<Vec<TransferConflict>> {
+        if items.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut conflicts = Vec::new();
+        let upload_items = items
+            .iter()
+            .filter(|item| item.direction == TransferDirection::Upload)
+            .collect::<Vec<_>>();
+        if !upload_items.is_empty() {
+            let lease = self.cached_sftp_session(session).await?;
+            let sftp = lease.entry.sftp.lock().await;
+            for item in upload_items {
+                let remote_path = required_remote_path(&item.remote_path)?;
+                match sftp.try_exists(remote_path.clone()).await {
+                    Ok(true) => conflicts.push(TransferConflict {
+                        direction: item.direction,
+                        path: remote_path,
+                    }),
+                    Ok(false) => {}
+                    Err(error) => {
+                        self.cache.remove_key_if_entry(&lease.key, &lease.entry);
+                        return Err(AppError::sftp(error.to_string()));
+                    }
+                }
+            }
+        }
+
+        for item in items
+            .iter()
+            .filter(|item| item.direction == TransferDirection::Download)
+        {
+            let local_path = PathBuf::from(required_path(&item.local_path)?);
+            if local_path.exists() {
+                conflicts.push(TransferConflict {
+                    direction: item.direction,
+                    path: local_path.to_string_lossy().into_owned(),
+                });
+            }
+        }
+
+        Ok(conflicts)
     }
 
     async fn cached_sftp_session(&self, session: &SavedSession) -> AppResult<CachedSftpLease> {
@@ -505,13 +593,44 @@ fn prune_sftp_entries(entries: &mut HashMap<SftpCacheKey, Arc<CachedSftpSession>
 }
 
 pub fn validate_delete_request(path: &str, is_directory: bool, recursive: bool) -> AppResult<()> {
-    let _ = required_path(path)?;
+    let _ = validate_destructive_remote_path(path)?;
     if is_directory && !recursive {
         return Err(AppError::validation(
             "删除文件夹必须显式传入 recursive=true",
         ));
     }
     Ok(())
+}
+
+pub fn validate_destructive_remote_path(path: &str) -> AppResult<String> {
+    let path = required_remote_path(path)?;
+    if path == "/" {
+        return Err(AppError::validation("不允许对远程根目录执行该操作"));
+    }
+    Ok(path)
+}
+
+pub fn classify_local_paths(paths: Vec<String>) -> AppResult<Vec<LocalPathInfo>> {
+    if paths.is_empty() {
+        return Err(AppError::validation("请至少选择一个本地路径"));
+    }
+    paths
+        .into_iter()
+        .map(|path| {
+            let path = required_path(&path)?;
+            let metadata = std::fs::metadata(&path)?;
+            let kind = if metadata.is_file() {
+                TransferKind::File
+            } else if metadata.is_dir() {
+                TransferKind::Directory
+            } else {
+                return Err(AppError::validation(format!(
+                    "暂不支持该本地路径类型: {path}"
+                )));
+            };
+            Ok(LocalPathInfo { path, kind })
+        })
+        .collect()
 }
 
 pub async fn local_path_total_bytes(path: &str) -> AppResult<u64> {
@@ -582,28 +701,25 @@ async fn authenticate(
     handle: &mut client::Handle<AcceptAnyServerKey>,
     session: &SavedSession,
 ) -> AppResult<()> {
-    let authenticated = match session.auth_mode {
-        AuthMode::Password => {
-            let credential_ref = session
-                .credential_ref
-                .as_deref()
-                .ok_or_else(|| AppError::credential("SSH 密码凭据引用不能为空"))?;
-            let password = read_system_secret(credential_ref)?;
-            handle
-                .authenticate_password(session.username.clone(), password)
-                .await
-                .map_err(|error| AppError::credential(error.to_string()))?
-                .success()
-        }
-        AuthMode::None => handle
+    let auth_material = build_sftp_auth_material(session)?;
+    let authenticated = match auth_material {
+        SftpAuthMaterial::Password(password) => handle
+            .authenticate_password(session.username.clone(), password)
+            .await
+            .map_err(|error| AppError::credential(error.to_string()))?
+            .success(),
+        SftpAuthMaterial::None => handle
             .authenticate_none(session.username.clone())
             .await
             .map_err(|error| AppError::credential(error.to_string()))?
             .success(),
-        AuthMode::Key | AuthMode::Agent => {
-            return Err(AppError::unsupported(
-                "SFTP key/agent 认证将在凭据阶段补齐，请先使用 password 会话",
-            ));
+        SftpAuthMaterial::PrivateKey {
+            identity_file,
+            passphrase,
+        } => {
+            let key = load_secret_key(&identity_file, passphrase.as_deref())
+                .map_err(|error| AppError::credential(format!("SSH 私钥解析失败: {error}")))?;
+            authenticate_private_key(handle, session.username.clone(), key).await?
         }
     };
 
@@ -613,21 +729,113 @@ async fn authenticate(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SftpAuthMaterial {
+    None,
+    Password(String),
+    PrivateKey {
+        identity_file: PathBuf,
+        passphrase: Option<String>,
+    },
+}
+
+pub fn build_sftp_auth_material(session: &SavedSession) -> AppResult<SftpAuthMaterial> {
+    if let Some(options) = session.ssh_options.as_ref() {
+        if options
+            .proxy_command
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+        {
+            return Err(AppError::unsupported("SFTP 暂不支持 ProxyCommand"));
+        }
+        if options
+            .jump_hosts
+            .iter()
+            .any(|host| !host.trim().is_empty())
+        {
+            return Err(AppError::unsupported("SFTP 暂不支持跳板机"));
+        }
+    }
+
+    match session.auth_mode {
+        AuthMode::Password => {
+            let credential_ref = session
+                .credential_ref
+                .as_deref()
+                .ok_or_else(|| AppError::credential("SSH 密码凭据引用不能为空"))?;
+            Ok(SftpAuthMaterial::Password(read_system_secret(
+                credential_ref,
+            )?))
+        }
+        AuthMode::None => Ok(SftpAuthMaterial::None),
+        AuthMode::Key => {
+            let identity_file = session
+                .ssh_options
+                .as_ref()
+                .and_then(|options| options.identity_file.as_deref())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| AppError::validation("密钥认证需要 ssh_options.identity_file"))?;
+            if identity_file.contains('\n')
+                || identity_file.contains('\r')
+                || identity_file.contains('\0')
+            {
+                return Err(AppError::validation("identity_file 不能包含控制字符"));
+            }
+            let passphrase = session
+                .credential_ref
+                .as_deref()
+                .map(read_system_secret)
+                .transpose()?;
+            Ok(SftpAuthMaterial::PrivateKey {
+                identity_file: PathBuf::from(identity_file),
+                passphrase,
+            })
+        }
+        AuthMode::Agent => Err(AppError::unsupported("SFTP 暂不支持 agent 认证")),
+    }
+}
+
+async fn authenticate_private_key(
+    handle: &mut client::Handle<AcceptAnyServerKey>,
+    username: String,
+    key: PrivateKey,
+) -> AppResult<bool> {
+    let hash = handle
+        .best_supported_rsa_hash()
+        .await
+        .map_err(|error| AppError::sftp(error.to_string()))?
+        .flatten();
+    handle
+        .authenticate_publickey(username, PrivateKeyWithHashAlg::new(Arc::new(key), hash))
+        .await
+        .map_err(|error| AppError::credential(error.to_string()))
+        .map(|result| result.success())
+}
+
 async fn upload_file<F>(
     sftp: &RusshSftpSession,
     local_path: &Path,
     remote_path: &str,
+    conflict_policy: TransferConflictPolicy,
     mut transferred: u64,
     on_progress: &mut F,
 ) -> AppResult<u64>
 where
-    F: FnMut(u64) -> AppResult<()>,
+    F: FnMut(TransferProgressUpdate) -> AppResult<()>,
 {
     let mut local = fs::File::open(local_path).await?;
-    let mut remote = sftp
-        .create(remote_path.to_string())
-        .await
-        .map_err(|error| AppError::sftp(error.to_string()))?;
+    if let Some(parent) = remote_parent_path(remote_path) {
+        create_remote_dir_all(sftp, &parent).await?;
+    }
+    let file_size = fs::metadata(local_path).await?.len();
+    let Some(mut remote) = open_remote_write_target(sftp, remote_path, conflict_policy).await?
+    else {
+        transferred = transferred.saturating_add(file_size);
+        on_progress(progress_update(transferred, None))?;
+        return Ok(transferred);
+    };
     let mut buffer = vec![0_u8; TRANSFER_BUFFER_SIZE];
     loop {
         let read = local.read(&mut buffer).await?;
@@ -639,7 +847,7 @@ where
             .await
             .map_err(|error| AppError::sftp(error.to_string()))?;
         transferred = transferred.saturating_add(read as u64);
-        on_progress(transferred)?;
+        on_progress(progress_update(transferred, None))?;
     }
     remote
         .shutdown()
@@ -652,11 +860,12 @@ async fn download_file<F>(
     sftp: &RusshSftpSession,
     remote_path: &str,
     local_path: &Path,
+    conflict_policy: TransferConflictPolicy,
     mut transferred: u64,
     on_progress: &mut F,
 ) -> AppResult<u64>
 where
-    F: FnMut(u64) -> AppResult<()>,
+    F: FnMut(TransferProgressUpdate) -> AppResult<()>,
 {
     if let Some(parent) = local_path.parent() {
         fs::create_dir_all(parent).await?;
@@ -665,7 +874,22 @@ where
         .open(remote_path.to_string())
         .await
         .map_err(|error| AppError::sftp(error.to_string()))?;
-    let mut local = fs::File::create(local_path).await?;
+    let remote_size = remote
+        .metadata()
+        .await
+        .ok()
+        .and_then(|metadata| metadata.size);
+    if let Some(remote_size) = remote_size {
+        on_progress(progress_update(
+            transferred,
+            Some(transferred.saturating_add(remote_size)),
+        ))?;
+    }
+    let Some(mut local) = open_local_write_target(local_path, conflict_policy).await? else {
+        transferred = transferred.saturating_add(remote_size.unwrap_or(0));
+        on_progress(progress_update(transferred, Some(transferred)))?;
+        return Ok(transferred);
+    };
     let mut buffer = vec![0_u8; TRANSFER_BUFFER_SIZE];
     loop {
         let read = remote
@@ -677,7 +901,7 @@ where
         }
         local.write_all(&buffer[..read]).await?;
         transferred = transferred.saturating_add(read as u64);
-        on_progress(transferred)?;
+        on_progress(progress_update(transferred, None))?;
     }
     local.flush().await?;
     Ok(transferred)
@@ -730,6 +954,204 @@ async fn create_remote_dir_all(sftp: &RusshSftpSession, path: &str) -> AppResult
     Ok(())
 }
 
+async fn ensure_remote_directory(sftp: &RusshSftpSession, path: &str) -> AppResult<()> {
+    match sftp.create_dir(path.to_string()).await {
+        Ok(()) => Ok(()),
+        Err(error) if is_already_exists_error(&error.to_string()) => Ok(()),
+        Err(error) => Err(AppError::sftp(error.to_string())),
+    }
+}
+
+async fn prepare_remote_directory_root(
+    sftp: &RusshSftpSession,
+    remote_path: &str,
+    conflict_policy: TransferConflictPolicy,
+) -> AppResult<Option<String>> {
+    match conflict_policy {
+        TransferConflictPolicy::Overwrite => {
+            create_remote_dir_all(sftp, remote_path).await?;
+            Ok(Some(remote_path.to_string()))
+        }
+        TransferConflictPolicy::Skip => match sftp.create_dir(remote_path.to_string()).await {
+            Ok(()) => Ok(Some(remote_path.to_string())),
+            Err(error) if is_already_exists_error(&error.to_string()) => Ok(None),
+            Err(error) => Err(AppError::sftp(error.to_string())),
+        },
+        TransferConflictPolicy::Rename => {
+            for candidate in remote_conflict_candidates(remote_path).take(1000) {
+                match sftp.create_dir(candidate.clone()).await {
+                    Ok(()) => return Ok(Some(candidate)),
+                    Err(error) if is_already_exists_error(&error.to_string()) => continue,
+                    Err(error) => return Err(AppError::sftp(error.to_string())),
+                }
+            }
+            Err(AppError::sftp(format!(
+                "无法为远程目录生成不冲突的名称: {remote_path}"
+            )))
+        }
+    }
+}
+
+async fn prepare_local_directory_root(
+    local_path: &Path,
+    conflict_policy: TransferConflictPolicy,
+) -> AppResult<Option<PathBuf>> {
+    match conflict_policy {
+        TransferConflictPolicy::Overwrite => {
+            fs::create_dir_all(local_path).await?;
+            Ok(Some(local_path.to_path_buf()))
+        }
+        TransferConflictPolicy::Skip if fs::try_exists(local_path).await? => Ok(None),
+        TransferConflictPolicy::Skip => {
+            fs::create_dir_all(local_path).await?;
+            Ok(Some(local_path.to_path_buf()))
+        }
+        TransferConflictPolicy::Rename => {
+            for candidate in local_conflict_candidates(local_path).take(1000) {
+                match fs::create_dir(&candidate).await {
+                    Ok(()) => return Ok(Some(candidate)),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(AppError::sftp(format!(
+                "无法为本地目录生成不冲突的名称: {}",
+                local_path.display()
+            )))
+        }
+    }
+}
+
+async fn open_remote_write_target(
+    sftp: &RusshSftpSession,
+    remote_path: &str,
+    conflict_policy: TransferConflictPolicy,
+) -> AppResult<Option<SftpFile>> {
+    match conflict_policy {
+        TransferConflictPolicy::Overwrite => sftp
+            .open_with_flags(
+                remote_path,
+                OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+            )
+            .await
+            .map(Some)
+            .map_err(|error| AppError::sftp(error.to_string())),
+        TransferConflictPolicy::Skip => match sftp
+            .open_with_flags(
+                remote_path,
+                OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
+            )
+            .await
+        {
+            Ok(file) => Ok(Some(file)),
+            Err(error) if is_already_exists_error(&error.to_string()) => Ok(None),
+            Err(error) => Err(AppError::sftp(error.to_string())),
+        },
+        TransferConflictPolicy::Rename => {
+            for candidate in remote_conflict_candidates(remote_path).take(1000) {
+                match sftp
+                    .open_with_flags(
+                        candidate,
+                        OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
+                    )
+                    .await
+                {
+                    Ok(file) => return Ok(Some(file)),
+                    Err(error) if is_already_exists_error(&error.to_string()) => continue,
+                    Err(error) => return Err(AppError::sftp(error.to_string())),
+                }
+            }
+            Err(AppError::sftp(format!(
+                "无法为远程文件生成不冲突的名称: {remote_path}"
+            )))
+        }
+    }
+}
+
+async fn open_local_write_target(
+    local_path: &Path,
+    conflict_policy: TransferConflictPolicy,
+) -> AppResult<Option<fs::File>> {
+    match conflict_policy {
+        TransferConflictPolicy::Overwrite => fs::File::create(local_path)
+            .await
+            .map(Some)
+            .map_err(Into::into),
+        TransferConflictPolicy::Skip => match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(local_path)
+            .await
+        {
+            Ok(file) => Ok(Some(file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+            Err(error) => Err(error.into()),
+        },
+        TransferConflictPolicy::Rename => {
+            for candidate in local_conflict_candidates(local_path).take(1000) {
+                match fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(candidate)
+                    .await
+                {
+                    Ok(file) => return Ok(Some(file)),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(AppError::sftp(format!(
+                "无法为本地文件生成不冲突的名称: {}",
+                local_path.display()
+            )))
+        }
+    }
+}
+
+fn remote_conflict_candidates(remote_path: &str) -> impl Iterator<Item = String> + '_ {
+    std::iter::once(remote_path.to_string()).chain((1..).map(move |index| {
+        let parent = remote_parent_path(remote_path).unwrap_or_else(|| "/".to_string());
+        let name = remote_path
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .filter(|value| !value.is_empty())
+            .unwrap_or("file");
+        join_remote_path(&parent, &numbered_conflict_candidate_name(name, index))
+    }))
+}
+
+fn local_conflict_candidates(local_path: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    std::iter::once(local_path.to_path_buf()).chain((1..).map(move |index| {
+        let name = local_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("file");
+        let candidate = numbered_conflict_candidate_name(name, index);
+        local_path
+            .parent()
+            .map(|parent| parent.join(&candidate))
+            .unwrap_or_else(|| PathBuf::from(candidate))
+    }))
+}
+
+pub fn numbered_conflict_candidate_name(name: &str, index: usize) -> String {
+    let name = if name.trim().is_empty() {
+        "file"
+    } else {
+        name.trim()
+    };
+    let Some(dot_index) = name.rfind('.') else {
+        return format!("{name} ({index})");
+    };
+    if dot_index == 0 {
+        return format!("{name} ({index})");
+    }
+    let (stem, extension) = name.split_at(dot_index);
+    format!("{stem} ({index}){extension}")
+}
+
 fn file_entry(name: String, path: String, metadata: FileAttributes) -> FileEntry {
     FileEntry {
         name,
@@ -761,6 +1183,34 @@ fn join_remote_path(parent: &str, name: &str) -> String {
     } else {
         format!("{parent}/{name}")
     }
+}
+
+fn remote_parent_path(path: &str) -> Option<String> {
+    let normalized = path.trim_end_matches('/');
+    let index = normalized.rfind('/')?;
+    if index == 0 {
+        Some("/".to_string())
+    } else {
+        Some(normalized[..index].to_string())
+    }
+}
+
+fn is_already_exists_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("already exists")
+        || message.contains("file exists")
+        || message.contains("exists")
+}
+
+fn required_remote_path(value: &str) -> AppResult<String> {
+    let mut value = required_path(value)?;
+    while value.len() > 1 && value.ends_with('/') {
+        value.pop();
+    }
+    if value.is_empty() {
+        return Err(AppError::validation("路径不能为空"));
+    }
+    Ok(value)
 }
 
 fn required_path(value: &str) -> AppResult<String> {

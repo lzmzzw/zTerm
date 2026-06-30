@@ -3,7 +3,12 @@ import { Bot, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-rea
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
-import { AppTextInputDialog, ConnectionPickerDialog, type ConnectionChoice } from "./AppShellDialogs";
+import {
+  AppTextInputDialog,
+  AppTransferConflictDialog,
+  ConnectionPickerDialog,
+  type ConnectionChoice,
+} from "./AppShellDialogs";
 import { RightToolsPanel } from "./RightToolsPanel";
 import { PanelHeader, ToolButton } from "./ShellControls";
 import { TitleBar } from "./TitleBar";
@@ -16,7 +21,7 @@ import { useAppTextInputDialog } from "./useAppTextInputDialog";
 import { useWorkspaceVisualSwitch } from "./useWorkspaceVisualSwitch";
 import { useAiStore } from "../features/ai/aiStore";
 import { buildAiTerminalContext } from "../features/ai/aiTerminalContextModel";
-import { useFileStore } from "../features/files/fileStore";
+import { useFileStore, type TransferConflict, type TransferConflictPolicy } from "../features/files/fileStore";
 import type { CommandHistoryView } from "../features/history/CommandHistoryPanel";
 import { resolveHistoryScope } from "../features/history/historyScopeModel";
 import { useHistoryStore } from "../features/history/historyStore";
@@ -66,6 +71,11 @@ type WorkspaceEditorState = {
   workspace: WorkspaceDefinition;
 };
 
+type TransferConflictDialogState = {
+  conflicts: TransferConflict[];
+  resolve: (policy: TransferConflictPolicy | null) => void;
+};
+
 const DEFAULT_MAX_RUNNING_WORKSPACES = 5;
 
 const EMPTY_AI_PANEL_STATE = {
@@ -81,8 +91,8 @@ const EMPTY_AI_PANEL_STATE = {
 
 const EMPTY_FILE_PANEL_STATE = {
   fileEntries: [],
-  filePath: ".",
-  selectedPath: null,
+  filePath: "/",
+  selectedPaths: [],
   filesLoading: false,
   fileError: null,
 };
@@ -184,6 +194,7 @@ export function AppShell() {
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [workspaceEditor, setWorkspaceEditor] = useState<WorkspaceEditorState | null>(null);
   const { textInputDialog, requestTextInput, resolveTextInputDialog } = useAppTextInputDialog();
+  const [transferConflictDialog, setTransferConflictDialog] = useState<TransferConflictDialogState | null>(null);
   const [connectionDialogTarget, setConnectionDialogTarget] = useState<ConnectionDialogTarget | null>(null);
   const [connectionDialogError, setConnectionDialogError] = useState<string | null>(null);
   const [connectionOpening, setConnectionOpening] = useState(false);
@@ -250,6 +261,8 @@ export function AppShell() {
     download,
     deletePath,
     renamePath,
+    classifyLocalPaths,
+    checkTransferConflicts,
     bindTransferEvents,
     loadTransfers,
     retryTransfer,
@@ -264,6 +277,8 @@ export function AppShell() {
       download: state.download,
       deletePath: state.deletePath,
       renamePath: state.renamePath,
+      classifyLocalPaths: state.classifyLocalPaths,
+      checkTransferConflicts: state.checkTransferConflicts,
       bindTransferEvents: state.bindTransferEvents,
       loadTransfers: state.loadTransfers,
       retryTransfer: state.retryTransfer,
@@ -272,7 +287,7 @@ export function AppShell() {
   const {
     fileEntries,
     filePath,
-    selectedPath,
+    selectedPaths,
     filesLoading,
     fileError,
   } = useFileStore(
@@ -281,7 +296,7 @@ export function AppShell() {
         ? {
             fileEntries: state.entries,
             filePath: state.path,
-            selectedPath: state.selectedPath,
+            selectedPaths: state.selectedPaths,
             filesLoading: state.loading,
             fileError: state.error,
           }
@@ -877,6 +892,17 @@ export function AppShell() {
     setActiveLeftTool((current) => (current === tool ? null : tool));
   }
 
+  function requestTransferConflictPolicy(conflicts: TransferConflict[]) {
+    return new Promise<TransferConflictPolicy | null>((resolve) => {
+      setTransferConflictDialog({ conflicts, resolve });
+    });
+  }
+
+  function resolveTransferConflictDialog(policy: TransferConflictPolicy | null) {
+    transferConflictDialog?.resolve(policy);
+    setTransferConflictDialog(null);
+  }
+
   const terminalActions = createTerminalActions({
     activeWorkspaceId,
     activeWorkspaceTabId: activeTabId,
@@ -912,12 +938,15 @@ export function AppShell() {
     filePath,
     setFilePath,
     requestTextInput,
+    requestConflictPolicy: requestTransferConflictPolicy,
     listFiles,
     mkdir,
     upload,
     download,
     deletePath,
     renamePath,
+    classifyLocalPaths,
+    checkTransferConflicts,
   });
 
   const workspaceSidebarItems = useMemo(
@@ -1139,6 +1168,14 @@ export function AppShell() {
         />
       ) : null}
 
+      {transferConflictDialog ? (
+        <AppTransferConflictDialog
+          conflicts={transferConflictDialog.conflicts}
+          onCancel={() => resolveTransferConflictDialog(null)}
+          onSelect={resolveTransferConflictDialog}
+        />
+      ) : null}
+
       {connectionDialogTarget ? (
         <ConnectionPickerDialog
           sessions={sessions}
@@ -1221,9 +1258,9 @@ export function AppShell() {
           loading: filesLoading,
           path: filePath,
           savedSessionId: activeSshSessionId,
-          selectedPath,
-          onDelete: remoteFileActions.deleteRemotePath,
-          onDownload: remoteFileActions.downloadRemotePath,
+          selectedPaths,
+          onDelete: remoteFileActions.deleteRemotePaths,
+          onDownload: remoteFileActions.downloadRemotePaths,
           onMkdir: remoteFileActions.createRemoteDirectory,
           onOpenDirectory: (path) => {
             void remoteFileActions.openDirectory(path);
@@ -1234,6 +1271,7 @@ export function AppShell() {
           onRename: remoteFileActions.renameRemotePath,
           onSelect: selectPath,
           onUpload: remoteFileActions.uploadPath,
+          onUploadDropped: remoteFileActions.uploadLocalPaths,
         }}
         history={{
           activeView: historyView,

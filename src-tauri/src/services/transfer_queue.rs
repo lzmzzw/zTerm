@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use crate::{
     error::AppResult,
-    models::sftp::{TransferDirection, TransferStatus, TransferTask},
+    models::sftp::{
+        TransferConflictPolicy, TransferDirection, TransferKind, TransferStatus, TransferTask,
+    },
     storage::{sqlite::SqliteStore, transfers},
 };
 
@@ -23,6 +25,8 @@ impl TransferQueue {
         direction: TransferDirection,
         local_path: &str,
         remote_path: &str,
+        kind: Option<TransferKind>,
+        conflict_policy: TransferConflictPolicy,
         total_bytes: u64,
     ) -> AppResult<TransferTask> {
         transfers::insert_transfer_task(
@@ -31,6 +35,8 @@ impl TransferQueue {
             direction,
             local_path,
             remote_path,
+            kind,
+            conflict_policy,
             total_bytes,
         )
     }
@@ -55,13 +61,32 @@ impl TransferQueue {
         )
     }
 
+    pub fn mark_progress_with_total(
+        &self,
+        task_id: &str,
+        transferred_bytes: u64,
+        total_bytes: Option<u64>,
+    ) -> AppResult<TransferTask> {
+        transfers::update_transfer_task_progress(
+            self.store.as_ref(),
+            task_id,
+            transferred_bytes,
+            total_bytes,
+        )
+    }
+
     pub fn mark_done(&self, task_id: &str) -> AppResult<TransferTask> {
         let task = transfers::get_transfer_task(self.store.as_ref(), task_id)?;
+        let final_bytes = if task.total_bytes > 0 {
+            task.total_bytes.max(task.transferred_bytes)
+        } else {
+            task.transferred_bytes
+        };
         transfers::update_transfer_task(
             self.store.as_ref(),
             task_id,
             TransferStatus::Done,
-            Some(task.total_bytes),
+            Some(final_bytes),
             None,
         )
     }

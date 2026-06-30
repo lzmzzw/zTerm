@@ -7,14 +7,15 @@ describe("remote path helpers", () => {
   it("normalizes parent paths without escaping above the remote root", () => {
     expect(parentRemotePath("/home/ops")).toBe("/home");
     expect(parentRemotePath("/home/ops/")).toBe("/home");
-    expect(parentRemotePath("/")).toBe(".");
-    expect(parentRemotePath(".")).toBe(".");
-    expect(parentRemotePath("logs")).toBe(".");
+    expect(parentRemotePath("/")).toBe("/");
+    expect(parentRemotePath(".")).toBe("/");
+    expect(parentRemotePath("logs")).toBe("/");
   });
 
   it("joins remote path segments using forward slashes", () => {
-    expect(joinRemotePath(".", "new-folder")).toBe("new-folder");
-    expect(joinRemotePath("", "new-folder")).toBe("new-folder");
+    expect(joinRemotePath("/", "new-folder")).toBe("/new-folder");
+    expect(joinRemotePath(".", "new-folder")).toBe("/new-folder");
+    expect(joinRemotePath("", "new-folder")).toBe("/new-folder");
     expect(joinRemotePath("/home/ops", "deploy.sh")).toBe("/home/ops/deploy.sh");
     expect(joinRemotePath("/home/ops/", "deploy.sh")).toBe("/home/ops/deploy.sh");
   });

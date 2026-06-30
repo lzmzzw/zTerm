@@ -4,8 +4,11 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
+import { nextSelectedFilePaths, type FileSelectionEvent } from "./fileSelectionModel";
 
 type FileKind = "file" | "directory" | "symlink" | "other";
+export type TransferKind = "file" | "directory";
+export type TransferConflictPolicy = "overwrite" | "skip" | "rename";
 
 export interface FileEntry {
   name: string;
@@ -25,6 +28,8 @@ export interface TransferTask {
   direction: TransferDirection;
   local_path: string;
   remote_path: string;
+  kind: TransferKind | null;
+  conflict_policy: TransferConflictPolicy;
   total_bytes: number;
   transferred_bytes: number;
   status: TransferStatus;
@@ -33,23 +38,50 @@ export interface TransferTask {
   updated_at_ms: number;
 }
 
+export interface LocalPathInfo {
+  path: string;
+  kind: TransferKind;
+}
+
+export interface TransferConflictCheckItem {
+  direction: TransferDirection;
+  localPath: string;
+  remotePath: string;
+  kind: TransferKind;
+}
+
+export interface TransferConflict {
+  direction: TransferDirection;
+  path: string;
+}
+
+interface TransferOptions {
+  kind?: TransferKind;
+  conflictPolicy?: TransferConflictPolicy;
+}
+
 interface FileState {
   entries: FileEntry[];
   transfers: TransferTask[];
+  activeSavedSessionId: string | null;
   path: string;
-  selectedPath: string | null;
+  selectedPaths: string[];
+  selectionAnchorPath: string | null;
   loading: boolean;
   transferLoading: boolean;
   error: string | null;
   setPath: (path: string) => void;
-  selectPath: (path: string | null) => void;
+  selectPath: (path: string | null, event?: FileSelectionEvent, orderedEntries?: FileEntry[]) => void;
+  selectPaths: (paths: string[]) => void;
   clearFiles: () => void;
   listFiles: (savedSessionId: string, path?: string) => Promise<void>;
   mkdir: (savedSessionId: string, path: string) => Promise<void>;
-  upload: (savedSessionId: string, localPath: string, remotePath: string) => Promise<void>;
-  download: (savedSessionId: string, remotePath: string, localPath: string) => Promise<void>;
+  upload: (savedSessionId: string, localPath: string, remotePath: string, options?: TransferOptions) => Promise<void>;
+  download: (savedSessionId: string, remotePath: string, localPath: string, options?: TransferOptions) => Promise<void>;
   deletePath: (savedSessionId: string, path: string, recursive: boolean) => Promise<void>;
   renamePath: (savedSessionId: string, from: string, to: string) => Promise<void>;
+  classifyLocalPaths: (paths: string[]) => Promise<LocalPathInfo[]>;
+  checkTransferConflicts: (savedSessionId: string, items: TransferConflictCheckItem[]) => Promise<TransferConflict[]>;
   loadTransfers: (savedSessionId: string | null) => Promise<void>;
   retryTransfer: (taskId: string) => Promise<void>;
   bindTransferEvents: () => Promise<UnlistenFn>;
@@ -60,26 +92,46 @@ let listFilesRequestId = 0;
 export const useFileStore = create<FileState>((set, get) => ({
   entries: [],
   transfers: [],
-  path: ".",
-  selectedPath: null,
+  activeSavedSessionId: null,
+  path: "/",
+  selectedPaths: [],
+  selectionAnchorPath: null,
   loading: false,
   transferLoading: false,
   error: null,
   setPath: (path) => set({ path }),
-  selectPath: (path) => set({ selectedPath: path }),
+  selectPath: (path, event, orderedEntries) => {
+    if (!path) {
+      set({ selectedPaths: [], selectionAnchorPath: null });
+      return;
+    }
+    const state = get();
+    const entries = orderedEntries ?? state.entries;
+    const selectedPaths = nextSelectedFilePaths(entries, state.selectedPaths, state.selectionAnchorPath, path, event);
+    set({ selectedPaths, selectionAnchorPath: event?.shiftKey ? state.selectionAnchorPath : path });
+  },
+  selectPaths: (paths) => set({ selectedPaths: paths, selectionAnchorPath: paths.at(-1) ?? null }),
   clearFiles() {
     listFilesRequestId += 1;
-    set({ entries: [], path: ".", selectedPath: null, loading: false, error: null });
+    set({
+      entries: [],
+      activeSavedSessionId: null,
+      path: "/",
+      selectedPaths: [],
+      selectionAnchorPath: null,
+      loading: false,
+      error: null,
+    });
   },
   async listFiles(savedSessionId, path = get().path) {
     if (!savedSessionId) return;
     const requestId = listFilesRequestId + 1;
     listFilesRequestId = requestId;
-    set({ loading: true, error: null, path });
+    set({ activeSavedSessionId: savedSessionId, loading: true, error: null, path });
     try {
       const entries = await invoke<FileEntry[]>("sftp_list", { savedSessionId, path });
       if (listFilesRequestId === requestId) {
-        set({ entries, loading: false, selectedPath: null });
+        set({ entries, loading: false, selectedPaths: [], selectionAnchorPath: null });
       }
     } catch (error) {
       if (listFilesRequestId === requestId) {
@@ -91,12 +143,24 @@ export const useFileStore = create<FileState>((set, get) => ({
     await invoke("sftp_mkdir", { savedSessionId, path });
     await get().listFiles(savedSessionId);
   },
-  async upload(savedSessionId, localPath, remotePath) {
-    const task = await invoke<TransferTask>("sftp_upload", { savedSessionId, localPath, remotePath });
+  async upload(savedSessionId, localPath, remotePath, options = {}) {
+    const task = await invoke<TransferTask>("sftp_upload", {
+      savedSessionId,
+      localPath,
+      remotePath,
+      kind: options.kind,
+      conflictPolicy: options.conflictPolicy,
+    });
     upsertTransfer(set, task);
   },
-  async download(savedSessionId, remotePath, localPath) {
-    const task = await invoke<TransferTask>("sftp_download", { savedSessionId, remotePath, localPath });
+  async download(savedSessionId, remotePath, localPath, options = {}) {
+    const task = await invoke<TransferTask>("sftp_download", {
+      savedSessionId,
+      remotePath,
+      localPath,
+      kind: options.kind,
+      conflictPolicy: options.conflictPolicy,
+    });
     upsertTransfer(set, task);
   },
   async deletePath(savedSessionId, path, recursive) {
@@ -106,6 +170,12 @@ export const useFileStore = create<FileState>((set, get) => ({
   async renamePath(savedSessionId, from, to) {
     await invoke("sftp_rename", { savedSessionId, from, to });
     await get().listFiles(savedSessionId);
+  },
+  async classifyLocalPaths(paths) {
+    return invoke<LocalPathInfo[]>("sftp_classify_local_paths", { paths });
+  },
+  async checkTransferConflicts(savedSessionId, items) {
+    return invoke<TransferConflict[]>("sftp_check_transfer_conflicts", { savedSessionId, items });
   },
   async loadTransfers(savedSessionId) {
     set({ transferLoading: true });
@@ -126,7 +196,14 @@ export const useFileStore = create<FileState>((set, get) => ({
     });
     const done = await listen<TransferTask>("transfer:done", (event) => {
       if (typeof event.payload === "object" && event.payload && "id" in event.payload) {
-        upsertTransfer(set, event.payload);
+        const task = event.payload;
+        upsertTransfer(set, task);
+        if (task.direction === "upload" && task.status === "done") {
+          const state = get();
+          if (state.activeSavedSessionId === task.saved_session_id) {
+            void state.listFiles(task.saved_session_id, state.path);
+          }
+        }
       }
     });
     return () => {

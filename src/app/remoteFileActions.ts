@@ -1,4 +1,15 @@
 // Author: Liz
+import { open } from "@tauri-apps/plugin-dialog";
+
+import type {
+  FileEntry,
+  LocalPathInfo,
+  TransferConflict,
+  TransferConflictCheckItem,
+  TransferConflictPolicy,
+  TransferKind,
+} from "../features/files/fileStore";
+import { buildDownloadTransferPlans, buildUploadTransferPlans } from "../features/files/fileTransferPlanner";
 import { joinRemotePath, parentRemotePath, remoteFileName } from "../features/files/remotePath";
 
 interface TextInputOptions {
@@ -14,12 +25,28 @@ interface RemoteFileActionDependencies {
   filePath: string;
   setFilePath: (path: string) => void;
   requestTextInput: (options: TextInputOptions) => Promise<string | null>;
+  requestConflictPolicy: (conflicts: TransferConflict[]) => Promise<TransferConflictPolicy | null>;
   listFiles: (savedSessionId: string, path: string) => Promise<unknown> | unknown;
   mkdir: (savedSessionId: string, path: string) => Promise<unknown> | unknown;
-  upload: (savedSessionId: string, localPath: string, remotePath: string) => Promise<unknown> | unknown;
-  download: (savedSessionId: string, remotePath: string, localPath: string) => Promise<unknown> | unknown;
+  upload: (
+    savedSessionId: string,
+    localPath: string,
+    remotePath: string,
+    options?: { kind?: TransferKind; conflictPolicy?: TransferConflictPolicy },
+  ) => Promise<unknown> | unknown;
+  download: (
+    savedSessionId: string,
+    remotePath: string,
+    localPath: string,
+    options?: { kind?: TransferKind; conflictPolicy?: TransferConflictPolicy },
+  ) => Promise<unknown> | unknown;
   deletePath: (savedSessionId: string, path: string, recursive: boolean) => Promise<unknown> | unknown;
   renamePath: (savedSessionId: string, from: string, to: string) => Promise<unknown> | unknown;
+  classifyLocalPaths: (paths: string[]) => Promise<LocalPathInfo[]>;
+  checkTransferConflicts: (savedSessionId: string, items: TransferConflictCheckItem[]) => Promise<TransferConflict[]>;
+  selectUploadFiles?: () => Promise<string[]>;
+  selectUploadDirectories?: () => Promise<string[]>;
+  selectDownloadDirectory?: () => Promise<string | null>;
 }
 
 export function createRemoteFileActions({
@@ -27,12 +54,18 @@ export function createRemoteFileActions({
   filePath,
   setFilePath,
   requestTextInput,
+  requestConflictPolicy,
   listFiles,
   mkdir,
   upload,
   download,
   deletePath,
   renamePath,
+  classifyLocalPaths,
+  checkTransferConflicts,
+  selectUploadFiles = defaultSelectUploadFiles,
+  selectUploadDirectories = defaultSelectUploadDirectories,
+  selectDownloadDirectory = defaultSelectDownloadDirectory,
 }: RemoteFileActionDependencies) {
   async function refreshFiles(path = filePath) {
     if (activeSshSessionId) {
@@ -61,51 +94,70 @@ export function createRemoteFileActions({
     await mkdir(activeSshSessionId, path);
   }
 
-  async function uploadPath() {
+  async function uploadPath(kind: "files" | "directories") {
     if (!activeSshSessionId) return;
-    const localPath = await requestTextInput({
-      title: "上传",
-      label: "本地上传路径",
-      requiredMessage: "请填写本地上传路径",
-    });
-    if (!localPath) return;
-    const remotePath = await requestTextInput({
-      title: "上传目标",
-      label: "远程目标路径",
-      initialValue: joinRemotePath(filePath, remoteFileName(localPath)),
-      requiredMessage: "请填写远程目标路径",
-    });
-    if (!remotePath) return;
-    await upload(activeSshSessionId, localPath, remotePath);
+    const paths = kind === "files" ? await selectUploadFiles() : await selectUploadDirectories();
+    await uploadLocalPaths(paths);
   }
 
-  async function downloadRemotePath(remotePath: string) {
+  async function uploadLocalPaths(paths: string[]) {
+    if (!activeSshSessionId || paths.length === 0) return;
+    const localPaths = await classifyLocalPaths(paths);
+    if (localPaths.length === 0) return;
+    const initialPlans = buildUploadTransferPlans({ currentRemotePath: filePath, localPaths });
+    const conflictPolicy = await resolveConflictPolicy(activeSshSessionId, "upload", initialPlans);
+    if (!conflictPolicy) return;
+    const plans =
+      conflictPolicy === "overwrite"
+        ? initialPlans
+        : buildUploadTransferPlans({ currentRemotePath: filePath, localPaths, conflictPolicy });
+    for (const plan of plans) {
+      await upload(activeSshSessionId, plan.localPath, plan.remotePath, {
+        kind: plan.kind,
+        conflictPolicy: plan.conflictPolicy,
+      });
+    }
+  }
+
+  async function downloadRemotePaths(entries: FileEntry[]) {
     if (!activeSshSessionId) return;
-    const localPath = await requestTextInput({
-      title: "下载",
-      label: "本地保存路径",
-      initialValue: remoteFileName(remotePath),
-      requiredMessage: "请填写本地保存路径",
-    });
-    if (!localPath) return;
-    await download(activeSshSessionId, remotePath, localPath);
+    const localDirectory = await selectDownloadDirectory();
+    if (!localDirectory) return;
+    const initialPlans = buildDownloadTransferPlans({ selectedEntries: entries, localDirectory });
+    if (initialPlans.length === 0) return;
+    const conflictPolicy = await resolveConflictPolicy(activeSshSessionId, "download", initialPlans);
+    if (!conflictPolicy) return;
+    const plans =
+      conflictPolicy === "overwrite"
+        ? initialPlans
+        : buildDownloadTransferPlans({ selectedEntries: entries, localDirectory, conflictPolicy });
+    for (const plan of plans) {
+      await download(activeSshSessionId, plan.remotePath, plan.localPath, {
+        kind: plan.kind,
+        conflictPolicy: plan.conflictPolicy,
+      });
+    }
   }
 
   async function renameRemotePath(from: string) {
     if (!activeSshSessionId) return;
-    const to = await requestTextInput({
+    const nextName = await requestTextInput({
       title: "重命名",
       label: "重命名为",
-      initialValue: from,
-      requiredMessage: "请填写新路径",
+      initialValue: remoteFileName(from),
+      requiredMessage: "请填写新名称",
     });
-    if (!to || to === from) return;
+    if (!nextName) return;
+    const to = joinRemotePath(parentRemotePath(from), nextName);
+    if (to === from) return;
     await renamePath(activeSshSessionId, from, to);
   }
 
-  async function deleteRemotePath(path: string, recursive: boolean) {
+  async function deleteRemotePaths(paths: string[], recursive: boolean) {
     if (!activeSshSessionId) return;
-    await deletePath(activeSshSessionId, path, recursive);
+    for (const path of paths) {
+      await deletePath(activeSshSessionId, path, recursive);
+    }
   }
 
   return {
@@ -114,8 +166,60 @@ export function createRemoteFileActions({
     openParentDirectory,
     createRemoteDirectory,
     uploadPath,
-    downloadRemotePath,
+    uploadLocalPaths,
+    downloadRemotePaths,
     renameRemotePath,
-    deleteRemotePath,
+    deleteRemotePaths,
   };
+
+  async function resolveConflictPolicy(
+    savedSessionId: string,
+    direction: "upload" | "download",
+    plans: Array<{ localPath: string; remotePath: string; kind: TransferKind; conflictPolicy: TransferConflictPolicy }>,
+  ) {
+    const conflicts = await checkTransferConflicts(
+      savedSessionId,
+      plans.map((plan) => ({
+        direction,
+        localPath: plan.localPath,
+        remotePath: plan.remotePath,
+        kind: plan.kind,
+      })),
+    );
+    if (conflicts.length === 0) return "overwrite" satisfies TransferConflictPolicy;
+    return requestConflictPolicy(conflicts);
+  }
+}
+
+async function defaultSelectUploadFiles() {
+  const selected = await open({
+    title: "选择要上传的文件",
+    multiple: true,
+    directory: false,
+  });
+  return normalizeDialogSelection(selected);
+}
+
+async function defaultSelectUploadDirectories() {
+  const selected = await open({
+    title: "选择要上传的文件夹",
+    multiple: true,
+    directory: true,
+    recursive: true,
+  });
+  return normalizeDialogSelection(selected);
+}
+
+async function defaultSelectDownloadDirectory() {
+  const selected = await open({
+    title: "选择下载目录",
+    multiple: false,
+    directory: true,
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+function normalizeDialogSelection(selected: string | string[] | null) {
+  if (!selected) return [];
+  return Array.isArray(selected) ? selected : [selected];
 }

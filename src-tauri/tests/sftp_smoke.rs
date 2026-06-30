@@ -3,7 +3,10 @@ use std::{env, fs, path::Path};
 
 use uuid::Uuid;
 use zterm_lib::{
-    models::session::{AuthMode, SavedSession, SessionType},
+    models::{
+        session::{AuthMode, SavedSession, SessionType},
+        sftp::{TransferConflictPolicy, TransferKind},
+    },
     services::sftp_service::SftpService,
 };
 
@@ -84,6 +87,8 @@ async fn run_sftp_smoke(
                 &session,
                 path_string(&local_root)?.as_str(),
                 &remote_root,
+                Some(TransferKind::Directory),
+                TransferConflictPolicy::Overwrite,
                 |_| Ok(()),
             )
             .await
@@ -104,6 +109,8 @@ async fn run_sftp_smoke(
                 &session,
                 &remote_root,
                 path_string(&download_root)?.as_str(),
+                Some(TransferKind::Directory),
+                TransferConflictPolicy::Overwrite,
                 |_| Ok(()),
             )
             .await
