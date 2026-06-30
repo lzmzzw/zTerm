@@ -1,37 +1,19 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#23D5C5"/>
-      <stop offset="50%" stop-color="#4A8DFF"/>
-      <stop offset="100%" stop-color="#7A2FFF"/>
-    </linearGradient>
-    <linearGradient id="zGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#23D5C5"/>
-      <stop offset="100%" stop-color="#4A5BFF"/>
-    </linearGradient>
-  </defs>
-
-  <rect x="16" y="16" width="992" height="992" rx="150" fill="url(#borderGrad)"/>
-  <rect x="47" y="47" width="930" height="930" rx="131" fill="#1C1426"/>
-
-  <g transform="translate(512 512) scale(1.24) translate(-512 -512)">
-    <path
-      d="M340 290
-         H735
-         Q775 290 750 335
-         L470 635
-         H740
-         Q780 635 755 675
-         L710 745
-         Q695 770 665 770
-         H305
-         Q245 770 285 715
-         L570 410
-         H325
-         Q290 410 305 380
-         L340 310
-         Q350 290 340 290 Z"
-      fill="url(#zGrad)"/>
-  </g>
+<svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
+ <defs>
+  <linearGradient y2="100%" x2="100%" y1="0%" x1="0%" id="borderGrad">
+   <stop stop-color="#23D5C5" offset="0%"/>
+   <stop stop-color="#4A8DFF" offset="50%"/>
+   <stop stop-color="#7A2FFF" offset="100%"/>
+  </linearGradient>
+  <linearGradient y2="100%" x2="100%" y1="0%" x1="0%" id="zGrad">
+   <stop stop-color="#23D5C5" offset="0%"/>
+   <stop stop-color="#4A5BFF" offset="100%"/>
+  </linearGradient>
+ </defs>
+ <g>
+  <title>Layer 1</title>
+  <rect id="svg_1" fill="url(#borderGrad)" rx="146.87" height="984" width="984" y="20" x="20"/>
+  <rect id="svg_2" fill="#1C1426" rx="128.51" height="922.81" width="922.81" y="50.6" x="50.6"/>
+  <path id="svg_3" fill="url(#zGrad)" d="m295.60737,218.27002l483.44,0q48.95,0 18.35,55.07l-342.68,367.17l330.44,0q48.96,0 18.36,48.95l-55.07,85.67q-18.36,30.6 -55.08,30.6l-440.59,0q-73.44,0 -24.48,-67.31l348.81,-373.29l-299.86,0q-42.83,0 -24.47,-36.71l42.83,-85.67q12.24,-24.48 0,-24.48z"/>
+ </g>
 </svg>
