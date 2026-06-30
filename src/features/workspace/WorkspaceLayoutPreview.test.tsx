@@ -83,8 +83,9 @@ describe("WorkspaceLayoutPreview", () => {
 
     expect(view.container.querySelectorAll(".zt-workspace-layout-pane")).toHaveLength(4);
     expect(view.container.querySelector(".zt-workspace-layout-pane.selected")?.getAttribute("data-pane-id")).toBe("pane-b");
+    expect(view.container.querySelector(".zt-workspace-layout-pane-title")).toBeNull();
     expect(view.container.textContent).toContain("172.16.41.181");
-    expect(view.container.textContent).toContain("/srv/app");
+    expect(view.container.textContent).not.toContain("/srv/app");
 
     view.unmount();
   });

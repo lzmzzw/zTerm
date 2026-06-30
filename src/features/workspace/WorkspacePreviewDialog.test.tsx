@@ -102,13 +102,78 @@ describe("WorkspacePreviewDialog", () => {
 
     const workspaceTab = view.container.querySelector(".zt-workspace-preview-workspace-tabs [role='tab']");
     const paneTab = view.container.querySelector(".zt-workspace-preview-pane-tab-list [role='tab']");
-    const inspectorTitle = view.container.querySelector(".zt-workspace-preview-inspector-title strong");
     const nameInput = view.container.querySelector<HTMLInputElement>('input[aria-label="编辑标签名称"]');
 
     expect(workspaceTab).toBeNull();
     expect(paneTab).toBeNull();
-    expect(inspectorTitle?.textContent).toBe("");
-    expect(nameInput?.value).toBe("新建终端");
+    expect(view.container.querySelector(".zt-workspace-preview-inspector-title")).toBeNull();
+    expect(nameInput).toBeNull();
+    view.unmount();
+  });
+
+  it("keeps the workspace editor focused on terminal tab names", () => {
+    const view = render(
+      <WorkspacePreviewDialog
+        mode="edit"
+        workspace={{
+          ...emptyWorkspaceDefinition(),
+          name: "工作区2",
+          tabs: [
+            {
+              ...emptyWorkspaceDefinition().tabs[0],
+              title: "172.16.41.180 (1)",
+              root: {
+                kind: "leaf",
+                id: "pane-1",
+                title: "git bash",
+                runtime_session_id: null,
+                saved_session_id: null,
+                active_terminal_tab_id: "pane-1-tab-1",
+                terminal_tabs: [
+                  {
+                    id: "pane-1-tab-1",
+                    title: "git bash",
+                    runtime_session_id: null,
+                    saved_session_id: null,
+                    connection_source: "default_local",
+                    path: "/c/Users/PKUWHAI",
+                    startup_command: null,
+                  },
+                  {
+                    id: "pane-1-tab-2",
+                    title: "Git Bash",
+                    runtime_session_id: null,
+                    saved_session_id: null,
+                    connection_source: "default_local",
+                    path: "/home/ubuntu",
+                    startup_command: null,
+                  },
+                ],
+              },
+            },
+          ],
+        }}
+        sessions={[]}
+        onCancel={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    const canvas = view.container.querySelector(".zt-workspace-preview-canvas");
+    const paneTabList = view.container.querySelector(".zt-workspace-preview-pane-tab-list");
+
+    expect(view.container.textContent).not.toContain("工作区名称");
+    expect(view.container.querySelector(".zt-workspace-preview-workspace-tabs [role='tab']")).toBeNull();
+    expect(view.container.querySelector(".zt-workspace-layout-pane-title")).toBeNull();
+    expect(view.container.querySelector(".zt-workspace-preview-inspector-title")).toBeNull();
+    expect(view.container.querySelector('input[aria-label="编辑标签名称"]')).toBeNull();
+    expect(canvas?.textContent).toContain("git bash");
+    expect(canvas?.textContent).toContain("Git Bash");
+    expect(canvas?.textContent).not.toContain("pane-1");
+    expect(canvas?.textContent).not.toContain("默认本地终端");
+    expect(canvas?.textContent).not.toContain("/c/Users/PKUWHAI");
+    expect(canvas?.querySelector(".zt-workspace-layout-pane-tabs span.active")?.textContent).toBe("git bash");
+    expect(paneTabList?.classList.contains("horizontal")).toBe(true);
     view.unmount();
   });
 

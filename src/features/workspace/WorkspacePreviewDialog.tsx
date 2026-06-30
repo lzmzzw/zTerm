@@ -112,32 +112,31 @@ export function WorkspacePreviewDialog({
           </button>
         </header>
 
-        <div className="zt-workspace-preview-body">
+        <div className={visibleTabs.length > 1 ? "zt-workspace-preview-body has-workspace-tabs" : "zt-workspace-preview-body"}>
           <div className="zt-workspace-editor-fields">
-            <label>
-              工作区名称
-              <input
-                aria-label="编辑工作区名称"
-                value={draft.name}
-                onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
-              />
-            </label>
+            <input
+              aria-label="编辑工作区名称"
+              value={draft.name}
+              onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+            />
           </div>
 
-          <div className="zt-workspace-preview-workspace-tabs" role="tablist" aria-label="工作区标签">
-            {visibleTabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-label={`切换工作区标签 ${tab.title}`}
-                aria-selected={tab.id === activeWorkspaceTabId}
-                onClick={() => selectWorkspaceTab(tab.id)}
-              >
-                {tab.title}
-              </button>
-            ))}
-          </div>
+          {visibleTabs.length > 1 ? (
+            <div className="zt-workspace-preview-workspace-tabs" role="tablist" aria-label="工作区标签">
+              {visibleTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-label={`切换工作区标签 ${tab.title}`}
+                  aria-selected={tab.id === activeWorkspaceTabId}
+                  onClick={() => selectWorkspaceTab(tab.id)}
+                >
+                  {tab.title}
+                </button>
+              ))}
+            </div>
+          ) : null}
 
           <div className="zt-workspace-preview-layout-editor">
             <div className="zt-workspace-preview-canvas">
@@ -206,16 +205,11 @@ function TerminalTabInspector({
     selectedTerminalTab.connection_source === "missing"
       ? "__missing__"
       : selectedTerminalTab.saved_session_id ?? "__default_local__";
-  const selectedTitle = getTerminalTabDisplayTitle(selectedTerminalTab);
   const visibleTerminalTabs = terminalTabs.filter((terminalTab) => !isEmptyTerminalTab(terminalTab));
 
   return (
     <>
-      <div className="zt-workspace-preview-inspector-title">
-        <strong>{selectedTitle}</strong>
-        <code>{paneId}</code>
-      </div>
-      <div className="zt-workspace-preview-pane-tab-list" role="tablist" aria-label={`${paneId} 终端标签`}>
+      <div className="zt-workspace-preview-pane-tab-list horizontal" role="tablist" aria-label={`${paneId} 终端标签`}>
         {visibleTerminalTabs.map((terminalTab) => (
           <button
             key={terminalTab.id}
@@ -230,16 +224,6 @@ function TerminalTabInspector({
         ))}
       </div>
       <div className="zt-workspace-preview-inspector-fields">
-        <label>
-          名称
-          <input
-            aria-label="编辑标签名称"
-            value={selectedTerminalTab.title}
-            onChange={(event) =>
-              onUpdate(paneId, selectedTerminalTab.id, (current) => ({ ...current, title: event.target.value }))
-            }
-          />
-        </label>
         <label>
           连接
           <ZtSelect
@@ -309,10 +293,6 @@ function isEmptyWorkspaceTab(tab: WorkspaceDefinitionDraft["tabs"][number]) {
 
   const terminalTabs = tab.root.terminal_tabs ?? [];
   return terminalTabs.length === 0 || terminalTabs.every(isEmptyTerminalTab);
-}
-
-function getTerminalTabDisplayTitle(terminalTab: PaneTerminalTab) {
-  return isEmptyTerminalTab(terminalTab) ? "" : terminalTab.title;
 }
 
 function isEmptyTerminalTab(terminalTab: PaneTerminalTab) {

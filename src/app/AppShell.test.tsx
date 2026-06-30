@@ -1238,7 +1238,7 @@ describe("AppShell", () => {
     const dialog = view.container.querySelector('.zt-workspace-preview-dialog[aria-label="编辑工作区 运维巡检"]');
     expect(dialog).not.toBe(null);
     expect(dialog?.querySelector('[aria-label="编辑工作区名称"]')).toHaveProperty("value", "运维巡检");
-    expect(dialog?.textContent).toContain("主工作台");
+    expect(dialog?.textContent).not.toContain("主工作台");
     expect(dialog?.textContent).toContain("生产机");
     expect(dialog?.querySelector('[aria-label="编辑标签路径"]')).toHaveProperty("value", "/srv/app");
     expect(dialog?.querySelector('[aria-label="编辑标签连接"]')).toHaveProperty("value", "session-1");
@@ -1317,7 +1317,7 @@ describe("AppShell", () => {
       (dialog?.querySelector('[data-pane-id="pane-5"]') as HTMLButtonElement).click();
     });
 
-    expect(dialog?.querySelector(".zt-workspace-preview-inspector")?.textContent).toContain("pane-5");
+    expect(dialog?.querySelector(".zt-workspace-preview-inspector")?.textContent).not.toContain("pane-5");
     expect(dialog?.querySelector('[aria-label="终端标签 pane-5-tab-1"]')).not.toBe(null);
     expect(dialog?.querySelector('[aria-label="编辑标签连接"]')).toHaveProperty("value", "session-1");
     expect(dialog?.querySelector('[aria-label="编辑标签路径"]')).toHaveProperty("value", "/srv/app");
