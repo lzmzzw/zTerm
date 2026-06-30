@@ -236,6 +236,12 @@ function LeafPane({
     const delayMs = active ? ACTIVE_XTERM_MOUNT_DELAY_MS : INACTIVE_XTERM_MOUNT_DELAY_MS;
     return scheduleAfterPaintDelay(() => {
       if (scheduledRuntimeSessionIdRef.current === activeRuntimeSessionId) {
+        const replayData = useTerminalStore.getState().output[activeRuntimeSessionId] ?? "";
+        setXtermReplay((current) => ({
+          data: replayData,
+          key: current.runtimeSessionId === activeRuntimeSessionId ? current.key + 1 : 1,
+          runtimeSessionId: activeRuntimeSessionId,
+        }));
         setXtermRuntimeSessionId(activeRuntimeSessionId);
       }
     }, delayMs);
@@ -243,13 +249,14 @@ function LeafPane({
 
   useEffect(() => {
     if (!xtermLive || !activeRuntimeSessionId) return;
+    if (xtermReplay.runtimeSessionId === activeRuntimeSessionId) return;
     const replayData = useTerminalStore.getState().output[activeRuntimeSessionId] ?? "";
     setXtermReplay((current) => ({
       data: replayData,
       key: current.runtimeSessionId === activeRuntimeSessionId ? current.key + 1 : 1,
       runtimeSessionId: activeRuntimeSessionId,
     }));
-  }, [activeRuntimeSessionId, xtermLive]);
+  }, [activeRuntimeSessionId, xtermLive, xtermReplay.runtimeSessionId]);
 
   const handleInput = useCallback(
     (data: string) => {

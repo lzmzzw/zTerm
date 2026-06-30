@@ -1,5 +1,5 @@
 // Author: Liz
-import { act, type ReactElement } from "react";
+import { StrictMode, act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -409,6 +409,25 @@ describe("XtermPane", () => {
     view.unmount();
   });
 
+  it("replays an initial terminal status query after StrictMode remounts the terminal effect", () => {
+    const view = render(
+      <StrictMode>
+        <XtermPane
+          data={"\x1b[6n"}
+          liveData={"\x1b[6n"}
+          liveSerial={1}
+          replayKey={1}
+          streamId="runtime-1"
+        />
+      </StrictMode>,
+    );
+
+    expect(terminalMock.instances.length).toBeGreaterThanOrEqual(2);
+    const remountedTerminal = terminalMock.instances[terminalMock.instances.length - 1];
+    expect(remountedTerminal?.write).toHaveBeenCalledWith("\x1b[6n");
+    view.unmount();
+  });
+
   it("allows live replay that only contains a terminal status query to generate a CPR response", async () => {
     const onInput = vi.fn();
     const view = render(
@@ -447,6 +466,44 @@ describe("XtermPane", () => {
 
     expect(onInput).toHaveBeenCalledWith("\x1b[1;1R");
     expect(onInput).toHaveBeenCalledWith("e");
+    view.unmount();
+  });
+
+  it("allows an initial local shell handshake with cursor controls to generate a CPR response", () => {
+    const onInput = vi.fn();
+    const view = render(<XtermPane data="" streamId="runtime-1" onInput={onInput} />);
+    const terminal = terminalMock.instances[0];
+    terminal.write.mockImplementationOnce((data: string, callback?: () => void) => {
+      if (data.includes("\x1b[6n")) {
+        terminal.dataListener?.("\x1b[1;1R");
+      }
+      callback?.();
+    });
+
+    view.rerender(<XtermPane data={"\x1b[?25l\x1b[6n"} streamId="runtime-1" onInput={onInput} />);
+
+    expect(onInput).toHaveBeenCalledWith("\x1b[1;1R");
+    view.unmount();
+  });
+
+  it("allows a new stream status query to generate CPR after a pending suppressed replay", () => {
+    const onInput = vi.fn();
+    const view = render(<XtermPane data="" streamId="runtime-old" onInput={onInput} />);
+    const terminal = terminalMock.instances[0];
+    terminal.write.mockImplementationOnce(() => undefined);
+
+    view.rerender(<XtermPane data={"previous output\x1b[6n"} streamId="runtime-old" onInput={onInput} />);
+    expect(onInput).not.toHaveBeenCalled();
+
+    terminal.write.mockImplementationOnce((data: string, callback?: () => void) => {
+      if (data.includes("\x1b[6n")) {
+        terminal.dataListener?.("\x1b[1;1R");
+      }
+      callback?.();
+    });
+    view.rerender(<XtermPane data={"\x1b[?25l\x1b[6n"} streamId="runtime-new" onInput={onInput} />);
+
+    expect(onInput).toHaveBeenCalledWith("\x1b[1;1R");
     view.unmount();
   });
 
@@ -509,6 +566,29 @@ describe("XtermPane", () => {
 
     expect(terminal.write).toHaveBeenCalledTimes(2);
     expect(terminal.write.mock.calls[1][0]).toBe(" next");
+    view.unmount();
+  });
+
+  it("does not mark a live chunk as processed before delayed replay data writes", () => {
+    const view = render(
+      <XtermPane data="" liveData={"PS C:\\workspace> "} liveSerial={1} replayKey={0} streamId="runtime-1" />,
+    );
+    const terminal = terminalMock.instances[0];
+
+    expect(terminal.write).toHaveBeenCalledTimes(1);
+    expect(terminal.write).toHaveBeenCalledWith("PS C:\\workspace> ");
+
+    view.rerender(
+      <XtermPane
+        data={"PS C:\\workspace> "}
+        liveData={"PS C:\\workspace> "}
+        liveSerial={1}
+        replayKey={1}
+        streamId="runtime-1"
+      />,
+    );
+
+    expect(terminal.write).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 

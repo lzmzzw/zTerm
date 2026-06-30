@@ -76,9 +76,38 @@ async function flushVisualSwitchFrame() {
   });
 }
 
+function installControlledPaintTimers() {
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const originalCancelAnimationFrame = window.cancelAnimationFrame;
+  let frameId = 0;
+  const frameTimers = new Map<number, number>();
+
+  window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+    const id = (frameId += 1);
+    const timerId = window.setTimeout(() => {
+      frameTimers.delete(id);
+      callback(performance.now());
+    }, 0);
+    frameTimers.set(id, timerId);
+    return id;
+  }) as typeof window.requestAnimationFrame;
+  window.cancelAnimationFrame = ((id: number) => {
+    const timerId = frameTimers.get(id);
+    if (timerId !== undefined) {
+      window.clearTimeout(timerId);
+    }
+    frameTimers.delete(id);
+  }) as typeof window.cancelAnimationFrame;
+
+  return () => {
+    window.requestAnimationFrame = originalRequestAnimationFrame;
+    window.cancelAnimationFrame = originalCancelAnimationFrame;
+  };
+}
+
 describe("SplitPaneView", () => {
   beforeEach(() => {
-    useTerminalStore.setState({ runtimes: {}, output: {} });
+    useTerminalStore.setState({ runtimes: {}, output: {}, outputChunks: {}, visualOutputTail: {} });
   });
 
   it("hides empty unconnected pane tabs while keeping the add button", () => {
@@ -163,6 +192,128 @@ describe("SplitPaneView", () => {
 
     expect(view.container.querySelector(".zt-xterm-pane")).not.toBeNull();
     expect(view.container.querySelector('[aria-label="空终端分栏"]')).toBeNull();
+    view.unmount();
+  });
+
+  it("replays local output that arrived before the delayed xterm mount", async () => {
+    useTerminalStore.setState({
+      runtimes: {
+        "runtime-local": {
+          runtime_session_id: "runtime-local",
+          saved_session_id: null,
+          history_scope_kind: "local_profile",
+          history_scope_id: "pwsh",
+          pane_id: "pane-a",
+          title: "PowerShell",
+          kind: "local",
+          cols: 120,
+          rows: 32,
+        },
+      },
+      output: {},
+      outputChunks: {},
+      visualOutputTail: {},
+    });
+    const root: PaneNode = {
+      kind: "leaf",
+      id: "pane-a",
+      runtime_session_id: "runtime-local",
+      saved_session_id: null,
+      title: "PowerShell",
+      active_terminal_tab_id: "pane-a-tab-1",
+      terminal_tabs: [
+        {
+          id: "pane-a-tab-1",
+          title: "PowerShell",
+          runtime_session_id: "runtime-local",
+          saved_session_id: null,
+          connection_source: "default_local",
+        },
+      ],
+    };
+    const view = render(
+      <SplitPaneView
+        root={root}
+        activePaneId="pane-a"
+        onActivatePane={vi.fn()}
+        onAddPaneTab={vi.fn()}
+        onSelectPaneTab={vi.fn()}
+        onClosePaneTab={vi.fn()}
+        onSplitPane={vi.fn()}
+        onClosePane={vi.fn()}
+      />,
+    );
+
+    expect(view.container.querySelector(".zt-xterm-pane")).toBeNull();
+
+    act(() => {
+      useTerminalStore.getState().appendOutput("runtime-local", "PS C:\\workspace> ");
+    });
+
+    await flushDeferredXtermMount();
+
+    expect(view.container.querySelector(".zt-xterm-pane")?.textContent).toContain("PS C:\\workspace> ");
+    view.unmount();
+  });
+
+  it("does not flash terminal status queries in the snapshot layer before xterm mounts", () => {
+    useTerminalStore.setState({
+      runtimes: {
+        "runtime-local": {
+          runtime_session_id: "runtime-local",
+          saved_session_id: null,
+          history_scope_kind: "local_profile",
+          history_scope_id: "pwsh",
+          pane_id: "pane-a",
+          title: "PowerShell",
+          kind: "local",
+          cols: 120,
+          rows: 32,
+        },
+      },
+      output: {
+        "runtime-local": "\x1b[?25l\x1b[6n",
+      },
+      outputChunks: {},
+      visualOutputTail: {
+        "runtime-local": "\x1b[?25l\x1b[6n",
+      },
+    });
+    const root: PaneNode = {
+      kind: "leaf",
+      id: "pane-a",
+      runtime_session_id: "runtime-local",
+      saved_session_id: null,
+      title: "PowerShell",
+      active_terminal_tab_id: "pane-a-tab-1",
+      terminal_tabs: [
+        {
+          id: "pane-a-tab-1",
+          title: "PowerShell",
+          runtime_session_id: "runtime-local",
+          saved_session_id: null,
+          connection_source: "default_local",
+        },
+      ],
+    };
+    const view = render(
+      <SplitPaneView
+        root={root}
+        activePaneId="pane-a"
+        onActivatePane={vi.fn()}
+        onAddPaneTab={vi.fn()}
+        onSelectPaneTab={vi.fn()}
+        onClosePaneTab={vi.fn()}
+        onSplitPane={vi.fn()}
+        onClosePane={vi.fn()}
+      />,
+    );
+
+    expect(view.container.querySelector(".zt-xterm-pane")).toBeNull();
+    expect(view.container.querySelector(".zt-terminal-snapshot-pane")?.textContent).toContain(
+      "正在准备 PowerShell",
+    );
+    expect(view.container.textContent).not.toContain("[6n");
     view.unmount();
   });
 
@@ -355,7 +506,10 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
-  it("mounts inactive split panes in the active workspace after showing their snapshots first", async () => {
+  it("mounts inactive split panes in the active workspace after showing their snapshots first", () => {
+    vi.useFakeTimers();
+    const restorePaintTimers = installControlledPaintTimers();
+    let view: ReturnType<typeof render> | null = null;
     useTerminalStore.setState({
       runtimes: {
         "runtime-active": {
@@ -430,38 +584,45 @@ describe("SplitPaneView", () => {
         ],
       },
     };
-    const view = render(
-      <SplitPaneView
-        root={root}
-        activePaneId="pane-a"
-        onActivatePane={vi.fn()}
-        onAddPaneTab={vi.fn()}
-        onSelectPaneTab={vi.fn()}
-        onClosePaneTab={vi.fn()}
-        onSplitPane={vi.fn()}
-        onClosePane={vi.fn()}
-      />,
-    );
+    try {
+      view = render(
+        <SplitPaneView
+          root={root}
+          activePaneId="pane-a"
+          onActivatePane={vi.fn()}
+          onAddPaneTab={vi.fn()}
+          onSelectPaneTab={vi.fn()}
+          onClosePaneTab={vi.fn()}
+          onSplitPane={vi.fn()}
+          onClosePane={vi.fn()}
+        />,
+      );
 
-    expect(view.container.querySelectorAll(".zt-xterm-pane")).toHaveLength(0);
-    expect(view.container.textContent).toContain("inactive snapshot");
-    expect(view.container.textContent).not.toContain("inactive output");
+      expect(view.container.querySelectorAll(".zt-xterm-pane")).toHaveLength(0);
+      expect(view.container.textContent).toContain("inactive snapshot");
+      expect(view.container.textContent).not.toContain("inactive output");
 
-    await flushDeferredXtermMount();
+      act(() => {
+        vi.advanceTimersByTime(60);
+      });
 
-    expect(view.container.querySelectorAll(".zt-xterm-pane")).toHaveLength(1);
-    expect(view.container.textContent).toContain("active output");
-    expect(view.container.textContent).toContain("inactive snapshot");
-    expect(view.container.textContent).not.toContain("inactive output");
+      expect(view.container.querySelectorAll(".zt-xterm-pane")).toHaveLength(1);
+      expect(view.container.textContent).toContain("active output");
+      expect(view.container.textContent).toContain("inactive snapshot");
+      expect(view.container.textContent).not.toContain("inactive output");
 
-    await act(async () => {
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
-    });
+      act(() => {
+        vi.advanceTimersByTime(60);
+      });
 
-    expect(view.container.querySelectorAll(".zt-xterm-pane")).toHaveLength(2);
-    expect(view.container.textContent).toContain("active output");
-    expect(view.container.textContent).toContain("inactive output");
-    view.unmount();
+      expect(view.container.querySelectorAll(".zt-xterm-pane")).toHaveLength(2);
+      expect(view.container.textContent).toContain("active output");
+      expect(view.container.textContent).toContain("inactive output");
+    } finally {
+      view?.unmount();
+      restorePaintTimers();
+      vi.useRealTimers();
+    }
   });
 
   it("renders a tab and add button for every split leaf pane", () => {

@@ -69,6 +69,7 @@ const KERMINAL_LIGHT_TERMINAL_THEME = {
 };
 const MAX_REPLAY_OUTPUT_CHARS = 16_000;
 const TERMINAL_STATUS_QUERY_PATTERN = /\x1b\[[0-9?;]*n/g;
+const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*?(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]/g;
 
 export function XtermPane({
   data = "",
@@ -217,6 +218,10 @@ export function XtermPane({
       terminalRef.current = null;
       searchAddonRef.current = null;
       writtenLengthRef.current = 0;
+      streamIdRef.current = null;
+      replayKeyRef.current = null;
+      liveSerialRef.current = null;
+      replayingOutputRef.current = false;
       lastResizeRef.current = null;
       scheduleNextTask(() => terminal.dispose());
     };
@@ -232,7 +237,17 @@ export function XtermPane({
       if (!streamChanged && !replayChanged) return;
       streamIdRef.current = streamId;
       replayKeyRef.current = replayKey;
-      liveSerialRef.current = liveSerial ?? null;
+      const replayCoversLiveData = isLiveDataCoveredByReplay(data, liveData, liveSerial);
+      if (
+        !streamChanged &&
+        replayChanged &&
+        replayCoversLiveData &&
+        liveSerialRef.current === liveSerial &&
+        writtenLengthRef.current === data.length
+      ) {
+        return;
+      }
+      liveSerialRef.current = replayCoversLiveData ? (liveSerial ?? null) : null;
       writtenLengthRef.current = data.length;
       terminal.clear();
       if (data) {
@@ -266,7 +281,7 @@ export function XtermPane({
       writeTerminalOutput(terminal, data, !isOnlyTerminalStatusQuery(data), replayingOutputRef);
     }
     writtenLengthRef.current = data.length;
-  }, [data, liveSerial, replayKey, streamId]);
+  }, [data, liveData, liveSerial, replayKey, streamId]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -418,6 +433,7 @@ function writeTerminalOutput(
   replayingOutputRef: { current: boolean },
 ) {
   if (!suppressGeneratedInput) {
+    replayingOutputRef.current = false;
     terminal.write(data);
     return;
   }
@@ -440,7 +456,20 @@ function prepareReplayOutput(data: string) {
 
 function isOnlyTerminalStatusQuery(data: string) {
   const withoutQueries = data.replace(TERMINAL_STATUS_QUERY_PATTERN, "");
-  return withoutQueries.trim().length === 0 && withoutQueries !== data;
+  if (withoutQueries === data) {
+    return false;
+  }
+  return data.replace(ANSI_CONTROL_SEQUENCE_PATTERN, "").trim().length === 0;
+}
+
+function isLiveDataCoveredByReplay(data: string, liveData: string | null, liveSerial: number | null | undefined) {
+  if (liveSerial === undefined || liveSerial === null) {
+    return false;
+  }
+  if (!liveData) {
+    return true;
+  }
+  return data.endsWith(liveData);
 }
 
 function isControlCharacter(character: string) {
