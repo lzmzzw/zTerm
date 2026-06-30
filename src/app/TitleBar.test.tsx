@@ -118,6 +118,19 @@ describe("TitleBar", () => {
     view.unmount();
   });
 
+  it("renders the standalone app logo in the titlebar corner", () => {
+    const view = render(<TitleBar />);
+    const logo = view.container.querySelector(".zt-titlebar-logo");
+
+    expect(logo).not.toBeNull();
+    expect(logo?.tagName).toBe("IMG");
+    expect(logo?.getAttribute("alt")).toBe("zTerm");
+    expect(logo?.getAttribute("src")).toContain("data:image/svg+xml");
+    expect(logo?.getAttribute("src")).toContain("borderGrad");
+
+    view.unmount();
+  });
+
   it("does not render sidebar, settings, or search controls in the titlebar", () => {
     const view = render(<TitleBar />);
 

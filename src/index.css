@@ -366,7 +366,7 @@ button {
 .zt-titlebar {
   grid-column: 1 / 4;
   display: grid;
-  grid-template-columns: minmax(80px, 1fr) 118px;
+  grid-template-columns: 40px minmax(40px, 1fr) 118px;
   align-items: center;
   height: 30px;
   border-bottom: 1px solid var(--zt-border-subtle);
@@ -399,6 +399,23 @@ button {
   width: 18px;
   height: 18px;
   border-radius: 4px;
+  object-fit: contain;
+}
+
+.zt-titlebar-logo-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 30px;
+  pointer-events: none;
+}
+
+.zt-titlebar-logo {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
   object-fit: contain;
 }
 

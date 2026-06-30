@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy, Minus, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { MouseEvent } from "react";
+import zTermLogoUrl from "../assets/zterm-logo.svg";
 
 export function TitleBar() {
   const [maximized, setMaximized] = useState(false);
@@ -40,6 +41,9 @@ export function TitleBar() {
 
   return (
     <header className="zt-titlebar">
+      <div className="zt-titlebar-logo-slot" aria-hidden="true">
+        <img className="zt-titlebar-logo" src={zTermLogoUrl} alt="zTerm" />
+      </div>
       <div className="zt-titlebar-drag-region" data-tauri-drag-region onMouseDown={startWindowDrag} />
       <div className="zt-window-actions" aria-label="窗口操作">
         <button
