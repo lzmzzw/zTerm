@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { useWorkspaceStore } from "./workspaceStore";
-import type { WorkspaceDefinition, WorkspaceRuntime } from "./types";
+import type { PaneNode, WorkspaceDefinition, WorkspaceRuntime } from "./types";
 
 function runtimeWorkspace(id: string, runtimeSessionId: string): WorkspaceRuntime {
   const now = 1;
@@ -47,6 +47,11 @@ function runtimeWorkspace(id: string, runtimeSessionId: string): WorkspaceRuntim
       },
     ],
   };
+}
+
+function leafPaneIds(root: PaneNode): string[] {
+  if (root.kind === "leaf") return [root.id];
+  return [...leafPaneIds(root.first), ...leafPaneIds(root.second)];
 }
 
 describe("workspaceStore pane tabs", () => {
@@ -386,6 +391,64 @@ describe("workspaceStore pane tabs", () => {
     if (workspaceTab.root.second.kind !== "leaf") return;
     expect(workspaceTab.root.second.terminal_tabs).toHaveLength(2);
     expect(workspaceTab.root.second.title).toBe("新建终端");
+  });
+
+  it("generates a unique pane id when splitting a restored layout with existing default ids", () => {
+    const workspace: WorkspaceRuntime = {
+      id: "workspace-split",
+      name: "恢复分栏",
+      status: "running",
+      active_tab_id: "tab-1",
+      activeTabId: "tab-1",
+      sort_order: 0,
+      created_at_ms: 1,
+      updated_at_ms: 1,
+      tabs: [
+        {
+          id: "tab-1",
+          title: "主工作区",
+          active_pane_id: "pane-1",
+          root: {
+            kind: "split",
+            id: "split-root",
+            direction: "horizontal",
+            ratio: 0.5,
+            first: {
+              kind: "leaf",
+              id: "pane-1",
+              title: "A",
+              runtime_session_id: null,
+              saved_session_id: null,
+            },
+            second: {
+              kind: "leaf",
+              id: "pane-2",
+              title: "B",
+              runtime_session_id: null,
+              saved_session_id: null,
+            },
+          },
+          sort_order: 0,
+          created_at_ms: 1,
+          updated_at_ms: 1,
+        },
+      ],
+    };
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      tabs: workspace.tabs,
+      activeTabId: workspace.activeTabId,
+    });
+
+    useWorkspaceStore.getState().splitActivePane("vertical");
+
+    const workspaceTab = useWorkspaceStore.getState().tabs[0];
+    const paneIds = leafPaneIds(workspaceTab.root);
+    expect(new Set(paneIds).size).toBe(paneIds.length);
+    expect(paneIds.filter((paneId) => paneId === "pane-2")).toHaveLength(1);
+    expect(workspaceTab.active_pane_id).not.toBe("pane-1");
+    expect(workspaceTab.active_pane_id).not.toBe("pane-2");
   });
 
   it("returns the created pane tab and binds a runtime to that exact tab even after focus changes", () => {

@@ -422,7 +422,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       ...workspace,
       tabs: workspace.tabs.map((tab) => {
         if (tab.id !== workspace.activeTabId) return tab;
-        const newPane = createPane();
+        const newPane = createPane(tab.root);
         return {
           ...tab,
           active_pane_id: newPane.id,
@@ -611,8 +611,8 @@ function collectRuntimeSessionIdsFromRoot(root: PaneNode, ids: Set<string>) {
   }
 }
 
-function createPane(): LeafPane {
-  const id = `pane-${nextPaneCounter++}`;
+function createPane(existingRoot?: PaneNode): LeafPane {
+  const id = nextPaneId(existingRoot);
   const paneTab = createPaneTab(`${id}-tab-1`);
   return {
     kind: "leaf",
@@ -623,6 +623,29 @@ function createPane(): LeafPane {
     active_terminal_tab_id: paneTab.id,
     terminal_tabs: [paneTab],
   };
+}
+
+function nextPaneId(existingRoot?: PaneNode): string {
+  const existingPaneIds = new Set<string>();
+  if (existingRoot) collectLeafPaneIds(existingRoot, existingPaneIds);
+
+  let id = `pane-${nextPaneCounter}`;
+  while (existingPaneIds.has(id)) {
+    nextPaneCounter += 1;
+    id = `pane-${nextPaneCounter}`;
+  }
+  nextPaneCounter += 1;
+  return id;
+}
+
+function collectLeafPaneIds(root: PaneNode, paneIds: Set<string>) {
+  if (root.kind === "leaf") {
+    paneIds.add(root.id);
+    return;
+  }
+
+  collectLeafPaneIds(root.first, paneIds);
+  collectLeafPaneIds(root.second, paneIds);
 }
 
 function createPaneTab(id = `pane-tab-${nextPaneTabCounter++}`): PaneTerminalTab {
