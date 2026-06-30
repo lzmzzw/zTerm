@@ -388,6 +388,47 @@ fn workspace_tabs_belong_to_a_workspace_after_migration() {
 }
 
 #[test]
+fn migrations_clear_default_workspace_tabs_but_keep_default_workspace() {
+    let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
+
+    run_migrations(&mut connection).expect("migrations should run on an empty database");
+    connection
+        .execute(
+            "
+            insert into workspace_tabs (
+              id, workspace_id, title, active_pane_id, root_json,
+              sort_order, created_at_ms, updated_at_ms
+            ) values (
+              'tab-1', 'default-workspace', '默认草稿', 'pane-1',
+              '{\"kind\":\"leaf\",\"id\":\"pane-1\",\"title\":\"PowerShell\",\"runtime_session_id\":null,\"saved_session_id\":null}',
+              0, 1, 1
+            )
+            ",
+            [],
+        )
+        .expect("legacy default workspace tab should insert");
+
+    run_migrations(&mut connection).expect("migrations should clear default workspace tabs");
+
+    let default_count: i64 = connection
+        .query_row(
+            "select count(*) from workspaces where id = 'default-workspace'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("default workspace count should read");
+    let tab_count: i64 = connection
+        .query_row(
+            "select count(*) from workspace_tabs where workspace_id = 'default-workspace'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("default workspace tab count should read");
+    assert_eq!(default_count, 1);
+    assert_eq!(tab_count, 0);
+}
+
+#[test]
 fn workspace_tabs_allow_same_tab_id_in_different_workspaces() {
     let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
 

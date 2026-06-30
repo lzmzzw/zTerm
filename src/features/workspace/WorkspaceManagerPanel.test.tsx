@@ -90,6 +90,7 @@ describe("WorkspaceManagerPanel", () => {
     expect(view.container.querySelector('[aria-label="编辑工作区 运维巡检"]')).toBeNull();
     expect(view.container.querySelector('[aria-label="恢复工作区 运维巡检"]')).toBeNull();
     expect(view.container.querySelector('[aria-label="关闭工作区 运维巡检"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="工作区 默认工作区"]')).toBeNull();
     view.unmount();
   });
 
@@ -152,7 +153,7 @@ describe("WorkspaceManagerPanel", () => {
     view.unmount();
   });
 
-  it("disables unavailable workspace context menu actions by status and default workspace protection", () => {
+  it("disables unavailable workspace context menu actions and never renders the hidden default workspace", () => {
     const view = render(
       <WorkspaceManagerPanel
         workspaces={workspaces}
@@ -176,13 +177,9 @@ describe("WorkspaceManagerPanel", () => {
     expect(view.container.querySelector<HTMLButtonElement>('[aria-label="关闭工作区 发布窗口"]')?.disabled).toBe(true);
     expect(view.container.querySelector<HTMLButtonElement>('[aria-label="删除工作区 发布窗口"]')?.disabled).toBe(false);
 
-    act(() => {
-      view.container.querySelector('[aria-label="工作区 默认工作区"]')?.dispatchEvent(
-        new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 220 }),
-      );
-    });
-
-    expect(view.container.querySelector<HTMLButtonElement>('[aria-label="删除工作区 默认工作区"]')?.disabled).toBe(true);
+    expect(view.container.querySelector('[aria-label="工作区 默认工作区"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="切换工作区 默认工作区"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="删除工作区 默认工作区"]')).toBeNull();
     view.unmount();
   });
 });

@@ -9,6 +9,7 @@ import {
   mergeWorkspaceSidebarItems,
   nextWorkspaceSortOrder,
 } from "./workspaceShellModel";
+import { DEFAULT_WORKSPACE_ID } from "./workspaceConstants";
 import type { PaneNode, PaneTerminalTab, WorkspaceDefinition, WorkspaceRuntime, WorkspaceSummary, WorkspaceTab } from "./types";
 
 function leaf(id: string, patch: Partial<Extract<PaneNode, { kind: "leaf" }>> = {}): Extract<PaneNode, { kind: "leaf" }> {
@@ -53,6 +54,16 @@ describe("workspaceShellModel", () => {
     const previewRoot = leaf("preview-pane");
     const summaries: WorkspaceSummary[] = [
       {
+        id: DEFAULT_WORKSPACE_ID,
+        name: "默认工作区",
+        status: "closed",
+        active_tab_id: "tab-1",
+        tab_count: 0,
+        sort_order: 0,
+        created_at_ms: 0,
+        updated_at_ms: 0,
+      },
+      {
         id: "workspace-a",
         name: "持久化工作区",
         status: "closed",
@@ -75,6 +86,12 @@ describe("workspaceShellModel", () => {
     ];
     const runtimes: WorkspaceRuntime[] = [
       {
+        ...definition(DEFAULT_WORKSPACE_ID, [tab("tab-1", leaf("pane-default"), 0)]),
+        name: "默认工作区",
+        status: "running",
+        activeTabId: "tab-1",
+      },
+      {
         ...definition("workspace-a", [tab("runtime-tab-a", leaf("pane-a"), 0), tab("runtime-tab-b", leaf("pane-b"), 1)]),
         name: "运行中工作区",
         status: "running",
@@ -90,6 +107,7 @@ describe("workspaceShellModel", () => {
     });
 
     expect(items.map((item) => item.id)).toEqual(["workspace-b", "workspace-a"]);
+    expect(items.some((item) => item.id === DEFAULT_WORKSPACE_ID)).toBe(false);
     expect(items.find((item) => item.id === "workspace-a")).toMatchObject({
       name: "运行中工作区",
       status: "running",

@@ -41,6 +41,7 @@ import { definitionFromDraft } from "../features/workspace/workspacePreviewModel
 import { workspaceDelete, workspaceGet, workspaceList, workspaceRemove, workspaceSave } from "../features/workspace/workspacePersistence";
 import { findPane, getActiveTerminalTab } from "../features/workspace/workspaceLayout";
 import { markWorkspaceRestoreQueued, runWorkspaceRestoreQueue } from "../features/workspace/workspaceRestoreScheduler";
+import { DEFAULT_WORKSPACE_ID } from "../features/workspace/workspaceConstants";
 import {
   definitionFromRuntime,
   hasRuntimeTabs,
@@ -372,6 +373,8 @@ export function AppShell() {
   const runningWorkspaceCapWorkspaces = useWorkspaceStore((state) => state.workspaces);
   const {
     selectWorkspace,
+    selectDefaultWorkspace,
+    migrateActiveWorkspaceToSavedWorkspace,
     upsertWorkspaceDefinition,
     updateWorkspaceRuntimeMetadata,
     freezeWorkspaceRuntimeVisualSnapshots,
@@ -395,6 +398,8 @@ export function AppShell() {
   } = useWorkspaceStore(
     useShallow((state) => ({
       selectWorkspace: state.selectWorkspace,
+      selectDefaultWorkspace: state.selectDefaultWorkspace,
+      migrateActiveWorkspaceToSavedWorkspace: state.migrateActiveWorkspaceToSavedWorkspace,
       upsertWorkspaceDefinition: state.upsertWorkspaceDefinition,
       updateWorkspaceRuntimeMetadata: state.updateWorkspaceRuntimeMetadata,
       freezeWorkspaceRuntimeVisualSnapshots: state.freezeWorkspaceRuntimeVisualSnapshots,
@@ -659,7 +664,7 @@ export function AppShell() {
       workspace: definitionFromDraft({
         ...initialDraft,
         id: null,
-        name: `${initialDraft.name} 副本`,
+        name: initialDraft.id === DEFAULT_WORKSPACE_ID ? "新建工作区" : `${initialDraft.name} 副本`,
         status: "closed",
         sort_order: nextWorkspaceSortOrder(workspaceSidebarItems),
       }),
@@ -695,6 +700,11 @@ export function AppShell() {
   }
 
   async function handleSelectWorkspace(workspaceId: string) {
+    if (workspaceId === activeWorkspaceId) {
+      freezeActiveWorkspaceBeforeSwitch(DEFAULT_WORKSPACE_ID);
+      selectDefaultWorkspace();
+      return;
+    }
     const runtime = workspaceRuntimes.find((workspace) => workspace.id === workspaceId);
     if (runtime?.status === "running") {
       startWorkspaceSwitchMetrics(workspaceId);
@@ -717,9 +727,14 @@ export function AppShell() {
   async function handleWorkspaceEditorSave(draft: WorkspaceDefinitionDraft) {
     setWorkspaceActionError(null);
     try {
-      const saved = await workspaceSave(draft);
+      const mode = workspaceEditor?.mode ?? "edit";
+      const saved = await workspaceSave(mode === "create" ? { ...draft, id: null } : draft);
       cacheWorkspaceDefinition(saved);
-      updateWorkspaceRuntimeMetadata(saved);
+      if (mode === "create") {
+        migrateActiveWorkspaceToSavedWorkspace(saved);
+      } else {
+        updateWorkspaceRuntimeMetadata(saved);
+      }
       setWorkspaceEditor(null);
       await refreshWorkspaceSummaries();
     } catch (error) {
@@ -759,7 +774,7 @@ export function AppShell() {
 
   function handleDeleteWorkspace(workspaceId: string) {
     setWorkspaceActionError(null);
-    if (workspaceId === "default-workspace") {
+    if (workspaceId === DEFAULT_WORKSPACE_ID) {
       setWorkspaceActionError("默认工作区不能删除");
       return;
     }
@@ -775,7 +790,7 @@ export function AppShell() {
     const workspace = pendingDeleteWorkspace;
     if (!workspace) return;
     setWorkspaceActionError(null);
-    if (workspace.id === "default-workspace") {
+    if (workspace.id === DEFAULT_WORKSPACE_ID) {
       setWorkspaceActionError("默认工作区不能删除");
       setPendingDeleteWorkspace(null);
       return;
@@ -1023,7 +1038,12 @@ export function AppShell() {
 
   useEffect(() => {
     const recentClosedWorkspaceIds = [...workspaceSummaries]
-      .filter((workspace) => workspace.status === "closed" && !workspaceDefinitions[workspace.id])
+      .filter(
+        (workspace) =>
+          workspace.id !== DEFAULT_WORKSPACE_ID &&
+          workspace.status === "closed" &&
+          !workspaceDefinitions[workspace.id],
+      )
       .sort((left, right) => right.updated_at_ms - left.updated_at_ms)
       .slice(0, 3)
       .map((workspace) => workspace.id);
@@ -1035,7 +1055,11 @@ export function AppShell() {
 
   useEffect(() => {
     const runningWorkspaces = runningWorkspaceCapWorkspaces.filter(
-      (workspace) => workspace.status === "running" && Array.isArray(workspace.tabs) && workspace.tabs.length > 0,
+      (workspace) =>
+        workspace.id !== DEFAULT_WORKSPACE_ID &&
+        workspace.status === "running" &&
+        Array.isArray(workspace.tabs) &&
+        workspace.tabs.length > 0,
     );
     if (runningWorkspaces.length <= DEFAULT_MAX_RUNNING_WORKSPACES) return;
 

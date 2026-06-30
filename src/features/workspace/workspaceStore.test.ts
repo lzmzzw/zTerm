@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { useWorkspaceStore } from "./workspaceStore";
+import { DEFAULT_WORKSPACE_ID } from "./workspaceConstants";
 import type { PaneNode, WorkspaceDefinition, WorkspaceRuntime } from "./types";
 
 function runtimeWorkspace(id: string, runtimeSessionId: string): WorkspaceRuntime {
@@ -126,6 +127,103 @@ describe("workspaceStore pane tabs", () => {
     expect(state.activeWorkspaceId).toBe("workspace-b");
     expect(state.tabs[0].id).toBe("workspace-b-tab-1");
     expect(state.workspaces.find((workspace) => workspace.id === "workspace-a")?.tabs[0].root).toMatchObject({
+      kind: "leaf",
+      runtime_session_id: "runtime-a",
+    });
+  });
+
+  it("keeps the hidden default workspace runtime in memory when switching away and back", () => {
+    const defaultWorkspace = runtimeWorkspace(DEFAULT_WORKSPACE_ID, "runtime-default");
+    const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
+    useWorkspaceStore.setState({
+      workspaces: [defaultWorkspace, workspaceA],
+      activeWorkspaceId: DEFAULT_WORKSPACE_ID,
+      tabs: defaultWorkspace.tabs,
+      activeTabId: defaultWorkspace.activeTabId,
+    });
+
+    useWorkspaceStore.getState().selectWorkspace("workspace-a");
+    useWorkspaceStore.getState().selectDefaultWorkspace();
+
+    const state = useWorkspaceStore.getState();
+    expect(state.activeWorkspaceId).toBe(DEFAULT_WORKSPACE_ID);
+    expect(state.tabs[0].root).toMatchObject({
+      kind: "leaf",
+      runtime_session_id: "runtime-default",
+    });
+    expect(state.workspaces.find((workspace) => workspace.id === "workspace-a")?.tabs[0].root).toMatchObject({
+      kind: "leaf",
+      runtime_session_id: "runtime-a",
+    });
+  });
+
+  it("migrates the active default workspace runtime to a saved workspace and resets default to an empty draft", () => {
+    const defaultWorkspace = runtimeWorkspace(DEFAULT_WORKSPACE_ID, "runtime-default");
+    const saved: WorkspaceDefinition = {
+      id: "workspace-new",
+      name: "发布窗口",
+      status: "closed",
+      active_tab_id: defaultWorkspace.activeTabId,
+      tabs: [],
+      sort_order: 3,
+      created_at_ms: 10,
+      updated_at_ms: 11,
+    };
+    useWorkspaceStore.setState({
+      workspaces: [defaultWorkspace],
+      activeWorkspaceId: DEFAULT_WORKSPACE_ID,
+      tabs: defaultWorkspace.tabs,
+      activeTabId: defaultWorkspace.activeTabId,
+    });
+
+    useWorkspaceStore.getState().migrateActiveWorkspaceToSavedWorkspace(saved);
+
+    const state = useWorkspaceStore.getState();
+    const migrated = state.workspaces.find((workspace) => workspace.id === "workspace-new");
+    const defaultAfterSave = state.workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID);
+    expect(state.activeWorkspaceId).toBe("workspace-new");
+    expect(migrated?.tabs[0].root).toMatchObject({
+      kind: "leaf",
+      runtime_session_id: "runtime-default",
+    });
+    expect(defaultAfterSave?.tabs[0].root).toMatchObject({
+      kind: "leaf",
+      title: "新建终端",
+      runtime_session_id: null,
+      saved_session_id: null,
+    });
+  });
+
+  it("moves an explicit active workspace runtime to a newly saved workspace id", () => {
+    const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
+    const defaultWorkspace = runtimeWorkspace(DEFAULT_WORKSPACE_ID, "runtime-default");
+    const saved: WorkspaceDefinition = {
+      id: "workspace-copy",
+      name: "运维巡检副本",
+      status: "closed",
+      active_tab_id: workspaceA.activeTabId,
+      tabs: [],
+      sort_order: 4,
+      created_at_ms: 20,
+      updated_at_ms: 21,
+    };
+    useWorkspaceStore.setState({
+      workspaces: [defaultWorkspace, workspaceA],
+      activeWorkspaceId: workspaceA.id,
+      tabs: workspaceA.tabs,
+      activeTabId: workspaceA.activeTabId,
+    });
+
+    useWorkspaceStore.getState().migrateActiveWorkspaceToSavedWorkspace(saved);
+
+    const state = useWorkspaceStore.getState();
+    expect(state.activeWorkspaceId).toBe("workspace-copy");
+    expect(state.workspaces.some((workspace) => workspace.id === "workspace-a")).toBe(false);
+    expect(state.workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID)?.tabs[0].root).toMatchObject({
+      kind: "leaf",
+      runtime_session_id: "runtime-default",
+    });
+    expect(state.workspaces.find((workspace) => workspace.id === "workspace-copy")?.tabs[0].root).toMatchObject({
       kind: "leaf",
       runtime_session_id: "runtime-a",
     });

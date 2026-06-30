@@ -3,6 +3,7 @@ import { CopyPlus } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { WorkspaceLayoutPreview, type WorkspaceLayoutPreviewSession } from "./WorkspaceLayoutPreview";
+import { DEFAULT_WORKSPACE_ID } from "./workspaceConstants";
 import type { WorkspaceSidebarItem } from "./workspaceShellModel";
 
 interface WorkspaceManagerPanelProps {
@@ -35,6 +36,7 @@ export function WorkspaceManagerPanel({
   onDeleteWorkspace,
 }: WorkspaceManagerPanelProps) {
   const [contextMenu, setContextMenu] = useState<WorkspaceContextMenu | null>(null);
+  const visibleWorkspaces = workspaces.filter((workspace) => workspace.id !== DEFAULT_WORKSPACE_ID);
 
   useEffect(() => {
     if (!contextMenu) return undefined;
@@ -64,7 +66,7 @@ export function WorkspaceManagerPanel({
       {error ? <div className="zt-empty-line">{error}</div> : null}
 
       <ul className="zt-workspace-list">
-        {workspaces.map((workspace) => {
+        {visibleWorkspaces.map((workspace) => {
           const active = workspace.id === activeWorkspaceId;
           const dotClass = workspace.status;
           const statusText = statusLabel(workspace.status);
@@ -114,7 +116,7 @@ export function WorkspaceManagerPanel({
         })}
       </ul>
 
-      {workspaces.length === 0 ? <div className="zt-empty-line">暂无工作区</div> : null}
+      {visibleWorkspaces.length === 0 ? <div className="zt-empty-line">暂无工作区</div> : null}
 
       {contextMenu ? (
         <div className="zt-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
@@ -162,7 +164,7 @@ function WorkspaceContextMenuItems({
 }) {
   const restoreDisabled = workspace.status === "running";
   const closeDisabled = workspace.status === "closed";
-  const deleteDisabled = workspace.id === "default-workspace";
+  const deleteDisabled = workspace.id === DEFAULT_WORKSPACE_ID;
 
   function run(action: (workspaceId: string) => void) {
     onCloseMenu();

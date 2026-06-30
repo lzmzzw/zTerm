@@ -187,6 +187,21 @@ fn default_workspace_cannot_be_removed() {
 }
 
 #[test]
+fn default_workspace_cannot_be_saved_with_layout_snapshot() {
+    let store = SqliteStore::open_in_memory().expect("sqlite store should open");
+    let mut draft = workspace_draft(None);
+    draft.id = Some("default-workspace".to_string());
+
+    let result = save_workspace(&store, draft);
+
+    assert!(result.is_err());
+    let loaded = get_workspace(&store, "default-workspace")
+        .expect("default workspace should remain after rejected save");
+    assert_eq!(loaded.id, "default-workspace");
+    assert!(loaded.tabs.is_empty());
+}
+
+#[test]
 fn deleted_saved_session_is_removed_from_workspace_snapshot_on_read() {
     let store = SqliteStore::open_in_memory().expect("sqlite store should open");
     let session = save_session(&store, saved_ssh_session()).expect("session should save");

@@ -21,6 +21,7 @@ use crate::{
 
 pub const WORKSPACES_TABLE: &str = "workspaces";
 pub const WORKSPACE_TABS_TABLE: &str = "workspace_tabs";
+const DEFAULT_WORKSPACE_ID: &str = "default-workspace";
 
 pub fn list_workspaces(store: &SqliteStore) -> AppResult<Vec<WorkspaceSummary>> {
     store.with_connection(|connection| {
@@ -91,6 +92,9 @@ pub fn save_workspace(
         return Err(AppError::validation("活动标签不属于工作区"));
     }
     let id = normalized_id(draft.id);
+    if id.as_deref() == Some(DEFAULT_WORKSPACE_ID) {
+        return Err(AppError::validation("默认工作区不能保存布局快照"));
+    }
     let now = now_ms();
 
     store.write_transaction(|transaction| {
@@ -169,7 +173,7 @@ pub fn close_workspace(store: &SqliteStore, id: &str) -> AppResult<DeleteResult>
 
 pub fn remove_workspace(store: &SqliteStore, id: &str) -> AppResult<DeleteResult> {
     let id = required_text("工作区 ID", id)?;
-    if id == "default-workspace" {
+    if id == DEFAULT_WORKSPACE_ID {
         return Err(AppError::validation("默认工作区不能删除"));
     }
 

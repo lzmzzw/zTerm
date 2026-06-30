@@ -22,6 +22,7 @@ import type {
   WorkspaceRuntime,
   WorkspaceTab,
 } from "./types";
+import { DEFAULT_WORKSPACE_ID } from "./workspaceConstants";
 import { materializePaneVisualSnapshots } from "./workspaceShellModel";
 
 type LeafPane = Extract<PaneNode, { kind: "leaf" }>;
@@ -33,6 +34,9 @@ interface WorkspaceStore {
   tabs: WorkspaceTab[];
   activeTabId: string;
   selectWorkspace: (workspaceId: string) => void;
+  selectDefaultWorkspace: () => void;
+  resetDefaultWorkspace: () => void;
+  migrateActiveWorkspaceToSavedWorkspace: (workspace: WorkspaceDefinition) => void;
   upsertWorkspaceDefinition: (workspace: WorkspaceDefinition) => void;
   updateWorkspaceRuntimeMetadata: (workspace: WorkspaceDefinition) => void;
   freezeWorkspaceRuntimeVisualSnapshots: (
@@ -85,51 +89,14 @@ let nextPaneTabCounter = 2;
 const workspaceDefinitionRequests: Record<string, Promise<WorkspaceDefinition>> = {};
 
 const now = Date.now();
-const initialPane: PaneNode = {
-  kind: "leaf",
-  id: "pane-1",
-  runtime_session_id: null,
-  saved_session_id: null,
-  title: "新建终端",
-  active_terminal_tab_id: "pane-1-tab-1",
-  terminal_tabs: [
-    {
-      id: "pane-1-tab-1",
-      title: "新建终端",
-      runtime_session_id: null,
-      saved_session_id: null,
-    },
-  ],
-};
-
-const initialTab: WorkspaceTab = {
-  id: "tab-1",
-  title: "新建终端",
-  active_pane_id: initialPane.id,
-  root: initialPane,
-  sort_order: 0,
-  created_at_ms: now,
-  updated_at_ms: now,
-};
-
-const initialWorkspace: WorkspaceRuntime = {
-  id: "default-workspace",
-  name: "默认工作区",
-  status: "running",
-  active_tab_id: initialTab.id,
-  activeTabId: initialTab.id,
-  tabs: [initialTab],
-  sort_order: 0,
-  created_at_ms: now,
-  updated_at_ms: now,
-};
+const initialWorkspace = createDefaultWorkspace(now);
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   workspaces: [initialWorkspace],
   workspaceDefinitions: {},
   activeWorkspaceId: initialWorkspace.id,
-  tabs: [initialTab],
-  activeTabId: initialTab.id,
+  tabs: initialWorkspace.tabs,
+  activeTabId: initialWorkspace.activeTabId,
   selectWorkspace: (workspaceId) =>
     set((state) => {
       const workspace = state.workspaces.find((item) => item.id === workspaceId);
@@ -142,6 +109,55 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       return {
         workspaces,
         ...mirrorWorkspace(selected),
+      };
+    }),
+  selectDefaultWorkspace: () =>
+    set((state) => {
+      const existingDefault = state.workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID);
+      const defaultWorkspace = existingDefault ?? createDefaultWorkspace();
+      const workspaces = upsertWorkspace(state.workspaces, defaultWorkspace);
+      return {
+        workspaces,
+        ...mirrorWorkspace(defaultWorkspace),
+      };
+    }),
+  resetDefaultWorkspace: () =>
+    set((state) => {
+      const defaultWorkspace = createDefaultWorkspace();
+      const workspaces = upsertWorkspace(state.workspaces, defaultWorkspace);
+      return {
+        workspaces,
+        ...(state.activeWorkspaceId === DEFAULT_WORKSPACE_ID ? mirrorWorkspace(defaultWorkspace) : {}),
+      };
+    }),
+  migrateActiveWorkspaceToSavedWorkspace: (workspace) =>
+    set((state) => {
+      const sourceWorkspace = activeWorkspaceFromState(state) ?? createDefaultWorkspace();
+      const defaultWorkspace =
+        sourceWorkspace.id === DEFAULT_WORKSPACE_ID
+          ? createDefaultWorkspace()
+          : state.workspaces.find((item) => item.id === DEFAULT_WORKSPACE_ID) ?? createDefaultWorkspace();
+      const migratedWorkspace: WorkspaceRuntime = {
+        ...workspace,
+        status: "running",
+        active_tab_id: sourceWorkspace.activeTabId,
+        activeTabId: sourceWorkspace.activeTabId,
+        tabs: sourceWorkspace.tabs,
+      };
+      const workspaces = upsertWorkspace(
+        upsertWorkspace(
+          state.workspaces.filter(
+            (item) => item.id !== sourceWorkspace.id && item.id !== workspace.id && item.id !== DEFAULT_WORKSPACE_ID,
+          ),
+          defaultWorkspace,
+        ),
+        migratedWorkspace,
+      );
+      const { [DEFAULT_WORKSPACE_ID]: _defaultDefinition, ...workspaceDefinitions } = state.workspaceDefinitions;
+      return {
+        workspaces,
+        workspaceDefinitions,
+        ...mirrorWorkspace(migratedWorkspace),
       };
     }),
   upsertWorkspaceDefinition: (workspace) =>
@@ -271,8 +287,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         return { workspaces, workspaceDefinitions };
       }
 
-      const nextWorkspaces = workspaces.length > 0 ? workspaces : [initialWorkspace];
-      const nextActive = nextWorkspaces[0];
+      const nextWorkspaces = workspaces.length > 0 ? workspaces : [createDefaultWorkspace()];
+      const nextActive =
+        nextWorkspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID) ?? nextWorkspaces[0];
       return {
         workspaces: nextWorkspaces,
         workspaceDefinitions,
@@ -478,8 +495,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         })
         .filter((tab): tab is WorkspaceTab => Boolean(tab));
 
-      const nextTabs = tabs.length > 0 ? tabs : [initialTab];
-      const nextActiveTabId = nextTabs[0]?.id ?? initialTab.id;
+      const fallbackDefault = createDefaultWorkspace();
+      const nextTabs = tabs.length > 0 ? tabs : fallbackDefault.tabs;
+      const nextActiveTabId = nextTabs[0]?.id ?? fallbackDefault.activeTabId;
       return updateActiveWorkspace(state, (current) => ({
         ...current,
         tabs: nextTabs,
@@ -494,7 +512,7 @@ function updateActiveWorkspace(
   state: WorkspaceStore,
   updater: (workspace: WorkspaceRuntime) => WorkspaceRuntime,
 ): Partial<WorkspaceStore> {
-  const current = activeWorkspaceFromState(state) ?? initialWorkspace;
+  const current = activeWorkspaceFromState(state) ?? createDefaultWorkspace();
   const next = updater(current);
   const workspaces = upsertWorkspace(state.workspaces, next);
   return {
@@ -530,6 +548,49 @@ function mirrorWorkspace(workspace: WorkspaceRuntime): Partial<WorkspaceStore> {
 function upsertWorkspace(workspaces: WorkspaceRuntime[], workspace: WorkspaceRuntime): WorkspaceRuntime[] {
   const exists = workspaces.some((item) => item.id === workspace.id);
   return exists ? workspaces.map((item) => (item.id === workspace.id ? workspace : item)) : [...workspaces, workspace];
+}
+
+function createInitialPane(): PaneNode {
+  return {
+    kind: "leaf",
+    id: "pane-1",
+    runtime_session_id: null,
+    saved_session_id: null,
+    title: "新建终端",
+    active_terminal_tab_id: "pane-1-tab-1",
+    terminal_tabs: [
+      {
+        id: "pane-1-tab-1",
+        title: "新建终端",
+        runtime_session_id: null,
+        saved_session_id: null,
+      },
+    ],
+  };
+}
+
+function createDefaultWorkspace(timestamp = Date.now()): WorkspaceRuntime {
+  const pane = createInitialPane();
+  const tab: WorkspaceTab = {
+    id: "tab-1",
+    title: "新建终端",
+    active_pane_id: pane.id,
+    root: pane,
+    sort_order: 0,
+    created_at_ms: timestamp,
+    updated_at_ms: timestamp,
+  };
+  return {
+    id: DEFAULT_WORKSPACE_ID,
+    name: "默认工作区",
+    status: "running",
+    active_tab_id: tab.id,
+    activeTabId: tab.id,
+    tabs: [tab],
+    sort_order: 0,
+    created_at_ms: timestamp,
+    updated_at_ms: timestamp,
+  };
 }
 
 function runtimeFromDefinition(workspace: WorkspaceDefinition): WorkspaceRuntime {

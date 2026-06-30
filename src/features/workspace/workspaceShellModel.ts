@@ -8,6 +8,7 @@ import type {
   WorkspaceSummary,
   WorkspaceStatus,
 } from "./types";
+import { DEFAULT_WORKSPACE_ID } from "./workspaceConstants";
 
 export interface WorkspaceSidebarItem {
   id: string;
@@ -34,6 +35,7 @@ export function mergeWorkspaceSidebarItems(
 ): WorkspaceSidebarItem[] {
   const items = new Map<string, WorkspaceSidebarItem>();
   for (const summary of summaries) {
+    if (summary.id === DEFAULT_WORKSPACE_ID) continue;
     const previewDefinition = previewDefinitions[summary.id];
     items.set(summary.id, {
       ...summary,
@@ -42,6 +44,7 @@ export function mergeWorkspaceSidebarItems(
   }
 
   for (const runtime of runtimes) {
+    if (runtime.id === DEFAULT_WORKSPACE_ID) continue;
     const existing = items.get(runtime.id);
     items.set(runtime.id, {
       id: runtime.id,
