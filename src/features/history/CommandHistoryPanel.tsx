@@ -184,28 +184,30 @@ export function CommandHistoryPanel({
       </div>
 
       {activeView === "groups" ? (
-        <CommandGroupView
-          commandGroups={commandGroups}
-          formCommands={formCommands}
-          formError={formError}
-          formName={formName}
-          formOpen={formOpen}
-          groupError={groupError}
-          groupLoading={groupLoading}
-          language={language}
-          hasHistoryScope={hasHistoryScope}
-          onCancelForm={resetForm}
-          onCopy={onCopy}
-          onDeleteCommandGroup={onDeleteCommandGroup}
-          onEditGroup={openEditGroupForm}
-          onFormCommandsChange={setFormCommands}
-          onFormNameChange={setFormName}
-          onNewGroup={openNewGroupForm}
-          onSaveGroup={() => void saveGroup()}
-          onSend={onSend}
-        />
+        <div className="zt-history-groups-view">
+          <CommandGroupView
+            commandGroups={commandGroups}
+            formCommands={formCommands}
+            formError={formError}
+            formName={formName}
+            formOpen={formOpen}
+            groupError={groupError}
+            groupLoading={groupLoading}
+            language={language}
+            hasHistoryScope={hasHistoryScope}
+            onCancelForm={resetForm}
+            onCopy={onCopy}
+            onDeleteCommandGroup={onDeleteCommandGroup}
+            onEditGroup={openEditGroupForm}
+            onFormCommandsChange={setFormCommands}
+            onFormNameChange={setFormName}
+            onNewGroup={openNewGroupForm}
+            onSaveGroup={() => void saveGroup()}
+            onSend={onSend}
+          />
+        </div>
       ) : (
-        <>
+        <div className="zt-history-entries-view">
           <div className="zt-history-toolbar">
             <label className="zt-history-search">
               <Search size={14} aria-hidden="true" />
@@ -285,7 +287,7 @@ export function CommandHistoryPanel({
               </article>
             ))}
           </div>
-        </>
+        </div>
       )}
     </section>
   );
@@ -337,7 +339,6 @@ function CommandGroupView({
           <Plus size={14} aria-hidden="true" />
           {t(language, "addCommandGroup")}
         </button>
-        <span>{hasHistoryScope ? t(language, "currentSavedSession") : t(language, "noSavedSession")}</span>
       </div>
 
       {formOpen ? (
@@ -422,7 +423,6 @@ function CommandGroupForm({
           aria-label={t(language, "commandGroupName")}
           value={name}
           onChange={(event) => onNameChange(event.currentTarget.value)}
-          placeholder={t(language, "commandGroupNamePlaceholder")}
         />
       </label>
       <label>
@@ -436,11 +436,23 @@ function CommandGroupForm({
       </label>
       {error ? <div className="zt-history-error">{error}</div> : null}
       <div className="zt-history-group-form-actions">
-        <button type="button" onClick={onSave}>
+        <button
+          type="button"
+          className="zt-history-group-save-action"
+          onClick={onSave}
+          aria-label={t(language, "saveCommandGroup")}
+          title={t(language, "saveCommandGroup")}
+        >
           <CheckSquare size={14} aria-hidden="true" />
           {t(language, "saveCommandGroup")}
         </button>
-        <button type="button" onClick={onCancel} aria-label={t(language, "cancel")}>
+        <button
+          type="button"
+          className="zt-history-group-cancel-action"
+          onClick={onCancel}
+          aria-label={t(language, "cancel")}
+          title={t(language, "cancel")}
+        >
           <X size={14} aria-hidden="true" />
           {t(language, "cancel")}
         </button>

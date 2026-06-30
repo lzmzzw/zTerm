@@ -292,6 +292,38 @@ describe("CommandHistoryPanel", () => {
     view.unmount();
   });
 
+  it("renders the command group form as a compact inline editor", async () => {
+    const view = renderPanel({ activeView: "groups", commandGroups: [] });
+
+    expect(view.container.querySelector(".zt-history-group-toolbar")?.textContent).not.toContain("当前历史作用域");
+
+    await click(button(view.container, "新增指令组"));
+
+    expect(input(view.container, "指令组名称").getAttribute("placeholder")).toBeNull();
+    expect(button(view.container, "保存指令组").classList.contains("zt-history-group-save-action")).toBe(true);
+    expect(button(view.container, "取消").classList.contains("zt-history-group-cancel-action")).toBe(true);
+
+    await click(button(view.container, "取消"));
+
+    expect(view.container.querySelector(".zt-history-group-form")).toBeNull();
+
+    view.unmount();
+  });
+
+  it("keeps command group form out of the panel stretch row", async () => {
+    const view = renderPanel({ activeView: "groups", commandGroups: [] });
+
+    await click(button(view.container, "新增指令组"));
+
+    const panel = view.container.querySelector(".zt-history-panel") as HTMLElement;
+    const directClasses = Array.from(panel.children).map((child) => child.className);
+    expect(directClasses).toEqual(["zt-history-mode-tabs", "zt-history-groups-view"]);
+    expect(panel.querySelector(":scope > .zt-history-group-form")).toBeNull();
+    expect(panel.querySelector(".zt-history-groups-view > .zt-history-group-form")).not.toBeNull();
+
+    view.unmount();
+  });
+
   it("renders an empty state when no history exists", () => {
     const view = renderPanel({ entries: [] });
 

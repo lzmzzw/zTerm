@@ -1359,7 +1359,14 @@ button {
 
 .zt-history-panel {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.zt-history-entries-view,
+.zt-history-groups-view {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 
@@ -1451,8 +1458,7 @@ button {
 }
 
 .zt-history-group-toolbar {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
@@ -1477,15 +1483,6 @@ button {
 .zt-history-group-form-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
-}
-
-.zt-history-group-toolbar span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--zt-text-muted);
-  font-size: var(--zt-font-size-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .zt-history-toolbar button {
@@ -1543,6 +1540,7 @@ button {
 .zt-history-list {
   display: grid;
   align-content: start;
+  flex: 1 1 auto;
   gap: 2px;
   min-height: 0;
   overflow: auto;
@@ -1579,15 +1577,15 @@ button {
 
 .zt-history-group-form {
   display: grid;
-  gap: 9px;
-  padding: 8px;
+  gap: 7px;
+  padding: 7px 8px 8px;
   border-bottom: 1px solid var(--zt-border);
   background: var(--zt-bg-main);
 }
 
 .zt-history-group-form label {
   display: grid;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
   color: var(--zt-text-secondary);
   font-size: var(--zt-font-size-ui);
@@ -1612,12 +1610,12 @@ button {
 }
 
 .zt-history-group-form input {
-  height: 24px;
+  height: 26px;
   padding: 0 7px;
 }
 
 .zt-history-group-form textarea {
-  min-height: 108px;
+  min-height: 92px;
   resize: vertical;
   padding: 6px 7px;
   font-family: var(--zt-font-mono);
@@ -1627,6 +1625,7 @@ button {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
+  padding-top: 1px;
 }
 
 .zt-history-group-form-actions button:hover,
@@ -1635,9 +1634,33 @@ button {
   background: var(--zt-bg-hover);
 }
 
+.zt-history-group-form-actions .zt-history-group-save-action {
+  border-color: color-mix(in srgb, var(--zt-accent) 42%, var(--zt-border));
+  background: color-mix(in srgb, var(--zt-accent) 12%, var(--zt-bg-surface));
+  color: var(--zt-text-primary);
+}
+
+.zt-history-group-form-actions .zt-history-group-save-action:hover {
+  border-color: color-mix(in srgb, var(--zt-accent) 62%, var(--zt-border-strong));
+  background: color-mix(in srgb, var(--zt-accent) 18%, var(--zt-bg-hover));
+}
+
+.zt-history-group-form-actions .zt-history-group-cancel-action {
+  border-color: transparent;
+  background: transparent;
+  color: var(--zt-text-secondary);
+}
+
+.zt-history-group-form-actions .zt-history-group-cancel-action:hover {
+  border-color: var(--zt-border);
+  background: var(--zt-bg-hover);
+  color: var(--zt-text-primary);
+}
+
 .zt-history-group-list {
   display: grid;
   align-content: start;
+  flex: 1 1 auto;
   gap: 6px;
   min-height: 0;
   overflow: auto;
