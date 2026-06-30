@@ -3,7 +3,7 @@ import { fallbackOnlyErrorMessage } from "../../lib/unknownErrorMessage";
 import type { WorkspaceRestoreStrategy } from "../settings/settingsStore";
 import type { SavedSession } from "../sessions/types";
 import type { RuntimeSessionInfo } from "../terminal/terminalStore";
-import { getLeafTerminalTabs } from "./workspaceLayout";
+import { getLeafTerminalTabs, normalizeWorkspaceTabsPaneIds } from "./workspaceLayout";
 import type { PaneNode, PaneTerminalTab, WorkspaceDefinition } from "./types";
 
 const MAX_TOTAL_CONCURRENT = 4;
@@ -58,7 +58,7 @@ interface WorkspaceRestoreQueueOptions {
 export function markWorkspaceRestoreQueued(workspace: WorkspaceDefinition): WorkspaceDefinition {
   return {
     ...workspace,
-    tabs: workspace.tabs.map((tab) => ({
+    tabs: normalizeWorkspaceTabsPaneIds(workspace.tabs).map((tab) => ({
       ...tab,
       root: markPaneRestoreQueued(tab.root),
     })),
@@ -67,7 +67,7 @@ export function markWorkspaceRestoreQueued(workspace: WorkspaceDefinition): Work
 
 export function collectWorkspaceRestoreTargets(workspace: WorkspaceDefinition): WorkspaceRestoreTarget[] {
   let paneOrder = 0;
-  return [...workspace.tabs]
+  return [...normalizeWorkspaceTabsPaneIds(workspace.tabs)]
     .sort((left, right) => left.sort_order - right.sort_order)
     .flatMap((tab) => {
       const workspaceTabActive = tab.id === workspace.active_tab_id;

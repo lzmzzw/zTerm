@@ -152,6 +152,22 @@ describe("workspaceRestoreScheduler", () => {
     ]);
   });
 
+  it("normalizes duplicate pane ids before collecting restore targets", () => {
+    const duplicated = workspace();
+    const activeRoot = duplicated.tabs[0].root;
+    if (activeRoot.kind !== "split" || activeRoot.second.kind !== "leaf") {
+      throw new Error("test workspace shape changed");
+    }
+    activeRoot.second.id = "pane-a";
+
+    const targets = collectWorkspaceRestoreTargets(duplicated);
+    const localTarget = targets.find((target) => target.terminalTab.title === "Visible Local");
+
+    expect(targets.filter((target) => target.paneId === "pane-a")).toHaveLength(2);
+    expect(localTarget?.paneId).not.toBe("pane-a");
+    expect(localTarget?.paneId).toMatch(/^pane-/);
+  });
+
   it("enforces total, SSH, local, and same-pane concurrency while continuing after failures", async () => {
     const inFlight = { total: 0, ssh: 0, local: 0, paneA: 0 };
     const max = { total: 0, ssh: 0, local: 0, paneA: 0 };

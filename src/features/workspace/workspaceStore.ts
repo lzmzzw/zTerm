@@ -7,6 +7,7 @@ import {
   firstLeafPaneId,
   getActiveTerminalTab,
   getLeafTerminalTabs,
+  normalizeWorkspaceTabsPaneIds,
   removePane,
   splitPane,
   updateLeafPane,
@@ -101,10 +102,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     set((state) => {
       const workspace = state.workspaces.find((item) => item.id === workspaceId);
       if (!workspace) return state;
-      const selected = {
+      const selected = normalizeWorkspaceRuntime({
         ...workspace,
         updated_at_ms: Date.now(),
-      };
+      });
       const workspaces = upsertWorkspace(state.workspaces, selected);
       return {
         workspaces,
@@ -114,7 +115,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   selectDefaultWorkspace: () =>
     set((state) => {
       const existingDefault = state.workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID);
-      const defaultWorkspace = existingDefault ?? createDefaultWorkspace();
+      const defaultWorkspace = normalizeWorkspaceRuntime(existingDefault ?? createDefaultWorkspace());
       const workspaces = upsertWorkspace(state.workspaces, defaultWorkspace);
       return {
         workspaces,
@@ -132,11 +133,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }),
   migrateActiveWorkspaceToSavedWorkspace: (workspace) =>
     set((state) => {
-      const sourceWorkspace = activeWorkspaceFromState(state) ?? createDefaultWorkspace();
+      const sourceWorkspace = normalizeWorkspaceRuntime(activeWorkspaceFromState(state) ?? createDefaultWorkspace());
       const defaultWorkspace =
         sourceWorkspace.id === DEFAULT_WORKSPACE_ID
           ? createDefaultWorkspace()
-          : state.workspaces.find((item) => item.id === DEFAULT_WORKSPACE_ID) ?? createDefaultWorkspace();
+          : normalizeWorkspaceRuntime(
+              state.workspaces.find((item) => item.id === DEFAULT_WORKSPACE_ID) ?? createDefaultWorkspace(),
+            );
       const migratedWorkspace: WorkspaceRuntime = {
         ...workspace,
         status: "running",
@@ -512,8 +515,8 @@ function updateActiveWorkspace(
   state: WorkspaceStore,
   updater: (workspace: WorkspaceRuntime) => WorkspaceRuntime,
 ): Partial<WorkspaceStore> {
-  const current = activeWorkspaceFromState(state) ?? createDefaultWorkspace();
-  const next = updater(current);
+  const current = normalizeWorkspaceRuntime(activeWorkspaceFromState(state) ?? createDefaultWorkspace());
+  const next = normalizeWorkspaceRuntime(updater(current));
   const workspaces = upsertWorkspace(state.workspaces, next);
   return {
     workspaces,
@@ -594,20 +597,31 @@ function createDefaultWorkspace(timestamp = Date.now()): WorkspaceRuntime {
 }
 
 function runtimeFromDefinition(workspace: WorkspaceDefinition): WorkspaceRuntime {
-  return {
+  return normalizeWorkspaceRuntime({
     ...workspace,
     activeTabId: workspace.active_tab_id,
+  });
+}
+
+function normalizeWorkspaceRuntime(workspace: WorkspaceRuntime): WorkspaceRuntime {
+  const activeTabId = workspace.activeTabId ?? workspace.active_tab_id;
+  return {
+    ...workspace,
+    active_tab_id: activeTabId,
+    activeTabId,
+    tabs: normalizeWorkspaceTabsPaneIds(workspace.tabs),
   };
 }
 
 function workspaceDraftFromRuntime(workspace: WorkspaceRuntime): WorkspaceDefinitionDraft {
+  const tabs = normalizeWorkspaceTabsPaneIds(workspace.tabs);
   return {
     id: workspace.id,
     name: workspace.name,
     status: "closed",
     active_tab_id: workspace.activeTabId,
     sort_order: workspace.sort_order,
-    tabs: workspace.tabs.map((tab) => ({
+    tabs: tabs.map((tab) => ({
       id: tab.id,
       title: tab.title,
       active_pane_id: tab.active_pane_id,

@@ -29,6 +29,92 @@ export function firstLeafPaneId(root: PaneNode): string | null {
   return firstLeafPaneId(root.first) ?? firstLeafPaneId(root.second);
 }
 
+export function normalizeWorkspaceTabsPaneIds<T extends { active_pane_id: string; root: PaneNode }>(
+  tabs: T[],
+): T[] {
+  return tabs.map((tab) => normalizeWorkspaceTabPaneIds(tab));
+}
+
+function normalizeWorkspaceTabPaneIds<T extends { active_pane_id: string; root: PaneNode }>(tab: T): T {
+  const reservedPaneIds = new Set<string>();
+  collectPaneIds(tab.root, reservedPaneIds);
+  const seenPaneIds = new Set<string>();
+  const normalizedRoot = normalizePaneIds(tab.root, seenPaneIds, reservedPaneIds);
+  const activePaneId = findLeafPane(normalizedRoot, tab.active_pane_id)
+    ? tab.active_pane_id
+    : firstLeafPaneId(normalizedRoot) ?? tab.active_pane_id;
+  return { ...tab, active_pane_id: activePaneId, root: normalizedRoot };
+}
+
+function normalizePaneIds(root: PaneNode, seenPaneIds: Set<string>, reservedPaneIds: Set<string>): PaneNode {
+  if (root.kind === "split") {
+    return {
+      ...root,
+      first: normalizePaneIds(root.first, seenPaneIds, reservedPaneIds),
+      second: normalizePaneIds(root.second, seenPaneIds, reservedPaneIds),
+    };
+  }
+
+  const originalId = root.id;
+  if (!seenPaneIds.has(originalId)) {
+    seenPaneIds.add(originalId);
+    return root;
+  }
+
+  const id = nextAvailablePaneId(reservedPaneIds);
+  seenPaneIds.add(id);
+  const terminalTabs = getLeafTerminalTabs(root).map((terminalTab) =>
+    renamePaneTerminalTabId(terminalTab, originalId, id),
+  );
+  const activeTerminalTabId = renamePaneTerminalTabIdValue(root.active_terminal_tab_id, originalId, id);
+
+  return {
+    ...root,
+    id,
+    active_terminal_tab_id: activeTerminalTabId,
+    terminal_tabs: terminalTabs,
+  };
+}
+
+function collectPaneIds(root: PaneNode, paneIds: Set<string>) {
+  if (root.kind === "leaf") {
+    paneIds.add(root.id);
+    return;
+  }
+
+  collectPaneIds(root.first, paneIds);
+  collectPaneIds(root.second, paneIds);
+}
+
+function nextAvailablePaneId(reservedPaneIds: Set<string>): string {
+  let counter = 1;
+  let id = `pane-${counter}`;
+  while (reservedPaneIds.has(id)) {
+    counter += 1;
+    id = `pane-${counter}`;
+  }
+  reservedPaneIds.add(id);
+  return id;
+}
+
+function renamePaneTerminalTabId(
+  terminalTab: PaneTerminalTab,
+  oldPaneId: string,
+  newPaneId: string,
+): PaneTerminalTab {
+  const id = renamePaneTerminalTabIdValue(terminalTab.id, oldPaneId, newPaneId) ?? terminalTab.id;
+  return id === terminalTab.id ? terminalTab : { ...terminalTab, id };
+}
+
+function renamePaneTerminalTabIdValue(
+  value: string | undefined,
+  oldPaneId: string,
+  newPaneId: string,
+): string | undefined {
+  const oldPrefix = `${oldPaneId}-tab-`;
+  return value?.startsWith(oldPrefix) ? `${newPaneId}-tab-${value.slice(oldPrefix.length)}` : value;
+}
+
 export function getLeafTerminalTabs(leaf: LeafPane): PaneTerminalTab[] {
   if (leaf.terminal_tabs && leaf.terminal_tabs.length > 0) {
     return leaf.terminal_tabs;

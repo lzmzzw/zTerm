@@ -55,6 +55,47 @@ function leafPaneIds(root: PaneNode): string[] {
   return [...leafPaneIds(root.first), ...leafPaneIds(root.second)];
 }
 
+function splitWithDuplicatePaneIds(): PaneNode {
+  return {
+    kind: "split",
+    id: "split-root",
+    direction: "horizontal",
+    ratio: 0.5,
+    first: {
+      kind: "leaf",
+      id: "pane-1",
+      title: "Git Bash",
+      runtime_session_id: "runtime-left",
+      saved_session_id: null,
+      active_terminal_tab_id: "pane-1-tab-1",
+      terminal_tabs: [
+        {
+          id: "pane-1-tab-1",
+          title: "Git Bash",
+          runtime_session_id: "runtime-left",
+          saved_session_id: null,
+        },
+      ],
+    },
+    second: {
+      kind: "leaf",
+      id: "pane-1",
+      title: "新建终端",
+      runtime_session_id: null,
+      saved_session_id: null,
+      active_terminal_tab_id: "pane-1-tab-1",
+      terminal_tabs: [
+        {
+          id: "pane-1-tab-1",
+          title: "新建终端",
+          runtime_session_id: null,
+          saved_session_id: null,
+        },
+      ],
+    },
+  };
+}
+
 describe("workspaceStore pane tabs", () => {
   it("caches workspace definitions and deduplicates in-flight loaders", async () => {
     const definition: WorkspaceDefinition = {
@@ -227,6 +268,91 @@ describe("workspaceStore pane tabs", () => {
       kind: "leaf",
       runtime_session_id: "runtime-a",
     });
+  });
+
+  it("normalizes duplicate pane ids when restoring a workspace definition into runtime", () => {
+    const definition: WorkspaceDefinition = {
+      id: "workspace-duplicated",
+      name: "重复分栏",
+      status: "running",
+      active_tab_id: "tab-1",
+      sort_order: 0,
+      created_at_ms: 1,
+      updated_at_ms: 1,
+      tabs: [
+        {
+          id: "tab-1",
+          title: "主工作区",
+          active_pane_id: "pane-1",
+          root: splitWithDuplicatePaneIds(),
+          sort_order: 0,
+          created_at_ms: 1,
+          updated_at_ms: 1,
+        },
+      ],
+    };
+    useWorkspaceStore.setState({
+      workspaces: [],
+      activeWorkspaceId: definition.id,
+      tabs: [],
+      activeTabId: definition.active_tab_id,
+    });
+
+    useWorkspaceStore.getState().upsertWorkspaceDefinition(definition);
+    useWorkspaceStore.getState().splitActivePane("vertical");
+
+    const workspaceTab = useWorkspaceStore.getState().tabs[0];
+    const paneIds = leafPaneIds(workspaceTab.root);
+    expect(new Set(paneIds).size).toBe(paneIds.length);
+    expect(paneIds.filter((paneId) => paneId === "pane-1")).toHaveLength(1);
+    expect(paneIds).toHaveLength(3);
+  });
+
+  it("normalizes duplicate pane ids when migrating the hidden default workspace to a saved workspace", () => {
+    const defaultWorkspace: WorkspaceRuntime = {
+      id: DEFAULT_WORKSPACE_ID,
+      name: "默认工作区",
+      status: "running",
+      active_tab_id: "tab-1",
+      activeTabId: "tab-1",
+      sort_order: 0,
+      created_at_ms: 1,
+      updated_at_ms: 1,
+      tabs: [
+        {
+          id: "tab-1",
+          title: "主工作区",
+          active_pane_id: "pane-1",
+          root: splitWithDuplicatePaneIds(),
+          sort_order: 0,
+          created_at_ms: 1,
+          updated_at_ms: 1,
+        },
+      ],
+    };
+    const saved: WorkspaceDefinition = {
+      id: "workspace-from-default",
+      name: "默认保存",
+      status: "closed",
+      active_tab_id: defaultWorkspace.activeTabId,
+      tabs: [],
+      sort_order: 3,
+      created_at_ms: 10,
+      updated_at_ms: 11,
+    };
+    useWorkspaceStore.setState({
+      workspaces: [defaultWorkspace],
+      activeWorkspaceId: DEFAULT_WORKSPACE_ID,
+      tabs: defaultWorkspace.tabs,
+      activeTabId: defaultWorkspace.activeTabId,
+    });
+
+    useWorkspaceStore.getState().migrateActiveWorkspaceToSavedWorkspace(saved);
+
+    const workspaceTab = useWorkspaceStore.getState().tabs[0];
+    const paneIds = leafPaneIds(workspaceTab.root);
+    expect(new Set(paneIds).size).toBe(paneIds.length);
+    expect(paneIds.filter((paneId) => paneId === "pane-1")).toHaveLength(1);
   });
 
   it("freezes visual snapshots for one running workspace without touching other workspaces", () => {
