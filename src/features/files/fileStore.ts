@@ -64,6 +64,7 @@ interface FileState {
   entries: FileEntry[];
   transfers: TransferTask[];
   activeSavedSessionId: string | null;
+  transferSessionId: string | null;
   path: string;
   selectedPaths: string[];
   selectionAnchorPath: string | null;
@@ -84,15 +85,22 @@ interface FileState {
   checkTransferConflicts: (savedSessionId: string, items: TransferConflictCheckItem[]) => Promise<TransferConflict[]>;
   loadTransfers: (savedSessionId: string | null) => Promise<void>;
   retryTransfer: (taskId: string) => Promise<void>;
+  pauseTransfer: (taskId: string) => Promise<void>;
+  resumeTransfer: (taskId: string) => Promise<void>;
+  cancelTransfer: (taskId: string) => Promise<void>;
+  deleteTransfer: (taskId: string) => Promise<void>;
   bindTransferEvents: () => Promise<UnlistenFn>;
 }
 
 let listFilesRequestId = 0;
+let transferListRequestId = 0;
+const deletedTransferIds = new Set<string>();
 
 export const useFileStore = create<FileState>((set, get) => ({
   entries: [],
   transfers: [],
   activeSavedSessionId: null,
+  transferSessionId: null,
   path: "/",
   selectedPaths: [],
   selectionAnchorPath: null,
@@ -113,9 +121,11 @@ export const useFileStore = create<FileState>((set, get) => ({
   selectPaths: (paths) => set({ selectedPaths: paths, selectionAnchorPath: paths.at(-1) ?? null }),
   clearFiles() {
     listFilesRequestId += 1;
+    transferListRequestId += 1;
     set({
       entries: [],
       activeSavedSessionId: null,
+      transferSessionId: null,
       path: "/",
       selectedPaths: [],
       selectionAnchorPath: null,
@@ -178,17 +188,49 @@ export const useFileStore = create<FileState>((set, get) => ({
     return invoke<TransferConflict[]>("sftp_check_transfer_conflicts", { savedSessionId, items });
   },
   async loadTransfers(savedSessionId) {
-    set({ transferLoading: true });
+    const requestId = transferListRequestId + 1;
+    transferListRequestId = requestId;
+    if (!savedSessionId) {
+      set({ transfers: [], transferLoading: false, transferSessionId: null });
+      return;
+    }
+    set({ transferLoading: true, transferSessionId: savedSessionId });
     try {
       const transfers = await invoke<TransferTask[]>("transfer_list", { savedSessionId, limit: 200 });
-      set({ transfers, transferLoading: false });
+      if (transferListRequestId !== requestId) {
+        return;
+      }
+      set({
+        transfers: transfers.filter((task) => task.saved_session_id === savedSessionId),
+        transferLoading: false,
+        transferSessionId: savedSessionId,
+      });
     } catch (error) {
-      set({ transferLoading: false, error: unknownErrorMessage(error, "文件操作失败") });
+      if (transferListRequestId === requestId) {
+        set({ transferLoading: false, error: unknownErrorMessage(error, "文件操作失败") });
+      }
     }
   },
   async retryTransfer(taskId) {
     const task = await invoke<TransferTask>("transfer_retry", { taskId });
     upsertTransfer(set, task);
+  },
+  async pauseTransfer(taskId) {
+    const task = await invoke<TransferTask>("transfer_pause", { taskId });
+    upsertTransfer(set, task);
+  },
+  async resumeTransfer(taskId) {
+    const task = await invoke<TransferTask>("transfer_resume", { taskId });
+    upsertTransfer(set, task);
+  },
+  async cancelTransfer(taskId) {
+    const task = await invoke<TransferTask>("transfer_cancel", { taskId });
+    upsertTransfer(set, task);
+  },
+  async deleteTransfer(taskId) {
+    await invoke("transfer_delete", { taskId });
+    deletedTransferIds.add(taskId);
+    set((state) => ({ transfers: state.transfers.filter((task) => task.id !== taskId) }));
   },
   async bindTransferEvents() {
     const progress = await listen<TransferTask>("transfer:progress", (event) => {
@@ -216,7 +258,13 @@ export const useFileStore = create<FileState>((set, get) => ({
 type FileStoreSet = (partial: Partial<FileState> | ((state: FileState) => Partial<FileState>)) => void;
 
 function upsertTransfer(set: FileStoreSet, task: TransferTask) {
+  if (deletedTransferIds.has(task.id)) {
+    return;
+  }
   set((state) => {
+    if (state.transferSessionId !== task.saved_session_id) {
+      return {};
+    }
     const exists = state.transfers.some((item) => item.id === task.id);
     return {
       transfers: exists

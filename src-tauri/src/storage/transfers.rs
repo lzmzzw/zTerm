@@ -154,6 +154,45 @@ pub fn update_transfer_task(
     })
 }
 
+pub fn update_transfer_task_status_checked(
+    store: &SqliteStore,
+    id: &str,
+    next_status: TransferStatus,
+    allowed_statuses: &[TransferStatus],
+    validation_message: &str,
+) -> AppResult<TransferTask> {
+    let id = required_text("传输任务 ID", id)?;
+    let now = now_ms();
+
+    store.write_transaction(|transaction| {
+        let status_value: String = transaction
+            .query_row(
+                "select status from transfer_tasks where id = ?1",
+                [&id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| AppError::not_found(format!("transfer task not found: {id}")))?;
+        let status = TransferStatus::from_db(&status_value)
+            .ok_or_else(|| AppError::storage(format!("invalid transfer status: {status_value}")))?;
+        if !allowed_statuses.contains(&status) {
+            return Err(AppError::validation(validation_message));
+        }
+
+        transaction.execute(
+            "
+            update transfer_tasks
+            set status = ?2,
+                error_message = null,
+                updated_at_ms = ?3
+            where id = ?1
+            ",
+            params![id, next_status.as_str(), now],
+        )?;
+        get_transfer_task_in_transaction(transaction, &id)
+    })
+}
+
 pub fn update_transfer_task_progress(
     store: &SqliteStore,
     id: &str,
@@ -169,7 +208,10 @@ pub fn update_transfer_task_progress(
         let changed = transaction.execute(
             "
             update transfer_tasks
-            set status = ?2,
+            set status = case
+                    when status in ('paused', 'cancelled') then status
+                    else ?2
+                end,
                 transferred_bytes = ?3,
                 total_bytes = case
                     when ?4 is null then total_bytes
@@ -193,6 +235,19 @@ pub fn update_transfer_task_progress(
             )));
         }
         get_transfer_task_in_transaction(transaction, &id)
+    })
+}
+
+pub fn delete_transfer_task(store: &SqliteStore, id: &str) -> AppResult<()> {
+    let id = required_text("传输任务 ID", id)?;
+    store.write_transaction(|transaction| {
+        let changed = transaction.execute("delete from transfer_tasks where id = ?1", [&id])?;
+        if changed == 0 {
+            return Err(AppError::not_found(format!(
+                "transfer task not found: {id}"
+            )));
+        }
+        Ok(())
     })
 }
 

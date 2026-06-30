@@ -1,5 +1,5 @@
 // Author: Liz
-import { Activity, Clock3, Folder, MessageSquareMore, Send, type LucideIcon } from "lucide-react";
+import { Activity, Clock3, Folder, MessageSquareMore, type LucideIcon } from "lucide-react";
 
 import { AiPanel } from "../features/ai/AiPanel";
 import type {
@@ -33,7 +33,6 @@ const rightToolRailIcons: Record<RightTool, LucideIcon> = {
   files: Folder,
   history: Clock3,
   monitor: Activity,
-  transfer: Send,
 };
 
 interface RightToolsPanelProps {
@@ -108,7 +107,11 @@ interface RightToolsPanelProps {
   };
   transfers: {
     tasks: TransferTask[];
+    onCancel: (taskId: string) => Promise<void> | void;
+    onDelete: (taskId: string) => Promise<void> | void;
+    onPause: (taskId: string) => Promise<void> | void;
     onRetry: (taskId: string) => Promise<void> | void;
+    onResume: (taskId: string) => Promise<void> | void;
   };
   language?: AppLanguage;
   onActiveToolChange: (tool: RightTool) => void;
@@ -169,25 +172,36 @@ export function RightToolsPanel({
           {activeTool === "files" ? (
             <>
               <PanelHeader title="SFTP" />
-              <FileExplorerPanel
-                savedSessionId={files.savedSessionId}
-                path={files.path}
-                entries={files.entries}
-                selectedPaths={files.selectedPaths}
-                loading={files.loading}
-                error={files.error}
-                onPathChange={files.onPathChange}
-                onSelect={files.onSelect}
-                onRefresh={files.onRefresh}
-                onParent={files.onParent}
-                onMkdir={files.onMkdir}
-                onUpload={files.onUpload}
-                onDownload={files.onDownload}
-                onRename={files.onRename}
-                onDelete={files.onDelete}
-                onOpenDirectory={files.onOpenDirectory}
-                onUploadDropped={files.onUploadDropped}
-              />
+              <div className="zt-file-transfer-shell">
+                <FileExplorerPanel
+                  savedSessionId={files.savedSessionId}
+                  path={files.path}
+                  entries={files.entries}
+                  selectedPaths={files.selectedPaths}
+                  loading={files.loading}
+                  error={files.error}
+                  onPathChange={files.onPathChange}
+                  onSelect={files.onSelect}
+                  onRefresh={files.onRefresh}
+                  onParent={files.onParent}
+                  onMkdir={files.onMkdir}
+                  onUpload={files.onUpload}
+                  onDownload={files.onDownload}
+                  onRename={files.onRename}
+                  onDelete={files.onDelete}
+                  onOpenDirectory={files.onOpenDirectory}
+                  onUploadDropped={files.onUploadDropped}
+                />
+                <TransferPanel
+                  collapsible
+                  tasks={transfers.tasks}
+                  onCancel={transfers.onCancel}
+                  onDelete={transfers.onDelete}
+                  onPause={transfers.onPause}
+                  onRetry={transfers.onRetry}
+                  onResume={transfers.onResume}
+                />
+              </div>
             </>
           ) : null}
 
@@ -217,13 +231,6 @@ export function RightToolsPanel({
                 onSaveCommandGroup={history.onSaveCommandGroup}
                 onDeleteCommandGroup={history.onDeleteCommandGroup}
               />
-            </>
-          ) : null}
-
-          {activeTool === "transfer" ? (
-            <>
-              <PanelHeader title={t(language, "transferTasks")} />
-              <TransferPanel tasks={transfers.tasks} onRetry={transfers.onRetry} />
             </>
           ) : null}
 

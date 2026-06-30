@@ -270,6 +270,10 @@ export function AppShell() {
     bindTransferEvents,
     loadTransfers,
     retryTransfer,
+    pauseTransfer,
+    resumeTransfer,
+    cancelTransfer,
+    deleteTransfer,
   } = useFileStore(
     useShallow((state) => ({
       setPath: state.setPath,
@@ -286,6 +290,10 @@ export function AppShell() {
       bindTransferEvents: state.bindTransferEvents,
       loadTransfers: state.loadTransfers,
       retryTransfer: state.retryTransfer,
+      pauseTransfer: state.pauseTransfer,
+      resumeTransfer: state.resumeTransfer,
+      cancelTransfer: state.cancelTransfer,
+      deleteTransfer: state.deleteTransfer,
     })),
   );
   const {
@@ -308,7 +316,7 @@ export function AppShell() {
     ),
   );
   const { transfers } = useFileStore(
-    useShallow((state) => (activeTool === "transfer" ? { transfers: state.transfers } : EMPTY_TRANSFER_PANEL_STATE)),
+    useShallow((state) => (activeTool === "files" ? { transfers: state.transfers } : EMPTY_TRANSFER_PANEL_STATE)),
   );
   const {
     searchHistory,
@@ -573,7 +581,7 @@ export function AppShell() {
 
   useEffect(() => {
     if (workspaceVisualSwitchActive) return;
-    if (activeTool === "transfer") {
+    if (activeTool === "files") {
       void loadTransfers(activeSshSessionId);
     }
   }, [activeSshSessionId, activeTool, loadTransfers, workspaceVisualSwitchActive]);
@@ -1428,7 +1436,11 @@ export function AppShell() {
         }}
         transfers={{
           tasks: transfers,
+          onCancel: (taskId) => void cancelTransfer(taskId),
+          onDelete: (taskId) => void deleteTransfer(taskId),
+          onPause: (taskId) => void pauseTransfer(taskId),
           onRetry: (taskId) => void retryTransfer(taskId),
+          onResume: (taskId) => void resumeTransfer(taskId),
         }}
         language={language}
         onActiveToolChange={toggleRightTool}

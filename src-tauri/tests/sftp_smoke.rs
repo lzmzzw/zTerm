@@ -89,6 +89,7 @@ async fn run_sftp_smoke(
                 &remote_root,
                 Some(TransferKind::Directory),
                 TransferConflictPolicy::Overwrite,
+                None,
                 |_| Ok(()),
             )
             .await
@@ -111,6 +112,7 @@ async fn run_sftp_smoke(
                 path_string(&download_root)?.as_str(),
                 Some(TransferKind::Directory),
                 TransferConflictPolicy::Overwrite,
+                None,
                 |_| Ok(()),
             )
             .await

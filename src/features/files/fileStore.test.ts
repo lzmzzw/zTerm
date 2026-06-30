@@ -14,7 +14,7 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: listenMock,
 }));
 
-import { useFileStore, type FileEntry } from "./fileStore";
+import { useFileStore, type FileEntry, type TransferTask } from "./fileStore";
 
 function entry(path: string): FileEntry {
   return {
@@ -24,6 +24,25 @@ function entry(path: string): FileEntry {
     size: 1,
     modified_at_ms: null,
     permissions: null,
+  };
+}
+
+function transferTask(overrides: Partial<TransferTask> = {}): TransferTask {
+  return {
+    id: "task-1",
+    saved_session_id: "session-1",
+    direction: "upload",
+    local_path: "C:/tmp/a.txt",
+    remote_path: "/tmp/a.txt",
+    kind: "file",
+    conflict_policy: "overwrite",
+    total_bytes: 100,
+    transferred_bytes: 40,
+    status: "running",
+    error_message: null,
+    created_at_ms: 1,
+    updated_at_ms: 2,
+    ...overrides,
   };
 }
 
@@ -44,6 +63,7 @@ describe("fileStore", () => {
       entries: [],
       transfers: [],
       activeSavedSessionId: null,
+      transferSessionId: null,
       path: "/",
       selectedPaths: [],
       selectionAnchorPath: null,
@@ -71,6 +91,26 @@ describe("fileStore", () => {
     expect(useFileStore.getState().entries).toEqual(currentEntries);
     expect(useFileStore.getState().path).toBe("/srv/current");
     expect(useFileStore.getState().loading).toBe(false);
+  });
+
+  it("keeps the latest transfer list result when an older SSH context request resolves later", async () => {
+    const stale = deferred<TransferTask[]>();
+    const currentTransfers = [transferTask({ id: "task-current", saved_session_id: "session-current" })];
+    invokeMock.mockReturnValueOnce(stale.promise).mockResolvedValueOnce(currentTransfers);
+
+    const staleRequest = useFileStore.getState().loadTransfers("session-old");
+    const currentRequest = useFileStore.getState().loadTransfers("session-current");
+
+    await currentRequest;
+    expect(useFileStore.getState().transfers).toEqual(currentTransfers);
+    expect(useFileStore.getState().transferSessionId).toBe("session-current");
+
+    stale.resolve([transferTask({ id: "task-old", saved_session_id: "session-old" })]);
+    await staleRequest;
+
+    expect(useFileStore.getState().transfers).toEqual(currentTransfers);
+    expect(useFileStore.getState().transferSessionId).toBe("session-current");
+    expect(useFileStore.getState().transferLoading).toBe(false);
   });
 
   it("clears stale SFTP entries and ignores an in-flight list after leaving the SSH context", async () => {
@@ -176,6 +216,75 @@ describe("fileStore", () => {
         },
       ],
     });
+  });
+
+  it("controls transfer pause resume cancel and delete through IPC", async () => {
+    const paused = transferTask({ status: "paused" });
+    const running = transferTask({ status: "running" });
+    const cancelled = transferTask({ status: "cancelled" });
+    useFileStore.setState({ transferSessionId: "session-1" });
+    invokeMock
+      .mockResolvedValueOnce(paused)
+      .mockResolvedValueOnce(running)
+      .mockResolvedValueOnce(cancelled)
+      .mockResolvedValueOnce({ deleted: true });
+
+    await useFileStore.getState().pauseTransfer("task-1");
+    expect(useFileStore.getState().transfers).toEqual([paused]);
+
+    await useFileStore.getState().resumeTransfer("task-1");
+    expect(useFileStore.getState().transfers).toEqual([running]);
+
+    await useFileStore.getState().cancelTransfer("task-1");
+    expect(useFileStore.getState().transfers).toEqual([cancelled]);
+
+    await useFileStore.getState().deleteTransfer("task-1");
+    expect(useFileStore.getState().transfers).toEqual([]);
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "transfer_pause", { taskId: "task-1" });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "transfer_resume", { taskId: "task-1" });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "transfer_cancel", { taskId: "task-1" });
+    expect(invokeMock).toHaveBeenNthCalledWith(4, "transfer_delete", { taskId: "task-1" });
+  });
+
+  it("ignores late transfer events after a task is deleted", async () => {
+    await useFileStore.getState().bindTransferEvents();
+    const progressHandler = listenMock.mock.calls.find(([eventName]) => eventName === "transfer:progress")?.[1];
+    expect(progressHandler).toBeTypeOf("function");
+
+    invokeMock.mockResolvedValueOnce({ deleted: true });
+    useFileStore.setState({ transferSessionId: "session-1", transfers: [transferTask({ id: "task-deleted" })] });
+
+    await useFileStore.getState().deleteTransfer("task-deleted");
+    expect(useFileStore.getState().transfers).toEqual([]);
+
+    progressHandler?.({ payload: transferTask({ id: "task-deleted", transferred_bytes: 60 }) });
+
+    expect(useFileStore.getState().transfers).toEqual([]);
+  });
+
+  it("keeps transfer events scoped to the loaded SSH session", async () => {
+    const current = transferTask({ id: "task-current", saved_session_id: "session-current" });
+    invokeMock.mockResolvedValueOnce([current]);
+
+    await useFileStore.getState().loadTransfers("session-current");
+    await useFileStore.getState().bindTransferEvents();
+    const progressHandler = listenMock.mock.calls.find(([eventName]) => eventName === "transfer:progress")?.[1];
+    expect(progressHandler).toBeTypeOf("function");
+
+    progressHandler?.({
+      payload: transferTask({ id: "task-stale", saved_session_id: "session-stale", transferred_bytes: 60 }),
+    });
+    expect(useFileStore.getState().transfers).toEqual([current]);
+
+    const updatedCurrent = transferTask({
+      id: "task-current",
+      saved_session_id: "session-current",
+      transferred_bytes: 80,
+    });
+    progressHandler?.({ payload: updatedCurrent });
+
+    expect(useFileStore.getState().transfers).toEqual([updatedCurrent]);
   });
 
   it("refreshes the active SFTP list after an upload task completes", async () => {

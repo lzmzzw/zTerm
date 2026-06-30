@@ -151,3 +151,107 @@ fn progress_updates_can_set_download_total_when_discovered_later() {
     assert_eq!(progressed.total_bytes, 10);
     assert_eq!(progressed.status, TransferStatus::Running);
 }
+
+#[test]
+fn transfer_queue_pauses_resumes_cancels_and_deletes_tasks() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite store should open"));
+    let session = save_session(store.as_ref(), ssh_draft()).expect("session should save");
+    let queue = TransferQueue::from_storage(Arc::clone(&store));
+    let task = queue
+        .enqueue(
+            &session.id,
+            TransferDirection::Upload,
+            "C:/tmp/local.txt",
+            "/tmp/remote.txt",
+            Some(TransferKind::File),
+            TransferConflictPolicy::Overwrite,
+            10,
+        )
+        .expect("transfer should enqueue");
+
+    queue
+        .register_control(&task.id)
+        .expect("current runtime control should register");
+    let paused_queued = queue
+        .pause(&task.id)
+        .expect("queued transfer with current control should pause");
+    assert_eq!(paused_queued.status, TransferStatus::Paused);
+    let resumed_queued = queue
+        .resume(&task.id)
+        .expect("paused queued transfer should resume");
+    assert_eq!(resumed_queued.status, TransferStatus::Running);
+
+    queue
+        .mark_running(&task.id)
+        .expect("transfer should mark running");
+    let paused = queue
+        .pause(&task.id)
+        .expect("running transfer should pause");
+    assert_eq!(paused.status, TransferStatus::Paused);
+
+    let still_paused = queue
+        .mark_progress_with_total(&task.id, 4, Some(10))
+        .expect("paused transfer should keep progress without resuming");
+    assert_eq!(still_paused.transferred_bytes, 4);
+    assert_eq!(still_paused.status, TransferStatus::Paused);
+
+    let resumed = queue
+        .resume(&task.id)
+        .expect("paused transfer should resume");
+    assert_eq!(resumed.status, TransferStatus::Running);
+
+    let cancelled = queue
+        .cancel(&task.id)
+        .expect("running transfer should cancel");
+    assert_eq!(cancelled.status, TransferStatus::Cancelled);
+
+    let still_cancelled = queue
+        .mark_progress(&task.id, 8)
+        .expect("cancelled transfer should not return to running");
+    assert_eq!(still_cancelled.status, TransferStatus::Cancelled);
+
+    queue
+        .delete(&task.id)
+        .expect("cancelled transfer should delete");
+    let list = transfers::list_transfer_tasks(store.as_ref(), Some(&session.id), 20)
+        .expect("transfers should list after delete");
+    assert!(list.is_empty());
+}
+
+#[test]
+fn transfer_queue_rejects_invalid_control_transitions() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite store should open"));
+    let session = save_session(store.as_ref(), ssh_draft()).expect("session should save");
+    let queue = TransferQueue::from_storage(Arc::clone(&store));
+    let task = queue
+        .enqueue(
+            &session.id,
+            TransferDirection::Download,
+            "C:/tmp/local.txt",
+            "/tmp/remote.txt",
+            Some(TransferKind::File),
+            TransferConflictPolicy::Overwrite,
+            10,
+        )
+        .expect("transfer should enqueue");
+
+    let resume_error = queue
+        .resume(&task.id)
+        .expect_err("queued transfer should not resume");
+    assert!(matches!(resume_error, AppError::Validation(message) if message.contains("暂停")));
+
+    let pause_error = queue
+        .pause(&task.id)
+        .expect_err("queued transfer without current control should not pause");
+    assert!(matches!(pause_error, AppError::Validation(message) if message.contains("当前运行期")));
+
+    let failed = queue
+        .mark_failed(&task.id, "network error")
+        .expect("transfer should fail");
+    assert_eq!(failed.status, TransferStatus::Failed);
+
+    let cancel_error = queue
+        .cancel(&task.id)
+        .expect_err("failed transfer should not cancel");
+    assert!(matches!(cancel_error, AppError::Validation(message) if message.contains("运行中")));
+}

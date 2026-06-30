@@ -1999,6 +1999,16 @@ button {
   min-height: 0;
 }
 
+.zt-file-transfer-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.zt-file-transfer-shell > .zt-file-panel {
+  flex: 1 1 auto;
+}
+
 .zt-file-path {
   display: grid;
   align-items: center;
@@ -2173,6 +2183,64 @@ button {
   padding: 8px;
 }
 
+.zt-transfer-dock {
+  display: grid;
+  flex: 0 0 clamp(96px, 25%, 168px);
+  grid-template-rows: 32px minmax(0, 1fr);
+  min-height: 0;
+  border-top: 1px solid var(--zt-border);
+  background: var(--zt-bg-base);
+}
+
+.zt-transfer-dock-collapsed {
+  flex-basis: 32px;
+  grid-template-rows: 32px;
+}
+
+.zt-transfer-dock-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 26px;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--zt-border-subtle);
+  color: var(--zt-text-primary);
+  font-size: var(--zt-font-size-ui);
+}
+
+.zt-transfer-dock-collapsed .zt-transfer-dock-header {
+  border-bottom: 0;
+}
+
+.zt-transfer-dock-header strong,
+.zt-transfer-dock-header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-transfer-dock-header span {
+  color: var(--zt-text-muted);
+}
+
+.zt-transfer-dock-header button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--zt-radius-control);
+  background: transparent;
+  color: var(--zt-text-secondary);
+}
+
+.zt-transfer-dock-header button:hover {
+  background: var(--zt-bg-hover);
+  color: var(--zt-text-primary);
+}
+
 .zt-transfer-conflict-body {
   display: grid;
   gap: 8px;
@@ -2205,9 +2273,9 @@ button {
 
 .zt-transfer-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) 160px 48px 72px minmax(80px, 160px) 28px;
+  grid-template-columns: minmax(120px, 1fr) 76px 40px 58px auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-height: 38px;
   border-radius: var(--zt-radius-control);
   padding: 4px 6px;
@@ -2263,7 +2331,26 @@ button {
   color: var(--zt-danger);
 }
 
+.zt-transfer-status.paused {
+  color: var(--zt-warning);
+}
+
+.zt-transfer-status.cancelled {
+  color: var(--zt-text-muted);
+}
+
+.zt-transfer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.zt-transfer-actions button {
+  width: 24px;
+}
+
 .zt-transfer-row em {
+  grid-column: 1 / -1;
   color: var(--zt-danger);
   font-style: normal;
 }

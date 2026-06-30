@@ -59,6 +59,7 @@ const storeMocks = vi.hoisted(() => ({
   historyPanelProps: null as Record<string, unknown> | null,
   monitorPanelProps: null as Record<string, unknown> | null,
   modelPanelProps: null as Record<string, unknown> | null,
+  transferPanelProps: null as Record<string, unknown> | null,
   loadCommandGroups: vi.fn().mockResolvedValue(undefined),
   saveCommandGroup: vi.fn().mockResolvedValue(undefined),
   searchHistory: vi.fn().mockResolvedValue(undefined),
@@ -66,6 +67,10 @@ const storeMocks = vi.hoisted(() => ({
   listFiles: vi.fn().mockResolvedValue(undefined),
   clearFiles: vi.fn(),
   loadTransfers: vi.fn().mockResolvedValue(undefined),
+  pauseTransfer: vi.fn().mockResolvedValue(undefined),
+  resumeTransfer: vi.fn().mockResolvedValue(undefined),
+  cancelTransfer: vi.fn().mockResolvedValue(undefined),
+  deleteTransfer: vi.fn().mockResolvedValue(undefined),
   openTerminal: vi.fn().mockResolvedValue({
     runtime_session_id: "runtime-2",
     saved_session_id: "session-1",
@@ -152,7 +157,10 @@ vi.mock("../features/files/FileExplorerPanel", () => ({
 }));
 
 vi.mock("../features/files/TransferPanel", () => ({
-  TransferPanel: () => <section aria-label="传输任务列表" />,
+  TransferPanel: (props: Record<string, unknown>) => {
+    storeMocks.transferPanelProps = props;
+    return <section aria-label="传输任务列表" />;
+  },
 }));
 
 vi.mock("../features/history/CommandHistoryPanel", () => ({
@@ -427,6 +435,10 @@ vi.mock("../features/files/fileStore", () => {
     bindTransferEvents: storeMocks.bindEvents,
     loadTransfers: storeMocks.loadTransfers,
     retryTransfer: storeMocks.asyncNoop,
+    pauseTransfer: storeMocks.pauseTransfer,
+    resumeTransfer: storeMocks.resumeTransfer,
+    cancelTransfer: storeMocks.cancelTransfer,
+    deleteTransfer: storeMocks.deleteTransfer,
   });
   const useFileStore = (selector?: (state: Record<string, unknown>) => unknown) => {
     const state = fileState();
@@ -882,6 +894,11 @@ describe("AppShell", () => {
     storeMocks.getWorkspaceRuntimeSessionIds.mockReturnValue(["runtime-1"]);
     storeMocks.historyPanelProps = null;
     storeMocks.monitorPanelProps = null;
+    storeMocks.transferPanelProps = null;
+    storeMocks.pauseTransfer.mockResolvedValue(undefined);
+    storeMocks.resumeTransfer.mockResolvedValue(undefined);
+    storeMocks.cancelTransfer.mockResolvedValue(undefined);
+    storeMocks.deleteTransfer.mockResolvedValue(undefined);
     storeMocks.sessionState.sessions = [];
     storeMocks.terminalState.runtimes = {};
     storeMocks.terminalState.output = {};
@@ -2953,6 +2970,69 @@ describe("AppShell", () => {
       "pane-1-tab-1",
       expect.objectContaining({ runtime_session_id: "runtime-2", saved_session_id: "session-1", pane_id: "pane-1" }),
     );
+    view.unmount();
+  });
+
+  it("loads SFTP files and current-session transfers from the merged files panel", async () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "session-1",
+        name: "开发机 A",
+        host: "172.16.41.180",
+        port: 22,
+        username: "ubuntu",
+        type: "ssh",
+        auth_mode: "none",
+        group_id: null,
+        tags: [],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+      },
+    ];
+    storeMocks.workspaceState.tabs = [
+      {
+        id: "tab-1",
+        title: "开发机 A",
+        active_pane_id: "pane-1",
+        root: {
+          kind: "leaf",
+          id: "pane-1",
+          title: "开发机 A",
+          runtime_session_id: "runtime-1",
+          saved_session_id: "session-1",
+          active_terminal_tab_id: "pane-1-tab-1",
+          terminal_tabs: [
+            {
+              id: "pane-1-tab-1",
+              title: "开发机 A",
+              runtime_session_id: "runtime-1",
+              saved_session_id: "session-1",
+            },
+          ],
+        },
+      },
+    ];
+    const view = render(<AppShell />);
+    const filesButton = view.container.querySelector('.zt-tool-rail [aria-label="SFTP 文件"]') as HTMLButtonElement;
+
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="传输任务"]')).toBe(null);
+    expect(storeMocks.loadTransfers).not.toHaveBeenCalled();
+
+    await act(async () => {
+      filesButton.click();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.listFiles).toHaveBeenLastCalledWith("session-1", "/");
+    expect(storeMocks.loadTransfers).toHaveBeenLastCalledWith("session-1");
+    expect(view.container.querySelector('[aria-label="文件面板"]')).not.toBe(null);
+    expect(view.container.querySelector('[aria-label="传输任务列表"]')).not.toBe(null);
+    expect(storeMocks.transferPanelProps?.onPause).toBeTypeOf("function");
+    expect(storeMocks.transferPanelProps?.onResume).toBeTypeOf("function");
+    expect(storeMocks.transferPanelProps?.onCancel).toBeTypeOf("function");
+    expect(storeMocks.transferPanelProps?.onDelete).toBeTypeOf("function");
+
     view.unmount();
   });
 

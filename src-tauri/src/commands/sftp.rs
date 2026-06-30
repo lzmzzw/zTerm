@@ -169,6 +169,27 @@ pub fn transfer_retry(
     Ok(task)
 }
 
+#[tauri::command]
+pub fn transfer_pause(state: State<'_, AppState>, task_id: String) -> AppResult<TransferTask> {
+    state.transfer_queue().pause(&task_id)
+}
+
+#[tauri::command]
+pub fn transfer_resume(state: State<'_, AppState>, task_id: String) -> AppResult<TransferTask> {
+    state.transfer_queue().resume(&task_id)
+}
+
+#[tauri::command]
+pub fn transfer_cancel(state: State<'_, AppState>, task_id: String) -> AppResult<TransferTask> {
+    state.transfer_queue().cancel(&task_id)
+}
+
+#[tauri::command]
+pub fn transfer_delete(state: State<'_, AppState>, task_id: String) -> AppResult<SftpDeleteResult> {
+    state.transfer_queue().delete(&task_id)?;
+    Ok(SftpDeleteResult { deleted: true })
+}
+
 fn spawn_transfer(
     app: AppHandle,
     service: SftpService,
@@ -176,6 +197,13 @@ fn spawn_transfer(
     session: crate::models::session::SavedSession,
     task: TransferTask,
 ) {
+    let control = match queue.register_control(&task.id) {
+        Ok(control) => control,
+        Err(error) => {
+            let _ = app.emit("transfer:done", error.to_string());
+            return;
+        }
+    };
     tauri::async_runtime::spawn(async move {
         let running = match queue.mark_running(&task.id) {
             Ok(task) => task,
@@ -208,6 +236,7 @@ fn spawn_transfer(
                         &task.remote_path,
                         task.kind,
                         task.conflict_policy,
+                        Some(control.clone()),
                         &mut progress,
                     )
                     .await
@@ -220,6 +249,7 @@ fn spawn_transfer(
                         &task.local_path,
                         task.kind,
                         task.conflict_policy,
+                        Some(control.clone()),
                         &mut progress,
                     )
                     .await
@@ -227,8 +257,28 @@ fn spawn_transfer(
         };
 
         let done = match result {
-            Ok(()) => queue.mark_done(&task.id),
-            Err(error) => queue.mark_failed(&task.id, &error.to_string()),
+            Ok(()) => match queue.get(&task.id) {
+                Ok(current) if current.status == crate::models::sftp::TransferStatus::Cancelled => {
+                    Ok(current)
+                }
+                Ok(_) => queue.mark_done(&task.id),
+                Err(crate::error::AppError::NotFound(_)) => {
+                    let _ = queue.unregister_control(&task.id);
+                    return;
+                }
+                Err(error) => Err(error),
+            },
+            Err(error) => match queue.get(&task.id) {
+                Ok(current) if current.status == crate::models::sftp::TransferStatus::Cancelled => {
+                    Ok(current)
+                }
+                Ok(_) => queue.mark_failed(&task.id, &error.to_string()),
+                Err(crate::error::AppError::NotFound(_)) => {
+                    let _ = queue.unregister_control(&task.id);
+                    return;
+                }
+                Err(error) => Err(error),
+            },
         };
         match done {
             Ok(task) => {
@@ -238,5 +288,6 @@ fn spawn_transfer(
                 let _ = app.emit("transfer:done", error.to_string());
             }
         }
+        let _ = queue.unregister_control(&task.id);
     });
 }

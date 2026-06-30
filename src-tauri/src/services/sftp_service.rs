@@ -29,7 +29,7 @@ use crate::{
             TransferConflictPolicy, TransferDirection, TransferKind,
         },
     },
-    services::credential_service::read_system_secret,
+    services::{credential_service::read_system_secret, transfer_queue::TransferRunControl},
 };
 
 const TRANSFER_BUFFER_SIZE: usize = 64 * 1024;
@@ -48,6 +48,13 @@ fn progress_update(transferred_bytes: u64, total_bytes: Option<u64>) -> Transfer
         total_bytes,
         transferred_bytes,
     }
+}
+
+async fn transfer_checkpoint(control: Option<&TransferRunControl>) -> AppResult<()> {
+    if let Some(control) = control {
+        control.checkpoint().await?;
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -164,6 +171,7 @@ impl SftpService {
         remote_path: &str,
         _kind: Option<TransferKind>,
         conflict_policy: TransferConflictPolicy,
+        control: Option<TransferRunControl>,
         mut on_progress: F,
     ) -> AppResult<()>
     where
@@ -174,6 +182,7 @@ impl SftpService {
         let metadata = fs::metadata(&local_path).await?;
         let sftp = connect_sftp(session).await?;
         let mut transferred = 0_u64;
+        transfer_checkpoint(control.as_ref()).await?;
 
         if metadata.is_dir() {
             let total_bytes = local_path_total_bytes(local_path.to_string_lossy().as_ref()).await?;
@@ -187,8 +196,10 @@ impl SftpService {
             };
             let mut stack = vec![(local_path, remote_root)];
             while let Some((local_dir, remote_dir)) = stack.pop() {
+                transfer_checkpoint(control.as_ref()).await?;
                 let mut entries = fs::read_dir(&local_dir).await?;
                 while let Some(entry) = entries.next_entry().await? {
+                    transfer_checkpoint(control.as_ref()).await?;
                     let entry_path = entry.path();
                     let entry_name = entry.file_name().to_string_lossy().to_string();
                     let remote_entry = join_remote_path(&remote_dir, &entry_name);
@@ -203,6 +214,7 @@ impl SftpService {
                             &remote_entry,
                             conflict_policy,
                             transferred,
+                            control.as_ref(),
                             &mut on_progress,
                         )
                         .await?;
@@ -216,6 +228,7 @@ impl SftpService {
                 &remote_path,
                 conflict_policy,
                 transferred,
+                control.as_ref(),
                 &mut on_progress,
             )
             .await?;
@@ -233,6 +246,7 @@ impl SftpService {
         local_path: &str,
         _kind: Option<TransferKind>,
         conflict_policy: TransferConflictPolicy,
+        control: Option<TransferRunControl>,
         mut on_progress: F,
     ) -> AppResult<()>
     where
@@ -241,6 +255,7 @@ impl SftpService {
         let remote_path = required_remote_path(remote_path)?;
         let local_path = PathBuf::from(required_path(local_path)?);
         let sftp = connect_sftp(session).await?;
+        transfer_checkpoint(control.as_ref()).await?;
         let metadata = sftp
             .symlink_metadata(remote_path.clone())
             .await
@@ -256,12 +271,14 @@ impl SftpService {
             };
             let mut stack = vec![(remote_path, local_root)];
             while let Some((remote_dir, local_dir)) = stack.pop() {
+                transfer_checkpoint(control.as_ref()).await?;
                 fs::create_dir_all(&local_dir).await?;
                 let entries = sftp
                     .read_dir(remote_dir.clone())
                     .await
                     .map_err(|error| AppError::sftp(error.to_string()))?;
                 for entry in entries {
+                    transfer_checkpoint(control.as_ref()).await?;
                     let remote_entry = entry.path();
                     let local_entry = local_dir.join(entry.file_name());
                     if entry.metadata().file_type().is_dir() {
@@ -273,6 +290,7 @@ impl SftpService {
                             &local_entry,
                             conflict_policy,
                             transferred,
+                            control.as_ref(),
                             &mut on_progress,
                         )
                         .await?;
@@ -286,6 +304,7 @@ impl SftpService {
                 &local_path,
                 conflict_policy,
                 transferred,
+                control.as_ref(),
                 &mut on_progress,
             )
             .await?;
@@ -820,11 +839,13 @@ async fn upload_file<F>(
     remote_path: &str,
     conflict_policy: TransferConflictPolicy,
     mut transferred: u64,
+    control: Option<&TransferRunControl>,
     on_progress: &mut F,
 ) -> AppResult<u64>
 where
     F: FnMut(TransferProgressUpdate) -> AppResult<()>,
 {
+    transfer_checkpoint(control).await?;
     let mut local = fs::File::open(local_path).await?;
     if let Some(parent) = remote_parent_path(remote_path) {
         create_remote_dir_all(sftp, &parent).await?;
@@ -838,10 +859,12 @@ where
     };
     let mut buffer = vec![0_u8; TRANSFER_BUFFER_SIZE];
     loop {
+        transfer_checkpoint(control).await?;
         let read = local.read(&mut buffer).await?;
         if read == 0 {
             break;
         }
+        transfer_checkpoint(control).await?;
         remote
             .write_all(&buffer[..read])
             .await
@@ -849,6 +872,7 @@ where
         transferred = transferred.saturating_add(read as u64);
         on_progress(progress_update(transferred, None))?;
     }
+    transfer_checkpoint(control).await?;
     remote
         .shutdown()
         .await
@@ -862,11 +886,13 @@ async fn download_file<F>(
     local_path: &Path,
     conflict_policy: TransferConflictPolicy,
     mut transferred: u64,
+    control: Option<&TransferRunControl>,
     on_progress: &mut F,
 ) -> AppResult<u64>
 where
     F: FnMut(TransferProgressUpdate) -> AppResult<()>,
 {
+    transfer_checkpoint(control).await?;
     if let Some(parent) = local_path.parent() {
         fs::create_dir_all(parent).await?;
     }
@@ -892,6 +918,7 @@ where
     };
     let mut buffer = vec![0_u8; TRANSFER_BUFFER_SIZE];
     loop {
+        transfer_checkpoint(control).await?;
         let read = remote
             .read(&mut buffer)
             .await
@@ -899,10 +926,12 @@ where
         if read == 0 {
             break;
         }
+        transfer_checkpoint(control).await?;
         local.write_all(&buffer[..read]).await?;
         transferred = transferred.saturating_add(read as u64);
         on_progress(progress_update(transferred, None))?;
     }
+    transfer_checkpoint(control).await?;
     local.flush().await?;
     Ok(transferred)
 }

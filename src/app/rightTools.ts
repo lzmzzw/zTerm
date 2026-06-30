@@ -1,16 +1,15 @@
 // Author: Liz
 import type { I18nKey } from "../features/settings/i18n";
 
-export type RightTool = "agent" | "files" | "history" | "monitor" | "transfer";
+export type RightTool = "agent" | "files" | "history" | "monitor";
 
-export const rightToolRailOrder: RightTool[] = ["files", "history", "transfer", "monitor", "agent"];
+export const rightToolRailOrder: RightTool[] = ["files", "history", "monitor", "agent"];
 
 const rightToolLabelKeys: Record<RightTool, I18nKey> = {
   agent: "agent",
   files: "sftpFiles",
   history: "history",
   monitor: "resourceMonitor",
-  transfer: "transferTasks",
 };
 
 const rightToolShortcutActions = {
