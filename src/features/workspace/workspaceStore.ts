@@ -52,6 +52,7 @@ interface WorkspaceStore {
   buildActiveWorkspaceDraft: () => WorkspaceDefinitionDraft | null;
   getWorkspaceRuntimeSessionIds: (workspaceId: string) => string[];
   closeWorkspaceRuntime: (workspaceId: string) => string[];
+  removeWorkspace: (workspaceId: string) => void;
   updatePaneTerminalTab: (
     workspaceId: string,
     workspaceTabId: string,
@@ -262,6 +263,22 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     });
     return runtimeIds;
   },
+  removeWorkspace: (workspaceId) =>
+    set((state) => {
+      const workspaces = state.workspaces.filter((workspace) => workspace.id !== workspaceId);
+      const { [workspaceId]: _removedDefinition, ...workspaceDefinitions } = state.workspaceDefinitions;
+      if (state.activeWorkspaceId !== workspaceId) {
+        return { workspaces, workspaceDefinitions };
+      }
+
+      const nextWorkspaces = workspaces.length > 0 ? workspaces : [initialWorkspace];
+      const nextActive = nextWorkspaces[0];
+      return {
+        workspaces: nextWorkspaces,
+        workspaceDefinitions,
+        ...mirrorWorkspace(nextActive),
+      };
+    }),
   updatePaneTerminalTab: (workspaceId, workspaceTabId, paneId, paneTabId, patch) =>
     set((state) => {
       const workspaces = state.workspaces.map((workspace) => {

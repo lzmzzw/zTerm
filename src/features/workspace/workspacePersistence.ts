@@ -18,3 +18,7 @@ export async function workspaceSave(draft: WorkspaceDefinitionDraft): Promise<Wo
 export async function workspaceDelete(workspaceId: string): Promise<void> {
   await invoke("workspace_delete", { workspaceId });
 }
+
+export async function workspaceRemove(workspaceId: string): Promise<void> {
+  await invoke("workspace_remove", { workspaceId });
+}

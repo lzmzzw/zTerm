@@ -78,6 +78,7 @@ pub fn run() {
             commands::workspace::workspace_get,
             commands::workspace::workspace_save,
             commands::workspace::workspace_delete,
+            commands::workspace::workspace_remove,
             commands::terminal::terminal_open,
             commands::terminal::terminal_open_default_local,
             commands::terminal::terminal_write,

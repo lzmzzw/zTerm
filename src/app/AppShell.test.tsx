@@ -32,9 +32,11 @@ const storeMocks = vi.hoisted(() => ({
   workspaceGet: vi.fn(),
   workspaceSave: vi.fn(),
   workspaceDelete: vi.fn().mockResolvedValue(undefined),
+  workspaceRemove: vi.fn().mockResolvedValue(undefined),
   cacheWorkspaceDefinition: vi.fn(),
   loadWorkspaceDefinition: vi.fn(),
   prefetchWorkspaceDefinitions: vi.fn(),
+  removeWorkspace: vi.fn(),
   workspaceDefinitionState: {
     definitions: {} as Record<string, Record<string, unknown>>,
   },
@@ -491,6 +493,7 @@ vi.mock("../features/workspace/workspacePersistence", () => ({
   workspaceGet: storeMocks.workspaceGet,
   workspaceSave: storeMocks.workspaceSave,
   workspaceDelete: storeMocks.workspaceDelete,
+  workspaceRemove: storeMocks.workspaceRemove,
 }));
 
 vi.mock("../features/workspace/workspaceStore", () => {
@@ -510,6 +513,7 @@ vi.mock("../features/workspace/workspaceStore", () => {
     buildActiveWorkspaceDraft: storeMocks.buildActiveWorkspaceDraft,
     getWorkspaceRuntimeSessionIds: storeMocks.getWorkspaceRuntimeSessionIds,
     closeWorkspaceRuntime: storeMocks.closeWorkspaceRuntime,
+    removeWorkspace: storeMocks.removeWorkspace,
     updatePaneTerminalTab: storeMocks.updatePaneTerminalTab,
     selectTab: storeMocks.selectTab,
     addTab: storeMocks.noop,
@@ -533,6 +537,7 @@ vi.mock("../features/workspace/workspaceStore", () => {
     buildActiveWorkspaceDraft: storeMocks.buildActiveWorkspaceDraft,
     getWorkspaceRuntimeSessionIds: storeMocks.getWorkspaceRuntimeSessionIds,
     closeWorkspaceRuntime: storeMocks.closeWorkspaceRuntime,
+    removeWorkspace: storeMocks.removeWorkspace,
     updatePaneTerminalTab: storeMocks.updatePaneTerminalTab,
     cacheWorkspaceDefinition: storeMocks.cacheWorkspaceDefinition,
     loadWorkspaceDefinition: storeMocks.loadWorkspaceDefinition,
@@ -618,6 +623,23 @@ function deferred<T>() {
 async function clickButton(container: HTMLElement, label: string) {
   await act(async () => {
     button(container, label).click();
+  });
+}
+
+function openWorkspaceContextMenu(container: HTMLElement, workspaceName: string) {
+  const item = container.querySelector(`[aria-label="工作区 ${workspaceName}"]`);
+  if (!item) {
+    throw new Error(`Workspace item not found: ${workspaceName}`);
+  }
+  item.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 96 }));
+}
+
+async function clickWorkspaceContextAction(container: HTMLElement, workspaceName: string, actionLabel: string) {
+  await act(async () => {
+    openWorkspaceContextMenu(container, workspaceName);
+    await Promise.resolve();
+    button(container, actionLabel).click();
+    await Promise.resolve();
   });
 }
 
@@ -809,6 +831,8 @@ describe("AppShell", () => {
     storeMocks.workspaceGet.mockReset();
     storeMocks.workspaceSave.mockReset();
     storeMocks.workspaceDelete.mockResolvedValue(undefined);
+    storeMocks.workspaceRemove.mockResolvedValue(undefined);
+    storeMocks.removeWorkspace.mockReset();
     storeMocks.updateWorkspaceRuntimeMetadata.mockReset();
     storeMocks.workspaceDefinitionState.definitions = {};
     storeMocks.terminalOutputAccesses = 0;
@@ -1196,9 +1220,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await clickButton(view.container, "工作区");
-    await act(async () => {
-      (view.container.querySelector('[aria-label="编辑工作区 运维巡检"]') as HTMLButtonElement).click();
-    });
+    await clickWorkspaceContextAction(view.container, "运维巡检", "编辑工作区 运维巡检");
 
     const dialog = view.container.querySelector('.zt-workspace-preview-dialog[aria-label="编辑工作区 运维巡检"]');
     expect(dialog).not.toBe(null);
@@ -1269,9 +1291,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await clickButton(view.container, "工作区");
-    await act(async () => {
-      (view.container.querySelector('[aria-label="编辑工作区 运维巡检"]') as HTMLButtonElement).click();
-    });
+    await clickWorkspaceContextAction(view.container, "运维巡检", "编辑工作区 运维巡检");
 
     const dialog = view.container.querySelector('.zt-workspace-preview-dialog[aria-label="编辑工作区 运维巡检"]');
     expect(dialog?.querySelectorAll(".zt-workspace-layout-pane")).toHaveLength(4);
@@ -1450,11 +1470,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await clickButton(view.container, "工作区");
-    await act(async () => {
-      (view.container.querySelector('[aria-label="编辑工作区 运维巡检"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await clickWorkspaceContextAction(view.container, "运维巡检", "编辑工作区 运维巡检");
 
     const dialog = view.container.querySelector('.zt-workspace-preview-dialog[aria-label="编辑工作区 运维巡检"]');
     expect(dialog).not.toBe(null);
@@ -1502,7 +1518,9 @@ describe("AppShell", () => {
 
     await clickButton(view.container, "工作区");
     await act(async () => {
-      (view.container.querySelector('[aria-label="关闭工作区 运维巡检"]') as HTMLButtonElement).click();
+      openWorkspaceContextMenu(view.container, "运维巡检");
+      await Promise.resolve();
+      button(view.container, "关闭工作区 运维巡检").click();
       await Promise.resolve();
     });
 
@@ -1536,7 +1554,9 @@ describe("AppShell", () => {
 
     await clickButton(view.container, "工作区");
     await act(async () => {
-      (view.container.querySelector('[aria-label="关闭工作区 运维巡检"]') as HTMLButtonElement).click();
+      openWorkspaceContextMenu(view.container, "运维巡检");
+      await Promise.resolve();
+      button(view.container, "关闭工作区 运维巡检").click();
       await Promise.resolve();
     });
 
@@ -1600,7 +1620,9 @@ describe("AppShell", () => {
 
     await clickButton(view.container, "工作区");
     await act(async () => {
-      (view.container.querySelector('[aria-label="关闭工作区 运维巡检"]') as HTMLButtonElement).click();
+      openWorkspaceContextMenu(view.container, "运维巡检");
+      await Promise.resolve();
+      button(view.container, "关闭工作区 运维巡检").click();
       await Promise.resolve();
     });
 
@@ -1632,7 +1654,9 @@ describe("AppShell", () => {
 
     await clickButton(view.container, "工作区");
     await act(async () => {
-      (view.container.querySelector('[aria-label="关闭工作区 运维巡检"]') as HTMLButtonElement).click();
+      openWorkspaceContextMenu(view.container, "运维巡检");
+      await Promise.resolve();
+      button(view.container, "关闭工作区 运维巡检").click();
       await Promise.resolve();
     });
 
@@ -1641,6 +1665,88 @@ describe("AppShell", () => {
     expect(storeMocks.workspaceDelete).not.toHaveBeenCalled();
     expect(view.container.textContent).toContain("关闭工作区运行时失败");
     expect(view.container.textContent).not.toContain("raw runtime close failure");
+
+    view.unmount();
+  });
+
+  it("deletes a workspace only after confirmation and successful runtime close", async () => {
+    const view = render(<AppShell />);
+
+    await clickButton(view.container, "工作区");
+    await clickWorkspaceContextAction(view.container, "运维巡检", "删除工作区 运维巡检");
+
+    const dialog = view.container.querySelector('[role="dialog"][aria-label="删除工作区"]');
+    expect(dialog?.textContent).toContain("确认删除工作区“运维巡检”");
+
+    await act(async () => {
+      (dialog?.querySelector('button[type="submit"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-1");
+    expect(storeMocks.closeWorkspaceRuntime).toHaveBeenCalledWith("workspace-1");
+    expect(storeMocks.workspaceRemove).toHaveBeenCalledWith("workspace-1");
+    expect(storeMocks.removeWorkspace).toHaveBeenCalledWith("workspace-1");
+
+    view.unmount();
+  });
+
+  it("does not delete a workspace when runtime close fails", async () => {
+    storeMocks.closeTerminal.mockRejectedValueOnce(new Error("PTY close failed"));
+    const view = render(<AppShell />);
+
+    await clickButton(view.container, "工作区");
+    await clickWorkspaceContextAction(view.container, "运维巡检", "删除工作区 运维巡检");
+    const dialog = view.container.querySelector('[role="dialog"][aria-label="删除工作区"]');
+
+    await act(async () => {
+      (dialog?.querySelector('button[type="submit"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-1");
+    expect(storeMocks.workspaceRemove).not.toHaveBeenCalled();
+    expect(storeMocks.removeWorkspace).not.toHaveBeenCalled();
+    expect(view.container.textContent).toContain("PTY close failed");
+
+    view.unmount();
+  });
+
+  it("keeps the default workspace protected from deletion", async () => {
+    storeMocks.workspaceState.workspaces = [
+      {
+        id: "default-workspace",
+        name: "默认工作区",
+        status: "running",
+        active_tab_id: "tab-1",
+        activeTabId: "tab-1",
+        tab_count: 1,
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+      },
+    ];
+    storeMocks.workspaceState.activeWorkspaceId = "default-workspace";
+    const view = render(<AppShell />);
+
+    await clickButton(view.container, "工作区");
+    await act(async () => {
+      openWorkspaceContextMenu(view.container, "默认工作区");
+      await Promise.resolve();
+    });
+
+    const deleteButton = button(view.container, "删除工作区 默认工作区");
+    expect(deleteButton.disabled).toBe(true);
+
+    await act(async () => {
+      deleteButton.click();
+      await Promise.resolve();
+    });
+
+    expect(view.container.querySelector('[role="dialog"][aria-label="删除工作区"]')).toBe(null);
+    expect(storeMocks.workspaceRemove).not.toHaveBeenCalled();
 
     view.unmount();
   });
@@ -1767,7 +1873,9 @@ describe("AppShell", () => {
 
     await clickButton(view.container, "工作区");
     await act(async () => {
-      (view.container.querySelector('[aria-label="恢复工作区 运维巡检"]') as HTMLButtonElement).click();
+      openWorkspaceContextMenu(view.container, "运维巡检");
+      await Promise.resolve();
+      button(view.container, "恢复工作区 运维巡检").click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -1871,7 +1979,9 @@ describe("AppShell", () => {
 
     await clickButton(view.container, "工作区");
     await act(async () => {
-      (view.container.querySelector('[aria-label="恢复工作区 运维巡检"]') as HTMLButtonElement).click();
+      openWorkspaceContextMenu(view.container, "运维巡检");
+      await Promise.resolve();
+      button(view.container, "恢复工作区 运维巡检").click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -1987,7 +2097,9 @@ describe("AppShell", () => {
 
     await clickButton(view.container, "工作区");
     await act(async () => {
-      (view.container.querySelector('[aria-label="恢复工作区 运维巡检"]') as HTMLButtonElement).click();
+      openWorkspaceContextMenu(view.container, "运维巡检");
+      await Promise.resolve();
+      button(view.container, "恢复工作区 运维巡检").click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -2086,7 +2198,9 @@ describe("AppShell", () => {
 
     await clickButton(view.container, "工作区");
     await act(async () => {
-      (view.container.querySelector('[aria-label="恢复工作区 运维巡检"]') as HTMLButtonElement).click();
+      openWorkspaceContextMenu(view.container, "运维巡检");
+      await Promise.resolve();
+      button(view.container, "恢复工作区 运维巡检").click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -2191,7 +2305,9 @@ describe("AppShell", () => {
 
     await clickButton(view.container, "工作区");
     await act(async () => {
-      (view.container.querySelector('[aria-label="恢复工作区 运维巡检"]') as HTMLButtonElement).click();
+      openWorkspaceContextMenu(view.container, "运维巡检");
+      await Promise.resolve();
+      button(view.container, "恢复工作区 运维巡检").click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -2486,7 +2602,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await clickButton(view.container, "工作区");
-    await clickButton(view.container, "恢复工作区 发布窗口");
+    await clickWorkspaceContextAction(view.container, "发布窗口", "恢复工作区 发布窗口");
     await flushWorkspacePostLayoutWork();
 
     expect(storeMocks.freezeWorkspaceRuntimeVisualSnapshots).toHaveBeenCalledWith(

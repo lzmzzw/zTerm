@@ -1,5 +1,5 @@
 // Author: Liz
-import { CopyPlus, Pencil, Play, Power } from "lucide-react";
+import { CopyPlus } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { WorkspaceLayoutPreview, type WorkspaceLayoutPreviewSession } from "./WorkspaceLayoutPreview";
@@ -15,7 +15,12 @@ interface WorkspaceManagerPanelProps {
   onEditWorkspace: (workspaceId: string) => void;
   onRestoreWorkspace: (workspaceId: string) => void;
   onCloseWorkspace: (workspaceId: string) => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
 }
+
+type WorkspaceContextMenu =
+  | { kind: "root"; x: number; y: number }
+  | { kind: "workspace"; workspace: WorkspaceSidebarItem; x: number; y: number };
 
 export function WorkspaceManagerPanel({
   workspaces,
@@ -27,8 +32,9 @@ export function WorkspaceManagerPanel({
   onEditWorkspace,
   onRestoreWorkspace,
   onCloseWorkspace,
+  onDeleteWorkspace,
 }: WorkspaceManagerPanelProps) {
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<WorkspaceContextMenu | null>(null);
 
   useEffect(() => {
     if (!contextMenu) return undefined;
@@ -43,7 +49,7 @@ export function WorkspaceManagerPanel({
       aria-label="工作区管理"
       onContextMenu={(event) => {
         event.preventDefault();
-        setContextMenu({ x: event.clientX, y: event.clientY });
+        setContextMenu({ kind: "root", x: event.clientX, y: event.clientY });
       }}
     >
       <div className="zt-panel-header">
@@ -63,7 +69,16 @@ export function WorkspaceManagerPanel({
           const dotClass = workspace.status;
           const statusText = statusLabel(workspace.status);
           return (
-            <li key={workspace.id} className={active ? "zt-workspace-item active" : "zt-workspace-item"}>
+            <li
+              key={workspace.id}
+              className={active ? "zt-workspace-item active" : "zt-workspace-item"}
+              aria-label={`工作区 ${workspace.name}`}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setContextMenu({ kind: "workspace", workspace, x: event.clientX, y: event.clientY });
+              }}
+            >
               <button
                 type="button"
                 className="zt-workspace-main"
@@ -92,32 +107,6 @@ export function WorkspaceManagerPanel({
                     <span className="zt-workspace-thumbnail-empty" aria-hidden="true" />
                   )}
                 </div>
-                <div className="zt-workspace-actions">
-                  <button
-                    type="button"
-                    aria-label={`编辑工作区 ${workspace.name}`}
-                    title="编辑"
-                    onClick={() => onEditWorkspace(workspace.id)}
-                  >
-                    <Pencil size={14} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`恢复工作区 ${workspace.name}`}
-                    title="恢复"
-                    onClick={() => onRestoreWorkspace(workspace.id)}
-                  >
-                    <Play size={14} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`关闭工作区 ${workspace.name}`}
-                    title="关闭工作区"
-                    onClick={() => onCloseWorkspace(workspace.id)}
-                  >
-                    <Power size={14} aria-hidden="true" />
-                  </button>
-                </div>
               </div>
               <span className={`zt-workspace-dot ${dotClass}`} title={statusText} aria-label={statusText} />
             </li>
@@ -129,12 +118,90 @@ export function WorkspaceManagerPanel({
 
       {contextMenu ? (
         <div className="zt-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-          <button type="button" role="menuitem" onClick={onCreateWorkspace}>
-            新建工作区
-          </button>
+          {contextMenu.kind === "root" ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setContextMenu(null);
+                onCreateWorkspace();
+              }}
+            >
+              新建工作区
+            </button>
+          ) : (
+            <WorkspaceContextMenuItems
+              workspace={contextMenu.workspace}
+              onEditWorkspace={onEditWorkspace}
+              onRestoreWorkspace={onRestoreWorkspace}
+              onCloseWorkspace={onCloseWorkspace}
+              onDeleteWorkspace={onDeleteWorkspace}
+              onCloseMenu={() => setContextMenu(null)}
+            />
+          )}
         </div>
       ) : null}
     </section>
+  );
+}
+
+function WorkspaceContextMenuItems({
+  workspace,
+  onEditWorkspace,
+  onRestoreWorkspace,
+  onCloseWorkspace,
+  onDeleteWorkspace,
+  onCloseMenu,
+}: {
+  workspace: WorkspaceSidebarItem;
+  onEditWorkspace: (workspaceId: string) => void;
+  onRestoreWorkspace: (workspaceId: string) => void;
+  onCloseWorkspace: (workspaceId: string) => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
+  onCloseMenu: () => void;
+}) {
+  const restoreDisabled = workspace.status === "running";
+  const closeDisabled = workspace.status === "closed";
+  const deleteDisabled = workspace.id === "default-workspace";
+
+  function run(action: (workspaceId: string) => void) {
+    onCloseMenu();
+    action(workspace.id);
+  }
+
+  return (
+    <>
+      <button type="button" role="menuitem" aria-label={`编辑工作区 ${workspace.name}`} onClick={() => run(onEditWorkspace)}>
+        编辑
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        aria-label={`恢复工作区 ${workspace.name}`}
+        disabled={restoreDisabled}
+        onClick={() => run(onRestoreWorkspace)}
+      >
+        恢复
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        aria-label={`关闭工作区 ${workspace.name}`}
+        disabled={closeDisabled}
+        onClick={() => run(onCloseWorkspace)}
+      >
+        关闭
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        aria-label={`删除工作区 ${workspace.name}`}
+        disabled={deleteDisabled}
+        onClick={() => run(onDeleteWorkspace)}
+      >
+        删除
+      </button>
+    </>
   );
 }
 

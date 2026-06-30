@@ -290,6 +290,57 @@ describe("workspaceStore pane tabs", () => {
     expect(closed.tabs[0].root.terminal_tabs?.[0]).not.toHaveProperty("visual_snapshot");
   });
 
+  it("removes a workspace runtime and cached definition while falling back from the active workspace", () => {
+    const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
+    const defaultWorkspace = runtimeWorkspace("default-workspace", "runtime-default");
+    const definitionA: WorkspaceDefinition = {
+      id: "workspace-a",
+      name: "运维巡检",
+      status: "closed",
+      active_tab_id: "workspace-a-tab-1",
+      tabs: workspaceA.tabs,
+      sort_order: 0,
+      created_at_ms: 1,
+      updated_at_ms: 2,
+    };
+    useWorkspaceStore.setState({
+      workspaceDefinitions: {
+        "workspace-a": definitionA,
+      },
+      workspaces: [workspaceA, defaultWorkspace],
+      activeWorkspaceId: workspaceA.id,
+      tabs: workspaceA.tabs,
+      activeTabId: workspaceA.activeTabId,
+    });
+
+    (useWorkspaceStore.getState() as unknown as { removeWorkspace: (workspaceId: string) => void }).removeWorkspace("workspace-a");
+
+    const state = useWorkspaceStore.getState();
+    expect(state.workspaces.map((workspace) => workspace.id)).toEqual(["default-workspace"]);
+    expect(state.workspaceDefinitions).not.toHaveProperty("workspace-a");
+    expect(state.activeWorkspaceId).toBe("default-workspace");
+    expect(state.tabs).toBe(defaultWorkspace.tabs);
+    expect(state.activeTabId).toBe(defaultWorkspace.activeTabId);
+  });
+
+  it("keeps the current active workspace when removing a background workspace", () => {
+    const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
+    const workspaceB = runtimeWorkspace("workspace-b", "runtime-b");
+    useWorkspaceStore.setState({
+      workspaces: [workspaceA, workspaceB],
+      activeWorkspaceId: workspaceB.id,
+      tabs: workspaceB.tabs,
+      activeTabId: workspaceB.activeTabId,
+    });
+
+    (useWorkspaceStore.getState() as unknown as { removeWorkspace: (workspaceId: string) => void }).removeWorkspace("workspace-a");
+
+    const state = useWorkspaceStore.getState();
+    expect(state.workspaces.map((workspace) => workspace.id)).toEqual(["workspace-b"]);
+    expect(state.activeWorkspaceId).toBe("workspace-b");
+    expect(state.tabs).toBe(workspaceB.tabs);
+  });
+
   it("updates one pane terminal tab restore state without touching background workspaces", () => {
     const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
     const workspaceB = runtimeWorkspace("workspace-b", "runtime-b");

@@ -10,7 +10,9 @@ use zterm_lib::{
     storage::{
         sessions::{delete_session, save_session},
         sqlite::SqliteStore,
-        workspace::{close_workspace, get_workspace, list_workspaces, save_workspace},
+        workspace::{
+            close_workspace, get_workspace, list_workspaces, remove_workspace, save_workspace,
+        },
     },
 };
 
@@ -156,6 +158,32 @@ fn closing_workspace_keeps_definition_for_later_restore() {
 
     assert_eq!(loaded.status, WorkspaceStatus::Closed);
     assert_eq!(loaded.tabs.len(), 1);
+}
+
+#[test]
+fn removing_workspace_deletes_definition_and_tabs() {
+    let store = SqliteStore::open_in_memory().expect("sqlite store should open");
+    let workspace = save_workspace(&store, workspace_draft(None)).expect("workspace should save");
+
+    remove_workspace(&store, &workspace.id).expect("workspace should remove");
+
+    assert!(get_workspace(&store, &workspace.id).is_err());
+    assert!(!list_workspaces(&store)
+        .expect("workspaces should list")
+        .iter()
+        .any(|summary| summary.id == workspace.id));
+}
+
+#[test]
+fn default_workspace_cannot_be_removed() {
+    let store = SqliteStore::open_in_memory().expect("sqlite store should open");
+
+    let result = remove_workspace(&store, "default-workspace");
+
+    assert!(result.is_err());
+    let loaded = get_workspace(&store, "default-workspace")
+        .expect("default workspace should remain after rejected remove");
+    assert_eq!(loaded.id, "default-workspace");
 }
 
 #[test]

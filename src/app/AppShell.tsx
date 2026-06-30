@@ -38,7 +38,7 @@ import { SplitPaneView } from "../features/workspace/SplitPaneView";
 import { WorkspaceManagerPanel } from "../features/workspace/WorkspaceManagerPanel";
 import { WorkspacePreviewDialog } from "../features/workspace/WorkspacePreviewDialog";
 import { definitionFromDraft } from "../features/workspace/workspacePreviewModel";
-import { workspaceDelete, workspaceGet, workspaceList, workspaceSave } from "../features/workspace/workspacePersistence";
+import { workspaceDelete, workspaceGet, workspaceList, workspaceRemove, workspaceSave } from "../features/workspace/workspacePersistence";
 import { findPane, getActiveTerminalTab } from "../features/workspace/workspaceLayout";
 import { markWorkspaceRestoreQueued, runWorkspaceRestoreQueue } from "../features/workspace/workspaceRestoreScheduler";
 import {
@@ -47,6 +47,7 @@ import {
   isReusableConnectionTab,
   mergeWorkspaceSidebarItems,
   nextWorkspaceSortOrder,
+  type WorkspaceSidebarItem,
 } from "../features/workspace/workspaceShellModel";
 import { useWorkspaceStore } from "../features/workspace/workspaceStore";
 import type {
@@ -193,6 +194,7 @@ export function AppShell() {
   const [workspaceSummaries, setWorkspaceSummaries] = useState<WorkspaceSummary[]>([]);
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [workspaceEditor, setWorkspaceEditor] = useState<WorkspaceEditorState | null>(null);
+  const [pendingDeleteWorkspace, setPendingDeleteWorkspace] = useState<WorkspaceSidebarItem | null>(null);
   const { textInputDialog, requestTextInput, resolveTextInputDialog } = useAppTextInputDialog();
   const [transferConflictDialog, setTransferConflictDialog] = useState<TransferConflictDialogState | null>(null);
   const [connectionDialogTarget, setConnectionDialogTarget] = useState<ConnectionDialogTarget | null>(null);
@@ -379,6 +381,7 @@ export function AppShell() {
     buildActiveWorkspaceDraft,
     getWorkspaceRuntimeSessionIds,
     closeWorkspaceRuntime,
+    removeWorkspace,
     updatePaneTerminalTab,
     selectTab,
     addPaneTab,
@@ -401,6 +404,7 @@ export function AppShell() {
       buildActiveWorkspaceDraft: state.buildActiveWorkspaceDraft,
       getWorkspaceRuntimeSessionIds: state.getWorkspaceRuntimeSessionIds,
       closeWorkspaceRuntime: state.closeWorkspaceRuntime,
+      removeWorkspace: state.removeWorkspace,
       updatePaneTerminalTab: state.updatePaneTerminalTab,
       selectTab: state.selectTab,
       addPaneTab: state.addPaneTab,
@@ -723,8 +727,7 @@ export function AppShell() {
     }
   }
 
-  async function handleCloseWorkspace(workspaceId: string) {
-    setWorkspaceActionError(null);
+  async function closeWorkspaceRuntimeSafely(workspaceId: string, fallbackMessage: string): Promise<boolean> {
     const runtimeSessionIds = getWorkspaceRuntimeSessionIds(workspaceId);
     const closeResults = await Promise.allSettled(
       runtimeSessionIds.map((runtimeSessionId) => closeTerminal(runtimeSessionId)),
@@ -734,17 +737,60 @@ export function AppShell() {
     );
     if (failedClose) {
       const reason = failedClose.reason;
-      setWorkspaceActionError(fallbackOnlyErrorMessage(reason, "关闭工作区运行时失败"));
-      return;
+      setWorkspaceActionError(fallbackOnlyErrorMessage(reason, fallbackMessage));
+      return false;
     }
 
     closeWorkspaceRuntime(workspaceId);
+    return true;
+  }
 
+  async function handleCloseWorkspace(workspaceId: string) {
+    setWorkspaceActionError(null);
+    const closed = await closeWorkspaceRuntimeSafely(workspaceId, "关闭工作区运行时失败");
+    if (!closed) return;
     try {
       await workspaceDelete(workspaceId);
       await refreshWorkspaceSummaries();
     } catch (error) {
       setWorkspaceActionError(fallbackOnlyErrorMessage(error, "关闭工作区失败"));
+    }
+  }
+
+  function handleDeleteWorkspace(workspaceId: string) {
+    setWorkspaceActionError(null);
+    if (workspaceId === "default-workspace") {
+      setWorkspaceActionError("默认工作区不能删除");
+      return;
+    }
+    const workspace = workspaceSidebarItems.find((item) => item.id === workspaceId);
+    if (!workspace) {
+      setWorkspaceActionError("工作区不存在或已删除");
+      return;
+    }
+    setPendingDeleteWorkspace(workspace);
+  }
+
+  async function confirmDeleteWorkspace() {
+    const workspace = pendingDeleteWorkspace;
+    if (!workspace) return;
+    setWorkspaceActionError(null);
+    if (workspace.id === "default-workspace") {
+      setWorkspaceActionError("默认工作区不能删除");
+      setPendingDeleteWorkspace(null);
+      return;
+    }
+
+    const closed = await closeWorkspaceRuntimeSafely(workspace.id, "删除工作区运行时失败");
+    if (!closed) return;
+
+    try {
+      await workspaceRemove(workspace.id);
+      removeWorkspace(workspace.id);
+      setPendingDeleteWorkspace(null);
+      await refreshWorkspaceSummaries();
+    } catch (error) {
+      setWorkspaceActionError(fallbackOnlyErrorMessage(error, "删除工作区失败"));
     }
   }
 
@@ -1093,6 +1139,7 @@ export function AppShell() {
                 onEditWorkspace={(workspaceId) => void handleEditWorkspace(workspaceId)}
                 onRestoreWorkspace={(workspaceId) => void handleRestoreWorkspace(workspaceId)}
                 onCloseWorkspace={(workspaceId) => void handleCloseWorkspace(workspaceId)}
+                onDeleteWorkspace={handleDeleteWorkspace}
               />
             ) : null}
 
@@ -1161,6 +1208,35 @@ export function AppShell() {
           onCancel={() => setWorkspaceEditor(null)}
           onSave={(draft) => void handleWorkspaceEditorSave(draft)}
         />
+      ) : null}
+
+      {pendingDeleteWorkspace ? (
+        <div className="zt-session-modal-backdrop">
+          <div className="zt-session-dialog zt-session-confirm-dialog" role="dialog" aria-modal="true" aria-label="删除工作区">
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void confirmDeleteWorkspace();
+              }}
+            >
+              <header>
+                <strong>删除工作区</strong>
+                <button type="button" aria-label="取消删除工作区" onClick={() => setPendingDeleteWorkspace(null)}>
+                  ×
+                </button>
+              </header>
+              <div className="zt-session-confirm-body">
+                确认删除工作区“{pendingDeleteWorkspace.name}”？删除后该工作区定义和布局快照将无法恢复。
+              </div>
+              <footer>
+                <button type="button" onClick={() => setPendingDeleteWorkspace(null)}>
+                  取消
+                </button>
+                <button type="submit">确认删除</button>
+              </footer>
+            </form>
+          </div>
+        </div>
       ) : null}
 
       {textInputDialog ? (

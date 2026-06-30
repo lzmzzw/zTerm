@@ -8,7 +8,9 @@ use crate::{
         workspace::{WorkspaceDefinition, WorkspaceDefinitionDraft, WorkspaceSummary},
     },
     state::AppState,
-    storage::workspace::{close_workspace, get_workspace, list_workspaces, save_workspace},
+    storage::workspace::{
+        close_workspace, get_workspace, list_workspaces, remove_workspace, save_workspace,
+    },
 };
 
 #[tauri::command]
@@ -38,4 +40,12 @@ pub fn workspace_delete(
     workspace_id: String,
 ) -> AppResult<DeleteResult> {
     close_workspace(state.storage().as_ref(), &workspace_id)
+}
+
+#[tauri::command]
+pub fn workspace_remove(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> AppResult<DeleteResult> {
+    remove_workspace(state.storage().as_ref(), &workspace_id)
 }

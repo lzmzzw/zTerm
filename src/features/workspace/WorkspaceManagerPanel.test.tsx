@@ -35,21 +35,41 @@ const workspaces: WorkspaceSidebarItem[] = [
     created_at_ms: 1,
     updated_at_ms: 2,
   },
+  {
+    id: "workspace-closed",
+    name: "发布窗口",
+    status: "closed",
+    active_tab_id: "tab-1",
+    tab_count: 1,
+    sort_order: 1,
+    created_at_ms: 1,
+    updated_at_ms: 2,
+  },
+  {
+    id: "default-workspace",
+    name: "默认工作区",
+    status: "running",
+    active_tab_id: "tab-1",
+    tab_count: 1,
+    sort_order: 2,
+    created_at_ms: 1,
+    updated_at_ms: 2,
+  },
 ];
 
 describe("WorkspaceManagerPanel", () => {
   it("shows only the new workspace action from the expanded workspace context menu", () => {
     const onCreateWorkspace = vi.fn();
-    const onEditWorkspace = vi.fn();
     const view = render(
       <WorkspaceManagerPanel
         workspaces={workspaces}
         activeWorkspaceId="workspace-1"
         onCreateWorkspace={onCreateWorkspace}
         onSelectWorkspace={vi.fn()}
-        onEditWorkspace={onEditWorkspace}
+        onEditWorkspace={vi.fn()}
         onRestoreWorkspace={vi.fn()}
         onCloseWorkspace={vi.fn()}
+        onDeleteWorkspace={vi.fn()}
       />,
     );
 
@@ -67,12 +87,102 @@ describe("WorkspaceManagerPanel", () => {
     });
 
     expect(onCreateWorkspace).toHaveBeenCalledTimes(1);
+    expect(view.container.querySelector('[aria-label="编辑工作区 运维巡检"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="恢复工作区 运维巡检"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="关闭工作区 运维巡检"]')).toBeNull();
+    view.unmount();
+  });
+
+  it("shows workspace actions from the targeted workspace context menu", () => {
+    const onEditWorkspace = vi.fn();
+    const onCloseWorkspace = vi.fn();
+    const onDeleteWorkspace = vi.fn();
+    const view = render(
+      <WorkspaceManagerPanel
+        workspaces={workspaces}
+        activeWorkspaceId="workspace-1"
+        onCreateWorkspace={vi.fn()}
+        onSelectWorkspace={vi.fn()}
+        onEditWorkspace={onEditWorkspace}
+        onRestoreWorkspace={vi.fn()}
+        onCloseWorkspace={onCloseWorkspace}
+        onDeleteWorkspace={onDeleteWorkspace}
+      />,
+    );
+
+    act(() => {
+      view.container.querySelector('[aria-label="工作区 运维巡检"]')?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 96 }),
+      );
+    });
+
+    const menuItems = Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim());
+    expect(menuItems).toEqual(["编辑", "恢复", "关闭", "删除"]);
+    expect(view.container.querySelector<HTMLButtonElement>('[aria-label="恢复工作区 运维巡检"]')?.disabled).toBe(true);
+    expect(view.container.querySelector<HTMLButtonElement>('[aria-label="关闭工作区 运维巡检"]')?.disabled).toBe(false);
+    expect(view.container.querySelector<HTMLButtonElement>('[aria-label="删除工作区 运维巡检"]')?.disabled).toBe(false);
 
     act(() => {
       (view.container.querySelector('[aria-label="编辑工作区 运维巡检"]') as HTMLButtonElement).click();
     });
 
     expect(onEditWorkspace).toHaveBeenCalledWith("workspace-1");
+
+    act(() => {
+      view.container.querySelector('[aria-label="工作区 运维巡检"]')?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 96 }),
+      );
+    });
+    act(() => {
+      (view.container.querySelector('[aria-label="关闭工作区 运维巡检"]') as HTMLButtonElement).click();
+    });
+
+    expect(onCloseWorkspace).toHaveBeenCalledWith("workspace-1");
+
+    act(() => {
+      view.container.querySelector('[aria-label="工作区 运维巡检"]')?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 96 }),
+      );
+    });
+    act(() => {
+      (view.container.querySelector('[aria-label="删除工作区 运维巡检"]') as HTMLButtonElement).click();
+    });
+
+    expect(onDeleteWorkspace).toHaveBeenCalledWith("workspace-1");
+    view.unmount();
+  });
+
+  it("disables unavailable workspace context menu actions by status and default workspace protection", () => {
+    const view = render(
+      <WorkspaceManagerPanel
+        workspaces={workspaces}
+        activeWorkspaceId="workspace-1"
+        onCreateWorkspace={vi.fn()}
+        onSelectWorkspace={vi.fn()}
+        onEditWorkspace={vi.fn()}
+        onRestoreWorkspace={vi.fn()}
+        onCloseWorkspace={vi.fn()}
+        onDeleteWorkspace={vi.fn()}
+      />,
+    );
+
+    act(() => {
+      view.container.querySelector('[aria-label="工作区 发布窗口"]')?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 160 }),
+      );
+    });
+
+    expect(view.container.querySelector<HTMLButtonElement>('[aria-label="恢复工作区 发布窗口"]')?.disabled).toBe(false);
+    expect(view.container.querySelector<HTMLButtonElement>('[aria-label="关闭工作区 发布窗口"]')?.disabled).toBe(true);
+    expect(view.container.querySelector<HTMLButtonElement>('[aria-label="删除工作区 发布窗口"]')?.disabled).toBe(false);
+
+    act(() => {
+      view.container.querySelector('[aria-label="工作区 默认工作区"]')?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 220 }),
+      );
+    });
+
+    expect(view.container.querySelector<HTMLButtonElement>('[aria-label="删除工作区 默认工作区"]')?.disabled).toBe(true);
     view.unmount();
   });
 });

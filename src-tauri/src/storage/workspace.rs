@@ -167,6 +167,22 @@ pub fn close_workspace(store: &SqliteStore, id: &str) -> AppResult<DeleteResult>
     })
 }
 
+pub fn remove_workspace(store: &SqliteStore, id: &str) -> AppResult<DeleteResult> {
+    let id = required_text("工作区 ID", id)?;
+    if id == "default-workspace" {
+        return Err(AppError::validation("默认工作区不能删除"));
+    }
+
+    store.write_transaction(|transaction| {
+        transaction.execute("delete from workspace_tabs where workspace_id = ?1", [&id])?;
+        let deleted = transaction.execute("delete from workspaces where id = ?1", [&id])?;
+        if deleted == 0 {
+            return Err(AppError::not_found(format!("workspace not found: {id}")));
+        }
+        Ok(DeleteResult { deleted: true })
+    })
+}
+
 fn save_workspace_tab(
     transaction: &rusqlite::Transaction<'_>,
     workspace_id: &str,
