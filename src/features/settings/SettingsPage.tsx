@@ -1,4 +1,7 @@
 // Author: Liz
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 import { ExternalLink, Info, Hash, Scale, GitBranch, RefreshCw, Search, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -403,6 +406,76 @@ function TerminalProfileSettings({
 
 function AboutSettings({ language }: { language: AppLanguage }) {
   const version = "0.1.0";
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const githubUrl = `https://${t(language, "aboutGitHubUrl")}`;
+
+  async function openGitHub() {
+    await openUrl(githubUrl);
+  }
+
+  function describeUpdateError(error: unknown) {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  function formatDownloadProgress(event: DownloadEvent, totalBytes: number | null, downloadedBytes: number) {
+    if (event.event === "Started") {
+      return {
+        totalBytes: event.data.contentLength ?? null,
+        downloadedBytes: 0,
+        status: t(language, "aboutUpdateDownloading"),
+      };
+    }
+    if (event.event === "Progress") {
+      const nextDownloadedBytes = downloadedBytes + event.data.chunkLength;
+      if (totalBytes && totalBytes > 0) {
+        return {
+          totalBytes,
+          downloadedBytes: nextDownloadedBytes,
+          status: t(language, "aboutUpdateDownloadingProgress", {
+            percent: Math.min(100, Math.round((nextDownloadedBytes / totalBytes) * 100)),
+          }),
+        };
+      }
+      return {
+        totalBytes,
+        downloadedBytes: nextDownloadedBytes,
+        status: t(language, "aboutUpdateDownloading"),
+      };
+    }
+    return {
+      totalBytes,
+      downloadedBytes,
+      status: t(language, "aboutUpdateInstalling"),
+    };
+  }
+
+  async function checkForUpdates() {
+    setCheckingUpdate(true);
+    setUpdateStatus(t(language, "aboutUpdateChecking"));
+    let totalBytes: number | null = null;
+    let downloadedBytes = 0;
+    try {
+      const update = await check({ timeout: 30000 });
+      if (!update) {
+        setUpdateStatus(t(language, "aboutUpdateNone"));
+        return;
+      }
+      setUpdateStatus(t(language, "aboutUpdateFound", { version: update.version }));
+      await update.downloadAndInstall((event) => {
+        const next = formatDownloadProgress(event, totalBytes, downloadedBytes);
+        totalBytes = next.totalBytes;
+        downloadedBytes = next.downloadedBytes;
+        setUpdateStatus(next.status);
+      });
+      setUpdateStatus(t(language, "aboutUpdateInstalled"));
+      await relaunch();
+    } catch (error) {
+      setUpdateStatus(t(language, "aboutUpdateFailed", { message: describeUpdateError(error) }));
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
 
   return (
     <section className="zt-settings-section zt-settings-about" aria-label={t(language, "about")}>
@@ -412,7 +485,6 @@ function AboutSettings({ language }: { language: AppLanguage }) {
           <strong>{t(language, "aboutTitle")}</strong>
           <span className="zt-settings-about-version-badge">v{version}</span>
         </div>
-        <p className="zt-settings-about-subtitle">{t(language, "aboutSubtitle")}</p>
         <div className="zt-settings-about-cards">
           <div className="zt-settings-about-card">
             <div className="zt-settings-about-card-header">
@@ -433,32 +505,21 @@ function AboutSettings({ language }: { language: AppLanguage }) {
               <GitBranch size={16} aria-hidden="true" />
               <strong>{t(language, "aboutGitHub")}</strong>
             </div>
-            <div className="zt-settings-about-card-row">
-              <span className="zt-settings-about-card-value">{t(language, "aboutGitHubUrl")}</span>
-              <button
-                type="button"
-                className="zt-settings-about-link-btn"
-                onClick={() => {
-                  window.open(`https://${t(language, "aboutGitHubUrl")}`, "_blank");
-                }}
-              >
-                {t(language, "aboutOpen")}
-                <ExternalLink size={14} aria-hidden="true" />
-              </button>
-            </div>
+            <span className="zt-settings-about-card-value">{t(language, "aboutGitHubUrl")}</span>
+            <button type="button" className="zt-settings-about-link-btn" onClick={() => void openGitHub()}>
+              {t(language, "aboutOpen")}
+              <ExternalLink size={14} aria-hidden="true" />
+            </button>
           </div>
           <div className="zt-settings-about-card">
             <div className="zt-settings-about-card-header">
               <RefreshCw size={16} aria-hidden="true" />
               <strong>{t(language, "aboutUpdate")}</strong>
-              <span className="zt-settings-about-update-badge">{t(language, "aboutUpdateAvailable")}</span>
             </div>
-            <div className="zt-settings-about-card-row">
-              <span className="zt-settings-about-card-value">{t(language, "aboutUpdateHint")}</span>
-              <button type="button" className="zt-settings-about-check-btn">
-                {t(language, "aboutCheckUpdate")}
-              </button>
-            </div>
+            <span className="zt-settings-about-card-value">{updateStatus ?? t(language, "aboutUpdateIdle")}</span>
+            <button type="button" className="zt-settings-about-check-btn" disabled={checkingUpdate} onClick={() => void checkForUpdates()}>
+              {checkingUpdate ? t(language, "aboutUpdateCheckingButton") : t(language, "aboutCheckUpdate")}
+            </button>
           </div>
         </div>
       </div>

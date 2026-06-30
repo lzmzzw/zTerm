@@ -1,4 +1,6 @@
 // Author: Liz
+use std::env;
+
 use tauri::Manager;
 
 pub mod commands;
@@ -14,6 +16,9 @@ pub mod storage;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(updater_plugin())
         .setup(setup_app_state)
         .invoke_handler(tauri::generate_handler![
             commands::sessions::sessions_list,
@@ -82,6 +87,17 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run zTerm");
+}
+
+fn updater_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry, tauri_plugin_updater::Config> {
+    let mut builder = tauri_plugin_updater::Builder::new();
+    if let Ok(pubkey) = env::var("ZTERM_UPDATER_PUBKEY") {
+        let pubkey = pubkey.trim();
+        if !pubkey.is_empty() {
+            builder = builder.pubkey(pubkey);
+        }
+    }
+    builder.build()
 }
 
 fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {

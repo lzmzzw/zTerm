@@ -1,10 +1,28 @@
 // Author: Liz
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SettingsPage } from "./SettingsPage";
 import type { AppSettings, ShortcutDefinition, TerminalProfile } from "./settingsStore";
+
+const tauriMocks = vi.hoisted(() => ({
+  check: vi.fn(),
+  openUrl: vi.fn(),
+  relaunch: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/plugin-opener", () => ({
+  openUrl: tauriMocks.openUrl,
+}));
+
+vi.mock("@tauri-apps/plugin-process", () => ({
+  relaunch: tauriMocks.relaunch,
+}));
+
+vi.mock("@tauri-apps/plugin-updater", () => ({
+  check: tauriMocks.check,
+}));
 
 const baseSettings: AppSettings = {
   language: "zhCN",
@@ -69,6 +87,14 @@ async function keydown(element: HTMLElement, init: KeyboardEventInit) {
   });
 }
 
+async function flushAsyncUpdates() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 async function selectOption(container: HTMLElement, label: string, optionText: string) {
   await click(button(container, label));
   const option = Array.from(document.querySelectorAll(".zt-select-option")).find(
@@ -79,6 +105,10 @@ async function selectOption(container: HTMLElement, label: string, optionText: s
 }
 
 describe("SettingsPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("renders visible form controls in the selected language", async () => {
     const view = render(
       <SettingsPage
@@ -317,6 +347,74 @@ describe("SettingsPage", () => {
 
     expect(onDetectTerminalProfiles).toHaveBeenCalledTimes(1);
     expect(view.container.textContent).toContain("检测到 1 个终端工具");
+
+    view.unmount();
+  });
+
+  it("renders the about page as single-line facts and opens GitHub through the system browser", async () => {
+    const view = render(
+      <SettingsPage
+        settings={baseSettings}
+        terminalProfiles={[]}
+        shortcutDefinitions={shortcuts}
+        loading={false}
+        error={null}
+        onClose={vi.fn()}
+        onSaveSettings={vi.fn()}
+        onResetSettings={vi.fn()}
+        onDetectTerminalProfiles={vi.fn()}
+        onSetDefaultTerminalProfile={vi.fn()}
+      />,
+    );
+
+    await click(button(view.container, "关于"));
+
+    expect(view.container.textContent).toContain("GPL-3.0");
+    expect(view.container.textContent).toContain("github.com/lzmzzw/zTerm");
+    expect(view.container.textContent).not.toContain("本地智能终端工作台。");
+    expect(view.container.textContent).not.toContain("Apache-2.0");
+    expect(view.container.textContent).not.toContain("可检查");
+    expect(view.container.textContent).not.toContain("手动检查更新。");
+
+    await click(button(view.container, "打开"));
+    expect(tauriMocks.openUrl).toHaveBeenCalledWith("https://github.com/lzmzzw/zTerm");
+
+    view.unmount();
+  });
+
+  it("checks, downloads, installs and relaunches through the Tauri updater", async () => {
+    const downloadAndInstall = vi.fn(async (onEvent: (event: { event: string; data?: { contentLength?: number; chunkLength?: number } }) => void) => {
+      onEvent({ event: "Started", data: { contentLength: 100 } });
+      onEvent({ event: "Progress", data: { chunkLength: 100 } });
+      onEvent({ event: "Finished" });
+    });
+    tauriMocks.check.mockResolvedValue({
+      version: "0.2.0",
+      downloadAndInstall,
+    });
+    const view = render(
+      <SettingsPage
+        settings={baseSettings}
+        terminalProfiles={[]}
+        shortcutDefinitions={shortcuts}
+        loading={false}
+        error={null}
+        onClose={vi.fn()}
+        onSaveSettings={vi.fn()}
+        onResetSettings={vi.fn()}
+        onDetectTerminalProfiles={vi.fn()}
+        onSetDefaultTerminalProfile={vi.fn()}
+      />,
+    );
+
+    await click(button(view.container, "关于"));
+    await click(button(view.container, "检查"));
+    await flushAsyncUpdates();
+
+    expect(tauriMocks.check).toHaveBeenCalledWith({ timeout: 30000 });
+    expect(downloadAndInstall).toHaveBeenCalledTimes(1);
+    expect(tauriMocks.relaunch).toHaveBeenCalledTimes(1);
+    expect(view.container.textContent).toContain("更新已安装，正在重启。");
 
     view.unmount();
   });

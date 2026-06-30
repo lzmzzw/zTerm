@@ -4626,18 +4626,16 @@ button {
   font-size: 11px;
 }
 
-.zt-settings-about-subtitle {
-  margin: 0 0 20px;
-  color: var(--zt-text-secondary);
-  font-size: var(--zt-font-size-ui);
-}
-
 .zt-settings-about-cards {
   display: grid;
   gap: 12px;
 }
 
 .zt-settings-about-card {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
   border: 1px solid var(--zt-border);
   border-radius: var(--zt-radius-control);
   background: var(--zt-bg-main);
@@ -4648,7 +4646,7 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
+  min-width: 0;
   color: var(--zt-text-primary);
 }
 
@@ -4661,32 +4659,20 @@ button {
   color: var(--zt-text-secondary);
 }
 
-.zt-settings-about-update-badge {
-  padding: 1px 6px;
-  border: 1px solid var(--zt-success);
-  border-radius: var(--zt-radius-control);
-  background: transparent;
-  color: var(--zt-success);
-  font-size: 11px;
-  font-weight: 500;
-}
-
 .zt-settings-about-card-value {
+  min-width: 0;
   color: var(--zt-text-secondary);
   font-size: var(--zt-font-size-ui);
-}
-
-.zt-settings-about-card-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  overflow-wrap: anywhere;
 }
 
 .zt-settings-about-link-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  justify-self: end;
   gap: 4px;
+  min-width: 72px;
   padding: 4px 10px;
   border: 1px solid var(--zt-border);
   border-radius: var(--zt-radius-control);
@@ -4694,6 +4680,7 @@ button {
   color: var(--zt-text-primary);
   font-size: var(--zt-font-size-ui);
   font-weight: 500;
+  white-space: nowrap;
   transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
@@ -4705,7 +4692,10 @@ button {
 .zt-settings-about-check-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  justify-self: end;
   gap: 4px;
+  min-width: 72px;
   padding: 4px 10px;
   border: 1px solid var(--zt-border);
   border-radius: var(--zt-radius-control);
@@ -4713,12 +4703,18 @@ button {
   color: var(--zt-text-primary);
   font-size: var(--zt-font-size-ui);
   font-weight: 500;
+  white-space: nowrap;
   transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .zt-settings-about-check-btn:hover {
   border-color: var(--zt-border-strong);
   background: var(--zt-bg-hover);
+}
+
+.zt-settings-about-check-btn:disabled {
+  cursor: default;
+  opacity: 0.72;
 }
 
 @media (max-width: 760px) {
