@@ -59,6 +59,7 @@ interface TerminalState {
   runtimes: Record<string, RuntimeSessionInfo>;
   output: Record<string, string>;
   outputChunks: Record<string, TerminalOutputChunk>;
+  inputSerialByRuntime: Record<string, number>;
   visualOutputTail: Record<string, string>;
   bindTerminalEvents: () => Promise<UnlistenFn>;
   openTerminal: (savedSessionId: string, paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>;
@@ -77,6 +78,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   runtimes: {},
   output: {},
   outputChunks: {},
+  inputSerialByRuntime: {},
   visualOutputTail: {},
   bindTerminalEvents() {
     terminalEventSubscribers += 1;
@@ -141,6 +143,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
   async writeTerminal(runtimeSessionId, data) {
     await invoke("terminal_write", { runtimeSessionId, data });
+    if (isSubmittedTerminalInput(data)) {
+      set((state) => ({
+        inputSerialByRuntime: {
+          ...state.inputSerialByRuntime,
+          [runtimeSessionId]: (state.inputSerialByRuntime[runtimeSessionId] ?? 0) + 1,
+        },
+      }));
+    }
   },
   async suggestCompletion(runtimeSessionId, input, cursor) {
     return invoke<CommandCompletionCandidate[]>("command_completion_suggest", {
@@ -172,8 +182,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const { [runtimeSessionId]: _runtime, ...runtimes } = state.runtimes;
       const { [runtimeSessionId]: _output, ...output } = state.output;
       const { [runtimeSessionId]: _outputChunk, ...outputChunks } = state.outputChunks;
+      const { [runtimeSessionId]: _inputSerial, ...inputSerialByRuntime } = state.inputSerialByRuntime;
       const { [runtimeSessionId]: _visualOutputTail, ...visualOutputTail } = state.visualOutputTail;
-      return { runtimes, output, outputChunks, visualOutputTail };
+      return { runtimes, output, outputChunks, inputSerialByRuntime, visualOutputTail };
     });
   },
   appendOutput(runtimeSessionId, data) {
@@ -196,6 +207,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }));
   },
 }));
+
+function isSubmittedTerminalInput(data: string) {
+  return data.includes("\r") || data.includes("\n");
+}
 
 function trimTerminalOutput(output: string) {
   if (output.length <= MAX_TERMINAL_OUTPUT_CHARS) {

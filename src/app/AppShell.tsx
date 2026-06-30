@@ -202,6 +202,7 @@ export function AppShell() {
   const autoClosingWorkspaceIdsRef = useRef<Set<string>>(new Set());
   const activeContextTokenRef = useRef(0);
   const [historyView, setHistoryView] = useState<CommandHistoryView>("history");
+  const [deduplicateHistory, setDeduplicateHistory] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
   const {
     loadConversations,
@@ -428,6 +429,11 @@ export function AppShell() {
   const activeRuntimeInfo = useTerminalStore((state) =>
     activeRuntimeSessionId ? (state.runtimes[activeRuntimeSessionId] ?? null) : null,
   );
+  const activeRuntimeInputSerial = useTerminalStore((state) =>
+    activeTool === "history" && !workspaceVisualSwitchActive && activeRuntimeSessionId
+      ? (state.inputSerialByRuntime[activeRuntimeSessionId] ?? 0)
+      : 0,
+  );
   const activeTerminalOutput = useTerminalStore((state) =>
     activeTool === "agent" && !workspaceVisualSwitchActive && activeRuntimeSessionId
       ? (state.output[activeRuntimeSessionId] ?? "")
@@ -539,7 +545,7 @@ export function AppShell() {
         query: historyQuery,
         scopeKind: activeHistoryScopeKind,
         scopeId: activeHistoryScopeId,
-        deduplicate: historyView === "deduplicated",
+        deduplicate: deduplicateHistory,
       });
     }
     void loadCommandGroups(activeHistoryScopeKind, activeHistoryScopeId);
@@ -547,6 +553,8 @@ export function AppShell() {
     activeTool,
     activeHistoryScopeId,
     activeHistoryScopeKind,
+    activeRuntimeInputSerial,
+    deduplicateHistory,
     historyQuery,
     historyView,
     loadCommandGroups,
@@ -1276,6 +1284,7 @@ export function AppShell() {
         history={{
           activeView: historyView,
           commandGroups,
+          deduplicateHistory,
           entries: historyEntries,
           error: historyError,
           groupError: historyGroupError,
@@ -1291,6 +1300,7 @@ export function AppShell() {
           },
           onCopy: (command) => void navigator.clipboard?.writeText(command),
           onDeleteCommandGroup: (groupId) => deleteCommandGroup(groupId),
+          onDeduplicateHistoryChange: setDeduplicateHistory,
           onQueryChange: setHistoryQuery,
           onSaveCommandGroup: (draft) => saveCommandGroup(draft),
           onSearch: (options) => {
@@ -1299,7 +1309,7 @@ export function AppShell() {
               query: historyQuery,
               scopeKind: activeHistoryScopeKind,
               scopeId: activeHistoryScopeId,
-              deduplicate: options?.deduplicate ?? historyView === "deduplicated",
+              deduplicate: options?.deduplicate ?? deduplicateHistory,
             });
           },
           onSend: (command) => void terminalActions.sendCommand(command),

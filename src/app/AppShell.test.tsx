@@ -129,6 +129,7 @@ const storeMocks = vi.hoisted(() => ({
   terminalState: {
     runtimes: {} as Record<string, Record<string, unknown>>,
     output: {} as Record<string, string>,
+    inputSerialByRuntime: {} as Record<string, number>,
     visualOutputTail: {} as Record<string, string>,
   },
 }));
@@ -162,8 +163,7 @@ vi.mock("../features/history/CommandHistoryPanel", () => ({
           type="button"
           aria-label="切换去重历史"
           onClick={() => {
-            (props.onViewChange as (view: string) => void)("deduplicated");
-            (props.onSearch as (options: { deduplicate: boolean }) => void)({ deduplicate: true });
+            (props.onDeduplicateHistoryChange as (enabled: boolean) => void)(true);
           }}
         >
           去重
@@ -464,6 +464,7 @@ vi.mock("../features/terminal/terminalStore", () => {
       resizeTerminal: vi.fn().mockResolvedValue(undefined),
       suggestCompletion: vi.fn().mockResolvedValue([]),
       runtimes: storeMocks.terminalState.runtimes,
+      inputSerialByRuntime: storeMocks.terminalState.inputSerialByRuntime,
       visualOutputTail: storeMocks.terminalState.visualOutputTail,
     };
     Object.defineProperty(state, "output", {
@@ -847,6 +848,7 @@ describe("AppShell", () => {
     storeMocks.sessionState.sessions = [];
     storeMocks.terminalState.runtimes = {};
     storeMocks.terminalState.output = {};
+    storeMocks.terminalState.inputSerialByRuntime = {};
     storeMocks.terminalState.visualOutputTail = {};
     storeMocks.workspaceState.workspaces = [
       {
@@ -2865,6 +2867,76 @@ describe("AppShell", () => {
     expect(storeMocks.loadCommandGroups).toHaveBeenLastCalledWith("saved_session", "session-2");
     expect(storeMocks.historyPanelProps?.historyScopeKind).toBe("saved_session");
     expect(storeMocks.historyPanelProps?.historyScopeId).toBe("session-2");
+
+    view.unmount();
+  });
+
+  it("refreshes command history when the active terminal receives input", async () => {
+    storeMocks.workspaceState.tabs = [
+      {
+        id: "tab-1",
+        title: "开发机 A",
+        active_pane_id: "pane-1",
+        root: {
+          kind: "leaf",
+          id: "pane-1",
+          title: "开发机 A",
+          runtime_session_id: "runtime-1",
+          saved_session_id: "session-1",
+          active_terminal_tab_id: "pane-1-tab-1",
+          terminal_tabs: [
+            {
+              id: "pane-1-tab-1",
+              title: "开发机 A",
+              runtime_session_id: "runtime-1",
+              saved_session_id: "session-1",
+            },
+          ],
+        },
+      },
+    ];
+    storeMocks.terminalState.inputSerialByRuntime = { "runtime-1": 0 };
+    const view = render(<AppShell />);
+    const historyButton = view.container.querySelector('.zt-tool-rail [aria-label="历史"]') as HTMLButtonElement;
+
+    await act(async () => {
+      historyButton.click();
+      await Promise.resolve();
+    });
+    storeMocks.searchHistory.mockClear();
+
+    await act(async () => {
+      storeMocks.terminalState.inputSerialByRuntime = { "runtime-1": 1 };
+      view.rerender(<AppShell />);
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.searchHistory).toHaveBeenLastCalledWith({
+      query: "",
+      scopeKind: "saved_session",
+      scopeId: "session-1",
+      deduplicate: false,
+    });
+
+    const deduplicateButton = view.container.querySelector('[aria-label="切换去重历史"]') as HTMLButtonElement;
+    await act(async () => {
+      deduplicateButton.click();
+      await Promise.resolve();
+    });
+    storeMocks.searchHistory.mockClear();
+
+    await act(async () => {
+      storeMocks.terminalState.inputSerialByRuntime = { "runtime-1": 2 };
+      view.rerender(<AppShell />);
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.searchHistory).toHaveBeenLastCalledWith({
+      query: "",
+      scopeKind: "saved_session",
+      scopeId: "session-1",
+      deduplicate: true,
+    });
 
     view.unmount();
   });

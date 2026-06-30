@@ -38,6 +38,12 @@ function input(container: HTMLElement, label: string) {
   return match as HTMLInputElement;
 }
 
+function buttonExists(container: HTMLElement, label: string) {
+  return Array.from(container.querySelectorAll("button")).some(
+    (item) => item.textContent?.trim() === label || item.getAttribute("aria-label") === label,
+  );
+}
+
 async function click(element: HTMLElement) {
   await act(async () => {
     element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -127,12 +133,14 @@ function renderPanel(overrides: Partial<Parameters<typeof CommandHistoryPanel>[0
       groupError={null}
       groupLoading={false}
       loading={false}
+      deduplicateHistory={false}
       query=""
       historyScopeKind="saved_session"
       historyScopeId="session-1"
       onClear={vi.fn()}
       onCopy={vi.fn()}
       onDeleteCommandGroup={vi.fn()}
+      onDeduplicateHistoryChange={vi.fn()}
       onQueryChange={vi.fn()}
       onSaveCommandGroup={vi.fn()}
       onSearch={vi.fn()}
@@ -144,42 +152,73 @@ function renderPanel(overrides: Partial<Parameters<typeof CommandHistoryPanel>[0
 }
 
 describe("CommandHistoryPanel", () => {
-  it("searches copies and sends command history entries", async () => {
+  it("filters copies and sends command history entries without a search button", async () => {
     const onQueryChange = vi.fn();
-    const onSearch = vi.fn();
     const onCopy = vi.fn();
     const onSend = vi.fn();
     const view = renderPanel({
       onQueryChange,
-      onSearch,
       onCopy,
       onSend,
     });
 
-    change(input(view.container, "搜索历史命令"), "who");
-    await click(button(view.container, "搜索"));
+    const filterInput = input(view.container, "筛选");
+    expect(filterInput.getAttribute("placeholder")).toBe("筛选");
+    expect(buttonExists(view.container, "搜索")).toBe(false);
+
+    change(filterInput, "who");
     await click(button(view.container, "复制 pwd"));
     await click(button(view.container, "发送 pwd"));
 
     expect(onQueryChange).toHaveBeenCalledWith("who");
-    expect(onSearch).toHaveBeenCalled();
     expect(onCopy).toHaveBeenCalledWith("pwd");
     expect(onSend).toHaveBeenCalledWith("pwd");
 
     view.unmount();
   });
 
-  it("switches between history deduplicated history and command groups", async () => {
+  it("shows only history and command group tabs", async () => {
     const onViewChange = vi.fn();
-    const onSearch = vi.fn();
-    const view = renderPanel({ onSearch, onViewChange });
+    const view = renderPanel({ onViewChange });
 
-    await click(button(view.container, "去重"));
-    expect(onViewChange).toHaveBeenCalledWith("deduplicated");
-    expect(onSearch).toHaveBeenCalledWith({ deduplicate: true });
+    const tabs = Array.from(view.container.querySelectorAll(".zt-history-mode-tabs button")).map((item) =>
+      item.textContent?.trim(),
+    );
+    expect(tabs).toEqual(["历史", "指令组"]);
 
     await click(button(view.container, "指令组"));
     expect(onViewChange).toHaveBeenCalledWith("groups");
+
+    view.unmount();
+  });
+
+  it("toggles deduplicated history display from the toolbar checkbox", async () => {
+    const onDeduplicateHistoryChange = vi.fn();
+    const view = renderPanel({ onDeduplicateHistoryChange });
+
+    await click(input(view.container, "去重展示"));
+
+    expect(onDeduplicateHistoryChange).toHaveBeenCalledWith(true);
+
+    view.unmount();
+  });
+
+  it("orders command history by operation time hides cwd and scrolls to the latest entry", () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return this.classList.contains("zt-history-list") ? 240 : 0;
+      },
+    });
+    const view = renderPanel({ entries: [entries[1], entries[0]] });
+
+    const commands = Array.from(view.container.querySelectorAll(".zt-history-entry code")).map((item) =>
+      item.textContent?.trim(),
+    );
+    expect(commands).toEqual(["pwd", "whoami"]);
+    expect(view.container.textContent).not.toContain("/home/ops");
+    expect(view.container.textContent).not.toContain("cwd 未知");
+    expect((view.container.querySelector(".zt-history-list") as HTMLDivElement).scrollTop).toBe(240);
 
     view.unmount();
   });
@@ -189,7 +228,9 @@ describe("CommandHistoryPanel", () => {
     const view = renderPanel({ onSaveCommandGroup });
 
     await click(input(view.container, "选择 pwd"));
-    await click(button(view.container, "保存为指令组"));
+    const saveSelectedButton = button(view.container, "保存为指令组");
+    expect(saveSelectedButton.textContent).not.toContain("保存为指令组");
+    await click(saveSelectedButton);
     await inputText(input(view.container, "指令组名称"), "巡检");
     await click(button(view.container, "保存指令组"));
 

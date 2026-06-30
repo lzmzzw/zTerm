@@ -35,7 +35,13 @@ describe("terminalStore", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     eventMock.listeners = {};
-    useTerminalStore.setState({ runtimes: {}, output: {} });
+    useTerminalStore.setState({
+      runtimes: {},
+      output: {},
+      outputChunks: {},
+      inputSerialByRuntime: {},
+      visualOutputTail: {},
+    });
   });
 
   it("passes a local working directory override when opening the default local terminal", async () => {
@@ -128,6 +134,20 @@ describe("terminalStore", () => {
     expect(visualTail).toBe("b".repeat(8_000));
   });
 
+  it("increments the input serial only after submitted terminal input is written", async () => {
+    invokeMock.mockResolvedValue(undefined);
+
+    await useTerminalStore.getState().writeTerminal("runtime-1", "l");
+    expect(useTerminalStore.getState().inputSerialByRuntime["runtime-1"]).toBeUndefined();
+
+    await useTerminalStore.getState().writeTerminal("runtime-1", "s\r");
+    expect(useTerminalStore.getState().inputSerialByRuntime["runtime-1"]).toBe(1);
+
+    invokeMock.mockRejectedValueOnce(new Error("write failed"));
+    await expect(useTerminalStore.getState().writeTerminal("runtime-1", "pwd\r")).rejects.toThrow("write failed");
+    expect(useTerminalStore.getState().inputSerialByRuntime["runtime-1"]).toBe(1);
+  });
+
   it("releases the zmodem controller when closing a terminal runtime", async () => {
     invokeMock.mockResolvedValue({ closed: true });
     useTerminalStore.setState({
@@ -145,6 +165,8 @@ describe("terminalStore", () => {
         },
       },
       output: { "runtime-1": "hello" },
+      outputChunks: { "runtime-1": { serial: 1, data: "hello" } },
+      inputSerialByRuntime: { "runtime-1": 3 },
       visualOutputTail: { "runtime-1": "hello" },
     });
 
@@ -153,6 +175,7 @@ describe("terminalStore", () => {
     expect(invokeMock).toHaveBeenCalledWith("terminal_close", { runtimeSessionId: "runtime-1" });
     expect(zmodemTransferMock.releaseTerminalZmodemRuntime).toHaveBeenCalledWith("runtime-1");
     expect(useTerminalStore.getState().runtimes["runtime-1"]).toBeUndefined();
+    expect(useTerminalStore.getState().inputSerialByRuntime["runtime-1"]).toBeUndefined();
     expect(useTerminalStore.getState().visualOutputTail["runtime-1"]).toBeUndefined();
   });
 

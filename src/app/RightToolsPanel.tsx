@@ -83,6 +83,7 @@ interface RightToolsPanelProps {
   history: {
     activeView: CommandHistoryView;
     commandGroups: SessionCommandGroup[];
+    deduplicateHistory: boolean;
     entries: CommandHistoryEntry[];
     error: string | null;
     groupError: string | null;
@@ -95,6 +96,7 @@ interface RightToolsPanelProps {
     onClear: () => void;
     onCopy: (command: string) => void;
     onDeleteCommandGroup: (groupId: string) => Promise<unknown> | unknown;
+    onDeduplicateHistoryChange: (enabled: boolean) => void;
     onQueryChange: (query: string) => void;
     onSaveCommandGroup: (draft: SessionCommandGroupDraft) => Promise<unknown> | unknown;
     onSearch: (options?: { deduplicate?: boolean }) => void;
@@ -195,6 +197,7 @@ export function RightToolsPanel({
               <CommandHistoryPanel
                 activeView={history.activeView}
                 commandGroups={history.commandGroups}
+                deduplicateHistory={history.deduplicateHistory}
                 entries={history.entries}
                 query={history.query}
                 loading={history.loading}
@@ -205,6 +208,7 @@ export function RightToolsPanel({
                 historyScopeKind={history.historyScopeKind}
                 historyScopeId={history.historyScopeId}
                 onViewChange={history.onViewChange}
+                onDeduplicateHistoryChange={history.onDeduplicateHistoryChange}
                 onQueryChange={history.onQueryChange}
                 onSearch={history.onSearch}
                 onCopy={history.onCopy}

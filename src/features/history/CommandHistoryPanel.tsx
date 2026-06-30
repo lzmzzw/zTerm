@@ -1,6 +1,6 @@
 // Author: Liz
 import { CheckSquare, Copy, Edit3, Play, Plus, Save, Search, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 import { t } from "../settings/i18n";
@@ -12,11 +12,12 @@ import type {
   SessionCommandGroupDraft,
 } from "./historyStore";
 
-export type CommandHistoryView = "history" | "deduplicated" | "groups";
+export type CommandHistoryView = "history" | "groups";
 
 interface CommandHistoryPanelProps {
   activeView: CommandHistoryView;
   commandGroups: SessionCommandGroup[];
+  deduplicateHistory: boolean;
   entries: CommandHistoryEntry[];
   query: string;
   loading: boolean;
@@ -32,6 +33,7 @@ interface CommandHistoryPanelProps {
   onCopy: (command: string) => void;
   onSend: (command: string) => void;
   onClear: () => void;
+  onDeduplicateHistoryChange: (enabled: boolean) => void;
   onSaveCommandGroup: (draft: SessionCommandGroupDraft) => Promise<unknown> | unknown;
   onDeleteCommandGroup: (groupId: string) => Promise<unknown> | unknown;
 }
@@ -39,6 +41,7 @@ interface CommandHistoryPanelProps {
 export function CommandHistoryPanel({
   activeView,
   commandGroups,
+  deduplicateHistory,
   entries,
   query,
   loading,
@@ -54,6 +57,7 @@ export function CommandHistoryPanel({
   onCopy,
   onSend,
   onClear,
+  onDeduplicateHistoryChange,
   onSaveCommandGroup,
   onDeleteCommandGroup,
 }: CommandHistoryPanelProps) {
@@ -63,14 +67,26 @@ export function CommandHistoryPanel({
   const [formName, setFormName] = useState("");
   const [formCommands, setFormCommands] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const historyListRef = useRef<HTMLDivElement | null>(null);
+  const orderedEntries = useMemo(
+    () => [...entries].sort((left, right) => historyEntryTime(left) - historyEntryTime(right)),
+    [entries],
+  );
   const selectedCommands = useMemo(
     () =>
       selectedEntryIds
-        .map((id) => entries.find((entry) => entry.id === id)?.command)
+        .map((id) => orderedEntries.find((entry) => entry.id === id)?.command)
         .filter((command): command is string => Boolean(command)),
-    [entries, selectedEntryIds],
+    [orderedEntries, selectedEntryIds],
   );
   const hasHistoryScope = Boolean(historyScopeKind && historyScopeId);
+
+  useLayoutEffect(() => {
+    if (activeView !== "history") return;
+    const list = historyListRef.current;
+    if (!list) return;
+    list.scrollTop = list.scrollHeight;
+  }, [activeView, orderedEntries]);
 
   useEffect(() => {
     setSelectedEntryIds([]);
@@ -80,10 +96,7 @@ export function CommandHistoryPanel({
   function changeView(view: CommandHistoryView) {
     onViewChange(view);
     if (view === "history") {
-      onSearch({ deduplicate: false });
-    }
-    if (view === "deduplicated") {
-      onSearch({ deduplicate: true });
+      onSearch({ deduplicate: deduplicateHistory });
     }
   }
 
@@ -165,9 +178,6 @@ export function CommandHistoryPanel({
         <button type="button" aria-selected={activeView === "history"} onClick={() => changeView("history")}>
           {t(language, "history")}
         </button>
-        <button type="button" aria-selected={activeView === "deduplicated"} onClick={() => changeView("deduplicated")}>
-          {t(language, "deduplicated")}
-        </button>
         <button type="button" aria-selected={activeView === "groups"} onClick={() => changeView("groups")}>
           {t(language, "commandGroups")}
         </button>
@@ -201,25 +211,40 @@ export function CommandHistoryPanel({
               <Search size={14} aria-hidden="true" />
               <input
                 type="text"
-                aria-label={t(language, "searchHistory")}
+                aria-label={t(language, "filterHistory")}
                 value={query}
                 onChange={(event) => onQueryChange(event.currentTarget.value)}
-                placeholder={activeView === "deduplicated" ? t(language, "searchDeduplicatedHistory") : t(language, "searchHistory")}
+                placeholder={t(language, "filterHistory")}
               />
             </label>
-            <button type="button" onClick={() => onSearch({ deduplicate: activeView === "deduplicated" })} disabled={loading}>
-              {t(language, "search")}
+            <label className="zt-history-dedupe">
+              <input
+                type="checkbox"
+                aria-label={t(language, "deduplicateHistory")}
+                checked={deduplicateHistory}
+                onChange={(event) => onDeduplicateHistoryChange(event.currentTarget.checked)}
+              />
+              <span>{t(language, "deduplicated")}</span>
+            </label>
+            <button
+              type="button"
+              aria-label={t(language, "saveAsCommandGroup")}
+              className="zt-history-icon-button"
+              onClick={openSelectedGroupForm}
+              title={t(language, "saveAsCommandGroup")}
+              disabled={loading || !hasHistoryScope || selectedCommands.length === 0}
+            >
+              <Save size={13} aria-hidden="true" />
             </button>
             <button
               type="button"
-              onClick={openSelectedGroupForm}
-              disabled={loading || !hasHistoryScope || selectedCommands.length === 0}
+              aria-label={t(language, "clearHistory")}
+              className="zt-history-icon-button"
+              onClick={onClear}
+              title={t(language, "clearHistory")}
+              disabled={loading || !hasHistoryScope}
             >
-              <Save size={14} aria-hidden="true" />
-              {t(language, "saveAsCommandGroup")}
-            </button>
-            <button type="button" aria-label={t(language, "clearHistory")} onClick={onClear} disabled={loading || !hasHistoryScope}>
-                     <Trash2 size={14} aria-hidden="true" />
+              <Trash2 size={13} aria-hidden="true" />
             </button>
           </div>
 
@@ -238,11 +263,12 @@ export function CommandHistoryPanel({
 
           {error ? <div className="zt-history-error">{error}</div> : null}
 
-          <div className="zt-history-list">
-            {entries.length === 0 ? <div className="zt-empty-line">{t(language, "noHistory")}</div> : null}
-            {entries.map((entry) => (
+          <div className="zt-history-list" ref={historyListRef}>
+            {orderedEntries.length === 0 ? <div className="zt-empty-line">{t(language, "noHistory")}</div> : null}
+            {orderedEntries.map((entry) => (
               <article className="zt-history-entry" key={entry.id}>
                 <input
+                  className="zt-history-entry-checkbox"
                   type="checkbox"
                   aria-label={`${t(language, "selectPrefix")} ${entry.command}`}
                   checked={selectedEntryIds.includes(entry.id)}
@@ -250,12 +276,11 @@ export function CommandHistoryPanel({
                   onChange={(event) => toggleEntry(entry.id, event.currentTarget.checked)}
                 />
                 <code>{entry.command}</code>
-                <span>{entry.cwd ?? t(language, "cwdUnknown")}</span>
                 <button type="button" aria-label={`${t(language, "copyPrefix")} ${entry.command}`} onClick={() => onCopy(entry.command)}>
-                  <Copy size={18} aria-hidden="true" />
+                  <Copy size={14} aria-hidden="true" />
                 </button>
                 <button type="button" aria-label={`${t(language, "sendPrefix")} ${entry.command}`} onClick={() => onSend(entry.command)}>
-                  <Play size={18} aria-hidden="true" />
+                  <Play size={14} aria-hidden="true" />
                 </button>
               </article>
             ))}
@@ -422,6 +447,10 @@ function CommandGroupForm({
       </div>
     </div>
   );
+}
+
+function historyEntryTime(entry: CommandHistoryEntry) {
+  return entry.finished_at_ms ?? entry.started_at_ms;
 }
 
 function normalizeCommands(value: string) {
