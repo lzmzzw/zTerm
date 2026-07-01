@@ -114,7 +114,10 @@ describe("global dark theme colors", () => {
 
   it("renders settings and session modals as shared floating cards", () => {
     expect(ruleBodiesForSelector(".zt-workbench-settings")).toContain("place-items: center");
-    expect(ruleBodiesForSelector(".zt-settings-page")).toContain("width: min(1220px, calc(100vw - 96px))");
+    expect(rootVariable("--zt-dialog-width-large")).toBe("1180px");
+    expect(ruleBodiesForSelector(".zt-settings-page")).toContain(
+      "width: min(var(--zt-dialog-width-large), calc(100vw - 96px))",
+    );
     expect(ruleBodiesForSelector(".zt-settings-page")).toContain("border: 1px solid var(--zt-dialog-border)");
     expect(ruleBodiesForSelector(".zt-settings-page")).toContain("border-radius: var(--zt-radius-window)");
     expect(ruleBodiesForSelector(".zt-settings-page")).toContain("box-shadow: var(--zt-dialog-shadow)");
@@ -162,7 +165,10 @@ describe("global dark theme colors", () => {
     expect(ruleBodiesForSelector(".zt-session-dialog form")).toContain("overflow: hidden");
     expect(ruleBodiesForSelector(".zt-session-dialog header strong")).toContain("text-align: left");
     expect(ruleBodiesForSelector(".zt-session-dialog footer")).toContain("min-height: 64px");
-    expect(ruleBodiesForSelector(".zt-settings-page")).toContain("height: min(780px, calc(100vh - 96px))");
+    expect(rootVariable("--zt-dialog-height-large")).toBe("780px");
+    expect(ruleBodiesForSelector(".zt-settings-page")).toContain(
+      "height: min(var(--zt-dialog-height-large), calc(100vh - 96px))",
+    );
   });
 
   it("uses one dark narrow scrollbar treatment for content display panes", () => {

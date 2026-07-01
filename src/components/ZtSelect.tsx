@@ -2,6 +2,8 @@
 import { type CSSProperties, type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { ZtFloatingSurface } from "./ZtUi";
+
 interface ZtSelectOption {
   value: string;
   label: string;
@@ -202,7 +204,7 @@ export function ZtSelect({
       </button>
       {open
         ? createPortal(
-            <div ref={panelRef} className="zt-select-popover" style={panelStyle}>
+            <ZtFloatingSurface ref={panelRef} className="zt-select-popover" style={panelStyle}>
               {showSearch ? (
                 <div className="zt-select-search-wrap">
                   <input
@@ -249,7 +251,7 @@ export function ZtSelect({
                   <div className="zt-select-empty">没有匹配项</div>
                 )}
               </div>
-            </div>,
+            </ZtFloatingSurface>,
             document.body,
           )
         : null}

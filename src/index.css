@@ -12,6 +12,16 @@
   --zt-radius-control: 6px;
   --zt-radius-pane: 5px;
   --zt-radius-window: 10px;
+  --zt-control-height-dense: 28px;
+  --zt-control-height-default: 32px;
+  --zt-control-height-form: 36px;
+  --zt-icon-button-dense: 24px;
+  --zt-icon-button-default: 28px;
+  --zt-icon-button-large: 32px;
+  --zt-dialog-width-compact: 420px;
+  --zt-dialog-width-medium: 620px;
+  --zt-dialog-width-large: 1180px;
+  --zt-dialog-height-large: 780px;
   --zt-surface-page: #101012;
   --zt-surface-chrome: #111113;
   --zt-surface-sidebar: #101012;
@@ -154,6 +164,498 @@ textarea {
 
 button {
   color: inherit;
+}
+
+.zt-button,
+.zt-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  border: 1px solid var(--zt-border);
+  border-radius: var(--zt-radius-control);
+  background: var(--zt-bg-surface);
+  color: var(--zt-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--zt-font-size-ui);
+  font-weight: 500;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.zt-button {
+  gap: 6px;
+  padding: 0 12px;
+}
+
+.zt-button-dense {
+  min-height: var(--zt-control-height-dense);
+}
+
+.zt-button-default {
+  min-height: var(--zt-control-height-default);
+}
+
+.zt-button-form {
+  min-height: var(--zt-control-height-form);
+}
+
+.zt-icon-button {
+  padding: 0;
+}
+
+.zt-icon-button-dense {
+  width: var(--zt-icon-button-dense);
+  height: var(--zt-icon-button-dense);
+}
+
+.zt-icon-button-default {
+  width: var(--zt-icon-button-default);
+  height: var(--zt-icon-button-default);
+}
+
+.zt-icon-button-large {
+  width: var(--zt-icon-button-large);
+  height: var(--zt-icon-button-large);
+}
+
+.zt-button:hover:not(:disabled),
+.zt-icon-button:hover:not(:disabled) {
+  border-color: var(--zt-border-strong);
+  background: var(--zt-bg-hover);
+}
+
+.zt-button:focus-visible,
+.zt-icon-button:focus-visible {
+  outline: none;
+  border-color: var(--zt-accent);
+  box-shadow: 0 0 0 2px var(--zt-focus-soft);
+}
+
+.zt-button:disabled,
+.zt-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.zt-button-primary {
+  border-color: color-mix(in srgb, var(--zt-accent) 58%, var(--zt-border));
+  background: var(--zt-bg-active);
+  color: var(--zt-text-primary);
+}
+
+.zt-button-danger {
+  border-color: var(--zt-danger-border);
+  background: var(--zt-danger-bg);
+  color: var(--zt-danger);
+}
+
+.zt-button-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--zt-text-secondary);
+}
+
+.zt-button-ghost:hover:not(:disabled),
+.zt-icon-button.zt-button-ghost:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--zt-bg-hover);
+  color: var(--zt-text-primary);
+}
+
+.zt-icon {
+  flex: none;
+  stroke-width: 2;
+}
+
+.zt-icon-dense {
+  width: 14px;
+  height: 14px;
+}
+
+.zt-icon-default {
+  width: 16px;
+  height: 16px;
+}
+
+.zt-icon-large {
+  width: 18px;
+  height: 18px;
+}
+
+.zt-input,
+.zt-textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--zt-border);
+  border-radius: var(--zt-radius-control);
+  background: var(--zt-bg-input);
+  color: var(--zt-text-primary);
+  font: inherit;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.zt-input {
+  padding: 0 12px;
+}
+
+.zt-input-dense {
+  min-height: var(--zt-control-height-dense);
+}
+
+.zt-input-default {
+  min-height: var(--zt-control-height-default);
+}
+
+.zt-input-form {
+  min-height: var(--zt-control-height-form);
+}
+
+.zt-textarea {
+  min-height: 96px;
+  padding: 9px 12px;
+  line-height: var(--zt-line-height-ui);
+  resize: vertical;
+}
+
+.zt-textarea-dense {
+  min-height: 64px;
+  padding: 7px 10px;
+}
+
+.zt-textarea-default {
+  min-height: 80px;
+}
+
+.zt-textarea-form {
+  min-height: 96px;
+}
+
+.zt-input::placeholder,
+.zt-textarea::placeholder {
+  color: var(--zt-text-muted);
+}
+
+.zt-input:hover:not(:disabled),
+.zt-textarea:hover:not(:disabled) {
+  border-color: var(--zt-border-strong);
+}
+
+.zt-input:focus,
+.zt-textarea:focus {
+  outline: none;
+  border-color: var(--zt-accent);
+  box-shadow: 0 0 0 2px var(--zt-focus-soft);
+}
+
+.zt-input:disabled,
+.zt-textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.zt-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: min(6vh, 48px) min(5vw, 56px);
+  overflow: hidden;
+  background: var(--zt-scrim);
+  backdrop-filter: blur(12px) saturate(130%);
+  -webkit-backdrop-filter: blur(12px) saturate(130%);
+}
+
+.zt-dialog {
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--zt-dialog-border);
+  border-radius: var(--zt-radius-window);
+  background: var(--zt-surface-floating);
+  background-clip: padding-box;
+  box-shadow: var(--zt-dialog-shadow);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+}
+
+.zt-dialog-compact {
+  width: min(var(--zt-dialog-width-compact), calc(100vw - 48px));
+  height: auto;
+  max-height: calc(100vh - 96px);
+}
+
+.zt-dialog-medium {
+  width: min(var(--zt-dialog-width-medium), calc(100vw - 96px));
+  height: min(var(--zt-dialog-height-large), calc(100vh - 96px));
+}
+
+.zt-dialog-large {
+  width: min(var(--zt-dialog-width-large), calc(100vw - 96px));
+  height: min(var(--zt-dialog-height-large), calc(100vh - 96px));
+}
+
+.zt-dialog-header,
+.zt-dialog-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  background: var(--zt-bg-elevated);
+}
+
+.zt-dialog-header {
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--zt-border-subtle);
+  border-radius: var(--zt-radius-window) var(--zt-radius-window) 0 0;
+}
+
+.zt-dialog-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--zt-text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-dialog-close {
+  flex: none;
+}
+
+.zt-dialog-body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.zt-dialog-message,
+.zt-dialog-form {
+  display: grid;
+  gap: 12px;
+  padding: 16px 20px;
+}
+
+.zt-dialog-message p {
+  margin: 0;
+  color: var(--zt-text-primary);
+  line-height: 1.5;
+}
+
+.zt-dialog-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--zt-text-secondary);
+  font-size: var(--zt-font-size-ui);
+  font-weight: 500;
+}
+
+.zt-dialog-footer {
+  justify-content: flex-end;
+  min-height: 68px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--zt-border-subtle);
+  border-radius: 0 0 var(--zt-radius-window) var(--zt-radius-window);
+}
+
+.zt-floating-surface {
+  position: fixed;
+  z-index: 5000;
+  display: grid;
+  min-width: 128px;
+  padding: 6px;
+  overflow: hidden;
+  border: 1px solid var(--zt-dialog-border);
+  border-radius: var(--zt-radius-window);
+  background: var(--zt-surface-floating);
+  background-clip: padding-box;
+  box-shadow: var(--zt-dialog-shadow);
+  backdrop-filter: blur(28px) saturate(160%);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+}
+
+.zt-switch,
+.zt-checkbox {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--zt-text-secondary);
+  font-size: var(--zt-font-size-ui);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.zt-switch-input,
+.zt-checkbox-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.zt-switch-control {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border: 1px solid var(--zt-border);
+  border-radius: 999px;
+  background: var(--zt-bg-input);
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.zt-switch-control::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--zt-text-secondary);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 28%);
+  transition:
+    background-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.zt-switch-input:checked + .zt-switch-control {
+  border-color: color-mix(in srgb, var(--zt-accent) 62%, var(--zt-border));
+  background: color-mix(in srgb, var(--zt-accent) 52%, var(--zt-bg-active));
+}
+
+.zt-switch-input:checked + .zt-switch-control::after {
+  background: var(--zt-text-primary);
+  transform: translateX(14px);
+}
+
+.zt-checkbox-control {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--zt-border);
+  border-radius: 4px;
+  background: var(--zt-bg-input);
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.zt-checkbox-control::after {
+  content: "";
+  width: 7px;
+  height: 4px;
+  border-left: 2px solid var(--zt-text-primary);
+  border-bottom: 2px solid var(--zt-text-primary);
+  opacity: 0;
+  transform: translateY(-1px) rotate(-45deg);
+}
+
+.zt-checkbox-input:checked + .zt-checkbox-control {
+  border-color: color-mix(in srgb, var(--zt-accent) 62%, var(--zt-border));
+  background: color-mix(in srgb, var(--zt-accent) 52%, var(--zt-bg-active));
+}
+
+.zt-checkbox-input:checked + .zt-checkbox-control::after {
+  opacity: 1;
+}
+
+.zt-switch-input:focus-visible + .zt-switch-control,
+.zt-checkbox-input:focus-visible + .zt-checkbox-control {
+  border-color: var(--zt-accent);
+  box-shadow: 0 0 0 2px var(--zt-focus-soft);
+}
+
+.zt-switch.is-disabled,
+.zt-checkbox.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.zt-switch-label,
+.zt-checkbox-label {
+  min-width: 0;
+}
+
+.zt-slider-input {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--zt-accent);
+}
+
+.zt-tabs,
+.zt-segmented-control {
+  min-width: 0;
+}
+
+.zt-tabs {
+  display: grid;
+  gap: 4px;
+}
+
+.zt-tabs-horizontal,
+.zt-segmented-control {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.zt-tabs button,
+.zt-segmented-control button {
+  min-height: var(--zt-control-height-default);
+  border: 1px solid transparent;
+  border-radius: var(--zt-radius-control);
+  background: transparent;
+  color: var(--zt-text-secondary);
+  padding: 0 12px;
+  font: inherit;
+  font-weight: 500;
+}
+
+.zt-tabs button:hover:not(:disabled),
+.zt-segmented-control button:hover:not(:disabled) {
+  background: var(--zt-bg-hover);
+  color: var(--zt-text-primary);
+}
+
+.zt-tabs button[aria-selected="true"],
+.zt-segmented-control button[aria-selected="true"] {
+  background: var(--zt-bg-active);
+  color: var(--zt-text-primary);
+  box-shadow: inset 2px 0 0 var(--zt-accent);
+}
+
+.zt-segmented-control {
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--zt-border);
+  border-radius: calc(var(--zt-radius-control) + 2px);
+  background: var(--zt-bg-input);
+}
+
+.zt-segmented-control button[aria-selected="true"] {
+  box-shadow: inset 0 0 0 1px var(--zt-border-subtle);
 }
 
 .zt-select-trigger.zt-select-trigger {
@@ -3360,8 +3862,8 @@ button {
 }
 
 .zt-session-dialog {
-  width: min(1040px, calc(100vw - 96px));
-  height: min(720px, calc(100vh - 96px));
+  width: min(var(--zt-dialog-width-large), calc(100vw - 96px));
+  height: min(var(--zt-dialog-height-large), calc(100vh - 96px));
   overflow: hidden;
   border: 1px solid var(--zt-dialog-border);
   border-radius: var(--zt-radius-window);
@@ -3593,8 +4095,8 @@ button {
 }
 
 .zt-workspace-preview-dialog {
-  width: min(1120px, calc(100vw - 96px));
-  height: min(720px, calc(100vh - 96px));
+  width: min(var(--zt-dialog-width-large), calc(100vw - 96px));
+  height: min(var(--zt-dialog-height-large), calc(100vh - 96px));
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr) 68px;
 }
@@ -3618,7 +4120,7 @@ button {
   min-width: 0;
 }
 
-.zt-workspace-editor-fields input {
+.zt-workspace-editor-fields input:not(.zt-input) {
   min-width: 0;
   height: 32px;
   padding: 0 10px;
@@ -4449,15 +4951,15 @@ button {
 
 .zt-model-dialog {
   width: min(620px, calc(100vw - 96px));
-  height: min(720px, calc(100vh - 96px));
+  height: min(var(--zt-dialog-height-large), calc(100vh - 96px));
 }
 
 .zt-model-form {
   display: grid;
-  grid-template-rows: 52px minmax(0, 1fr) 68px;
-  height: 100%;
-  gap: 0;
-  overflow: hidden;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
 }
 
 .zt-model-dialog-body {
@@ -4479,9 +4981,9 @@ button {
   font-weight: 500;
 }
 
-.zt-model-form input,
+.zt-model-form input:not(.zt-input),
 .zt-model-form select,
-.zt-model-form textarea {
+.zt-model-form textarea:not(.zt-textarea) {
   min-width: 0;
   border: 1px solid var(--zt-border);
   border-radius: var(--zt-radius-control);
@@ -4491,14 +4993,14 @@ button {
   resize: vertical;
 }
 
-.zt-model-form input,
+.zt-model-form input:not(.zt-input),
 .zt-model-form select {
   min-height: 34px;
 }
 
-.zt-model-form input:focus,
+.zt-model-form input:not(.zt-input):focus,
 .zt-model-form select:focus,
-.zt-model-form textarea:focus {
+.zt-model-form textarea:not(.zt-textarea):focus {
   outline: none;
   border-color: var(--zt-accent);
   box-shadow: 0 0 0 2px var(--zt-focus-soft);
@@ -4531,8 +5033,8 @@ button {
 
 .zt-settings-page {
   grid-row: 2;
-  width: min(1220px, calc(100vw - 96px));
-  height: min(780px, calc(100vh - 96px));
+  width: min(var(--zt-dialog-width-large), calc(100vw - 96px));
+  height: min(var(--zt-dialog-height-large), calc(100vh - 96px));
   min-height: 0;
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr);
@@ -4559,7 +5061,7 @@ button {
 
 .zt-settings-page-header strong {
   flex: 1;
-  text-align: center;
+  text-align: left;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: 0.01em;
@@ -5279,13 +5781,13 @@ button {
   }
 
   .zt-session-dialog {
-    width: min(1040px, calc(100vw - 32px));
-    height: min(720px, calc(100vh - 48px));
+    width: min(var(--zt-dialog-width-large), calc(100vw - 32px));
+    height: min(var(--zt-dialog-height-large), calc(100vh - 48px));
   }
 
   .zt-workspace-preview-dialog {
-    width: min(980px, calc(100vw - 32px));
-    height: min(680px, calc(100vh - 48px));
+    width: min(var(--zt-dialog-width-large), calc(100vw - 32px));
+    height: min(var(--zt-dialog-height-large), calc(100vh - 48px));
   }
 
   .zt-workspace-preview-layout-editor {
