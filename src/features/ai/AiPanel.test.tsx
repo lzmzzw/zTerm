@@ -60,6 +60,14 @@ async function doubleClick(element: HTMLElement) {
   });
 }
 
+async function keyDown(element: HTMLElement, init: KeyboardEventInit) {
+  let allowed = true;
+  await act(async () => {
+    allowed = element.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+  });
+  return allowed;
+}
+
 async function chooseSelect(container: HTMLElement, label: string, value: string) {
   await click(select(container, label));
   const option = Array.from(document.querySelectorAll('[role="option"]')).find(
@@ -124,18 +132,56 @@ describe("AiPanel", () => {
       />,
     );
 
-    expect(view.container.textContent).toContain("排查终端");
-    expect(view.container.textContent).toContain("当前绑定窗格");
+    expect(view.container.textContent).not.toContain("排查终端");
+    expect(view.container.textContent).not.toContain("当前绑定窗格");
     expect(view.container.textContent).toContain("主终端");
     expect(view.container.querySelector(".zt-ai-bound-target")?.textContent).not.toContain("pane=pane-left");
     expect(view.container.querySelector(".zt-ai-bound-target")?.textContent).not.toContain("runtime=runtime-1");
     expect(view.container.textContent).toContain("建议命令：`pwd`");
-    expect(view.container.querySelector(".zt-ai-message.role-user")?.classList.contains("role-user")).toBe(true);
-    expect(view.container.querySelector(".zt-ai-message.role-assistant")?.classList.contains("role-assistant")).toBe(true);
+    expect(view.container.textContent).not.toContain("暂无待确认工具调用");
+    expect(view.container.textContent).not.toContain("向 AI 提问");
+    expect(input(view.container, "AI 请求").getAttribute("placeholder")).toBe(null);
+    const userMessage = view.container.querySelector(".zt-ai-message.role-user");
+    const assistantMessage = view.container.querySelector(".zt-ai-message.role-assistant");
+    expect(userMessage?.classList.contains("role-user")).toBe(true);
+    expect(userMessage?.textContent?.trim()).toBe("显示当前目录");
+    expect(userMessage?.getAttribute("aria-label")).toBe("用户");
+    expect(assistantMessage?.classList.contains("role-assistant")).toBe(true);
+    expect(assistantMessage?.textContent?.trim()).toBe("建议命令：`pwd`");
+    expect(assistantMessage?.getAttribute("aria-label")).toBe("AI");
     change(input(view.container, "AI 请求"), "列出文件");
     await click(button(view.container, "发送"));
 
     expect(onSendChat).toHaveBeenCalledWith("列出文件");
+    view.unmount();
+  });
+
+  it("sends chat on Enter and keeps Ctrl+Enter or Alt+Enter for new lines", async () => {
+    const onSendChat = vi.fn().mockResolvedValue(undefined);
+    const view = render(
+      <AiPanel
+        activeRuntimeSessionId="runtime-1"
+        providersAvailable
+        recentOutput=""
+        loading={false}
+        error={null}
+        onSendChat={onSendChat}
+      />,
+    );
+
+    const prompt = input(view.container, "AI 请求");
+    change(prompt, "列出当前目录");
+    const enterAllowed = await keyDown(prompt, { key: "Enter" });
+    expect(enterAllowed).toBe(false);
+    expect(onSendChat).toHaveBeenCalledWith("列出当前目录");
+    expect(prompt.value).toBe("");
+
+    change(prompt, "第一行");
+    const ctrlEnterAllowed = await keyDown(prompt, { key: "Enter", ctrlKey: true });
+    const altEnterAllowed = await keyDown(prompt, { key: "Enter", altKey: true });
+    expect(ctrlEnterAllowed).toBe(true);
+    expect(altEnterAllowed).toBe(true);
+    expect(onSendChat).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 
@@ -159,9 +205,47 @@ describe("AiPanel", () => {
     );
 
     const boundTarget = view.container.querySelector(".zt-ai-bound-target");
+    expect(boundTarget?.classList.contains("is-unbound")).toBe(true);
     expect(boundTarget?.textContent).toContain("未绑定终端");
     expect(boundTarget?.textContent).not.toContain("新建终端");
+    expect(view.container.textContent).not.toContain("当前未绑定终端，AI 仍可回答问题但不能写入终端");
     expect(boundTarget?.querySelector("strong")?.getAttribute("title")).toBe("未绑定终端");
+    view.unmount();
+  });
+
+  it("keeps tool and system conversation messages neutral without visible role labels", () => {
+    const view = render(
+      <AiPanel
+        activeRuntimeSessionId="runtime-1"
+        providersAvailable
+        recentOutput=""
+        loading={false}
+        error={null}
+        messages={[
+          {
+            id: "message-tool",
+            conversation_id: "conversation-1",
+            role: "tool",
+            content: "命令已写入活动终端。",
+            status: "complete",
+          },
+          {
+            id: "message-system",
+            conversation_id: "conversation-1",
+            role: "system",
+            content: "系统上下文已更新。",
+            status: "complete",
+          },
+        ]}
+      />,
+    );
+
+    const toolMessage = view.container.querySelector(".zt-ai-message.role-tool");
+    const systemMessage = view.container.querySelector(".zt-ai-message.role-system");
+    expect(toolMessage?.textContent?.trim()).toBe("命令已写入活动终端。");
+    expect(toolMessage?.getAttribute("aria-label")).toBe("工具");
+    expect(systemMessage?.textContent?.trim()).toBe("系统上下文已更新。");
+    expect(systemMessage?.getAttribute("aria-label")).toBe("系统");
     view.unmount();
   });
 
@@ -183,8 +267,10 @@ describe("AiPanel", () => {
             tool_id: "terminal.write",
             tool_title: "写入终端",
             risk_level: "high",
-            arguments_summary: "runtime_session_id=runtime-1, data=pwd",
-            target_summary: "pane_id=pane-left, runtime_session_id=runtime-1",
+            arguments_summary:
+              "data=touch a && ls -l a, pane_id=pane-left, runtime_session_id=runtime-1, saved_session_id=session-1, target_title=172.16.41.180",
+            target_summary:
+              "target_title=172.16.41.180, pane_id=pane-left, runtime_session_id=runtime-1, saved_session_id=session-1",
             requires_confirmation: true,
             status: "pending",
           },
@@ -196,8 +282,14 @@ describe("AiPanel", () => {
       />,
     );
 
-    expect(view.container.textContent).toContain("terminal.write");
-    expect(view.container.textContent).toContain("pane_id=pane-left");
+    const toolCard = view.container.querySelector(".zt-ai-tool-card");
+    expect(toolCard?.textContent).toContain("连接：172.16.41.180");
+    expect(toolCard?.textContent).toContain("操作：写入终端");
+    expect(toolCard?.textContent).toContain("命令：touch a && ls -l a");
+    expect(toolCard?.textContent).not.toContain("runtime_session_id");
+    expect(toolCard?.textContent).not.toContain("saved_session_id");
+    expect(toolCard?.textContent).not.toContain("pane_id");
+    expect(toolCard?.getAttribute("title")).toContain("runtime_session_id=runtime-1");
     await click(button(view.container, "批准"));
     await click(button(view.container, "拒绝"));
 
@@ -237,7 +329,7 @@ describe("AiPanel", () => {
     view.unmount();
   });
 
-  it("confirms deleting an AI conversation from the history list", async () => {
+  it("deletes an AI conversation directly from the history list", async () => {
     const onDeleteConversation = vi.fn().mockResolvedValue(undefined);
     const view = render(
       <AiPanel
@@ -257,11 +349,8 @@ describe("AiPanel", () => {
 
     await click(button(view.container, "历史会话"));
     await click(button(view.container, "删除 AI 会话 排查终端"));
-    expect(onDeleteConversation).not.toHaveBeenCalled();
-    expect(view.container.textContent).toContain("确认删除 AI 会话“排查终端”？");
-
-    await click(button(view.container, "确认删除"));
     expect(onDeleteConversation).toHaveBeenCalledWith("conversation-2");
+    expect(view.container.textContent).not.toContain("确认删除 AI 会话“排查终端”？");
     view.unmount();
   });
 
@@ -297,7 +386,7 @@ describe("AiPanel", () => {
         loading={false}
         error={null}
         conversations={[
-          { id: "conversation-active", title: "当前会话", updated_at_ms: 6 },
+          { id: "conversation-active", title: "列出当前目录文件", updated_at_ms: 6 },
           { id: "conversation-old", title: "历史排查", updated_at_ms: 5 },
         ]}
         activeConversationId="conversation-active"
@@ -322,15 +411,22 @@ describe("AiPanel", () => {
 
     await click(button(view.container, "历史会话"));
     const historyView = view.container.querySelector(".zt-ai-history-view");
+    const historyMain = button(view.container, "恢复 AI 会话 历史排查");
     expect(view.container.textContent).toContain("历史排查");
-    expect(historyView?.textContent).not.toContain("当前会话");
+    expect(view.container.textContent).not.toContain("当前绑定窗格");
+    expect(view.container.textContent).not.toContain("列出当前目录文件");
     expect(view.container.querySelector(".zt-ai-composer")).toBe(null);
+    expect(historyMain.querySelector(".zt-ai-history-title")?.textContent).toBe("历史排查");
+    expect(historyMain.querySelector(".zt-ai-history-time")?.textContent?.trim()).not.toBe("");
 
     await click(button(view.container, "展开 AI 会话 历史排查"));
     expect(onLoadConversationPreview).toHaveBeenCalledWith("conversation-old");
     expect(view.container.textContent).toContain("第二条");
     expect(view.container.textContent).toContain("第五条");
     expect(view.container.textContent).not.toContain("第一条不展示");
+    expect(view.container.querySelector(".zt-ai-history-preview-message")).toBe(null);
+    expect(view.container.querySelector(".zt-ai-history-preview .zt-ai-message.role-user")?.textContent?.trim()).toBe("第三条");
+    expect(view.container.querySelector(".zt-ai-history-preview .zt-ai-message.role-assistant")?.textContent?.trim()).toBe("第二条");
 
     await click(button(view.container, "折叠 AI 会话 历史排查"));
     expect(view.container.textContent).not.toContain("第二条");
@@ -368,8 +464,8 @@ describe("AiPanel", () => {
 
     expect(onLoadConversationPreview).not.toHaveBeenCalled();
     expect(onSelectConversation).not.toHaveBeenCalled();
-    expect(onDeleteConversation).not.toHaveBeenCalled();
-    expect(view.container.textContent).toContain("确认删除 AI 会话“历史排查”？");
+    expect(onDeleteConversation).toHaveBeenCalledWith("conversation-old");
+    expect(view.container.textContent).not.toContain("确认删除 AI 会话“历史排查”？");
     view.unmount();
   });
 

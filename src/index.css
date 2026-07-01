@@ -3481,10 +3481,18 @@ button {
   z-index: 1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
+  align-items: center;
   gap: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--zt-border-subtle);
+  background: var(--zt-bg-sidebar);
+}
+
+.zt-ai-bound-target.is-unbound {
+  padding-bottom: 8px;
+  border: 0;
+  border-bottom: 1px solid var(--zt-border-subtle);
+  border-radius: 0;
   background: var(--zt-bg-sidebar);
 }
 
@@ -3519,12 +3527,8 @@ button {
   white-space: nowrap;
 }
 
-.zt-ai-current-conversation {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.zt-ai-bound-target.is-unbound strong {
+  color: var(--zt-warning);
 }
 
 .zt-ai-toolbar {
@@ -3676,6 +3680,9 @@ button {
 
 .zt-ai-history-main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   height: 30px;
   padding: 0 7px;
@@ -3690,20 +3697,21 @@ button {
   background: var(--zt-bg-hover);
 }
 
-.zt-ai-history-main span,
-.zt-ai-history-main small {
+.zt-ai-history-title,
+.zt-ai-history-time {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.zt-ai-history-main span {
+.zt-ai-history-title {
   font-size: var(--zt-font-size-ui);
   line-height: 1.25;
 }
 
-.zt-ai-history-main small {
+.zt-ai-history-time {
+  justify-self: end;
   color: var(--zt-text-muted);
   font-size: 11px;
   line-height: 1.1;
@@ -3711,34 +3719,9 @@ button {
 
 .zt-ai-history-preview {
   display: grid;
-  gap: 5px;
+  align-content: start;
+  gap: 8px;
   min-width: 0;
-  padding-left: 33px;
-}
-
-.zt-ai-history-preview-message {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  padding: 6px 7px;
-  border: 1px solid var(--zt-border-subtle);
-  border-radius: var(--zt-radius-control);
-  background: var(--zt-bg-surface);
-}
-
-.zt-ai-history-preview-message strong {
-  color: var(--zt-text-secondary);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.zt-ai-history-preview-message p {
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--zt-text-primary);
-  font-size: var(--zt-font-size-ui);
-  line-height: 1.35;
-  white-space: pre-wrap;
 }
 
 .zt-ai-messages {
@@ -3763,12 +3746,6 @@ button {
   background: var(--zt-bg-main);
 }
 
-.zt-ai-message strong {
-  color: var(--zt-text-secondary);
-  font-size: var(--zt-font-size-ui);
-  font-weight: 600;
-}
-
 .zt-ai-message p {
   margin: 0;
   overflow-wrap: anywhere;
@@ -3789,6 +3766,7 @@ button {
 }
 
 .zt-ai-message.role-tool {
+  justify-self: stretch;
   width: auto;
   max-width: 100%;
   border-color: var(--zt-border-subtle);
@@ -3796,6 +3774,7 @@ button {
 }
 
 .zt-ai-message.role-system {
+  justify-self: stretch;
   width: auto;
   max-width: 100%;
   border-color: var(--zt-border-subtle);
@@ -3973,16 +3952,48 @@ button {
   font-size: var(--zt-font-size-ui);
 }
 
-.zt-ai-tool-card p {
+.zt-ai-tool-summary {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.zt-ai-tool-summary p {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
   margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--zt-text-secondary);
+  min-width: 0;
+  color: var(--zt-text-primary);
   font-size: var(--zt-font-size-ui);
   line-height: 1.4;
 }
 
-.zt-ai-tool-card .zt-ai-tool-target {
+.zt-ai-tool-summary span {
+  color: var(--zt-text-secondary);
+  font-size: var(--zt-font-size-ui);
+}
+
+.zt-ai-tool-summary strong,
+.zt-ai-tool-summary code {
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--zt-text-primary);
+  font-family: inherit;
+  font-size: var(--zt-font-size-ui);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.zt-ai-tool-summary code {
+  font-family: var(--zt-font-mono);
+  font-weight: 500;
+  white-space: pre-wrap;
+}
+
+.zt-ai-tool-risk-note {
+  line-height: 1.35;
 }
 
 .zt-ai-tool-card footer button {

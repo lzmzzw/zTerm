@@ -1,9 +1,8 @@
 // Author: Liz
-import { ArrowLeft, ChevronDown, ChevronRight, History, Plus, Send, ShieldCheck, Terminal, Trash2 } from "lucide-react";
-import { useId, useState } from "react";
+import { ArrowLeft, ChevronDown, ChevronRight, History, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
+import { useId, useState, type KeyboardEvent } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
-import { ZtConfirmDialog } from "../../components/ZtUi";
 import { t } from "../settings/i18n";
 import type { AppLanguage } from "../settings/settingsStore";
 import type {
@@ -69,7 +68,6 @@ export function AiPanel({
   const [panelView, setPanelView] = useState<"current" | "history">("current");
   const [expandedConversationIds, setExpandedConversationIds] = useState<string[]>([]);
   const [chatPrompt, setChatPrompt] = useState("");
-  const [pendingDeleteConversation, setPendingDeleteConversation] = useState<AiConversationSummary | null>(null);
   const promptId = useId();
   const canSendChat = providersAvailable && Boolean(chatPrompt.trim()) && !loading && Boolean(onSendChat);
   const matchingSnapshotTitle =
@@ -87,8 +85,6 @@ export function AiPanel({
         .filter(Boolean)
         .join(" · ")
     : boundTarget;
-  const activeConversationTitle =
-    conversations.find((conversation) => conversation.id === activeConversationId)?.title ?? t(language, "currentConversation");
   const historyConversations = conversations.filter((conversation) => conversation.id !== activeConversationId);
 
   async function sendChat() {
@@ -98,11 +94,12 @@ export function AiPanel({
     setChatPrompt("");
   }
 
-  async function confirmDeleteConversation() {
-    const conversation = pendingDeleteConversation;
-    if (!conversation || !onDeleteConversation) return;
-    await onDeleteConversation(conversation.id);
-    setPendingDeleteConversation(null);
+  function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || event.nativeEvent.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    void sendChat();
   }
 
   function createNewConversation() {
@@ -137,26 +134,14 @@ export function AiPanel({
     if (previewMessages.length === 0) {
       return <div className="zt-empty-line">{t(language, "noAiHistoryPreview")}</div>;
     }
-    return previewMessages.map((message) => (
-      <article className={`zt-ai-history-preview-message role-${message.role}`} key={message.id}>
-        <strong>{roleLabel(message.role, language)}</strong>
-        <p>{message.content}</p>
-      </article>
-    ));
+    return previewMessages.map((message) => renderConversationMessage(message, language));
   }
 
   return (
     <section className="zt-ai-panel" aria-label="AI 操作台">
-      <header className="zt-ai-bound-target" aria-label="当前绑定窗格">
+      <header className={`zt-ai-bound-target${activeRuntimeSessionId ? "" : " is-unbound"}`} aria-label="当前绑定窗格">
         <div>
-          <span title={t(language, "currentBoundPane")}>
-            <Terminal size={14} aria-hidden="true" />
-            {t(language, "currentBoundPane")}
-          </span>
           <strong title={boundTargetTitle}>{boundTarget}</strong>
-          <small className="zt-ai-current-conversation" title={activeConversationTitle}>
-            {activeConversationTitle}
-          </small>
         </div>
         <div className="zt-ai-toolbar" aria-label={panelView === "history" ? t(language, "aiHistory") : t(language, "currentConversation")}>
           {panelView === "history" ? (
@@ -217,8 +202,10 @@ export function AiPanel({
                     title={t(language, "restoreAiConversation", { title: conversation.title })}
                     onDoubleClick={() => void restoreConversation(conversation.id)}
                   >
-                    <span>{conversation.title}</span>
-                    <small>{formatConversationTime(conversation.updated_at_ms)}</small>
+                    <span className="zt-ai-history-title">{conversation.title}</span>
+                    <time className="zt-ai-history-time" dateTime={new Date(conversation.updated_at_ms).toISOString()}>
+                      {formatConversationTime(conversation.updated_at_ms)}
+                    </time>
                   </button>
                   {onDeleteConversation ? (
                     <button
@@ -227,7 +214,7 @@ export function AiPanel({
                       aria-label={t(language, "deleteAiConversationTitle", { title: conversation.title })}
                       title={t(language, "deleteAiConversationTitle", { title: conversation.title })}
                       disabled={loading}
-                      onClick={() => setPendingDeleteConversation(conversation)}
+                      onClick={() => void onDeleteConversation(conversation.id)}
                     >
                       <Trash2 size={14} aria-hidden="true" />
                     </button>
@@ -242,52 +229,60 @@ export function AiPanel({
         <>
           <div className="zt-ai-messages" aria-label="AI 会话消息">
             {messages.length === 0 ? <div className="zt-empty-line">{t(language, "noAiMessages")}</div> : null}
-            {messages.map((message) => (
-              <article className={`zt-ai-message role-${message.role}`} key={message.id}>
-                <strong>{roleLabel(message.role, language)}</strong>
-                <p>{message.content}</p>
-              </article>
-            ))}
+            {messages.map((message) => renderConversationMessage(message, language))}
           </div>
 
-          <div className="zt-ai-tools" aria-label="AI 工具调用">
-            {pendingInvocations.length === 0 ? <div className="zt-empty-line">{t(language, "noPendingTools")}</div> : null}
-            {pendingInvocations.map((invocation) => (
-              <section className={`zt-ai-tool-card risk-${invocation.risk_level}`} key={invocation.id}>
-                <header>
-                  <strong>{invocation.tool_title}</strong>
-                  <span>{riskLabel(invocation.risk_level, language)}</span>
-                </header>
-                <small>{invocation.tool_id}</small>
-                {invocation.target_summary ? <p className="zt-ai-tool-target">{t(language, "target")}: {invocation.target_summary}</p> : null}
-                <p>{invocation.arguments_summary}</p>
-                {invocation.risk_summary ? <small>{invocation.risk_summary}</small> : null}
-                <footer>
-                  <button type="button" disabled={loading} onClick={() => void onConfirmTool?.(invocation.id, true)}>
-                    {t(language, "approve")}
-                  </button>
-                  <button type="button" disabled={loading} onClick={() => void onConfirmTool?.(invocation.id, false)}>
-                    {t(language, "reject")}
-                  </button>
-                </footer>
-              </section>
-            ))}
-          </div>
+          {pendingInvocations.length > 0 ? (
+            <div className="zt-ai-tools" aria-label="AI 工具调用">
+              {pendingInvocations.map((invocation) => {
+                const toolSummary = summarizeToolInvocation(invocation, language);
+                return (
+                  <section className={`zt-ai-tool-card risk-${invocation.risk_level}`} title={toolSummary.rawDetails} key={invocation.id}>
+                    <header>
+                      <strong>{invocation.tool_title}</strong>
+                      <span>{riskLabel(invocation.risk_level, language)}</span>
+                    </header>
+                    <div className="zt-ai-tool-summary">
+                      <p>
+                        <span>{t(language, "aiToolConnection")}：</span>
+                        <strong>{toolSummary.connection}</strong>
+                      </p>
+                      <p>
+                        <span>{t(language, "aiToolOperation")}：</span>
+                        <strong>{toolSummary.operation}</strong>
+                      </p>
+                      <p>
+                        <span>{toolSummary.detailLabel}：</span>
+                        <code>{toolSummary.detail}</code>
+                      </p>
+                    </div>
+                    {invocation.risk_summary ? <small className="zt-ai-tool-risk-note">{invocation.risk_summary}</small> : null}
+                    <footer>
+                      <button type="button" disabled={loading} onClick={() => void onConfirmTool?.(invocation.id, true)}>
+                        {t(language, "approve")}
+                      </button>
+                      <button type="button" disabled={loading} onClick={() => void onConfirmTool?.(invocation.id, false)}>
+                        {t(language, "reject")}
+                      </button>
+                    </footer>
+                  </section>
+                );
+              })}
+            </div>
+          ) : null}
 
           {!providersAvailable ? <div className="zt-ai-warning">{t(language, "configureAiProvider")}</div> : null}
-          {!activeRuntimeSessionId ? <div className="zt-ai-warning">{t(language, "aiNoTerminalWarning")}</div> : null}
           {error ? <div className="zt-session-error">{error}</div> : null}
 
           <div className="zt-ai-composer" aria-label={t(language, "aiComposer")}>
             <div className="zt-ai-prompt zt-ai-chat-input">
-              <label htmlFor={promptId}>{t(language, "askAi")}</label>
               <div className="zt-ai-composer-box">
                 <textarea
                   id={promptId}
                   aria-label={t(language, "aiRequest")}
                   value={chatPrompt}
                   onChange={(event) => setChatPrompt(event.currentTarget.value)}
-                  placeholder={t(language, "aiRequestPlaceholder")}
+                  onKeyDown={handlePromptKeyDown}
                 />
                 <div className="zt-ai-composer-footer">
                   <div className="zt-ai-approval-mode" aria-label={t(language, "approvalMode")} title={t(language, "approvalMode")}>
@@ -318,17 +313,6 @@ export function AiPanel({
         </>
       )}
 
-      {pendingDeleteConversation ? (
-        <ZtConfirmDialog
-          title={t(language, "deleteAiConversation")}
-          message={t(language, "confirmDeleteAiConversationMessage", { title: pendingDeleteConversation.title })}
-          cancelLabel={t(language, "cancel")}
-          confirmLabel={t(language, "confirmDelete")}
-          danger
-          onCancel={() => setPendingDeleteConversation(null)}
-          onConfirm={() => void confirmDeleteConversation()}
-        />
-      ) : null}
     </section>
   );
 }
@@ -350,6 +334,14 @@ function approvalModeOptions(language: AppLanguage): Array<{ value: AiApprovalMo
   ];
 }
 
+function renderConversationMessage(message: AiConversationMessage, language: AppLanguage) {
+  return (
+    <article className={`zt-ai-message role-${message.role}`} aria-label={roleLabel(message.role, language)} key={message.id}>
+      <p>{message.content}</p>
+    </article>
+  );
+}
+
 function roleLabel(role: AiConversationMessage["role"], language: AppLanguage) {
   if (role === "user") return t(language, "userRole");
   if (role === "assistant") return t(language, "assistantRole");
@@ -362,6 +354,55 @@ function riskLabel(risk: AiToolPendingInvocation["risk_level"], language: AppLan
   if (risk === "medium") return t(language, "riskMedium");
   if (risk === "high") return t(language, "riskHigh");
   return t(language, "riskCritical");
+}
+
+function summarizeToolInvocation(invocation: AiToolPendingInvocation, language: AppLanguage) {
+  const argumentFields = parseSummaryFields(invocation.arguments_summary);
+  const targetFields = parseSummaryFields(invocation.target_summary ?? "");
+  const connection =
+    argumentFields.target_title ??
+    targetFields.target_title ??
+    targetFields.cwd ??
+    argumentFields.cwd ??
+    t(language, "aiToolCurrentTerminal");
+  const command = invocation.tool_id === "terminal.write" ? argumentFields.data : null;
+  const compactArguments = compactToolArguments(argumentFields);
+  const detail = command ?? compactArguments ?? invocation.arguments_summary;
+  return {
+    connection,
+    operation: invocation.tool_title,
+    detail,
+    detailLabel: command ? t(language, "aiToolCommand") : t(language, "aiToolArguments"),
+    rawDetails: [
+      invocation.tool_id,
+      invocation.target_summary ? `${t(language, "target")}: ${invocation.target_summary}` : null,
+      invocation.arguments_summary,
+      invocation.risk_summary,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  };
+}
+
+function compactToolArguments(fields: Record<string, string>) {
+  const hiddenKeys = new Set(["pane_id", "runtime_session_id", "saved_session_id", "target_title", "scope_id"]);
+  const parts = Object.entries(fields)
+    .filter(([key, value]) => !hiddenKeys.has(key) && value.trim().length > 0)
+    .map(([key, value]) => `${key}=${value}`);
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
+function parseSummaryFields(summary: string) {
+  const fields: Record<string, string> = {};
+  const keyPattern = /(?:^|,\s)([a-z_]+)=/g;
+  const matches = Array.from(summary.matchAll(keyPattern));
+  matches.forEach((match, index) => {
+    const key = match[1];
+    const valueStart = (match.index ?? 0) + match[0].length;
+    const valueEnd = index + 1 < matches.length ? matches[index + 1].index ?? summary.length : summary.length;
+    fields[key] = summary.slice(valueStart, valueEnd).replace(/,\s$/, "").trim();
+  });
+  return fields;
 }
 
 function formatConversationTime(updatedAtMs?: number) {
