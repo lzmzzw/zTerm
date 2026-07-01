@@ -3564,27 +3564,31 @@ button {
 
 .zt-ai-approval-mode {
   display: inline-flex;
-  align-items: center;
-  gap: 4px;
+  align-items: flex-end;
+  gap: 3px;
   min-width: 0;
-  max-width: min(260px, calc(100% - 48px));
+  max-width: min(240px, calc(100% - 42px));
   color: var(--zt-text-secondary);
 }
 
 .zt-ai-approval-mode svg {
   flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin-bottom: 5px;
   color: currentColor;
 }
 
 .zt-ai-approval-select.zt-select-trigger {
   width: auto;
   min-width: 0;
-  min-height: 26px;
-  height: 26px;
-  padding: 0 18px 0 2px;
+  min-height: 22px;
+  height: 22px;
+  padding: 0 15px 0 1px;
   border: 0;
   background: transparent;
   color: currentColor;
+  font-size: 12px;
   font-weight: 650;
   box-shadow: none;
 }
@@ -3604,9 +3608,9 @@ button {
 }
 
 .zt-ai-approval-select .zt-select-chevron {
-  right: 3px;
-  width: 7px;
-  height: 7px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
   color: currentColor;
 }
 
@@ -3963,7 +3967,7 @@ button {
 .zt-ai-prompt textarea {
   min-height: 64px;
   max-height: 130px;
-  resize: vertical;
+  resize: none;
   padding: 0;
   border: 0;
   background: transparent;
@@ -3979,7 +3983,7 @@ button {
 
 .zt-ai-composer-footer {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
@@ -3993,12 +3997,17 @@ button {
 }
 
 .zt-ai-send {
-  width: 34px;
-  height: 34px;
+  width: 24px;
+  height: 24px;
   flex: 0 0 auto;
   border-radius: 999px;
   background: #f4f4f4;
   color: #202020;
+}
+
+.zt-ai-send svg {
+  width: 15px;
+  height: 15px;
 }
 
 .zt-ai-mode button:hover,

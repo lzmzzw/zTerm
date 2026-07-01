@@ -227,6 +227,19 @@ describe("global dark theme colors", () => {
     }
   });
 
+  it("keeps the AI composer controls compact and anchored to the bottom", () => {
+    expect(ruleBodiesForSelector(".zt-ai-prompt textarea")).toContain("resize: none");
+    expect(ruleBodiesForSelector(".zt-ai-composer-footer")).toContain("align-items: flex-end");
+    expect(ruleBodiesForSelector(".zt-ai-approval-mode svg")).toContain("width: 12px");
+    expect(ruleBodiesForSelector(".zt-ai-approval-mode svg")).toContain("height: 12px");
+    expect(ruleBodiesForSelector(".zt-ai-approval-select.zt-select-trigger")).toContain("height: 22px");
+    expect(ruleBodiesForSelector(".zt-ai-approval-select.zt-select-trigger")).toContain("font-size: 12px");
+    expect(ruleBodiesForSelector(".zt-ai-send")).toContain("width: 28px");
+    expect(ruleBodiesForSelector(".zt-ai-send")).toContain("height: 28px");
+    expect(ruleBodiesForSelector(".zt-ai-send svg")).toContain("width: 15px");
+    expect(ruleBodiesForSelector(".zt-ai-send svg")).toContain("height: 15px");
+  });
+
   it("styles connection type icons without adding icons to ordinary section tabs", () => {
     expect(ruleBodiesForSelector(".zt-session-type-tabs button")).toContain("display: inline-flex");
     expect(ruleBodiesForSelector(".zt-session-type-tabs button svg")).toContain("width: 15px");
