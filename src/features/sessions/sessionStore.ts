@@ -4,7 +4,15 @@ import { create } from "zustand";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 
-import type { SavedSession, SavedSessionDraft, SessionGroup, SessionGroupDraft, SessionTestResult, SessionTreeSnapshot } from "./types";
+import type {
+  SavedSession,
+  SavedSessionDraft,
+  SessionGroup,
+  SessionGroupDraft,
+  SessionTestRequest,
+  SessionTestResult,
+  SessionTreeSnapshot,
+} from "./types";
 
 interface SessionState extends SessionTreeSnapshot {
   loading: boolean;
@@ -15,7 +23,7 @@ interface SessionState extends SessionTreeSnapshot {
   deleteGroup: (groupId: string) => Promise<void>;
   saveSession: (draft: SavedSessionDraft) => Promise<SavedSession>;
   deleteSession: (sessionId: string) => Promise<void>;
-  testSession: (draft: SavedSessionDraft) => Promise<SessionTestResult>;
+  testSession: (request: SessionTestRequest) => Promise<SessionTestResult>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -51,7 +59,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     await invoke("sessions_delete_session", { id: sessionId });
     await get().loadSessions();
   },
-  async testSession(draft) {
-    return invoke<SessionTestResult>("sessions_test_connection", { draft });
+  async testSession(request) {
+    return invoke<SessionTestResult>("sessions_test_connection", {
+      draft: request.draft,
+      secret: request.secret ?? null,
+    });
   },
 }));

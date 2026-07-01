@@ -120,3 +120,8 @@ export interface SessionTestResult {
   ok: boolean;
   message: string;
 }
+
+export interface SessionTestRequest {
+  draft: SavedSessionDraft;
+  secret?: string | null;
+}

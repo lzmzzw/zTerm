@@ -26,6 +26,7 @@ import type {
   SavedSession,
   SavedSessionDraft,
   SessionGroup,
+  SessionTestRequest,
   SessionTestResult,
   SessionType,
   SshOptions,
@@ -42,7 +43,7 @@ interface SessionEditorDialogProps {
   onClose: () => void;
   onTypeChange?: (type: SessionType) => void;
   onSave: (draft: SavedSessionDraft) => Promise<unknown> | unknown;
-  onTestConnection?: (draft: SavedSessionDraft) => Promise<SessionTestResult> | SessionTestResult;
+  onTestConnection?: (request: SessionTestRequest) => Promise<SessionTestResult> | SessionTestResult;
   onSaveCredential?: (draft: CredentialDraft) => Promise<CredentialRecord> | CredentialRecord;
   onReadCredential?: (credentialRef: string) => Promise<string> | string;
   onSelectSshKeyFile?: () => Promise<string | null> | string | null;
@@ -174,11 +175,31 @@ export function SessionEditorDialog({
     setError(null);
     setStatus(null);
     try {
-      const result = await onTestConnection(buildDraft(credentialRef.trim() || null));
+      const result = await onTestConnection(buildTestRequest());
       setStatus(result.message);
     } catch (testError) {
       setError(fallbackOnlyErrorMessage(testError, "测试连接失败"));
     }
+  }
+
+  function buildTestRequest(): SessionTestRequest {
+    return {
+      draft: buildDraft(credentialRef.trim() || null),
+      secret: transientTestSecret(),
+    };
+  }
+
+  function transientTestSecret() {
+    if (type === "ssh" && authMode === "password" && passwordDirty && password) {
+      return password;
+    }
+    if (type === "ssh" && authMode === "key" && keyPassphraseDirty && keyPassphrase) {
+      return keyPassphrase;
+    }
+    if (type === "rdp" && authMode === "password" && passwordDirty && password) {
+      return password;
+    }
+    return null;
   }
 
   function buildDraft(sessionCredentialRef: string | null): SavedSessionDraft {

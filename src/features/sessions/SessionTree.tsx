@@ -20,6 +20,7 @@ import type {
   SavedSessionDraft,
   SessionGroup,
   SessionGroupDraft,
+  SessionTestRequest,
   SessionTestResult,
   SessionType,
 } from "./types";
@@ -30,7 +31,7 @@ interface SessionTreeProps {
   sessions: SavedSession[];
   onSaveGroup?: (draft: SessionGroupDraft) => Promise<unknown> | unknown;
   onSaveSession?: (draft: SavedSessionDraft) => Promise<unknown> | unknown;
-  onTestSession?: (draft: SavedSessionDraft) => Promise<SessionTestResult> | SessionTestResult;
+  onTestSession?: (request: SessionTestRequest) => Promise<SessionTestResult> | SessionTestResult;
   onSaveCredential?: (draft: CredentialDraft) => Promise<CredentialRecord> | CredentialRecord;
   onReadCredential?: (credentialRef: string) => Promise<string> | string;
   onSelectSshKeyFile?: () => Promise<string | null> | string | null;

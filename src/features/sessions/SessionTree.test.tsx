@@ -766,6 +766,41 @@ describe("SessionTree", () => {
     view.unmount();
   });
 
+  it("passes a dirty SSH password as a transient test secret without saving it", async () => {
+    const onTestSession = vi.fn().mockResolvedValue({ ok: true, message: "SSH 连接测试通过" });
+    const onSaveCredential = vi.fn();
+    const secret = "phase9-test-only-password";
+    const view = render(
+      <SessionTree
+        groups={groups}
+        sessions={sessions}
+        onTestSession={onTestSession}
+        onSaveCredential={onSaveCredential}
+      />,
+    );
+
+    await click(button(view.container, "编辑会话 生产跳板机"));
+    await chooseSelect(view.container, "认证方式", "password");
+    await click(button(view.container, "显示密码"));
+    change(input(view.container, "密码"), secret);
+    await click(button(view.container, "测试连接"));
+
+    expect(onSaveCredential).not.toHaveBeenCalled();
+    expect(onTestSession).toHaveBeenCalledWith({
+      draft: expect.objectContaining({
+        id: "ssh-prod",
+        type: "ssh",
+        auth_mode: "password",
+        credential_ref: null,
+      }),
+      secret,
+    });
+    expect(view.container.textContent).toContain("SSH 连接测试通过");
+    expect(view.container.textContent).not.toContain(secret);
+
+    view.unmount();
+  });
+
   it("keeps fixed fallback text when deleting a session fails with a non-Error value", async () => {
     const onDeleteSession = vi.fn().mockRejectedValue("raw session delete failure");
     const view = render(<SessionTree groups={groups} sessions={sessions} onDeleteSession={onDeleteSession} />);
