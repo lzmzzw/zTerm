@@ -126,6 +126,7 @@ interface AiState {
   loadPendingInvocations: () => Promise<void>;
   captureContext: (context: AiTerminalContextSnapshot) => Promise<void>;
   sendChat: (message: string, context: AiTerminalContextSnapshot | null) => Promise<void>;
+  cancelChat: () => void;
   setApprovalMode: (mode: AiApprovalMode) => Promise<void>;
   selectConversation: (conversationId: string) => Promise<void>;
   loadConversationPreview: (conversationId: string) => Promise<void>;
@@ -135,6 +136,10 @@ interface AiState {
 }
 
 let contextCaptureRequestId = 0;
+let aiChatRequestId = 0;
+let assistantStreamTimer: ReturnType<typeof window.setInterval> | null = null;
+
+const ASSISTANT_STREAM_INTERVAL_MS = 20;
 
 export const useAiStore = create<AiState>((set, get) => ({
   conversations: [],
@@ -190,7 +195,31 @@ export const useAiStore = create<AiState>((set, get) => ({
   async sendChat(message, context) {
     const content = message.trim();
     if (!content) return;
-    set({ loading: true, error: null });
+    stopAssistantMessageStream();
+    const requestId = aiChatRequestId + 1;
+    aiChatRequestId = requestId;
+    const pendingConversationId = get().activeConversationId ?? `pending-conversation-${requestId}`;
+    const optimisticUserMessage: AiConversationMessage = {
+      id: `pending-user-${requestId}`,
+      conversation_id: pendingConversationId,
+      role: "user",
+      content,
+      status: "complete",
+      created_at_ms: Date.now(),
+    };
+    const streamingAssistantMessage: AiConversationMessage = {
+      id: `pending-assistant-${requestId}`,
+      conversation_id: pendingConversationId,
+      role: "assistant",
+      content: "",
+      status: "streaming",
+      created_at_ms: Date.now(),
+    };
+    set((state) => ({
+      loading: true,
+      error: null,
+      messages: [...state.messages, optimisticUserMessage, streamingAssistantMessage],
+    }));
     try {
       const response = await invoke<AiChatResponse>("ai_chat", {
         request: {
@@ -201,22 +230,52 @@ export const useAiStore = create<AiState>((set, get) => ({
           terminal_context: context,
         },
       });
+      if (aiChatRequestId !== requestId) return;
       const conversation = await invoke<AiConversation>("ai_conversation_get", { conversationId: response.conversation_id });
+      if (aiChatRequestId !== requestId) return;
+      const streamingMessages = conversationMessagesForStreaming(conversation.messages, response.message);
       set((state) => ({
         activeConversationId: response.conversation_id,
-        messages: conversation.messages,
+        messages: streamingMessages.messages,
         approvalMode: conversation.approval_mode ?? state.approvalMode,
-        conversationPreviews: withConversationPreview(state.conversationPreviews, conversation),
         pendingInvocations: response.pending_invocations.length > 0 ? response.pending_invocations : state.pendingInvocations,
-        loading: false,
       }));
-      await useAiStore.getState().loadConversations();
-      await useAiStore.getState().loadPendingInvocations();
+      startAssistantMessageStream(requestId, conversation, streamingMessages.assistantMessageId, streamingMessages.assistantContent);
+      try {
+        const conversations = await invoke<AiConversationSummary[]>("ai_conversation_list", {});
+        const pendingInvocations = await invoke<AiToolPendingInvocation[]>("ai_tool_pending");
+        if (aiChatRequestId === requestId) {
+          set({
+            conversations,
+            pendingInvocations,
+          });
+        }
+      } catch (refreshError) {
+        if (aiChatRequestId === requestId) {
+          set({ error: unknownErrorMessage(refreshError, "AI Agent 操作失败") });
+        }
+      }
     } catch (error) {
-      set({ loading: false, error: unknownErrorMessage(error, "AI Agent 操作失败") });
+      if (aiChatRequestId === requestId) {
+        stopAssistantMessageStream();
+        set((state) => ({
+          loading: false,
+          error: unknownErrorMessage(error, "AI Agent 操作失败"),
+          messages: state.messages.filter((message) => message.id !== streamingAssistantMessage.id),
+        }));
+      }
     }
   },
+  cancelChat() {
+    aiChatRequestId += 1;
+    stopAssistantMessageStream();
+    set((state) => ({
+      loading: false,
+      messages: state.messages.filter((message) => message.status !== "streaming"),
+    }));
+  },
   async selectConversation(conversationId) {
+    stopAssistantMessageStream();
     try {
       const conversation = await invoke<AiConversation>("ai_conversation_get", { conversationId });
       set((state) => ({
@@ -287,9 +346,11 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
   },
   newConversation() {
+    stopAssistantMessageStream();
     set({ activeConversationId: null, approvalMode: "safe", messages: [], error: null });
   },
   async deleteConversation(conversationId) {
+    stopAssistantMessageStream();
     set({ loading: true, error: null });
     try {
       await invoke("ai_conversation_delete", { conversationId });
@@ -317,6 +378,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
   },
   async confirmTool(invocationId, approved) {
+    stopAssistantMessageStream();
     set({ loading: true, error: null });
     try {
       await invoke("ai_tool_confirm", {
@@ -366,4 +428,103 @@ function withoutConversationPreview(
   const next = { ...previews };
   delete next[conversationId];
   return next;
+}
+
+function conversationMessagesForStreaming(messages: AiConversationMessage[], assistantContent: string) {
+  const assistantIndex = lastAssistantMessageIndex(messages, assistantContent);
+  if (assistantIndex < 0) {
+    const assistantMessage: AiConversationMessage = {
+      id: `streaming-assistant-${Date.now()}`,
+      conversation_id: messages[0]?.conversation_id ?? "pending-conversation",
+      role: "assistant",
+      content: "",
+      status: "streaming",
+      created_at_ms: Date.now(),
+    };
+    return {
+      messages: [...messages, assistantMessage],
+      assistantMessageId: assistantMessage.id,
+      assistantContent,
+    };
+  }
+  const assistantMessage = messages[assistantIndex];
+  return {
+    messages: messages.map((message, index) =>
+      index === assistantIndex ? { ...message, content: "", status: "streaming" } : message,
+    ),
+    assistantMessageId: assistantMessage.id,
+    assistantContent: assistantMessage.content,
+  };
+}
+
+function lastAssistantMessageIndex(messages: AiConversationMessage[], assistantContent: string) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant" && message.content === assistantContent) {
+      return index;
+    }
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "assistant") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function startAssistantMessageStream(
+  requestId: number,
+  conversation: AiConversation,
+  assistantMessageId: string,
+  assistantContent: string,
+) {
+  stopAssistantMessageStream();
+  const characters = Array.from(assistantContent);
+  if (characters.length === 0) {
+    finishAssistantMessageStream(requestId, conversation, assistantMessageId, "");
+    return;
+  }
+
+  let visibleLength = 0;
+  assistantStreamTimer = window.setInterval(() => {
+    visibleLength += 1;
+    const content = characters.slice(0, visibleLength).join("");
+    const complete = visibleLength >= characters.length;
+    if (complete) {
+      finishAssistantMessageStream(requestId, conversation, assistantMessageId, content);
+      return;
+    }
+    if (aiChatRequestId !== requestId) {
+      stopAssistantMessageStream();
+      return;
+    }
+    useAiStore.setState((state) => ({
+      messages: state.messages.map((message) =>
+        message.id === assistantMessageId ? { ...message, content, status: "streaming" } : message,
+      ),
+    }));
+  }, ASSISTANT_STREAM_INTERVAL_MS);
+}
+
+function finishAssistantMessageStream(
+  requestId: number,
+  conversation: AiConversation,
+  assistantMessageId: string,
+  content: string,
+) {
+  stopAssistantMessageStream();
+  if (aiChatRequestId !== requestId) return;
+  useAiStore.setState((state) => ({
+    messages: state.messages.map((message) =>
+      message.id === assistantMessageId ? { ...message, content, status: "complete" } : message,
+    ),
+    conversationPreviews: withConversationPreview(state.conversationPreviews, conversation),
+    loading: false,
+  }));
+}
+
+function stopAssistantMessageStream() {
+  if (!assistantStreamTimer) return;
+  window.clearInterval(assistantStreamTimer);
+  assistantStreamTimer = null;
 }

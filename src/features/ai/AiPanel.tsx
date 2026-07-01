@@ -1,5 +1,5 @@
 // Author: Liz
-import { ArrowLeft, ChevronDown, ChevronRight, History, Plus, Send, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowUp, ChevronDown, ChevronRight, History, Plus, ShieldCheck, Square, Trash2 } from "lucide-react";
 import { useId, useState, type KeyboardEvent } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
@@ -32,6 +32,7 @@ interface AiPanelProps {
   pendingInvocations?: AiToolPendingInvocation[];
   language?: AppLanguage;
   onSendChat?: (message: string) => Promise<unknown> | unknown;
+  onCancelChat?: () => void;
   onApprovalModeChange?: (mode: AiApprovalMode) => Promise<unknown> | unknown;
   onSelectConversation?: (conversationId: string) => Promise<unknown> | unknown;
   onLoadConversationPreview?: (conversationId: string) => Promise<unknown> | unknown;
@@ -58,6 +59,7 @@ export function AiPanel({
   pendingInvocations = [],
   language = "zhCN",
   onSendChat,
+  onCancelChat,
   onApprovalModeChange,
   onSelectConversation,
   onLoadConversationPreview,
@@ -70,6 +72,7 @@ export function AiPanel({
   const [chatPrompt, setChatPrompt] = useState("");
   const promptId = useId();
   const canSendChat = providersAvailable && Boolean(chatPrompt.trim()) && !loading && Boolean(onSendChat);
+  const canCancelChat = loading && Boolean(onCancelChat);
   const matchingSnapshotTitle =
     contextSnapshot?.runtime_session_id === activeRuntimeSessionId ? contextSnapshot.title?.trim() : null;
   const boundTarget = activeRuntimeSessionId
@@ -90,8 +93,8 @@ export function AiPanel({
   async function sendChat() {
     const message = chatPrompt.trim();
     if (!message || !onSendChat) return;
-    await onSendChat(message);
     setChatPrompt("");
+    await onSendChat(message);
   }
 
   function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -285,27 +288,44 @@ export function AiPanel({
                   onKeyDown={handlePromptKeyDown}
                 />
                 <div className="zt-ai-composer-footer">
-                  <div className="zt-ai-approval-mode" aria-label={t(language, "approvalMode")} title={t(language, "approvalMode")}>
+                  <div
+                    className={`zt-ai-approval-mode mode-${approvalMode}`}
+                    aria-label={t(language, "approvalMode")}
+                    title={t(language, "approvalMode")}
+                  >
                     <ShieldCheck size={14} aria-hidden="true" />
                     <ZtSelect
                       ariaLabel={t(language, "approvalMode")}
-                      className="zt-ai-approval-select"
+                      className={`zt-ai-approval-select mode-${approvalMode}`}
                       value={approvalMode}
                       options={approvalModeOptions(language)}
                       disabled={loading}
                       onChange={(value) => void onApprovalModeChange?.(value as AiApprovalMode)}
                     />
                   </div>
-                  <button
-                    type="button"
-                    className="zt-ai-send"
-                    aria-label={t(language, "send")}
-                    title={t(language, "send")}
-                    disabled={!canSendChat}
-                    onClick={() => void sendChat()}
-                  >
-                    <Send size={16} aria-hidden="true" />
-                  </button>
+                  {loading ? (
+                    <button
+                      type="button"
+                      className="zt-ai-send is-cancel"
+                      aria-label={t(language, "cancel")}
+                      title={t(language, "cancel")}
+                      disabled={!canCancelChat}
+                      onClick={() => onCancelChat?.()}
+                    >
+                      <Square size={14} fill="currentColor" aria-hidden="true" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="zt-ai-send"
+                      aria-label={t(language, "send")}
+                      title={t(language, "send")}
+                      disabled={!canSendChat}
+                      onClick={() => void sendChat()}
+                    >
+                      <ArrowUp size={18} strokeWidth={2.6} aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -339,7 +359,11 @@ function renderConversationMessage(message: AiConversationMessage, language: App
     return renderToolConversationMessage(message, language);
   }
   return (
-    <article className={`zt-ai-message role-${message.role}`} aria-label={roleLabel(message.role, language)} key={message.id}>
+    <article
+      className={`zt-ai-message role-${message.role} status-${message.status}`}
+      aria-label={roleLabel(message.role, language)}
+      key={message.id}
+    >
       <p>{message.content}</p>
     </article>
   );
@@ -348,7 +372,7 @@ function renderConversationMessage(message: AiConversationMessage, language: App
 function renderToolConversationMessage(message: AiConversationMessage, language: AppLanguage) {
   const result = formatToolMessage(message.content, t(language, "aiToolCompleted"));
   return (
-    <article className="zt-ai-message role-tool" aria-label={roleLabel(message.role, language)} key={message.id}>
+    <article className={`zt-ai-message role-tool status-${message.status}`} aria-label={roleLabel(message.role, language)} key={message.id}>
       <div className="zt-ai-tool-result">
         <strong className="zt-ai-tool-result-title">{t(language, "aiToolResultTitle")}</strong>
         <dl>

@@ -3469,7 +3469,7 @@ button {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto auto;
   gap: 8px;
-  padding: 10px;
+  padding: 4px 10px 0;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -3565,21 +3565,61 @@ button {
 .zt-ai-approval-mode {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
   max-width: min(260px, calc(100% - 48px));
+  color: var(--zt-text-secondary);
 }
 
 .zt-ai-approval-mode svg {
   flex: 0 0 auto;
-  color: var(--zt-text-secondary);
+  color: currentColor;
 }
 
 .zt-ai-approval-select.zt-select-trigger {
-  width: 136px;
-  height: 30px;
-  padding: 0 28px 0 10px;
-  background: var(--zt-bg-main);
+  width: auto;
+  min-width: 0;
+  min-height: 26px;
+  height: 26px;
+  padding: 0 18px 0 2px;
+  border: 0;
+  background: transparent;
+  color: currentColor;
+  font-weight: 650;
+  box-shadow: none;
+}
+
+.zt-ai-approval-select.zt-select-trigger:hover,
+.zt-ai-approval-select.zt-select-trigger[aria-expanded="true"] {
+  border-color: transparent;
+  background: transparent;
+  color: currentColor;
+  box-shadow: none;
+}
+
+.zt-ai-approval-select.zt-select-trigger:focus-visible {
+  outline: none;
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--zt-focus-soft);
+}
+
+.zt-ai-approval-select .zt-select-chevron {
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  color: currentColor;
+}
+
+.zt-ai-approval-mode.mode-request_approval {
+  color: var(--zt-text-muted);
+}
+
+.zt-ai-approval-mode.mode-safe {
+  color: var(--zt-accent);
+}
+
+.zt-ai-approval-mode.mode-full_access {
+  color: var(--zt-warning);
 }
 
 .zt-ai-conversations {
@@ -3753,6 +3793,11 @@ button {
   font-size: var(--zt-font-size-ui);
   line-height: 1.45;
   white-space: pre-wrap;
+}
+
+.zt-ai-message.status-streaming p:empty::after {
+  content: "...";
+  color: var(--zt-text-muted);
 }
 
 .zt-ai-message.role-user {
@@ -3948,19 +3993,25 @@ button {
 }
 
 .zt-ai-send {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   flex: 0 0 auto;
   border-radius: 999px;
-  background: var(--zt-bg-active);
-  color: var(--zt-text-primary);
+  background: #f4f4f4;
+  color: #202020;
 }
 
 .zt-ai-mode button:hover,
 .zt-ai-start:hover,
 .zt-ai-send:hover {
-  background: var(--zt-bg-hover);
+  background: #ffffff;
   filter: none;
+}
+
+.zt-ai-send.is-cancel svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 0;
 }
 
 .zt-ai-start:disabled,

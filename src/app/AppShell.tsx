@@ -224,6 +224,7 @@ export function AppShell() {
     loadPendingInvocations,
     captureContext,
     sendChat,
+    cancelChat,
     setApprovalMode,
     selectConversation,
     loadConversationPreview,
@@ -236,6 +237,7 @@ export function AppShell() {
       loadPendingInvocations: state.loadPendingInvocations,
       captureContext: state.captureContext,
       sendChat: state.sendChat,
+      cancelChat: state.cancelChat,
       setApprovalMode: state.setApprovalMode,
       selectConversation: state.selectConversation,
       loadConversationPreview: state.loadConversationPreview,
@@ -1486,6 +1488,7 @@ export function AppShell() {
           onNewConversation: newConversation,
           onSelectConversation: selectConversation,
           onSendChat: (message) => sendChat(message, aiTerminalContext),
+          onCancelChat: cancelChat,
         }}
         files={{
           entries: fileEntries,

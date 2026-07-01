@@ -48,6 +48,14 @@ function change(element: HTMLTextAreaElement, value: string) {
   });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
+}
+
 async function click(element: HTMLElement) {
   await act(async () => {
     element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -153,6 +161,56 @@ describe("AiPanel", () => {
     await click(button(view.container, "发送"));
 
     expect(onSendChat).toHaveBeenCalledWith("列出文件");
+    view.unmount();
+  });
+
+  it("clears the composer immediately after sending without waiting for the response", async () => {
+    const send = deferred<void>();
+    const onSendChat = vi.fn(() => send.promise);
+    const view = render(
+      <AiPanel
+        activeRuntimeSessionId="runtime-1"
+        providersAvailable
+        recentOutput=""
+        loading={false}
+        error={null}
+        onSendChat={onSendChat}
+      />,
+    );
+
+    const prompt = input(view.container, "AI 请求");
+    change(prompt, "测试");
+    await click(button(view.container, "发送"));
+
+    expect(onSendChat).toHaveBeenCalledWith("测试");
+    expect(prompt.value).toBe("");
+    send.resolve();
+    await act(async () => {
+      await send.promise;
+    });
+    view.unmount();
+  });
+
+  it("switches the composer action to cancel while a chat request is running", async () => {
+    const onCancelChat = vi.fn();
+    const view = render(
+      <AiPanel
+        activeRuntimeSessionId="runtime-1"
+        providersAvailable
+        recentOutput=""
+        loading
+        error={null}
+        onSendChat={vi.fn()}
+        onCancelChat={onCancelChat}
+      />,
+    );
+
+    const cancelButton = button(view.container, "取消");
+    expect(cancelButton.classList.contains("is-cancel")).toBe(true);
+    expect(cancelButton.textContent?.trim()).toBe("");
+    await click(cancelButton);
+
+    expect(onCancelChat).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 

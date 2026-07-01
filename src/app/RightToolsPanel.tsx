@@ -68,6 +68,7 @@ interface RightToolsPanelProps {
     onNewConversation: () => Promise<unknown> | unknown;
     onSelectConversation: (conversationId: string) => Promise<unknown> | unknown;
     onSendChat: (message: string) => Promise<unknown> | unknown;
+    onCancelChat: () => void;
   };
   files: {
     entries: FileEntry[];
@@ -198,6 +199,7 @@ export function RightToolsPanel({
                 onNewConversation={agent.onNewConversation}
                 onDeleteConversation={agent.onDeleteConversation}
                 onConfirmTool={agent.onConfirmTool}
+                onCancelChat={agent.onCancelChat}
               />
             </>
           ) : null}
