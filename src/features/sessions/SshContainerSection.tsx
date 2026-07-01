@@ -71,7 +71,7 @@ export function SshContainerSection({ sshOptions, onSshOptionsChange }: SshConta
             aria-label="容器工作目录"
             value={sshOptions.container?.workdir ?? ""}
             onChange={(event) => updateContainer({ workdir: event.currentTarget.value.trim() || null })}
-            placeholder="/app"
+            placeholder="/"
           />
         </label>
       </div>
