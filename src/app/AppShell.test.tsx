@@ -363,6 +363,7 @@ vi.mock("../features/sessions/sessionStore", () => {
     if (selector) return selector(state);
     return state;
   };
+  useSessionStore.getState = sessionState;
   return { useSessionStore };
 });
 
@@ -3820,14 +3821,21 @@ describe("AppShell", () => {
     expect(storeMocks.listSshContainers).toHaveBeenCalledWith("session-1");
     expect(view.container.textContent).toContain("api");
     expect(view.container.textContent).toContain("old");
+    expect(view.container.textContent).not.toContain("Up 3 minutes");
+    expect(view.container.querySelector('[aria-label="刷新容器"]')?.getAttribute("title")).toBe("刷新");
+    expect(view.container.querySelector('[aria-label="进入容器 api"]')?.getAttribute("title")).toBe("进入容器");
+    expect(view.container.querySelector('[aria-label="进入容器 api"] svg')).not.toBe(null);
     expect((view.container.querySelector('[aria-label="进入容器 old"]') as HTMLButtonElement).disabled).toBe(true);
+    const enterApiButton = view.container.querySelector('[aria-label="进入容器 api"]') as HTMLButtonElement;
 
     await act(async () => {
-      (view.container.querySelector('[aria-label="进入容器 api"]') as HTMLButtonElement).click();
+      enterApiButton.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+      enterApiButton.click();
       await Promise.resolve();
       await Promise.resolve();
     });
 
+    expect(storeMocks.addPaneTabAfter).toHaveBeenCalledTimes(1);
     expect(storeMocks.addPaneTabAfter).toHaveBeenCalledWith("pane-1", "pane-1-tab-1");
     expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
       "workspace-1",
@@ -3842,6 +3850,7 @@ describe("AppShell", () => {
         restore_status: "pending",
       }),
     );
+    expect(storeMocks.openSshContainerTerminal).toHaveBeenCalledTimes(1);
     expect(storeMocks.openSshContainerTerminal).toHaveBeenCalledWith("session-1", "pane-1", "abc123", "api");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
       "workspace-1",

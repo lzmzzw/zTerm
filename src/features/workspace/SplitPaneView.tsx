@@ -14,6 +14,15 @@ import type { PaneNode, PaneSplitDirection } from "./types";
 
 const ACTIVE_XTERM_MOUNT_DELAY_MS = 48;
 const INACTIVE_XTERM_MOUNT_DELAY_MS = 96;
+type TerminalRuntimeKind = "local" | "ssh" | "ssh_container" | "rdp_placeholder";
+
+function isInteractiveTerminalRuntime(kind: TerminalRuntimeKind) {
+  return kind === "local" || kind === "ssh" || kind === "ssh_container";
+}
+
+function isSshLikeTerminalRuntime(kind: TerminalRuntimeKind) {
+  return kind === "ssh" || kind === "ssh_container";
+}
 
 interface SplitPaneViewProps {
   root: PaneNode;
@@ -193,10 +202,10 @@ function LeafPane({
     activeRuntimeSessionId ? state.runtimes[activeRuntimeSessionId] : null,
   );
   const xtermMounted = Boolean(
-      runtime &&
+    runtime &&
       activeRuntimeSessionId &&
       xtermRuntimeSessionId === activeRuntimeSessionId &&
-      (runtime.kind === "ssh" || runtime.kind === "local"),
+      isInteractiveTerminalRuntime(runtime.kind),
   );
   const xtermLive = Boolean(workspaceActive && xtermMounted);
   const outputChunk = useTerminalStore((state) =>
@@ -260,7 +269,7 @@ function LeafPane({
 
   const handleInput = useCallback(
     (data: string) => {
-      if (runtime?.kind === "ssh" || runtime?.kind === "local") {
+      if (runtime && isInteractiveTerminalRuntime(runtime.kind)) {
         void writeTerminal(runtime.runtime_session_id, data);
       }
     },
@@ -269,7 +278,7 @@ function LeafPane({
 
   const handleResize = useCallback(
     (cols: number, rows: number) => {
-      if (runtime?.kind === "ssh" || runtime?.kind === "local") {
+      if (runtime && isInteractiveTerminalRuntime(runtime.kind)) {
         void resizeTerminal(runtime.runtime_session_id, cols, rows);
       }
     },
@@ -278,7 +287,7 @@ function LeafPane({
 
   const handleCompletionRequest = useCallback(
     (input: string, cursor: number) => {
-      if (runtime?.kind === "ssh" || runtime?.kind === "local") {
+      if (runtime && isInteractiveTerminalRuntime(runtime.kind)) {
         return suggestCompletion(runtime.runtime_session_id, input, cursor);
       }
       return Promise.resolve([]);
@@ -415,9 +424,9 @@ function LeafPane({
         </div>
         <TerminalToolbar onSplitPane={handleSplitPane} onClosePane={handleClosePane} />
       </div>
-      {xtermMounted && visualMode === "normal" && workspaceActive && (runtime?.kind === "ssh" || runtime?.kind === "local") ? (
+      {xtermMounted && visualMode === "normal" && workspaceActive && runtime && isInteractiveTerminalRuntime(runtime.kind) ? (
         <XtermPane
-          contextMenuEnabled={workspaceActive && (runtime.kind === "ssh" || runtime.kind === "local")}
+          contextMenuEnabled={workspaceActive && isInteractiveTerminalRuntime(runtime.kind)}
           data={xtermReplay.data}
           liveData={outputChunk?.data ?? null}
           liveSerial={outputChunk?.serial ?? null}
@@ -425,13 +434,13 @@ function LeafPane({
           streamId={runtime.runtime_session_id}
           onCompletionRequest={handleCompletionRequest}
           onDisconnect={
-            runtime.kind === "ssh" && activeTerminalTab.runtime_session_id
+            isSshLikeTerminalRuntime(runtime.kind) && activeTerminalTab.runtime_session_id
               ? () => onDisconnectTerminal?.(root.id, activeTerminalTab.id, activeTerminalTab.runtime_session_id!)
               : undefined
           }
           onInput={handleInput}
           onReconnect={
-            runtime.kind === "ssh" && activeTerminalTab.runtime_session_id && activeTerminalTab.saved_session_id
+            isSshLikeTerminalRuntime(runtime.kind) && activeTerminalTab.runtime_session_id && activeTerminalTab.saved_session_id
               ? () =>
                   onReconnectTerminal?.(
                     root.id,
@@ -457,7 +466,7 @@ function LeafPane({
           message={
             runtime?.kind === "rdp_placeholder"
               ? activeTerminalTab.title
-              : runtime?.kind === "ssh" || runtime?.kind === "local"
+              : runtime && isInteractiveTerminalRuntime(runtime.kind)
                 ? `正在准备 ${activeTerminalTab.title}`
               : activeTerminalTab.restore_status === "pending"
                 ? `正在连接 ${activeTerminalTab.title}`

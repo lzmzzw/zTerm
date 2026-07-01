@@ -582,12 +582,20 @@ button {
 
 .zt-tunnel-target {
   min-width: 0;
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   border: 1px solid var(--zt-border-subtle);
   border-radius: var(--zt-radius-control);
   background: var(--zt-bg-main);
   padding: 8px 10px;
+}
+
+.zt-tunnel-target-content {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
 }
 
 .zt-tunnel-target strong,
@@ -639,6 +647,57 @@ button {
   color: var(--zt-text-secondary);
   padding: 2px 6px;
   font-size: 11px;
+}
+
+.zt-container-refresh-button,
+.zt-container-enter-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--zt-radius-control);
+  background: transparent;
+  color: var(--zt-text-secondary);
+}
+
+.zt-container-refresh-button:hover,
+.zt-container-enter-button:hover:not(:disabled) {
+  background: var(--zt-bg-hover);
+  color: var(--zt-text-primary);
+}
+
+.zt-container-enter-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.zt-container-list-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.zt-container-main {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.zt-container-main span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--zt-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-container-actions {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
 }
 
 .zt-tunnel-list-item dl {

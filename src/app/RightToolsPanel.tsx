@@ -1,5 +1,5 @@
 // Author: Liz
-import { Activity, Box, Cable, Clock3, Folder, MessageSquareMore, RefreshCw, type LucideIcon } from "lucide-react";
+import { Activity, Box, Cable, Clock3, Folder, LogIn, MessageSquareMore, RefreshCw, type LucideIcon } from "lucide-react";
 
 import { AiPanel } from "../features/ai/AiPanel";
 import type {
@@ -342,13 +342,35 @@ function SshContainerListPanel({
   return (
     <div className="zt-tunnel-panel">
       <div className="zt-tunnel-target">
-        <strong>{sessionName ?? "当前 SSH 连接"}</strong>
-        {target ? <span>{target}</span> : null}
-      </div>
-      <div className="zt-container-toolbar">
-        <button type="button" className="zt-icon-button" aria-label="刷新容器" onClick={() => void onRefresh()}>
+        <div className="zt-tunnel-target-content">
+          <strong>{sessionName ?? "当前 SSH 连接"}</strong>
+          {target ? <span>{target}</span> : null}
+        </div>
+        <button
+          type="button"
+          className="zt-icon-button zt-container-refresh-button"
+          aria-label="刷新容器"
+          title="刷新"
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            const button = event.currentTarget;
+            button.dataset.pointerActivated = "true";
+            window.setTimeout(() => {
+              delete button.dataset.pointerActivated;
+            }, 350);
+            void onRefresh();
+          }}
+          onClick={(event) => {
+            if (event.currentTarget.dataset.pointerActivated === "true") {
+              delete event.currentTarget.dataset.pointerActivated;
+              event.preventDefault();
+              return;
+            }
+            void onRefresh();
+          }}
+        >
           <RefreshCw size={14} aria-hidden="true" />
-          <span>刷新</span>
         </button>
       </div>
       {loading ? <div className="zt-empty-line">正在加载容器...</div> : null}
@@ -359,24 +381,41 @@ function SshContainerListPanel({
           {containers.map((container) => {
             const title = container.name?.trim() || container.id.slice(0, 12);
             return (
-              <section className="zt-tunnel-list-item" role="listitem" aria-label={title} key={container.id}>
-                <header>
+              <section className="zt-tunnel-list-item zt-container-list-item" role="listitem" aria-label={title} key={container.id}>
+                <div className="zt-container-main">
                   <strong>{title}</strong>
-                  <code>{container.running ? "running" : "stopped"}</code>
-                </header>
-                <div className="zt-tunnel-meta">
                   <span>{container.image || "-"}</span>
-                  <span>{container.status || "-"}</span>
                 </div>
-                <button
-                  type="button"
-                  className="zt-session-form-secondary"
-                  aria-label={`进入容器 ${title}`}
-                  disabled={!container.running}
-                  onClick={() => void onEnter(container)}
-                >
-                  进入容器
-                </button>
+                <div className="zt-container-actions">
+                  <code>{container.running ? "running" : "stopped"}</code>
+                  <button
+                    type="button"
+                    className="zt-icon-button zt-container-enter-button"
+                    aria-label={`进入容器 ${title}`}
+                    title="进入容器"
+                    disabled={!container.running}
+                    onPointerDown={(event) => {
+                      if (event.button !== 0 || !container.running) return;
+                      event.preventDefault();
+                      const button = event.currentTarget;
+                      button.dataset.pointerActivated = "true";
+                      window.setTimeout(() => {
+                        delete button.dataset.pointerActivated;
+                      }, 350);
+                      void onEnter(container);
+                    }}
+                    onClick={(event) => {
+                      if (event.currentTarget.dataset.pointerActivated === "true") {
+                        delete event.currentTarget.dataset.pointerActivated;
+                        event.preventDefault();
+                        return;
+                      }
+                      void onEnter(container);
+                    }}
+                  >
+                    <LogIn size={15} aria-hidden="true" />
+                  </button>
+                </div>
               </section>
             );
           })}

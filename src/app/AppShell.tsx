@@ -1033,17 +1033,29 @@ export function AppShell() {
   }
 
   async function enterSshContainer(container: SshContainerInfo) {
-    if (!activeTab || !activePaneTab || !activeSshSessionId) return;
-    const targetWorkspaceId = activeWorkspaceId;
-    const targetWorkspaceTabId = activeTab.id;
-    const targetPaneId = activeTab.active_pane_id;
-    const afterPaneTabId = activePaneTab.id;
+    const workspaceState = useWorkspaceStore.getState();
+    const latestActiveTab = workspaceState.tabs.find((tab) => tab.id === workspaceState.activeTabId) ?? workspaceState.tabs[0];
+    const latestActivePane = latestActiveTab ? findPane(latestActiveTab.root, latestActiveTab.active_pane_id) : null;
+    const latestActiveLeaf = latestActivePane?.kind === "leaf" ? latestActivePane : null;
+    const latestActivePaneTab = latestActiveLeaf ? getActiveTerminalTab(latestActiveLeaf) : null;
+    const latestSavedSessionId = latestActivePaneTab?.saved_session_id ?? null;
+    const latestSavedSession = latestSavedSessionId
+      ? (useSessionStore.getState().sessions.find((session) => session.id === latestSavedSessionId) ?? null)
+      : null;
+    if (!latestActiveTab || !latestActivePaneTab || latestSavedSession?.type !== "ssh") return;
+    if (latestSavedSession.ssh_options?.container?.enabled !== true) return;
+
+    const targetWorkspaceId = workspaceState.activeWorkspaceId;
+    const targetWorkspaceTabId = latestActiveTab.id;
+    const targetPaneId = latestActiveTab.active_pane_id;
+    const afterPaneTabId = latestActivePaneTab.id;
+    const targetSavedSessionId = latestSavedSession.id;
     const title = container.name?.trim() || container.id.slice(0, 12);
     const targetPaneTab = addPaneTabAfter(targetPaneId, afterPaneTabId);
     setTerminalError(null);
     updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, {
       title: `容器: ${title}`,
-      saved_session_id: activeSshSessionId,
+      saved_session_id: targetSavedSessionId,
       connection_source: "ssh_container",
       container_target: {
         id: container.id,
@@ -1053,7 +1065,7 @@ export function AppShell() {
       restore_error: null,
     });
     try {
-      const runtime = await openSshContainerTerminal(activeSshSessionId, targetPaneId, container.id, container.name);
+      const runtime = await openSshContainerTerminal(targetSavedSessionId, targetPaneId, container.id, container.name);
       bindRuntimeToPaneTab(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, runtime);
     } catch (error) {
       const message = fallbackOnlyErrorMessage(error, "进入容器失败");

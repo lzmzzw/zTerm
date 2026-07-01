@@ -317,7 +317,7 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
-  it("enables terminal context actions for local and ssh terminals", async () => {
+  it("enables terminal context actions for local, ssh, and ssh_container terminals", async () => {
     const rootFor = (runtimeId: string): PaneNode => ({
       kind: "leaf",
       id: "pane-a",
@@ -359,10 +359,22 @@ describe("SplitPaneView", () => {
           cols: 120,
           rows: 32,
         },
+        "runtime-container": {
+          runtime_session_id: "runtime-container",
+          saved_session_id: "ssh-session-1",
+          history_scope_kind: "saved_session",
+          history_scope_id: "ssh-session-1",
+          pane_id: "pane-a",
+          title: "容器: api",
+          kind: "ssh_container",
+          cols: 120,
+          rows: 32,
+        },
       },
       output: {
         "runtime-local": "$ ",
         "runtime-ssh": "$ ",
+        "runtime-container": "# ",
       },
     });
 
@@ -386,6 +398,12 @@ describe("SplitPaneView", () => {
     await flushDeferredXtermMount();
     expect(sshView.container.querySelector(".zt-xterm-pane")?.getAttribute("data-context-menu-enabled")).toBe("true");
     sshView.unmount();
+
+    const containerView = render(<SplitPaneView root={rootFor("runtime-container")} {...props} />);
+    await flushDeferredXtermMount();
+    expect(containerView.container.querySelector(".zt-xterm-pane")?.getAttribute("data-context-menu-enabled")).toBe("true");
+    expect(containerView.container.querySelector(".zt-terminal-placeholder")).toBeNull();
+    containerView.unmount();
   });
 
   it("keeps xterm unmounted for the first visual switch frame", async () => {
