@@ -3773,6 +3773,58 @@ button {
   background: var(--zt-bg-surface);
 }
 
+.zt-ai-tool-result {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.zt-ai-tool-result-title {
+  color: var(--zt-text-primary);
+  font-size: var(--zt-font-size-ui);
+  font-weight: 650;
+}
+
+.zt-ai-tool-result dl {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.zt-ai-tool-result dl > div {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+}
+
+.zt-ai-tool-result dt {
+  color: var(--zt-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.zt-ai-tool-result dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--zt-text-primary);
+  font-size: var(--zt-font-size-ui);
+  line-height: 1.5;
+}
+
+.zt-ai-tool-result code,
+.zt-ai-tool-output {
+  font-family: var(--zt-font-mono);
+  font-size: 12px;
+}
+
+.zt-ai-tool-output {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 .zt-ai-message.role-system {
   justify-self: stretch;
   width: auto;

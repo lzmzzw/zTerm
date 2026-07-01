@@ -335,10 +335,132 @@ function approvalModeOptions(language: AppLanguage): Array<{ value: AiApprovalMo
 }
 
 function renderConversationMessage(message: AiConversationMessage, language: AppLanguage) {
+  if (message.role === "tool") {
+    return renderToolConversationMessage(message, language);
+  }
   return (
     <article className={`zt-ai-message role-${message.role}`} aria-label={roleLabel(message.role, language)} key={message.id}>
       <p>{message.content}</p>
     </article>
+  );
+}
+
+function renderToolConversationMessage(message: AiConversationMessage, language: AppLanguage) {
+  const result = formatToolMessage(message.content, t(language, "aiToolCompleted"));
+  return (
+    <article className="zt-ai-message role-tool" aria-label={roleLabel(message.role, language)} key={message.id}>
+      <div className="zt-ai-tool-result">
+        <strong className="zt-ai-tool-result-title">{t(language, "aiToolResultTitle")}</strong>
+        <dl>
+          <div>
+            <dt>{t(language, "aiToolStatus")}</dt>
+            <dd>{result.status}</dd>
+          </div>
+          {result.command ? (
+            <div>
+              <dt>{t(language, "aiToolCommand")}</dt>
+              <dd>
+                <code>{result.command}</code>
+              </dd>
+            </div>
+          ) : null}
+          <div>
+            <dt>{t(language, "aiToolOutput")}</dt>
+            <dd>
+              <pre className="zt-ai-tool-output">{result.output || t(language, "aiToolNoOutput")}</pre>
+            </dd>
+          </div>
+        </dl>
+      </div>
+    </article>
+  );
+}
+
+interface ToolMessageFormat {
+  status: string;
+  command: string | null;
+  output: string;
+}
+
+const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*?(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]/g;
+const CONTROL_CHARACTER_PATTERN = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
+
+function formatToolMessage(content: string, completedFallback: string): ToolMessageFormat {
+  const terminalReturn = splitOnce(content, "终端返回：");
+  if (terminalReturn) {
+    return {
+      status: cleanPlainText(terminalReturn[0]) || completedFallback,
+      command: null,
+      output: cleanTerminalOutput(terminalReturn[1], null),
+    };
+  }
+
+  const lines = normalizeLineBreaks(content).split("\n");
+  const outputIndex = lines.findIndex((line) => line.trimStart().startsWith("终端输出："));
+  if (outputIndex >= 0) {
+    const commandLine = lines.find((line) => line.trimStart().startsWith("命令："));
+    const command = commandLine ? cleanPlainText(commandLine.replace(/^.*?命令：/, "")) : null;
+    const status = cleanPlainText(
+      lines
+        .slice(0, outputIndex)
+        .filter((line) => !line.trimStart().startsWith("命令："))
+        .join("\n"),
+    );
+    const outputFirstLine = lines[outputIndex].replace(/^.*?终端输出：/, "");
+    const output = [outputFirstLine, ...lines.slice(outputIndex + 1)].join("\n");
+    return {
+      status: status || completedFallback,
+      command: command || null,
+      output: cleanTerminalOutput(output, command),
+    };
+  }
+
+  return {
+    status: cleanPlainText(content) || completedFallback,
+    command: null,
+    output: "",
+  };
+}
+
+function splitOnce(value: string, separator: string): [string, string] | null {
+  const index = value.indexOf(separator);
+  if (index < 0) return null;
+  return [value.slice(0, index), value.slice(index + separator.length)];
+}
+
+function cleanPlainText(value: string) {
+  return normalizeLineBreaks(stripTerminalControls(value))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function cleanTerminalOutput(value: string, command: string | null) {
+  const commandLines = command ? cleanPlainText(command).split("\n").filter(Boolean) : [];
+  return normalizeLineBreaks(stripTerminalControls(value))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !commandLines.includes(line))
+    .filter((line) => !looksLikeShellPrompt(line))
+    .join("\n");
+}
+
+function normalizeLineBreaks(value: string) {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function stripTerminalControls(value: string) {
+  return value.replace(ANSI_CONTROL_SEQUENCE_PATTERN, "").replace(CONTROL_CHARACTER_PATTERN, "");
+}
+
+function looksLikeShellPrompt(line: string) {
+  const value = line.trim();
+  return (
+    (/^[\w.-]+@[\w.-]+:.*[$#]\s*$/.test(value) && value.includes(":")) ||
+    /^PS\s+.+>\s*$/.test(value) ||
+    (/^[A-Za-z]:\\.*>\s*$/.test(value) && value.endsWith(">"))
   );
 }
 

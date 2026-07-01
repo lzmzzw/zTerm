@@ -253,6 +253,52 @@ fn tool_service_safe_mode_auto_executes_low_risk_terminal_write_with_readback() 
 }
 
 #[test]
+fn tool_service_terminal_write_result_summary_is_readable() {
+    let store = SqliteStore::open_in_memory().expect("store should open");
+    let conversation = AiConversationService::default()
+        .create(
+            &store,
+            AiConversationCreateRequest {
+                title: Some("可读摘要".to_string()),
+                scope_kind: "follow_focus".to_string(),
+                scope_ref_json: Some("{}".to_string()),
+                approval_mode: Some(AiApprovalMode::Safe),
+            },
+        )
+        .expect("conversation should create");
+    let writer = Arc::new(FakeToolWriter::with_output(
+        "pwd\u{1b}[?2004l\r\r\n/home/demo\r\n\u{1b}[?2004h\u{1b}[32muser@host\u{1b}[m:\u{1b}[34m~\u{1b}[m$ ",
+    ));
+    let service = AiToolService::with_writer(writer);
+
+    let outcome = service
+        .execute_if_allowed(
+            &store,
+            terminal_write_request("pwd\r", Some(conversation.id.clone()), Some("pane-main")),
+            AiApprovalMode::Safe,
+        )
+        .expect("command should execute");
+
+    let audit = outcome.audit_record.expect("audit should be recorded");
+    let summary = audit.result_summary.as_deref().expect("result summary");
+    assert!(summary.contains("命令：pwd"));
+    assert!(summary.contains("终端输出：\n/home/demo"));
+    assert!(!summary.contains('\u{1b}'));
+    assert!(!summary.contains("?2004"));
+    assert!(!summary.contains("user@host"));
+
+    let loaded = AiConversationService::default()
+        .get(&store, &conversation.id)
+        .expect("conversation should load");
+    let tool_message = loaded
+        .messages
+        .iter()
+        .find(|message| message.role == AiMessageRole::Tool)
+        .expect("tool message should persist");
+    assert_eq!(tool_message.content, summary);
+}
+
+#[test]
 fn tool_service_safe_mode_keeps_high_risk_terminal_write_pending_with_captured_target() {
     let store = SqliteStore::open_in_memory().expect("store should open");
     let writer = Arc::new(FakeToolWriter::default());

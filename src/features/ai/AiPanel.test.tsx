@@ -226,7 +226,8 @@ describe("AiPanel", () => {
             id: "message-tool",
             conversation_id: "conversation-1",
             role: "tool",
-            content: "命令已写入活动终端。",
+            content:
+              "命令已写入活动终端。终端返回：touch a\u001b[?2004l\r\r\n\u001b[?2004h\u001b[32mubuntu@ubuntu\u001b[m:\u001b[34m~\u001b[m$",
             status: "complete",
           },
           {
@@ -242,7 +243,14 @@ describe("AiPanel", () => {
 
     const toolMessage = view.container.querySelector(".zt-ai-message.role-tool");
     const systemMessage = view.container.querySelector(".zt-ai-message.role-system");
-    expect(toolMessage?.textContent?.trim()).toBe("命令已写入活动终端。");
+    expect(toolMessage?.textContent).toContain("执行结果");
+    expect(toolMessage?.textContent).toContain("状态");
+    expect(toolMessage?.textContent).toContain("命令已写入活动终端。");
+    expect(toolMessage?.textContent).toContain("终端输出");
+    expect(toolMessage?.querySelector(".zt-ai-tool-output")?.textContent?.trim()).toBe("touch a");
+    expect(toolMessage?.textContent).not.toContain("?2004");
+    expect(toolMessage?.textContent).not.toContain("[32m");
+    expect(toolMessage?.textContent).not.toContain("ubuntu@ubuntu");
     expect(toolMessage?.getAttribute("aria-label")).toBe("工具");
     expect(systemMessage?.textContent?.trim()).toBe("系统上下文已更新。");
     expect(systemMessage?.getAttribute("aria-label")).toBe("系统");

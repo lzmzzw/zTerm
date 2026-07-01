@@ -283,17 +283,7 @@ impl AiToolService {
                     })
                     .transpose()?
                     .flatten();
-                if let Some(output) = output
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                {
-                    Ok(format!(
-                        "命令已写入活动终端。终端返回：{}",
-                        truncate(&redact_sensitive(&output), 1600)
-                    ))
-                } else {
-                    Ok("命令已写入活动终端，暂未读取到新的终端输出。".to_string())
-                }
+                Ok(terminal_write_result_summary(&data, output.as_deref()))
             }
             "history.search" => {
                 let query = optional_string_arg(arguments, "query");
@@ -784,6 +774,123 @@ fn truncate(value: &str, max_chars: usize) -> String {
     } else {
         format!("{}...", value.chars().take(max_chars).collect::<String>())
     }
+}
+
+fn terminal_write_result_summary(command: &str, output: Option<&str>) -> String {
+    let readable_command = readable_terminal_command(command);
+    let command = redact_sensitive(&truncate(&readable_command, 240));
+    let output = output
+        .and_then(|value| readable_terminal_output(value, &readable_command))
+        .map(|value| redact_sensitive(&truncate(&value, 1600)));
+    match output {
+        Some(output) => format!("命令已写入活动终端。\n命令：{command}\n终端输出：\n{output}"),
+        None => format!("命令已写入活动终端。\n命令：{command}\n终端输出：未读取到额外输出。"),
+    }
+}
+
+fn readable_terminal_command(command: &str) -> String {
+    strip_terminal_controls(command)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn readable_terminal_output(output: &str, command: &str) -> Option<String> {
+    let command_lines = command
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let normalized = strip_terminal_controls(output)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let lines = normalized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| {
+            !command_lines
+                .iter()
+                .any(|command_line| line == command_line)
+        })
+        .filter(|line| !looks_like_shell_prompt(line))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let text = lines.join("\n");
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn looks_like_shell_prompt(line: &str) -> bool {
+    let value = line.trim();
+    ((value.ends_with('$') || value.ends_with('#')) && value.contains('@') && value.contains(':'))
+        || (value.starts_with("PS ") && value.ends_with('>'))
+        || (value.ends_with('>') && value.contains(":\\"))
+}
+
+fn strip_terminal_controls(input: &str) -> String {
+    let mut output = String::new();
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            match chars.next() {
+                Some('[') => {
+                    for next in chars.by_ref() {
+                        if ('@'..='~').contains(&next) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    let mut escaped = false;
+                    for next in chars.by_ref() {
+                        if escaped {
+                            if next == '\\' {
+                                break;
+                            }
+                            escaped = false;
+                            continue;
+                        }
+                        if next == '\u{1b}' {
+                            escaped = true;
+                        } else if next == '\u{7}' {
+                            break;
+                        }
+                    }
+                }
+                Some('P' | '_' | '^' | 'X') => {
+                    let mut escaped = false;
+                    for next in chars.by_ref() {
+                        if escaped {
+                            if next == '\\' {
+                                break;
+                            }
+                            escaped = false;
+                        } else if next == '\u{1b}' {
+                            escaped = true;
+                        }
+                    }
+                }
+                Some('O') => {
+                    chars.next();
+                }
+                Some(_) | None => {}
+            }
+            continue;
+        }
+        if ch.is_control() && !matches!(ch, '\r' | '\n' | '\t') {
+            continue;
+        }
+        output.push(ch);
+    }
+    output
 }
 
 fn now_ms() -> i64 {
