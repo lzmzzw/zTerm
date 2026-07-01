@@ -141,7 +141,6 @@ describe("TransferPanel", () => {
   });
 
   it("confirms before deleting an active transfer", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
     const onDelete = vi.fn();
     const view = render(
       <TransferPanel
@@ -156,12 +155,17 @@ describe("TransferPanel", () => {
 
     await click(button(view.container, "删除 task-1"));
     expect(onDelete).not.toHaveBeenCalled();
+    expect(view.container.querySelector('[role="dialog"][aria-label="删除传输任务"]')?.textContent).toContain(
+      "删除运行中传输会先取消该任务",
+    );
+
+    await click(button(view.container, "取消"));
+    expect(onDelete).not.toHaveBeenCalled();
 
     await click(button(view.container, "删除 task-1"));
+    await click(button(view.container, "确认删除"));
     expect(onDelete).toHaveBeenCalledWith("task-1");
-    expect(confirmSpy).toHaveBeenCalledWith("删除运行中传输会先取消该任务，确认删除？");
 
-    confirmSpy.mockRestore();
     view.unmount();
   });
 
@@ -228,7 +232,6 @@ describe("TransferPanel", () => {
   });
 
   it("runs collapsible transfer dock bulk actions", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValueOnce(true);
     const onPauseAll = vi.fn();
     const onResumeAll = vi.fn();
     const onClearAll = vi.fn();
@@ -254,15 +257,16 @@ describe("TransferPanel", () => {
     expect(onResumeAll).toHaveBeenCalledWith(["task-3"]);
 
     await click(button(view.container, "清理全部传输任务"));
-    expect(confirmSpy).toHaveBeenCalledWith("清理全部任务会取消进行中的传输并删除任务记录，确认清理？");
+    expect(view.container.querySelector('[role="dialog"][aria-label="清理传输任务"]')?.textContent).toContain(
+      "清理全部任务会取消进行中的传输并删除任务记录",
+    );
+    await click(button(view.container, "确认清理"));
     expect(onClearAll).toHaveBeenCalledWith(["task-1", "task-2", "task-3", "task-4"]);
 
-    confirmSpy.mockRestore();
     view.unmount();
   });
 
   it("does not clear all transfers when the bulk clear confirmation is rejected", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValueOnce(false);
     const onClearAll = vi.fn();
     const view = render(
       <TransferPanel
@@ -278,10 +282,10 @@ describe("TransferPanel", () => {
     );
 
     await click(button(view.container, "清理全部传输任务"));
+    await click(button(view.container, "取消"));
 
     expect(onClearAll).not.toHaveBeenCalled();
 
-    confirmSpy.mockRestore();
     view.unmount();
   });
 });

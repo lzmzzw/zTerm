@@ -19,6 +19,7 @@ import type { RightTool } from "./rightTools";
 import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
 import { useWorkspaceVisualSwitch } from "./useWorkspaceVisualSwitch";
+import { ZtConfirmDialog } from "../components/ZtUi";
 import { useAiStore } from "../features/ai/aiStore";
 import { buildAiTerminalContext } from "../features/ai/aiTerminalContextModel";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
@@ -1366,32 +1367,14 @@ export function AppShell() {
       ) : null}
 
       {pendingDeleteWorkspace ? (
-        <div className="zt-session-modal-backdrop">
-          <div className="zt-session-dialog zt-session-confirm-dialog" role="dialog" aria-modal="true" aria-label="删除工作区">
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void confirmDeleteWorkspace();
-              }}
-            >
-              <header>
-                <strong>删除工作区</strong>
-                <button type="button" aria-label="取消删除工作区" onClick={() => setPendingDeleteWorkspace(null)}>
-                  ×
-                </button>
-              </header>
-              <div className="zt-session-confirm-body">
-                确认删除工作区“{pendingDeleteWorkspace.name}”？删除后该工作区定义和布局快照将无法恢复。
-              </div>
-              <footer>
-                <button type="button" onClick={() => setPendingDeleteWorkspace(null)}>
-                  取消
-                </button>
-                <button type="submit">确认删除</button>
-              </footer>
-            </form>
-          </div>
-        </div>
+        <ZtConfirmDialog
+          title="删除工作区"
+          message={`确认删除工作区“${pendingDeleteWorkspace.name}”？删除后该工作区定义和布局快照将无法恢复。`}
+          confirmLabel="确认删除"
+          danger
+          onCancel={() => setPendingDeleteWorkspace(null)}
+          onConfirm={() => void confirmDeleteWorkspace()}
+        />
       ) : null}
 
       {textInputDialog ? (

@@ -1,8 +1,17 @@
 // Author: Liz
-import { Pencil, Plus, Save, Star, TestTube2, Trash2, X } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { Pencil, Plus, Save, Star, TestTube2, Trash2 } from "lucide-react";
+import { useEffect, useId, useState, type FormEvent } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
+import {
+  ZtButton,
+  ZtConfirmDialog,
+  ZtDialog,
+  ZtFloatingSurface,
+  ZtInput,
+  ZtSwitch,
+  ZtTextarea,
+} from "../../components/ZtUi";
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 import type {
   AiProviderDraftTestRequest,
@@ -76,6 +85,7 @@ export function ModelManagerPanel({
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AiProviderProfile | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const editorFormId = useId();
 
   const editingProvider = providers.find((provider) => provider.id === form.id) ?? null;
   const isEditing = Boolean(form.id);
@@ -287,129 +297,103 @@ export function ModelManagerPanel({
       </div>
 
       {editorOpen ? (
-        <div className="zt-session-modal-backdrop">
-          <div className="zt-session-dialog zt-model-dialog" role="dialog" aria-modal="true" aria-label="模型配置">
-            <form className="zt-model-form" onSubmit={(event) => void saveProvider(event)}>
-              <header>
-                <button type="button" aria-label="关闭模型配置" title="关闭模型配置" onClick={closeEditor}>
-                  <X size={14} aria-hidden="true" />
-                </button>
-                <strong>{isEditing ? "编辑模型" : "新增模型"}</strong>
-                <span aria-hidden="true" />
-              </header>
-
-              <div className="zt-model-dialog-body">
-                {formError ? <p className="zt-session-error">{formError}</p> : null}
-                {message ? <p className="zt-settings-status">{message}</p> : null}
-                <label>
-                  <span>模型名称</span>
-                  <input aria-label="模型名称" value={form.name} onChange={(event) => patchForm({ name: event.currentTarget.value })} />
-                </label>
-                <label>
-                  <span>协议类型</span>
-                  <ZtSelect
-                    ariaLabel="协议类型"
-                    value={form.kind}
-                    options={providerKindOptions}
-                    onChange={(nextValue) => patchForm({ kind: nextValue as AiProviderKind })}
-                  />
-                </label>
-                <label>
-                  <span>模型 URL</span>
-                  <input aria-label="模型 URL" value={form.baseUrl} onChange={(event) => patchForm({ baseUrl: event.currentTarget.value })} />
-                </label>
-                <label>
-                  <span>模型标识</span>
-                  <input aria-label="模型标识" value={form.model} onChange={(event) => patchForm({ model: event.currentTarget.value })} />
-                </label>
-                <label>
-                  <span>API Key{form.kind === "anthropic" ? "" : "（可选）"}</span>
-                  <input
-                    aria-label="API Key"
-                    type="password"
-                    placeholder={editingProvider?.api_key_ref ? "留空则保留已保存 Key" : ""}
-                    value={form.apiKey}
-                    onChange={(event) => patchForm({ apiKey: event.currentTarget.value })}
-                  />
-                </label>
-                <label className="zt-settings-check">
-                  <input type="checkbox" checked={form.enabled} onChange={(event) => patchForm({ enabled: event.currentTarget.checked })} />
-                  <span>启用</span>
-                </label>
-                <label className="zt-settings-check">
-                  <input type="checkbox" checked={form.isDefault} onChange={(event) => patchForm({ isDefault: event.currentTarget.checked })} />
-                  <span>默认模型</span>
-                </label>
-                <label>
-                  <span>测试输入</span>
-                  <textarea
-                    aria-label="测试输入"
-                    rows={4}
-                    value={form.testInput}
-                    onChange={(event) => patchForm({ testInput: event.currentTarget.value })}
-                  />
-                </label>
-                <label>
-                  <span>测试输出</span>
-                  <textarea
-                    aria-label="测试输出"
-                    className="zt-model-test-output"
-                    readOnly
-                    rows={5}
-                    value={testOutput ?? "等待测试输出"}
-                  />
-                </label>
-              </div>
-
-              <footer>
-                <button type="button" title="测试模型" disabled={testing || loading} onClick={() => void testDraft()}>
-                  <TestTube2 size={14} aria-hidden="true" />
-                  {testing ? "测试中" : "测试模型"}
-                </button>
-                <button type="submit" title="保存模型" disabled={saving || loading}>
-                  <Save size={14} aria-hidden="true" />
-                  {saving ? "保存中" : "保存模型"}
-                </button>
-              </footer>
-            </form>
-          </div>
-        </div>
+        <ZtDialog
+          ariaLabel="模型配置"
+          title={isEditing ? "编辑模型" : "新增模型"}
+          size="medium"
+          className="zt-model-dialog"
+          bodyClassName="zt-model-dialog-body"
+          onClose={closeEditor}
+          closeLabel="关闭模型配置"
+          footer={
+            <>
+              <ZtButton disabled={testing || loading} onClick={() => void testDraft()}>
+                <TestTube2 size={14} aria-hidden="true" />
+                {testing ? "测试中" : "测试模型"}
+              </ZtButton>
+              <ZtButton form={editorFormId} type="submit" disabled={saving || loading} variant="primary">
+                <Save size={14} aria-hidden="true" />
+                {saving ? "保存中" : "保存模型"}
+              </ZtButton>
+            </>
+          }
+        >
+          <form id={editorFormId} className="zt-model-form" onSubmit={(event) => void saveProvider(event)}>
+            {formError ? <p className="zt-session-error">{formError}</p> : null}
+            {message ? <p className="zt-settings-status">{message}</p> : null}
+            <label>
+              <span>模型名称</span>
+              <ZtInput aria-label="模型名称" value={form.name} onChange={(event) => patchForm({ name: event.currentTarget.value })} />
+            </label>
+            <label>
+              <span>协议类型</span>
+              <ZtSelect
+                ariaLabel="协议类型"
+                value={form.kind}
+                options={providerKindOptions}
+                onChange={(nextValue) => patchForm({ kind: nextValue as AiProviderKind })}
+              />
+            </label>
+            <label>
+              <span>模型 URL</span>
+              <ZtInput aria-label="模型 URL" value={form.baseUrl} onChange={(event) => patchForm({ baseUrl: event.currentTarget.value })} />
+            </label>
+            <label>
+              <span>模型标识</span>
+              <ZtInput aria-label="模型标识" value={form.model} onChange={(event) => patchForm({ model: event.currentTarget.value })} />
+            </label>
+            <label>
+              <span>API Key{form.kind === "anthropic" ? "" : "（可选）"}</span>
+              <ZtInput
+                aria-label="API Key"
+                type="password"
+                placeholder={editingProvider?.api_key_ref ? "留空则保留已保存 Key" : ""}
+                value={form.apiKey}
+                onChange={(event) => patchForm({ apiKey: event.currentTarget.value })}
+              />
+            </label>
+            <ZtSwitch label="启用" checked={form.enabled} onChange={(checked) => patchForm({ enabled: checked })} />
+            <ZtSwitch label="默认模型" checked={form.isDefault} onChange={(checked) => patchForm({ isDefault: checked })} />
+            <label>
+              <span>测试输入</span>
+              <ZtTextarea
+                aria-label="测试输入"
+                rows={4}
+                value={form.testInput}
+                onChange={(event) => patchForm({ testInput: event.currentTarget.value })}
+              />
+            </label>
+            <label>
+              <span>测试输出</span>
+              <ZtTextarea
+                aria-label="测试输出"
+                className="zt-model-test-output"
+                readOnly
+                rows={5}
+                value={testOutput ?? "等待测试输出"}
+              />
+            </label>
+          </form>
+        </ZtDialog>
       ) : null}
 
       {pendingDelete ? (
-        <div className="zt-session-modal-backdrop">
-          <div className="zt-session-dialog zt-session-confirm-dialog" role="dialog" aria-modal="true" aria-label="删除模型">
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void deleteProvider(pendingDelete);
-              }}
-            >
-              <header>
-                <button type="button" aria-label="取消删除模型" title="取消删除模型" onClick={() => setPendingDelete(null)}>
-                  <X size={14} aria-hidden="true" />
-                </button>
-                <strong>删除模型</strong>
-                <span aria-hidden="true" />
-              </header>
-              <div className="zt-session-confirm-body">确认删除模型“{pendingDelete.name}”？</div>
-              <footer>
-                <button type="button" onClick={() => setPendingDelete(null)}>
-                  取消
-                </button>
-                <button type="submit">确认删除</button>
-              </footer>
-            </form>
-          </div>
-        </div>
+        <ZtConfirmDialog
+          title="删除模型"
+          message={`确认删除模型“${pendingDelete.name}”？`}
+          confirmLabel="确认删除"
+          danger
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => void deleteProvider(pendingDelete)}
+        />
       ) : null}
 
       {contextMenu ? (
-        <div className="zt-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+        <ZtFloatingSurface className="zt-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
           <button type="button" role="menuitem" onClick={openCreateEditor}>
             新建模型
           </button>
-        </div>
+        </ZtFloatingSurface>
       ) : null}
     </section>
   );

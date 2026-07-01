@@ -1,8 +1,8 @@
 // Author: Liz
-import { X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
+import { ZtButton, ZtDialog, ZtInput, ZtTextarea } from "../../components/ZtUi";
 import type { SavedSession } from "../sessions/types";
 import {
   findLeafPane,
@@ -98,87 +98,78 @@ export function WorkspacePreviewDialog({
   }
 
   return (
-    <div className="zt-session-modal-backdrop">
-      <section
-        className="zt-session-dialog zt-workspace-preview-dialog"
-        role="dialog"
-        aria-label={dialogLabel}
-      >
-        <header>
-          <span />
-          <strong>{mode === "create" ? "新建工作区" : "编辑工作区"}</strong>
-          <button type="button" aria-label="关闭工作区编辑" onClick={onCancel}>
-            <X size={14} aria-hidden="true" />
-          </button>
-        </header>
+    <ZtDialog
+      ariaLabel={dialogLabel}
+      title={mode === "create" ? "新建工作区" : "编辑工作区"}
+      size="large"
+      className="zt-workspace-preview-dialog"
+      bodyClassName={visibleTabs.length > 1 ? "zt-workspace-preview-body has-workspace-tabs" : "zt-workspace-preview-body"}
+      onClose={onCancel}
+      closeLabel="关闭工作区编辑"
+      footer={
+        <>
+          <ZtButton onClick={onCancel}>取消</ZtButton>
+          <ZtButton aria-label="保存工作区" variant="primary" onClick={() => onSave(normalizeDraft(draft))}>
+            保存
+          </ZtButton>
+        </>
+      }
+    >
+      <div className="zt-workspace-editor-fields">
+        <ZtInput
+          aria-label="编辑工作区名称"
+          value={draft.name}
+          onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+        />
+      </div>
 
-        <div className={visibleTabs.length > 1 ? "zt-workspace-preview-body has-workspace-tabs" : "zt-workspace-preview-body"}>
-          <div className="zt-workspace-editor-fields">
-            <input
-              aria-label="编辑工作区名称"
-              value={draft.name}
-              onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+      {visibleTabs.length > 1 ? (
+        <div className="zt-workspace-preview-workspace-tabs" role="tablist" aria-label="工作区标签">
+          {visibleTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-label={`切换工作区标签 ${tab.title}`}
+              aria-selected={tab.id === activeWorkspaceTabId}
+              onClick={() => selectWorkspaceTab(tab.id)}
+            >
+              {tab.title}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="zt-workspace-preview-layout-editor">
+        <div className="zt-workspace-preview-canvas">
+          {activeWorkspaceTab ? (
+            <WorkspaceLayoutPreview
+              root={activeWorkspaceTab.root}
+              sessions={sessionOptions}
+              selectedPaneId={selectedPane?.id ?? selectedPaneId}
+              onSelectPane={selectPane}
             />
-          </div>
-
-          {visibleTabs.length > 1 ? (
-            <div className="zt-workspace-preview-workspace-tabs" role="tablist" aria-label="工作区标签">
-              {visibleTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="tab"
-                  aria-label={`切换工作区标签 ${tab.title}`}
-                  aria-selected={tab.id === activeWorkspaceTabId}
-                  onClick={() => selectWorkspaceTab(tab.id)}
-                >
-                  {tab.title}
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          <div className="zt-workspace-preview-layout-editor">
-            <div className="zt-workspace-preview-canvas">
-              {activeWorkspaceTab ? (
-                <WorkspaceLayoutPreview
-                  root={activeWorkspaceTab.root}
-                  sessions={sessionOptions}
-                  selectedPaneId={selectedPane?.id ?? selectedPaneId}
-                  onSelectPane={selectPane}
-                />
-              ) : (
-                <div className="zt-empty-line">暂无工作区标签</div>
-              )}
-            </div>
-
-            <aside className="zt-workspace-preview-inspector" aria-label="工作区标签属性">
-              {selectedPane && selectedTerminalTab ? (
-                <TerminalTabInspector
-                  paneId={selectedPane.id}
-                  terminalTabs={terminalTabs}
-                  selectedTerminalTab={selectedTerminalTab}
-                  sessions={sessionOptions}
-                  onSelectTerminalTab={setSelectedTerminalTabId}
-                  onUpdate={updateTerminalTab}
-                />
-              ) : (
-                <div className="zt-empty-line">选择一个分栏以编辑连接和路径</div>
-              )}
-            </aside>
-          </div>
+          ) : (
+            <div className="zt-empty-line">暂无工作区标签</div>
+          )}
         </div>
 
-        <footer>
-          <button type="button" onClick={onCancel}>
-            取消
-          </button>
-          <button type="button" aria-label="保存工作区" onClick={() => onSave(normalizeDraft(draft))}>
-            保存
-          </button>
-        </footer>
-      </section>
-    </div>
+        <aside className="zt-workspace-preview-inspector" aria-label="工作区标签属性">
+          {selectedPane && selectedTerminalTab ? (
+            <TerminalTabInspector
+              paneId={selectedPane.id}
+              terminalTabs={terminalTabs}
+              selectedTerminalTab={selectedTerminalTab}
+              sessions={sessionOptions}
+              onSelectTerminalTab={setSelectedTerminalTabId}
+              onUpdate={updateTerminalTab}
+            />
+          ) : (
+            <div className="zt-empty-line">选择一个分栏以编辑连接和路径</div>
+          )}
+        </aside>
+      </div>
+    </ZtDialog>
   );
 }
 
@@ -257,7 +248,7 @@ function TerminalTabInspector({
         </label>
         <label>
           路径
-          <input
+          <ZtInput
             aria-label="编辑标签路径"
             value={selectedTerminalTab.path ?? ""}
             onChange={(event) =>
@@ -267,9 +258,10 @@ function TerminalTabInspector({
         </label>
         <label>
           连接后指令
-          <textarea
+          <ZtTextarea
             aria-label="编辑连接后指令"
             value={selectedTerminalTab.startup_command ?? ""}
+            controlSize="dense"
             rows={3}
             onChange={(event) =>
               onUpdate(paneId, selectedTerminalTab.id, (current) => ({

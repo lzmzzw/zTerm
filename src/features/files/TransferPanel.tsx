@@ -2,6 +2,7 @@
 import { ChevronDown, ChevronUp, Pause, Play, RotateCcw, Trash2, XCircle } from "lucide-react";
 import { useState } from "react";
 
+import { ZtConfirmDialog } from "../../components/ZtUi";
 import type { TransferStatus, TransferTask } from "./fileStore";
 import { legacyTransferDestinationPath, legacyTransferSourcePath } from "./fileTransferPaths";
 
@@ -38,8 +39,42 @@ export function TransferPanel({
   const resumableTaskIds = tasks.filter((task) => task.status === "paused").map((task) => task.id);
   const allTaskIds = tasks.map((task) => task.id);
   const [collapsed, setCollapsed] = useState(collapsible);
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
 
-  const list = renderTransferList(tasks, onRetry, onPause, onResume, onCancel, onDelete);
+  const requestDelete = (task: TransferTask) => {
+    if (!activeTransferStatuses.has(task.status)) {
+      void onDelete(task.id);
+      return;
+    }
+    setPendingConfirm({
+      title: "删除传输任务",
+      message: "删除运行中传输会先取消该任务，确认删除？",
+      confirmLabel: "确认删除",
+      onConfirm: () => void onDelete(task.id),
+    });
+  };
+
+  const list = renderTransferList(tasks, onRetry, onPause, onResume, onCancel, requestDelete);
+
+  const confirmDialog = pendingConfirm ? (
+    <ZtConfirmDialog
+      title={pendingConfirm.title}
+      message={pendingConfirm.message}
+      confirmLabel={pendingConfirm.confirmLabel}
+      danger
+      onCancel={() => setPendingConfirm(null)}
+      onConfirm={() => {
+        const action = pendingConfirm.onConfirm;
+        setPendingConfirm(null);
+        action();
+      }}
+    />
+  ) : null;
 
   if (collapsible) {
     return (
@@ -80,12 +115,14 @@ export function TransferPanel({
                   aria-label="清理全部传输任务"
                   title="清理全部"
                   disabled={allTaskIds.length === 0}
-                  onClick={() => {
-                    if (!window.confirm("清理全部任务会取消进行中的传输并删除任务记录，确认清理？")) {
-                      return;
-                    }
-                    void onClearAll(allTaskIds);
-                  }}
+                  onClick={() =>
+                    setPendingConfirm({
+                      title: "清理传输任务",
+                      message: "清理全部任务会取消进行中的传输并删除任务记录，确认清理？",
+                      confirmLabel: "确认清理",
+                      onConfirm: () => void onClearAll(allTaskIds),
+                    })
+                  }
                 >
                   <Trash2 size={14} aria-hidden="true" />
                 </button>
@@ -102,11 +139,17 @@ export function TransferPanel({
           </button>
         </div>
         {collapsed ? null : list}
+        {confirmDialog}
       </section>
     );
   }
 
-  return list;
+  return (
+    <>
+      {list}
+      {confirmDialog}
+    </>
+  );
 }
 
 function renderTransferList(
@@ -115,7 +158,7 @@ function renderTransferList(
   onPause: TransferPanelProps["onPause"],
   onResume: TransferPanelProps["onResume"],
   onCancel: TransferPanelProps["onCancel"],
-  onDelete: TransferPanelProps["onDelete"],
+  onDelete: (task: TransferTask) => void,
 ) {
   if (tasks.length === 0) {
     return <div className="zt-empty-line">暂无传输任务</div>;
@@ -163,12 +206,7 @@ function renderTransferList(
                 type="button"
                 aria-label={`删除 ${task.id}`}
                 title="删除"
-                onClick={() => {
-                  if (activeTransferStatuses.has(task.status) && !window.confirm("删除运行中传输会先取消该任务，确认删除？")) {
-                    return;
-                  }
-                  void onDelete(task.id);
-                }}
+                onClick={() => onDelete(task)}
               >
                 <Trash2 size={14} aria-hidden="true" />
               </button>

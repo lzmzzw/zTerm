@@ -3,6 +3,7 @@ import { Send, ShieldCheck, Terminal, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
+import { ZtConfirmDialog } from "../../components/ZtUi";
 import { t } from "../settings/i18n";
 import type { AppLanguage } from "../settings/settingsStore";
 import type {
@@ -217,35 +218,15 @@ export function AiPanel({
       </div>
 
       {pendingDeleteConversation ? (
-        <div className="zt-session-modal-backdrop">
-          <div className="zt-session-dialog zt-session-confirm-dialog" role="dialog" aria-modal="true" aria-label={t(language, "deleteAiConversation")}>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void confirmDeleteConversation();
-              }}
-            >
-              <header>
-                <strong>{t(language, "deleteAiConversation")}</strong>
-                <button
-                  type="button"
-                  aria-label={t(language, "cancelDeleteAiConversation")}
-                  title={t(language, "cancelDeleteAiConversation")}
-                  onClick={() => setPendingDeleteConversation(null)}
-                >
-                  ×
-                </button>
-              </header>
-              <p>{t(language, "confirmDeleteAiConversationMessage", { title: pendingDeleteConversation.title })}</p>
-              <footer>
-                <button type="button" onClick={() => setPendingDeleteConversation(null)}>
-                  {t(language, "cancel")}
-                </button>
-                <button type="submit">{t(language, "confirmDelete")}</button>
-              </footer>
-            </form>
-          </div>
-        </div>
+        <ZtConfirmDialog
+          title={t(language, "deleteAiConversation")}
+          message={t(language, "confirmDeleteAiConversationMessage", { title: pendingDeleteConversation.title })}
+          cancelLabel={t(language, "cancel")}
+          confirmLabel={t(language, "confirmDelete")}
+          danger
+          onCancel={() => setPendingDeleteConversation(null)}
+          onConfirm={() => void confirmDeleteConversation()}
+        />
       ) : null}
     </section>
   );

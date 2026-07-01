@@ -2,6 +2,7 @@
 import { CopyPlus } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { ZtFloatingSurface } from "../../components/ZtUi";
 import { WorkspaceLayoutPreview, type WorkspaceLayoutPreviewSession } from "./WorkspaceLayoutPreview";
 import { DEFAULT_WORKSPACE_ID } from "./workspaceConstants";
 import type { WorkspaceSidebarItem } from "./workspaceShellModel";
@@ -119,7 +120,7 @@ export function WorkspaceManagerPanel({
       {visibleWorkspaces.length === 0 ? <div className="zt-empty-line">暂无工作区</div> : null}
 
       {contextMenu ? (
-        <div className="zt-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+        <ZtFloatingSurface className="zt-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
           {contextMenu.kind === "root" ? (
             <button
               type="button"
@@ -141,7 +142,7 @@ export function WorkspaceManagerPanel({
               onCloseMenu={() => setContextMenu(null)}
             />
           )}
-        </div>
+        </ZtFloatingSurface>
       ) : null}
     </section>
   );

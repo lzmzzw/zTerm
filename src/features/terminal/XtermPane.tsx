@@ -6,6 +6,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { ZtFloatingSurface } from "../../components/ZtUi";
 import { scheduleNextTask } from "../../lib/renderScheduling";
 import type { CommandCompletionCandidate } from "./terminalStore";
 
@@ -360,7 +361,7 @@ function TerminalContextMenu({
   const hasConnectionActions = Boolean(onReconnect || onDisconnect);
 
   return (
-    <div className="zt-context-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
+    <ZtFloatingSurface className="zt-context-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
       <button type="button" role="menuitem" onClick={onCopy}>
         复制
       </button>
@@ -388,7 +389,7 @@ function TerminalContextMenu({
           ) : null}
         </>
       ) : null}
-    </div>
+    </ZtFloatingSurface>
   );
 }
 

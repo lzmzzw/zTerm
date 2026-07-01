@@ -1,6 +1,7 @@
 // Author: Liz
 import { useState } from "react";
 
+import { ZtButton, ZtConfirmDialog, ZtDialog, ZtFloatingSurface, ZtInput } from "../../components/ZtUi";
 import type { SavedSession, SessionGroup } from "./types";
 
 export type SessionTreeContextMenu =
@@ -28,7 +29,7 @@ export function SessionContextMenu({
   onOpenSession?: (session: SavedSession) => void;
 }) {
   return (
-    <div className="zt-session-context-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
+    <ZtFloatingSurface className="zt-session-context-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
       {menu.kind === "root" ? (
         <>
           <button type="button" role="menuitem" onClick={() => onCreateSession(null)}>
@@ -67,7 +68,7 @@ export function SessionContextMenu({
           </button>
         </>
       ) : null}
-    </div>
+    </ZtFloatingSurface>
   );
 }
 
@@ -102,32 +103,34 @@ export function SessionGroupDialog({
     }
   }
 
+  const formId = `${title}-session-group-form`;
+
   return (
-    <div className="zt-session-modal-backdrop">
-      <div className="zt-session-dialog zt-session-group-dialog" role="dialog" aria-modal="true" aria-label={title}>
-        <form onSubmit={handleSubmit}>
-          <header>
-            <strong>{title}</strong>
-            <button type="button" aria-label="关闭分组编辑" onClick={onCancel}>
-              ×
-            </button>
-          </header>
-          <label>
-            <span>文件夹名称</span>
-            <input aria-label="文件夹名称" value={name} onChange={(event) => setName(event.currentTarget.value)} />
-          </label>
-          {error ? <p className="zt-session-error">{error}</p> : null}
-          <footer>
-            <button type="button" onClick={onCancel}>
-              取消
-            </button>
-            <button type="submit" disabled={saving}>
-              确定
-            </button>
-          </footer>
-        </form>
-      </div>
-    </div>
+    <ZtDialog
+      ariaLabel={title}
+      title={title}
+      size="compact"
+      onClose={onCancel}
+      closeLabel="关闭分组编辑"
+      footer={
+        <>
+          <ZtButton disabled={saving} onClick={onCancel}>
+            取消
+          </ZtButton>
+          <ZtButton form={formId} type="submit" disabled={saving} variant="primary">
+            确定
+          </ZtButton>
+        </>
+      }
+    >
+      <form id={formId} className="zt-dialog-form" onSubmit={handleSubmit}>
+        <label>
+          <span>文件夹名称</span>
+          <ZtInput aria-label="文件夹名称" value={name} onChange={(event) => setName(event.currentTarget.value)} />
+        </label>
+        {error ? <p className="zt-session-error">{error}</p> : null}
+      </form>
+    </ZtDialog>
   );
 }
 
@@ -145,29 +148,13 @@ export function ConfirmDialog({
   onConfirm: () => void;
 }) {
   return (
-    <div className="zt-session-modal-backdrop">
-      <div className="zt-session-dialog zt-session-confirm-dialog" role="dialog" aria-modal="true" aria-label={title}>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            onConfirm();
-          }}
-        >
-          <header>
-            <strong>{title}</strong>
-            <button type="button" aria-label="关闭确认框" onClick={onCancel}>
-              ×
-            </button>
-          </header>
-          <p>{message}</p>
-          <footer>
-            <button type="button" onClick={onCancel}>
-              取消
-            </button>
-            <button type="submit">{confirmLabel}</button>
-          </footer>
-        </form>
-      </div>
-    </div>
+    <ZtConfirmDialog
+      title={title}
+      message={message}
+      confirmLabel={confirmLabel}
+      danger={confirmLabel.includes("删除")}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />
   );
 }
