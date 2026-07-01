@@ -62,6 +62,7 @@ const storeMocks = vi.hoisted(() => ({
   modelPanelProps: null as Record<string, unknown> | null,
   transferPanelProps: null as Record<string, unknown> | null,
   fileTransferPanelProps: null as Record<string, unknown> | null,
+  aiPanelProps: null as Record<string, unknown> | null,
   loadCommandGroups: vi.fn().mockResolvedValue(undefined),
   saveCommandGroup: vi.fn().mockResolvedValue(undefined),
   searchHistory: vi.fn().mockResolvedValue(undefined),
@@ -178,7 +179,10 @@ vi.mock("./TitleBar", () => ({
 }));
 
 vi.mock("../features/ai/AiPanel", () => ({
-  AiPanel: () => <section aria-label="AI 面板" />,
+  AiPanel: (props: Record<string, unknown>) => {
+    storeMocks.aiPanelProps = props;
+    return <section aria-label="AI 面板" />;
+  },
 }));
 
 vi.mock("../features/files/FileExplorerPanel", () => ({
@@ -973,6 +977,7 @@ describe("AppShell", () => {
     storeMocks.monitorPanelProps = null;
     storeMocks.transferPanelProps = null;
     storeMocks.fileTransferPanelProps = null;
+    storeMocks.aiPanelProps = null;
     storeMocks.pauseTransfer.mockResolvedValue(undefined);
     storeMocks.resumeTransfer.mockResolvedValue(undefined);
     storeMocks.cancelTransfer.mockResolvedValue(undefined);
@@ -2857,6 +2862,30 @@ describe("AppShell", () => {
     expect(storeMocks.addPaneTab).not.toHaveBeenCalled();
     expect(storeMocks.bindRuntimeToPaneTab).not.toHaveBeenCalled();
 
+    view.unmount();
+  });
+
+  it("does not bind the AI panel or capture terminal context for the startup placeholder pane", async () => {
+    const view = render(<AppShell />);
+
+    const agentButton = view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement;
+    await act(async () => {
+      agentButton.click();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.aiPanelProps).toEqual(
+      expect.objectContaining({
+        activeRuntimeSessionId: null,
+        activePaneTitle: null,
+      }),
+    );
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 140));
+    });
+
+    expect(storeMocks.captureContext).not.toHaveBeenCalled();
     view.unmount();
   });
 

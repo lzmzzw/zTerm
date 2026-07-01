@@ -29,25 +29,39 @@ describe("buildAiTerminalContext", () => {
     });
   });
 
+  it("returns null when there is no active runtime to bind", () => {
+    expect(
+      buildAiTerminalContext({
+        runtimeSessionId: null,
+        savedSessionId: null,
+        paneId: "pane-empty",
+        title: "新建终端",
+        cwd: null,
+        recentOutput: "line 1\nline 2",
+        activeTool: "history",
+      }),
+    ).toBe(null);
+  });
+
   it("keeps recent output and recent output tail in sync", () => {
     const context = buildAiTerminalContext({
-      runtimeSessionId: null,
+      runtimeSessionId: "runtime-1",
       savedSessionId: null,
-      paneId: "pane-empty",
-      title: "空终端",
+      paneId: "pane-1",
+      title: "PowerShell",
       cwd: null,
       recentOutput: "line 1\nline 2",
       activeTool: "history",
     });
 
-    expect(context.recent_output).toBe("line 1\nline 2");
-    expect(context.recent_output_tail).toBe(context.recent_output);
+    expect(context?.recent_output).toBe("line 1\nline 2");
+    expect(context?.recent_output_tail).toBe(context?.recent_output);
   });
 
-  it("uses null for unavailable active terminal fields", () => {
+  it("uses null for unavailable optional terminal fields on a bound runtime", () => {
     expect(
       buildAiTerminalContext({
-        runtimeSessionId: null,
+        runtimeSessionId: "runtime-1",
         savedSessionId: null,
         paneId: null,
         title: null,
@@ -56,7 +70,7 @@ describe("buildAiTerminalContext", () => {
         activeTool: null,
       }),
     ).toEqual({
-      runtime_session_id: null,
+      runtime_session_id: "runtime-1",
       saved_session_id: null,
       pane_id: null,
       title: null,

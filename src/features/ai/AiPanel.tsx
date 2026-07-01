@@ -65,16 +65,21 @@ export function AiPanel({
   const [pendingDeleteConversation, setPendingDeleteConversation] = useState<AiConversationSummary | null>(null);
   const promptId = useId();
   const canSendChat = providersAvailable && Boolean(chatPrompt.trim()) && !loading && Boolean(onSendChat);
-  const boundTarget =
-    contextSnapshot?.title?.trim() || activePaneTitle?.trim() || activeRuntimeSessionId || t(language, "unboundTerminal");
-  const boundTargetTitle = [
-    boundTarget,
-    activePaneId ? `pane=${activePaneId}` : null,
-    activeRuntimeSessionId ? `runtime=${activeRuntimeSessionId}` : null,
-    activeSavedSessionId ? `session=${activeSavedSessionId}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const matchingSnapshotTitle =
+    contextSnapshot?.runtime_session_id === activeRuntimeSessionId ? contextSnapshot.title?.trim() : null;
+  const boundTarget = activeRuntimeSessionId
+    ? matchingSnapshotTitle || activePaneTitle?.trim() || activeRuntimeSessionId
+    : t(language, "unboundTerminal");
+  const boundTargetTitle = activeRuntimeSessionId
+    ? [
+        boundTarget,
+        activePaneId ? `pane=${activePaneId}` : null,
+        `runtime=${activeRuntimeSessionId}`,
+        activeSavedSessionId ? `session=${activeSavedSessionId}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : boundTarget;
 
   async function sendChat() {
     const message = chatPrompt.trim();
@@ -232,22 +237,19 @@ export function AiPanel({
   );
 }
 
-function approvalModeOptions(language: AppLanguage): Array<{ value: AiApprovalMode; label: string; description: string }> {
+function approvalModeOptions(language: AppLanguage): Array<{ value: AiApprovalMode; label: string }> {
   return [
     {
       value: "request_approval",
       label: t(language, "requestApproval"),
-      description: t(language, "requestApprovalDescription"),
     },
     {
       value: "safe",
       label: t(language, "safeApproval"),
-      description: t(language, "safeApprovalDescription"),
     },
     {
       value: "full_access",
       label: t(language, "fullAccess"),
-      description: t(language, "fullAccessDescription"),
     },
   ];
 }

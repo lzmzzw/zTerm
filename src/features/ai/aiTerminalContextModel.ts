@@ -11,7 +11,11 @@ interface AiTerminalContextInput {
   activeTool: string | null;
 }
 
-export function buildAiTerminalContext(input: AiTerminalContextInput): AiTerminalContextSnapshot {
+export function buildAiTerminalContext(input: AiTerminalContextInput): AiTerminalContextSnapshot | null {
+  if (!input.runtimeSessionId) {
+    return null;
+  }
+
   return {
     runtime_session_id: input.runtimeSessionId,
     saved_session_id: input.savedSessionId,

@@ -487,8 +487,9 @@ export function AppShell() {
   const workspaceRestoreStrategy = appSettings?.workspace_restore_strategy ?? "visible_first";
   const recentTerminalOutput = activeTerminalOutput.slice(-4000);
   const aiTerminalContext = useMemo(
-    () =>
-      buildAiTerminalContext({
+    () => {
+      if (!activeRuntimeSessionId) return null;
+      return buildAiTerminalContext({
         runtimeSessionId: activeRuntimeSessionId,
         savedSessionId: activeSavedSessionId,
         paneId: activeTab?.active_pane_id ?? null,
@@ -496,7 +497,8 @@ export function AppShell() {
         cwd: activePaneTab?.path ?? null,
         recentOutput: recentTerminalOutput,
         activeTool,
-      }),
+      });
+    },
     [
       activePane?.id,
       activePaneTab?.path,
@@ -638,6 +640,10 @@ export function AppShell() {
     const token = activeContextTokenRef.current + 1;
     activeContextTokenRef.current = token;
     const context = aiTerminalContext;
+    if (!context) {
+      activeContextTokenRef.current += 1;
+      return undefined;
+    }
     const timer = window.setTimeout(() => {
       if (activeContextTokenRef.current !== token) return;
       void captureContext(context);
@@ -1454,7 +1460,7 @@ export function AppShell() {
         agent={{
           activeRuntimeSessionId,
           activePaneId: activeTab?.active_pane_id ?? null,
-          activePaneTitle: activePaneTab?.title ?? activePane?.id ?? null,
+          activePaneTitle: activeRuntimeSessionId ? (activePaneTab?.title ?? activePane?.id ?? null) : null,
           activeSavedSessionId,
           approvalMode: aiApprovalMode,
           error: agentError,

@@ -131,6 +131,32 @@ describe("AiPanel", () => {
     view.unmount();
   });
 
+  it("shows an unbound target instead of a placeholder pane title without an active runtime", () => {
+    const view = render(
+      <AiPanel
+        activeRuntimeSessionId={null}
+        activePaneId="pane-1"
+        activePaneTitle="新建终端"
+        providersAvailable
+        recentOutput=""
+        loading={false}
+        error={null}
+        contextSnapshot={{
+          runtime_session_id: null,
+          pane_id: "pane-1",
+          title: "新建终端",
+          recent_output_tail: "",
+        }}
+      />,
+    );
+
+    const boundTarget = view.container.querySelector(".zt-ai-bound-target");
+    expect(boundTarget?.textContent).toContain("未绑定终端");
+    expect(boundTarget?.textContent).not.toContain("新建终端");
+    expect(boundTarget?.querySelector("strong")?.getAttribute("title")).toBe("未绑定终端");
+    view.unmount();
+  });
+
   it("renders pending tool invocation and confirms or rejects it", async () => {
     const onConfirmTool = vi.fn();
     const view = render(
@@ -189,6 +215,14 @@ describe("AiPanel", () => {
     const composer = view.container.querySelector(".zt-ai-composer");
     expect(composer).not.toBe(null);
     expect(composer?.querySelector('[aria-label="审批模式"]')).not.toBe(null);
+    await click(select(view.container, "审批模式"));
+    const approvalOptions = Array.from(document.querySelectorAll('[role="option"]')).filter((item) =>
+      ["request_approval", "safe", "full_access"].includes(item.getAttribute("data-value") ?? ""),
+    );
+    expect(approvalOptions).toHaveLength(3);
+    expect(approvalOptions.map((item) => item.querySelector(".zt-select-option-description"))).toEqual([null, null, null]);
+    await click(select(view.container, "审批模式"));
+
     await chooseSelect(view.container, "审批模式", "request_approval");
 
     expect(onApprovalModeChange).toHaveBeenCalledWith("request_approval");
