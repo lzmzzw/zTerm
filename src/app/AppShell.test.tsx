@@ -684,6 +684,13 @@ function change(element: HTMLInputElement | HTMLTextAreaElement, value: string) 
   });
 }
 
+async function flushDomI18n() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -1064,6 +1071,43 @@ describe("AppShell", () => {
         },
       ],
     });
+  });
+
+  it("translates workbench chrome and dynamic DOM text when language is English", async () => {
+    storeMocks.settingsState.appSettings = {
+      ...storeMocks.settingsState.appSettings,
+      language: "enUS",
+    };
+    const view = render(<AppShell />);
+
+    await flushDomI18n();
+
+    expect(view.container.querySelector('[aria-label="Title Bar"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-left-rail [aria-label="Workspace"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-left-rail [aria-label="Sessions"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-left-rail [aria-label="File Transfer"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-left-rail [aria-label="Models"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-left-rail [aria-label="Open Settings"]')).not.toBe(null);
+    expect(view.container.querySelector('[aria-label="Terminal Panes"]')).not.toBe(null);
+    expect(view.container.textContent).toContain("New Terminal");
+
+    const dynamicButton = document.createElement("button");
+    dynamicButton.setAttribute("aria-label", "删除工作区 运维巡检");
+    dynamicButton.textContent = "确认删除工作区";
+    view.container.appendChild(dynamicButton);
+
+    const skipped = document.createElement("div");
+    skipped.dataset.noI18n = "true";
+    skipped.textContent = "新建终端";
+    view.container.appendChild(skipped);
+
+    await flushDomI18n();
+
+    expect(dynamicButton.getAttribute("aria-label")).toBe("Delete Workspace 运维巡检");
+    expect(dynamicButton.textContent).toBe("Confirm Delete Workspace");
+    expect(skipped.textContent).toBe("新建终端");
+
+    view.unmount();
   });
 
   it("opens settings page from the bottom left rail settings icon without mounting removed bottom dock", async () => {
