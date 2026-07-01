@@ -68,6 +68,7 @@ interface WorkspaceStore {
   selectTab: (tabId: string) => void;
   addTab: () => void;
   addPaneTab: (paneId: string) => PaneTerminalTab;
+  addPaneTabAfter: (paneId: string, afterPaneTabId: string) => PaneTerminalTab;
   closePaneTab: (paneId: string, paneTabId: string) => void;
   selectPaneTab: (paneId: string, paneTabId: string) => void;
   setActivePane: (paneId: string) => void;
@@ -352,6 +353,23 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           ...tab,
           active_pane_id: paneId,
           root: updateLeafPane(tab.root, paneId, addPaneTabPatch(tab.root, paneId, paneTab)),
+          updated_at_ms: Date.now(),
+        };
+      }),
+      updated_at_ms: Date.now(),
+    })));
+    return paneTab;
+  },
+  addPaneTabAfter: (paneId, afterPaneTabId) => {
+    const paneTab = createPaneTab();
+    set((state) => updateActiveWorkspace(state, (workspace) => ({
+      ...workspace,
+      tabs: workspace.tabs.map((tab) => {
+        if (tab.id !== workspace.activeTabId) return tab;
+        return {
+          ...tab,
+          active_pane_id: paneId,
+          root: updateLeafPane(tab.root, paneId, addPaneTabAfterPatch(tab.root, paneId, afterPaneTabId, paneTab)),
           updated_at_ms: Date.now(),
         };
       }),
@@ -766,6 +784,32 @@ function addPaneTabPatch(root: PaneNode, paneId: string, paneTab: PaneTerminalTa
   };
 }
 
+function addPaneTabAfterPatch(
+  root: PaneNode,
+  paneId: string,
+  afterPaneTabId: string,
+  paneTab: PaneTerminalTab,
+): Partial<LeafPane> {
+  const pane = findLeafPane(root, paneId);
+  const terminalTabs = pane ? getLeafTerminalTabs(pane) : [];
+  const afterIndex = terminalTabs.findIndex((tab) => tab.id === afterPaneTabId);
+  const nextTerminalTabs =
+    afterIndex >= 0
+      ? [
+          ...terminalTabs.slice(0, afterIndex + 1),
+          paneTab,
+          ...terminalTabs.slice(afterIndex + 1),
+        ]
+      : [...terminalTabs, paneTab];
+  return {
+    active_terminal_tab_id: paneTab.id,
+    terminal_tabs: nextTerminalTabs,
+    runtime_session_id: paneTab.runtime_session_id,
+    saved_session_id: paneTab.saved_session_id,
+    title: paneTab.title,
+  };
+}
+
 function closePaneTabInRoot(root: PaneNode, paneId: string, paneTabId: string): PaneNode {
   if (root.kind === "split") {
     return {
@@ -800,7 +844,7 @@ function closePaneTabInRoot(root: PaneNode, paneId: string, paneTabId: string): 
 }
 
 function numberDuplicateSessionTabs(root: PaneNode, savedSessionId: string | null, title: string): PaneNode {
-  if (!savedSessionId || countSessionTabs(root, savedSessionId) <= 1) return root;
+  if (!savedSessionId || countNumberedSessionTabs(root, savedSessionId) <= 1) return root;
 
   let index = 0;
   const baseTitle = title.replace(/\s\(\d+\)$/, "");
@@ -815,7 +859,7 @@ function numberDuplicateSessionTabs(root: PaneNode, savedSessionId: string | nul
     }
 
     const terminalTabs = getLeafTerminalTabs(node).map((tab) => {
-      if (tab.saved_session_id !== savedSessionId) return tab;
+      if (tab.saved_session_id !== savedSessionId || tab.connection_source === "ssh_container") return tab;
       index += 1;
       return { ...tab, title: `${baseTitle} (${index})` };
     });
@@ -834,10 +878,12 @@ function numberDuplicateSessionTabs(root: PaneNode, savedSessionId: string | nul
   return visit(root);
 }
 
-function countSessionTabs(root: PaneNode, savedSessionId: string): number {
+function countNumberedSessionTabs(root: PaneNode, savedSessionId: string): number {
   if (root.kind === "split") {
-    return countSessionTabs(root.first, savedSessionId) + countSessionTabs(root.second, savedSessionId);
+    return countNumberedSessionTabs(root.first, savedSessionId) + countNumberedSessionTabs(root.second, savedSessionId);
   }
 
-  return getLeafTerminalTabs(root).filter((tab) => tab.saved_session_id === savedSessionId).length;
+  return getLeafTerminalTabs(root).filter(
+    (tab) => tab.saved_session_id === savedSessionId && tab.connection_source !== "ssh_container",
+  ).length;
 }

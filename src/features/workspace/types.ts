@@ -6,7 +6,11 @@ export interface PaneTerminalTab {
   title: string;
   runtime_session_id: string | null;
   saved_session_id: string | null;
-  connection_source?: "saved_session" | "default_local" | "missing" | null;
+  connection_source?: "saved_session" | "ssh_container" | "default_local" | "missing" | null;
+  container_target?: {
+    id: string;
+    name?: string | null;
+  } | null;
   path?: string | null;
   startup_command?: string | null;
   restore_status?: "queued" | "pending" | "connected" | "failed" | null;

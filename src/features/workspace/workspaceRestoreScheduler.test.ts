@@ -10,7 +10,12 @@ import type { WorkspaceDefinition } from "./types";
 import type { SavedSession } from "../sessions/types";
 import type { RuntimeSessionInfo } from "../terminal/terminalStore";
 
-function runtime(id: string, paneId: string, kind: "ssh" | "local", savedSessionId: string | null): RuntimeSessionInfo {
+function runtime(
+  id: string,
+  paneId: string,
+  kind: "ssh" | "ssh_container" | "local",
+  savedSessionId: string | null,
+): RuntimeSessionInfo {
   return {
     runtime_session_id: id,
     saved_session_id: savedSessionId,
@@ -207,6 +212,7 @@ describe("workspaceRestoreScheduler", () => {
       strategy: "visible_first",
       openTerminal,
       openDefaultLocalTerminal,
+      openSshContainerTerminal: vi.fn(),
       writeTerminal: vi.fn().mockResolvedValue(undefined),
       closeTerminal: vi.fn().mockResolvedValue(undefined),
       updatePaneTerminalTab: (_workspaceId, _workspaceTabId, _paneId, paneTabId, patch) => {
@@ -241,6 +247,7 @@ describe("workspaceRestoreScheduler", () => {
       strategy: "connect_all",
       openTerminal: vi.fn(async (savedSessionId: string, paneId: string) => runtime(`runtime-${savedSessionId}`, paneId, "ssh", savedSessionId)),
       openDefaultLocalTerminal: vi.fn(async (paneId: string) => runtime(`runtime-${paneId}`, paneId, "local", null)),
+      openSshContainerTerminal: vi.fn(),
       writeTerminal: vi.fn().mockResolvedValue(undefined),
       closeTerminal: vi.fn().mockResolvedValue(undefined),
       updatePaneTerminalTab: (workspaceId, workspaceTabId, paneId, paneTabId, patch) => {
@@ -277,6 +284,7 @@ describe("workspaceRestoreScheduler", () => {
       strategy: "layout_only",
       openTerminal,
       openDefaultLocalTerminal: vi.fn(),
+      openSshContainerTerminal: vi.fn(),
       writeTerminal,
       closeTerminal: vi.fn().mockResolvedValue(undefined),
       updatePaneTerminalTab: vi.fn(),
@@ -290,6 +298,7 @@ describe("workspaceRestoreScheduler", () => {
       strategy: "visible_first",
       openTerminal,
       openDefaultLocalTerminal: vi.fn(async (paneId: string) => runtime(`runtime-${paneId}`, paneId, "local", null)),
+      openSshContainerTerminal: vi.fn(),
       writeTerminal,
       closeTerminal: vi.fn().mockResolvedValue(undefined),
       updatePaneTerminalTab: vi.fn(),
@@ -298,6 +307,42 @@ describe("workspaceRestoreScheduler", () => {
     expect(openTerminal).toHaveBeenCalledWith("ssh-a", "pane-a", "/srv/app");
     expect(writeTerminal).toHaveBeenCalledWith("runtime-ssh-a", "source ./env.sh\r");
     expect(writeTerminal).not.toHaveBeenCalledWith("runtime-ssh-a", "cd -- '/srv/app'\r");
+  });
+
+  it("restores ssh_container tabs with the saved container target instead of host SSH", async () => {
+    const workspaceWithContainer = workspace();
+    const activeRoot = workspaceWithContainer.tabs[0].root;
+    if (activeRoot.kind !== "split" || activeRoot.first.kind !== "leaf") {
+      throw new Error("test workspace shape changed");
+    }
+    const activeTab = (activeRoot.first.terminal_tabs ?? []).find((tab) => tab.id === "pane-a-tab-2");
+    if (!activeTab) {
+      throw new Error("active tab missing");
+    }
+    activeTab.connection_source = "ssh_container";
+    activeTab.container_target = { id: "abc123", name: "api" };
+
+    const openTerminal = vi.fn(async (savedSessionId: string, paneId: string) =>
+      runtime(`runtime-${savedSessionId}`, paneId, "ssh", savedSessionId),
+    );
+    const openSshContainerTerminal = vi.fn(async (savedSessionId: string, paneId: string) =>
+      runtime(`runtime-container-${savedSessionId}`, paneId, "ssh_container", savedSessionId),
+    );
+
+    await runWorkspaceRestoreQueue({
+      workspace: workspaceWithContainer,
+      sessions,
+      strategy: "visible_first",
+      openTerminal,
+      openDefaultLocalTerminal: vi.fn(async (paneId: string) => runtime(`runtime-${paneId}`, paneId, "local", null)),
+      openSshContainerTerminal,
+      writeTerminal: vi.fn().mockResolvedValue(undefined),
+      closeTerminal: vi.fn().mockResolvedValue(undefined),
+      updatePaneTerminalTab: vi.fn(),
+    });
+
+    expect(openSshContainerTerminal).toHaveBeenCalledWith("ssh-a", "pane-a", "abc123", "api");
+    expect(openTerminal.mock.calls.some(([savedSessionId]) => savedSessionId === "ssh-a")).toBe(false);
   });
 
   it("keeps fixed fallback text when restoring a tab fails with a non-Error value", async () => {
@@ -314,6 +359,7 @@ describe("workspaceRestoreScheduler", () => {
         return runtime(`runtime-${savedSessionId}`, paneId, "ssh", savedSessionId);
       }),
       openDefaultLocalTerminal: vi.fn(async (paneId: string) => runtime(`runtime-${paneId}`, paneId, "local", null)),
+      openSshContainerTerminal: vi.fn(),
       writeTerminal: vi.fn().mockResolvedValue(undefined),
       closeTerminal: vi.fn().mockResolvedValue(undefined),
       updatePaneTerminalTab: (_workspaceId, _workspaceTabId, _paneId, paneTabId, patch) => {
@@ -340,6 +386,7 @@ describe("workspaceRestoreScheduler", () => {
       strategy: "layout_only",
       openTerminal,
       openDefaultLocalTerminal,
+      openSshContainerTerminal: vi.fn(),
       writeTerminal: vi.fn(),
       closeTerminal: vi.fn(),
       updatePaneTerminalTab,

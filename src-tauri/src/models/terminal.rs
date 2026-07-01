@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum RuntimeSessionKind {
     Local,
     Ssh,
+    SshContainer,
     RdpPlaceholder,
 }
 
@@ -14,6 +15,7 @@ impl RuntimeSessionKind {
         match self {
             Self::Local => "local",
             Self::Ssh => "ssh",
+            Self::SshContainer => "ssh_container",
             Self::RdpPlaceholder => "rdp_placeholder",
         }
     }

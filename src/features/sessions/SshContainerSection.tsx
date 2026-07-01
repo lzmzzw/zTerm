@@ -11,6 +11,7 @@ interface SshContainerSectionProps {
 const containerRuntimeOptions = [
   { value: "docker", label: "Docker" },
   { value: "podman", label: "Podman" },
+  { value: "nerdctl", label: "containerd (nerdctl)" },
 ];
 
 export function SshContainerSection({ sshOptions, onSshOptionsChange }: SshContainerSectionProps) {
@@ -35,7 +36,7 @@ export function SshContainerSection({ sshOptions, onSshOptionsChange }: SshConta
           checked={sshOptions.container?.enabled ?? false}
           onChange={(event) => updateContainer({ enabled: event.currentTarget.checked })}
         />
-        <span>连接后进入容器</span>
+        <span>启用容器入口</span>
       </label>
       <div className="zt-session-form-grid zt-session-nested-grid">
         <label>
@@ -45,15 +46,6 @@ export function SshContainerSection({ sshOptions, onSshOptionsChange }: SshConta
             value={sshOptions.container?.runtime ?? "docker"}
             options={containerRuntimeOptions}
             onChange={(nextValue) => updateContainer({ runtime: nextValue })}
-          />
-        </label>
-        <label>
-          <span>容器</span>
-          <input
-            aria-label="容器"
-            value={sshOptions.container?.container ?? ""}
-            onChange={(event) => updateContainer({ container: event.currentTarget.value.trim() })}
-            placeholder="容器 ID 或名称"
           />
         </label>
         <label>

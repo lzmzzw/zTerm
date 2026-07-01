@@ -141,7 +141,7 @@ const exact: Record<string, string> = {
   "SOCKS 监听范围": "SOCKS Listen Scope",
   "SOCKS 监听端口": "SOCKS Listen Port",
   "启用容器": "Enable Container",
-  "连接后进入容器": "Enter container after connection",
+  "启用容器入口": "Enable container entry",
   "运行时": "Runtime",
   "容器运行时": "Container Runtime",
   "容器 ID 或名称": "Container ID or name",

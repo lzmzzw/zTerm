@@ -8,7 +8,7 @@ import {
   releaseTerminalZmodemRuntime,
 } from "./zmodemTransfer";
 
-type RuntimeSessionKind = "local" | "ssh" | "rdp_placeholder";
+type RuntimeSessionKind = "local" | "ssh" | "ssh_container" | "rdp_placeholder";
 type HistoryScopeKind = "saved_session" | "local_profile";
 
 export interface RuntimeSessionInfo {
@@ -33,6 +33,14 @@ export interface CommandCompletionCandidate {
   };
   score: number;
   source_label: string;
+}
+
+export interface SshContainerInfo {
+  id: string;
+  name: string;
+  image: string;
+  status: string;
+  running: boolean;
 }
 
 interface TerminalDataEvent {
@@ -63,6 +71,13 @@ interface TerminalState {
   visualOutputTail: Record<string, string>;
   bindTerminalEvents: () => Promise<UnlistenFn>;
   openTerminal: (savedSessionId: string, paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>;
+  openSshContainerTerminal: (
+    savedSessionId: string,
+    paneId: string,
+    containerId: string,
+    containerName?: string | null,
+  ) => Promise<RuntimeSessionInfo>;
+  listSshContainers: (savedSessionId: string) => Promise<SshContainerInfo[]>;
   openDefaultLocalTerminal: (paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>;
   writeTerminal: (runtimeSessionId: string, data: string) => Promise<void>;
   suggestCompletion: (runtimeSessionId: string, input: string, cursor: number) => Promise<CommandCompletionCandidate[]>;
@@ -130,6 +145,21 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       runtimes: { ...state.runtimes, [runtime.runtime_session_id]: runtime },
     }));
     return runtime;
+  },
+  async openSshContainerTerminal(savedSessionId, paneId, containerId, containerName) {
+    const runtime = await invoke<RuntimeSessionInfo>("terminal_open_ssh_container", {
+      savedSessionId,
+      paneId,
+      containerId,
+      containerName,
+    });
+    set((state) => ({
+      runtimes: { ...state.runtimes, [runtime.runtime_session_id]: runtime },
+    }));
+    return runtime;
+  },
+  async listSshContainers(savedSessionId) {
+    return invoke<SshContainerInfo[]>("ssh_container_list", { savedSessionId });
   },
   async openDefaultLocalTerminal(paneId, workingDirectory) {
     const runtime = await invoke<RuntimeSessionInfo>("terminal_open_default_local", {

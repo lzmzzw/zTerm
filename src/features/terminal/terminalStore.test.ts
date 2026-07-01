@@ -87,6 +87,52 @@ describe("terminalStore", () => {
     });
   });
 
+  it("opens an SSH container terminal with the selected container target", async () => {
+    invokeMock.mockResolvedValue({
+      runtime_session_id: "runtime-container",
+      saved_session_id: "session-1",
+      history_scope_kind: "saved_session",
+      history_scope_id: "session-1",
+      pane_id: "pane-1",
+      title: "容器: api",
+      kind: "ssh_container",
+      cols: 120,
+      rows: 32,
+    });
+
+    const runtime = await useTerminalStore
+      .getState()
+      .openSshContainerTerminal("session-1", "pane-1", "abc123", "api");
+
+    expect(invokeMock).toHaveBeenCalledWith("terminal_open_ssh_container", {
+      savedSessionId: "session-1",
+      paneId: "pane-1",
+      containerId: "abc123",
+      containerName: "api",
+    });
+    expect(runtime.kind).toBe("ssh_container");
+    expect(useTerminalStore.getState().runtimes["runtime-container"]).toEqual(runtime);
+  });
+
+  it("lists SSH containers for a saved session", async () => {
+    invokeMock.mockResolvedValue([
+      {
+        id: "abc123",
+        name: "api",
+        image: "app:latest",
+        status: "Up 3 minutes",
+        running: true,
+      },
+    ]);
+
+    const containers = await useTerminalStore.getState().listSshContainers("session-1");
+
+    expect(invokeMock).toHaveBeenCalledWith("ssh_container_list", {
+      savedSessionId: "session-1",
+    });
+    expect(containers[0].name).toBe("api");
+  });
+
   it("routes raw terminal data events through the zmodem controller", async () => {
     const unlisten = await useTerminalStore.getState().bindTerminalEvents();
 

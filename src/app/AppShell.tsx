@@ -34,6 +34,7 @@ import { SettingsPage } from "../features/settings/SettingsPage";
 import { applyAppSettings } from "../features/settings/applyAppSettings";
 import { useDomI18n } from "../features/settings/domI18n";
 import { useSettingsStore } from "../features/settings/settingsStore";
+import { listSshContainers, type SshContainerInfo } from "../features/terminal/sshContainerApi";
 import { useTerminalStore } from "../features/terminal/terminalStore";
 import { SplitPaneView } from "../features/workspace/SplitPaneView";
 import { WorkspaceManagerPanel } from "../features/workspace/WorkspaceManagerPanel";
@@ -102,6 +103,12 @@ const EMPTY_FILE_PANEL_STATE = {
 
 const EMPTY_TRANSFER_PANEL_STATE = {
   transfers: [],
+};
+
+const EMPTY_CONTAINER_PANEL_STATE = {
+  items: [] as SshContainerInfo[],
+  loading: false,
+  error: null as string | null,
 };
 
 const EMPTY_HISTORY_PANEL_STATE = {
@@ -194,6 +201,7 @@ export function AppShell() {
   const [viewMode, setViewMode] = useState<"workbench" | "settings">("workbench");
   const [activeLeftTool, setActiveLeftTool] = useState<LeftTool | null>(null);
   const [activeTool, setActiveTool] = useState<RightTool | null>(null);
+  const [containerPanelState, setContainerPanelState] = useState(EMPTY_CONTAINER_PANEL_STATE);
   const [workspaceSummaries, setWorkspaceSummaries] = useState<WorkspaceSummary[]>([]);
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [workspaceEditor, setWorkspaceEditor] = useState<WorkspaceEditorState | null>(null);
@@ -398,6 +406,7 @@ export function AppShell() {
     updatePaneTerminalTab,
     selectTab,
     addPaneTab,
+    addPaneTabAfter,
     closePaneTab,
     selectPaneTab,
     setActivePane,
@@ -423,6 +432,7 @@ export function AppShell() {
       updatePaneTerminalTab: state.updatePaneTerminalTab,
       selectTab: state.selectTab,
       addPaneTab: state.addPaneTab,
+      addPaneTabAfter: state.addPaneTabAfter,
       closePaneTab: state.closePaneTab,
       selectPaneTab: state.selectPaneTab,
       setActivePane: state.setActivePane,
@@ -440,9 +450,12 @@ export function AppShell() {
   const activeSavedSession = activeSavedSessionId ? sessions.find((session) => session.id === activeSavedSessionId) ?? null : null;
   const activeSshSessionId = activeSavedSession?.type === "ssh" ? activeSavedSession.id : null;
   const activeSshTunnels = activeSavedSession?.type === "ssh" ? (activeSavedSession.ssh_options?.tunnels ?? []) : [];
+  const activeSshContainersEnabled =
+    activeSavedSession?.type === "ssh" && activeSavedSession.ssh_options?.container?.enabled === true;
   const activeRuntimeSessionId = activePaneTab?.runtime_session_id ?? null;
   const bindTerminalEvents = useTerminalStore((state) => state.bindTerminalEvents);
   const openTerminal = useTerminalStore((state) => state.openTerminal);
+  const openSshContainerTerminal = useTerminalStore((state) => state.openSshContainerTerminal);
   const openDefaultLocalTerminal = useTerminalStore((state) => state.openDefaultLocalTerminal);
   const closeTerminal = useTerminalStore((state) => state.closeTerminal);
   const writeTerminal = useTerminalStore((state) => state.writeTerminal);
@@ -558,6 +571,26 @@ export function AppShell() {
       setActiveTool(null);
     }
   }, [activeSshTunnels.length, activeTool]);
+
+  useEffect(() => {
+    if (activeTool === "containers" && !activeSshContainersEnabled) {
+      setActiveTool(null);
+    }
+  }, [activeSshContainersEnabled, activeTool]);
+
+  useEffect(() => {
+    if (workspaceVisualSwitchActive || activeTool !== "containers") return undefined;
+    if (!activeSshContainersEnabled || !activeSshSessionId) {
+      setContainerPanelState(EMPTY_CONTAINER_PANEL_STATE);
+      return undefined;
+    }
+
+    let cancelled = false;
+    void loadSshContainers(activeSshSessionId, () => cancelled);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSshContainersEnabled, activeSshSessionId, activeTool, workspaceVisualSwitchActive]);
 
   useEffect(() => {
     if (workspaceVisualSwitchActive) {
@@ -898,6 +931,7 @@ export function AppShell() {
       isCancelled: () => switchEpoch !== undefined && !isWorkspaceSwitchEpochCurrent(switchEpoch),
       openTerminal,
       openDefaultLocalTerminal,
+      openSshContainerTerminal,
       writeTerminal,
       closeTerminal,
       updatePaneTerminalTab,
@@ -974,6 +1008,63 @@ export function AppShell() {
     setActiveTool((current) => (current === tool ? null : tool));
   }
 
+  async function loadSshContainers(savedSessionId: string, isCancelled: () => boolean = () => false) {
+    setContainerPanelState((current) => ({ ...current, loading: true, error: null }));
+    try {
+      const items = await listSshContainers(savedSessionId);
+      if (isCancelled()) return;
+      setContainerPanelState({ items, loading: false, error: null });
+    } catch (error) {
+      if (isCancelled()) return;
+      setContainerPanelState({
+        items: [],
+        loading: false,
+        error: fallbackOnlyErrorMessage(error, "加载容器失败"),
+      });
+    }
+  }
+
+  async function refreshActiveSshContainers() {
+    if (!activeSshContainersEnabled || !activeSshSessionId) {
+      setContainerPanelState(EMPTY_CONTAINER_PANEL_STATE);
+      return;
+    }
+    await loadSshContainers(activeSshSessionId);
+  }
+
+  async function enterSshContainer(container: SshContainerInfo) {
+    if (!activeTab || !activePaneTab || !activeSshSessionId) return;
+    const targetWorkspaceId = activeWorkspaceId;
+    const targetWorkspaceTabId = activeTab.id;
+    const targetPaneId = activeTab.active_pane_id;
+    const afterPaneTabId = activePaneTab.id;
+    const title = container.name?.trim() || container.id.slice(0, 12);
+    const targetPaneTab = addPaneTabAfter(targetPaneId, afterPaneTabId);
+    setTerminalError(null);
+    updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, {
+      title: `容器: ${title}`,
+      saved_session_id: activeSshSessionId,
+      connection_source: "ssh_container",
+      container_target: {
+        id: container.id,
+        name: container.name?.trim() || null,
+      },
+      restore_status: "pending",
+      restore_error: null,
+    });
+    try {
+      const runtime = await openSshContainerTerminal(activeSshSessionId, targetPaneId, container.id, container.name);
+      bindRuntimeToPaneTab(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, runtime);
+    } catch (error) {
+      const message = fallbackOnlyErrorMessage(error, "进入容器失败");
+      updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, {
+        restore_status: "failed",
+        restore_error: message,
+      });
+      setTerminalError(message);
+    }
+  }
+
   function toggleLeftTool(tool: LeftTool) {
     setActiveLeftTool((current) => (current === tool ? null : tool));
   }
@@ -999,6 +1090,7 @@ export function AppShell() {
     bindRuntimeToPaneTab,
     updatePaneTerminalTab,
     openTerminal,
+    openSshContainerTerminal,
     closeTerminal,
     writeTerminal,
     activeRuntimeSessionId,
@@ -1452,6 +1544,18 @@ export function AppShell() {
                 username: activeSavedSession.username,
               }
             : null,
+        }}
+        containers={{
+          enabled: activeSshContainersEnabled,
+          sessionName: activeSavedSession?.type === "ssh" ? activeSavedSession.name : null,
+          target: activeSavedSession?.type === "ssh"
+            ? `${activeSavedSession.username}@${activeSavedSession.host}:${activeSavedSession.port}`
+            : null,
+          items: containerPanelState.items,
+          loading: containerPanelState.loading,
+          error: containerPanelState.error,
+          onEnter: enterSshContainer,
+          onRefresh: refreshActiveSshContainers,
         }}
         tunnels={{
           sessionName: activeSavedSession?.type === "ssh" ? activeSavedSession.name : null,

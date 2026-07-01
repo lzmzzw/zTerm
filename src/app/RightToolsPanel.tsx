@@ -1,5 +1,5 @@
 // Author: Liz
-import { Activity, Cable, Clock3, Folder, MessageSquareMore, type LucideIcon } from "lucide-react";
+import { Activity, Box, Cable, Clock3, Folder, MessageSquareMore, RefreshCw, type LucideIcon } from "lucide-react";
 
 import { AiPanel } from "../features/ai/AiPanel";
 import type {
@@ -27,12 +27,14 @@ import { sshTunnelMode } from "../features/sessions/sshSessionModel";
 import { tunnelModes } from "../features/sessions/SshTunnelCard";
 import type { SshTunnel } from "../features/sessions/types";
 import type { AppLanguage } from "../features/settings/settingsStore";
+import type { SshContainerInfo } from "../features/terminal/sshContainerApi";
 import { t } from "../features/settings/i18n";
 import { PanelHeader, ToolButton } from "./ShellControls";
 import { rightToolLabelKey, rightToolRailOrder, type RightTool } from "./rightTools";
 
 const rightToolRailIcons: Record<RightTool, LucideIcon> = {
   agent: MessageSquareMore,
+  containers: Box,
   files: Folder,
   history: Clock3,
   monitor: Activity,
@@ -109,6 +111,16 @@ interface RightToolsPanelProps {
   monitor: {
     target: ServerMonitorTarget | null;
   };
+  containers: {
+    enabled: boolean;
+    sessionName: string | null;
+    target: string | null;
+    items: SshContainerInfo[];
+    loading: boolean;
+    error: string | null;
+    onEnter: (container: SshContainerInfo) => Promise<void> | void;
+    onRefresh: () => Promise<void> | void;
+  };
   tunnels: {
     sessionName: string | null;
     target: string | null;
@@ -132,13 +144,18 @@ export function RightToolsPanel({
   files,
   history,
   monitor,
+  containers,
   tunnels,
   transfers,
   language = "zhCN",
   onActiveToolChange,
 }: RightToolsPanelProps) {
   const monitorSnapshot = useServerInfoSnapshot(monitor.target?.id ?? null, activeTool === "monitor");
-  const visibleTools = rightToolRailOrder.filter((tool) => tool !== "tunnels" || tunnels.items.length > 0);
+  const visibleTools = rightToolRailOrder.filter(
+    (tool) =>
+      (tool !== "tunnels" || tunnels.items.length > 0) &&
+      (tool !== "containers" || containers.enabled),
+  );
 
   return (
     <aside
@@ -262,6 +279,21 @@ export function RightToolsPanel({
             </>
           ) : null}
 
+          {activeTool === "containers" ? (
+            <>
+              <PanelHeader title={t(language, "sshContainers")} />
+              <SshContainerListPanel
+                sessionName={containers.sessionName}
+                target={containers.target}
+                containers={containers.items}
+                loading={containers.loading}
+                error={containers.error}
+                onEnter={containers.onEnter}
+                onRefresh={containers.onRefresh}
+              />
+            </>
+          ) : null}
+
           {activeTool === "tunnels" ? (
             <>
               <PanelHeader title={t(language, "sshTunnels")} />
@@ -287,6 +319,70 @@ export function RightToolsPanel({
         })}
       </nav>
     </aside>
+  );
+}
+
+function SshContainerListPanel({
+  sessionName,
+  target,
+  containers,
+  loading,
+  error,
+  onEnter,
+  onRefresh,
+}: {
+  sessionName: string | null;
+  target: string | null;
+  containers: SshContainerInfo[];
+  loading: boolean;
+  error: string | null;
+  onEnter: (container: SshContainerInfo) => Promise<void> | void;
+  onRefresh: () => Promise<void> | void;
+}) {
+  return (
+    <div className="zt-tunnel-panel">
+      <div className="zt-tunnel-target">
+        <strong>{sessionName ?? "当前 SSH 连接"}</strong>
+        {target ? <span>{target}</span> : null}
+      </div>
+      <div className="zt-container-toolbar">
+        <button type="button" className="zt-icon-button" aria-label="刷新容器" onClick={() => void onRefresh()}>
+          <RefreshCw size={14} aria-hidden="true" />
+          <span>刷新</span>
+        </button>
+      </div>
+      {loading ? <div className="zt-empty-line">正在加载容器...</div> : null}
+      {error ? <div className="zt-error-line">{error}</div> : null}
+      {!loading && !error && containers.length === 0 ? <div className="zt-empty-line">当前 SSH 连接没有容器</div> : null}
+      {containers.length > 0 ? (
+        <div className="zt-tunnel-list" role="list" aria-label="SSH 容器列表">
+          {containers.map((container) => {
+            const title = container.name?.trim() || container.id.slice(0, 12);
+            return (
+              <section className="zt-tunnel-list-item" role="listitem" aria-label={title} key={container.id}>
+                <header>
+                  <strong>{title}</strong>
+                  <code>{container.running ? "running" : "stopped"}</code>
+                </header>
+                <div className="zt-tunnel-meta">
+                  <span>{container.image || "-"}</span>
+                  <span>{container.status || "-"}</span>
+                </div>
+                <button
+                  type="button"
+                  className="zt-session-form-secondary"
+                  aria-label={`进入容器 ${title}`}
+                  disabled={!container.running}
+                  onClick={() => void onEnter(container)}
+                >
+                  进入容器
+                </button>
+              </section>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

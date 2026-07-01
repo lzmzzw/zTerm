@@ -26,6 +26,12 @@ interface TerminalActionDependencies {
     patch: Partial<PaneTerminalTab>,
   ) => void;
   openTerminal: (savedSessionId: string, paneId: string) => Promise<RuntimeSessionInfo>;
+  openSshContainerTerminal: (
+    savedSessionId: string,
+    paneId: string,
+    containerId: string,
+    containerName?: string | null,
+  ) => Promise<RuntimeSessionInfo>;
   closeTerminal: (runtimeSessionId: string) => Promise<void>;
   writeTerminal: (runtimeSessionId: string, data: string) => Promise<void>;
   activeRuntimeSessionId: string | null;
@@ -41,6 +47,7 @@ export function createTerminalActions({
   bindRuntimeToPaneTab,
   updatePaneTerminalTab,
   openTerminal,
+  openSshContainerTerminal,
   closeTerminal,
   writeTerminal,
   activeRuntimeSessionId,
@@ -90,7 +97,15 @@ export function createTerminalActions({
         restore_status: "pending",
         restore_error: null,
       });
-      const runtime = await openTerminal(savedSessionId, paneId);
+      const runtime =
+        activePaneTab?.connection_source === "ssh_container" && activePaneTab.container_target?.id
+          ? await openSshContainerTerminal(
+              savedSessionId,
+              paneId,
+              activePaneTab.container_target.id,
+              activePaneTab.container_target.name ?? null,
+            )
+          : await openTerminal(savedSessionId, paneId);
       updatePaneTerminalTab(activeWorkspaceId, activeWorkspaceTabId, paneId, paneTabId, {
         runtime_session_id: runtime.runtime_session_id,
         saved_session_id: runtime.saved_session_id,

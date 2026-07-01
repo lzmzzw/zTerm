@@ -325,6 +325,10 @@ impl CommandCompletionService {
                 }
                 normalize_command_names(commands, MAX_SYSTEM_COMMANDS)
             }
+            RuntimeSessionKind::SshContainer => POSIX_BUILTINS
+                .iter()
+                .map(|command| (*command).to_string())
+                .collect(),
             RuntimeSessionKind::RdpPlaceholder => Vec::new(),
         };
 
@@ -362,6 +366,7 @@ impl CommandCompletionService {
                 source_label: match context.kind {
                     RuntimeSessionKind::Local => "系统命令".to_string(),
                     RuntimeSessionKind::Ssh => "远端系统命令".to_string(),
+                    RuntimeSessionKind::SshContainer => "容器内建命令".to_string(),
                     RuntimeSessionKind::RdpPlaceholder => "系统命令".to_string(),
                 },
             });

@@ -8,7 +8,8 @@ use zterm_lib::{
         rdp_service::{
             build_mstsc_arguments, build_rdp_file_content, rdp_password_credential_target,
         },
-        ssh_terminal_service::build_ssh_arguments,
+        ssh_container_service::parse_container_ps_output,
+        ssh_terminal_service::{build_ssh_arguments, build_ssh_container_arguments},
     },
 };
 
@@ -185,7 +186,7 @@ fn ssh_arguments_include_remote_dynamic_socks_tunnel() {
 }
 
 #[test]
-fn ssh_arguments_skip_tunnels_not_marked_auto_open_and_enter_container() {
+fn ssh_arguments_skip_tunnels_not_marked_auto_open_and_ignore_container_entry() {
     let session = SavedSession {
         id: "ssh-container".to_string(),
         name: "SSH Container".to_string(),
@@ -251,11 +252,75 @@ fn ssh_arguments_skip_tunnels_not_marked_auto_open_and_enter_container() {
         "127.0.0.1:15432:db.internal:5432"
     ));
     assert!(has_arg_pair(&args, "-D", "127.0.0.1:1080"));
+    assert_eq!(
+        args.last().map(String::as_str),
+        Some("deploy@app.example.test")
+    );
+}
+
+#[test]
+fn ssh_container_arguments_append_selected_container_exec_command() {
+    let session = SavedSession {
+        id: "ssh-container".to_string(),
+        name: "SSH Container".to_string(),
+        session_type: SessionType::Ssh,
+        group_id: None,
+        host: "app.example.test".to_string(),
+        port: 22,
+        username: "deploy".to_string(),
+        auth_mode: AuthMode::Agent,
+        credential_ref: None,
+        description: None,
+        tags: vec![],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        last_used_at_ms: None,
+        ssh_options: Some(SshOptions {
+            connect_timeout_ms: None,
+            keepalive_interval_ms: None,
+            proxy_command: None,
+            identity_file: None,
+            jump_hosts: vec![],
+            tunnels: vec![],
+            container: Some(SshContainerOptions {
+                enabled: true,
+                runtime: "containerd".to_string(),
+                container: "legacy-default-ignored".to_string(),
+                shell: Some("/bin/bash".to_string()),
+                user: Some("app".to_string()),
+                workdir: Some("/srv/app".to_string()),
+            }),
+        }),
+        rdp_options: None,
+        local_options: None,
+    };
+
+    let args =
+        build_ssh_container_arguments(&session, "api").expect("container ssh args should build");
+
     assert_eq!(args[args.len() - 2], "deploy@app.example.test");
     assert_eq!(
         args.last().map(String::as_str),
-        Some("podman exec -it --user app --workdir /srv/app api /bin/bash")
+        Some("nerdctl exec -it --user app --workdir /srv/app api /bin/bash")
     );
+}
+
+#[test]
+fn ssh_container_list_parser_orders_running_containers_by_name() {
+    let containers = parse_container_ps_output(
+        "bbb\tworker\tredis:7\tExited (0) 2 hours ago\nccc\tapi\tapp:latest\tUp 3 minutes\naaa\t\tnginx\trunning\n",
+    );
+
+    assert_eq!(
+        containers
+            .iter()
+            .map(|container| (container.id.as_str(), container.running))
+            .collect::<Vec<_>>(),
+        vec![("aaa", true), ("ccc", true), ("bbb", false)]
+    );
+    assert_eq!(containers[1].name, "api");
+    assert_eq!(containers[2].status, "Exited (0) 2 hours ago");
 }
 
 #[test]

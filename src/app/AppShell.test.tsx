@@ -10,6 +10,7 @@ const storeMocks = vi.hoisted(() => ({
   asyncNoop: vi.fn().mockResolvedValue(undefined),
   bindEvents: vi.fn().mockResolvedValue(() => undefined),
   addPaneTab: vi.fn(),
+  addPaneTabAfter: vi.fn(),
   closePaneTab: vi.fn(),
   closeActivePane: vi.fn(),
   selectPaneTab: vi.fn(),
@@ -83,6 +84,33 @@ const storeMocks = vi.hoisted(() => ({
     cols: 120,
     rows: 32,
   }),
+  openSshContainerTerminal: vi.fn().mockResolvedValue({
+    runtime_session_id: "runtime-container",
+    saved_session_id: "session-1",
+    history_scope_kind: "saved_session",
+    history_scope_id: "session-1",
+    pane_id: "pane-1",
+    title: "容器: api",
+    kind: "ssh_container",
+    cols: 120,
+    rows: 32,
+  }),
+  listSshContainers: vi.fn().mockResolvedValue([
+    {
+      id: "abc123",
+      name: "api",
+      image: "app:latest",
+      status: "Up 3 minutes",
+      running: true,
+    },
+    {
+      id: "def456",
+      name: "old",
+      image: "app:old",
+      status: "Exited (0) 2 hours ago",
+      running: false,
+    },
+  ]),
   openDefaultLocalTerminal: vi.fn().mockResolvedValue({
     runtime_session_id: "runtime-local",
     saved_session_id: null,
@@ -478,11 +506,16 @@ vi.mock("../features/history/historyStore", () => {
   return { useHistoryStore };
 });
 
+vi.mock("../features/terminal/sshContainerApi", () => ({
+  listSshContainers: storeMocks.listSshContainers,
+}));
+
 vi.mock("../features/terminal/terminalStore", () => {
   const terminalState = (trackOutputAccess = false) => {
     const state: Record<string, unknown> = {
       bindTerminalEvents: storeMocks.bindEvents,
       openTerminal: storeMocks.openTerminal,
+      openSshContainerTerminal: storeMocks.openSshContainerTerminal,
       openDefaultLocalTerminal: storeMocks.openDefaultLocalTerminal,
       closeTerminal: storeMocks.closeTerminal,
       writeTerminal: storeMocks.writeTerminal,
@@ -544,6 +577,7 @@ vi.mock("../features/workspace/workspaceStore", () => {
     selectTab: storeMocks.selectTab,
     addTab: storeMocks.noop,
     addPaneTab: storeMocks.addPaneTab,
+    addPaneTabAfter: storeMocks.addPaneTabAfter,
     closePaneTab: storeMocks.closePaneTab,
     selectPaneTab: storeMocks.selectPaneTab,
     setActivePane: storeMocks.setActivePane,
@@ -577,6 +611,7 @@ vi.mock("../features/workspace/workspaceStore", () => {
     selectTab: storeMocks.selectTab,
     setActivePane: storeMocks.setActivePane,
     selectPaneTab: storeMocks.selectPaneTab,
+    addPaneTabAfter: storeMocks.addPaneTabAfter,
     bindRuntimeToPane: storeMocks.bindRuntimeToPane,
     bindRuntimeToPaneTab: storeMocks.bindRuntimeToPaneTab,
   });
@@ -827,6 +862,12 @@ describe("AppShell", () => {
       runtime_session_id: null,
       saved_session_id: null,
     });
+    storeMocks.addPaneTabAfter.mockReturnValue({
+      id: "pane-1-tab-created",
+      title: "新建终端",
+      runtime_session_id: null,
+      saved_session_id: null,
+    });
     storeMocks.openDefaultLocalTerminal.mockResolvedValue({
       runtime_session_id: "runtime-local",
       saved_session_id: null,
@@ -849,6 +890,33 @@ describe("AppShell", () => {
       cols: 120,
       rows: 32,
     });
+    storeMocks.openSshContainerTerminal.mockResolvedValue({
+      runtime_session_id: "runtime-container",
+      saved_session_id: "session-1",
+      history_scope_kind: "saved_session",
+      history_scope_id: "session-1",
+      pane_id: "pane-1",
+      title: "容器: api",
+      kind: "ssh_container",
+      cols: 120,
+      rows: 32,
+    });
+    storeMocks.listSshContainers.mockResolvedValue([
+      {
+        id: "abc123",
+        name: "api",
+        image: "app:latest",
+        status: "Up 3 minutes",
+        running: true,
+      },
+      {
+        id: "def456",
+        name: "old",
+        image: "app:old",
+        status: "Exited (0) 2 hours ago",
+        running: false,
+      },
+    ]);
     storeMocks.closeWorkspaceRuntime.mockReturnValue(["runtime-1"]);
     storeMocks.closeTerminal.mockResolvedValue(undefined);
     storeMocks.selectWorkspace.mockReset();
@@ -3682,6 +3750,164 @@ describe("AppShell", () => {
 
     expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).toBe(null);
     expect(view.container.querySelector(".zt-workbench")?.classList.contains("zt-workbench-right-collapsed")).toBe(true);
+
+    view.unmount();
+  });
+
+  it("lists SSH containers and opens a selected running container in a tab to the right", async () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "session-1",
+        name: "开发机 A",
+        host: "172.16.41.180",
+        port: 22,
+        username: "ubuntu",
+        type: "ssh",
+        auth_mode: "none",
+        group_id: null,
+        tags: [],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        ssh_options: {
+          container: {
+            enabled: true,
+            runtime: "docker",
+            container: "legacy-default-ignored",
+            shell: "/bin/bash",
+            user: null,
+            workdir: "/srv/app",
+          },
+        },
+      },
+    ];
+    storeMocks.workspaceState.tabs = [
+      {
+        id: "tab-1",
+        title: "开发机 A",
+        active_pane_id: "pane-1",
+        root: {
+          kind: "leaf",
+          id: "pane-1",
+          title: "开发机 A",
+          runtime_session_id: "runtime-1",
+          saved_session_id: "session-1",
+          active_terminal_tab_id: "pane-1-tab-1",
+          terminal_tabs: [
+            {
+              id: "pane-1-tab-1",
+              title: "开发机 A",
+              runtime_session_id: "runtime-1",
+              saved_session_id: "session-1",
+              connection_source: "saved_session",
+            },
+          ],
+        },
+      },
+    ];
+    const view = render(<AppShell />);
+    const containerButton = view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]') as HTMLButtonElement;
+
+    expect(containerButton).not.toBe(null);
+    expect(containerButton.querySelector("svg")?.classList.contains("lucide-box")).toBe(true);
+
+    await act(async () => {
+      containerButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.listSshContainers).toHaveBeenCalledWith("session-1");
+    expect(view.container.textContent).toContain("api");
+    expect(view.container.textContent).toContain("old");
+    expect((view.container.querySelector('[aria-label="进入容器 old"]') as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => {
+      (view.container.querySelector('[aria-label="进入容器 api"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.addPaneTabAfter).toHaveBeenCalledWith("pane-1", "pane-1-tab-1");
+    expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
+      "workspace-1",
+      "tab-1",
+      "pane-1",
+      "pane-1-tab-created",
+      expect.objectContaining({
+        title: "容器: api",
+        saved_session_id: "session-1",
+        connection_source: "ssh_container",
+        container_target: { id: "abc123", name: "api" },
+        restore_status: "pending",
+      }),
+    );
+    expect(storeMocks.openSshContainerTerminal).toHaveBeenCalledWith("session-1", "pane-1", "abc123", "api");
+    expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
+      "workspace-1",
+      "tab-1",
+      "pane-1",
+      "pane-1-tab-created",
+      expect.objectContaining({ runtime_session_id: "runtime-container", kind: "ssh_container" }),
+    );
+
+    view.unmount();
+  });
+
+  it("hides the container tool when the active SSH session has not enabled containers", () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "session-1",
+        name: "开发机 A",
+        host: "172.16.41.180",
+        port: 22,
+        username: "ubuntu",
+        type: "ssh",
+        auth_mode: "none",
+        group_id: null,
+        tags: [],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        ssh_options: {
+          container: {
+            enabled: false,
+            runtime: "docker",
+            container: "",
+            shell: "/bin/sh",
+            user: null,
+            workdir: null,
+          },
+        },
+      },
+    ];
+    storeMocks.workspaceState.tabs = [
+      {
+        id: "tab-1",
+        title: "开发机 A",
+        active_pane_id: "pane-1",
+        root: {
+          kind: "leaf",
+          id: "pane-1",
+          title: "开发机 A",
+          runtime_session_id: "runtime-1",
+          saved_session_id: "session-1",
+          active_terminal_tab_id: "pane-1-tab-1",
+          terminal_tabs: [
+            {
+              id: "pane-1-tab-1",
+              title: "开发机 A",
+              runtime_session_id: "runtime-1",
+              saved_session_id: "session-1",
+            },
+          ],
+        },
+      },
+    ];
+
+    const view = render(<AppShell />);
+
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).toBe(null);
 
     view.unmount();
   });

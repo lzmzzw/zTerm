@@ -294,6 +294,7 @@ fn normalize_terminal_tabs(
             saved_session_id: pane_saved_session_id,
             connection_source: None,
             path: None,
+            container_target: None,
             startup_command: None,
             restore_status: None,
             restore_error: None,

@@ -21,7 +21,9 @@ use crate::{
         },
         terminal_profile::TerminalProfile,
     },
-    services::ssh_terminal_service::{spawn_ssh_terminal, NativeSshControl, SshTerminalRuntime},
+    services::ssh_terminal_service::{
+        spawn_ssh_container_terminal, spawn_ssh_terminal, NativeSshControl, SshTerminalRuntime,
+    },
 };
 
 #[derive(Default)]
@@ -106,6 +108,66 @@ impl TerminalManager {
             pane_id,
             title: session.name.clone(),
             kind: RuntimeSessionKind::Ssh,
+            cols,
+            rows,
+        };
+
+        let (runtime, reader) = match spawn.runtime {
+            SshTerminalRuntime::Pty(pty) => (
+                RuntimeSession::Pty(PtyRuntime {
+                    master: Mutex::new(pty.master),
+                    writer: Mutex::new(pty.writer),
+                    child: Mutex::new(pty.child),
+                }),
+                pty.reader,
+            ),
+            SshTerminalRuntime::Native(native) => (
+                RuntimeSession::NativeSsh(NativeSshRuntimeState {
+                    writer: Mutex::new(native.writer),
+                    control: native.control,
+                    exit_status: native.exit_status,
+                }),
+                native.reader,
+            ),
+        };
+        self.sessions
+            .lock()
+            .map_err(|_| AppError::terminal("terminal session lock was poisoned"))?
+            .insert(info.runtime_session_id.clone(), runtime);
+        self.record_runtime_info(&info)?;
+        self.ensure_output_buffer(&info.runtime_session_id)?;
+
+        Ok(OpenedPtySession {
+            info,
+            reader,
+            auth_secret: spawn.auth_secret,
+        })
+    }
+
+    pub fn open_ssh_container_session(
+        &self,
+        session: &SavedSession,
+        pane_id: String,
+        container_id: String,
+        container_name: Option<String>,
+        cols: u16,
+        rows: u16,
+    ) -> AppResult<OpenedPtySession> {
+        let spawn = spawn_ssh_container_terminal(session, &container_id, cols, rows)?;
+        let title_target = container_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| short_container_id(&container_id));
+        let info = RuntimeSessionInfo {
+            runtime_session_id: Uuid::new_v4().to_string(),
+            saved_session_id: Some(session.id.clone()),
+            history_scope_kind: Some(HistoryScopeKind::SavedSession),
+            history_scope_id: Some(session.id.clone()),
+            pane_id,
+            title: format!("容器: {title_target}"),
+            kind: RuntimeSessionKind::SshContainer,
             cols,
             rows,
         };
@@ -504,4 +566,13 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or_default()
+}
+
+fn short_container_id(container_id: &str) -> String {
+    let value = container_id.trim();
+    if value.chars().count() <= 12 {
+        value.to_string()
+    } else {
+        value.chars().take(12).collect()
+    }
 }

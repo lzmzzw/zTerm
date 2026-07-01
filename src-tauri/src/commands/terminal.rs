@@ -149,6 +149,60 @@ pub fn terminal_open(
 }
 
 #[tauri::command]
+pub fn terminal_open_ssh_container(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    saved_session_id: String,
+    pane_id: String,
+    container_id: String,
+    container_name: Option<String>,
+) -> AppResult<RuntimeSessionInfo> {
+    let storage = state.storage();
+    let session = get_session(storage.as_ref(), &saved_session_id)?;
+    if session.session_type != SessionType::Ssh {
+        return Err(AppError::unsupported("进入容器只支持 SSH 会话"));
+    }
+    let (session, mut auth_secrets) = resolve_ssh_jump_context(storage.as_ref(), &session)?;
+    let manager = state.terminal_manager();
+    let opened = manager.open_ssh_container_session(
+        &session,
+        pane_id,
+        container_id,
+        container_name,
+        120,
+        32,
+    )?;
+    if let Some(secret) = opened.auth_secret {
+        auth_secrets.push(AuthPromptSecret::new(ssh_prompt_target(&session), secret));
+    }
+    let history = state.command_history_service();
+    history.register_runtime(
+        &opened.info.runtime_session_id,
+        opened.info.saved_session_id.clone(),
+        opened.info.history_scope_kind,
+        opened.info.history_scope_id.clone(),
+    );
+    let completion = state.command_completion_service();
+    completion.register_runtime(
+        &opened.info.runtime_session_id,
+        opened.info.kind,
+        opened.info.saved_session_id.clone(),
+        opened.info.history_scope_kind,
+        opened.info.history_scope_id.clone(),
+    );
+    spawn_terminal_reader(
+        app,
+        manager,
+        history,
+        completion,
+        opened.info.runtime_session_id.clone(),
+        opened.reader,
+        auth_secrets,
+    );
+    Ok(opened.info)
+}
+
+#[tauri::command]
 pub fn terminal_open_default_local(
     app: AppHandle,
     state: State<'_, AppState>,

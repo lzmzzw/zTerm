@@ -12,6 +12,7 @@ pub mod rdp_service;
 pub mod server_info_service;
 pub mod sftp_service;
 pub mod ssh_command_service;
+pub mod ssh_container_service;
 pub mod ssh_terminal_service;
 pub mod terminal_manager;
 pub mod terminal_profile_service;

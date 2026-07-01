@@ -383,8 +383,36 @@ describe("SessionTree", () => {
     expect(editorFields(view.container).textContent).not.toContain("认证方式");
 
     await click(button(view.container, "容器"));
-    expect(editorFields(view.container).textContent).toContain("连接后进入容器");
+    expect(editorFields(view.container).textContent).toContain("启用容器入口");
     expect(editorFields(view.container).textContent).not.toContain("在连接时自动打开");
+
+    view.unmount();
+  });
+
+  it("configures SSH container entry without a default container target", async () => {
+    const view = render(<SessionTree groups={groups} sessions={sessions} />);
+
+    await click(button(view.container, "编辑会话 生产跳板机"));
+    await click(button(view.container, "容器"));
+
+    const runtimeOptions = await openSelectOptions(view.container, "容器运行时");
+    expect(runtimeOptions.map((option) => option.getAttribute("data-value"))).toEqual([
+      "docker",
+      "podman",
+      "nerdctl",
+    ]);
+    expect(runtimeOptions.map((option) => option.textContent)).toEqual([
+      "Docker",
+      "Podman",
+      "containerd (nerdctl)",
+    ]);
+    await click(select(view.container, "容器运行时"));
+
+    expect(editorFields(view.container).querySelector('input[aria-label="容器"]')).toBeNull();
+    expect(editorFields(view.container).textContent).not.toContain("容器 ID 或名称");
+    expect(input(view.container, "容器 Shell").placeholder).toBe("/bin/sh");
+    expect(input(view.container, "容器工作目录").placeholder).toBe("/app");
+    expect(input(view.container, "容器用户")).not.toBeNull();
 
     view.unmount();
   });

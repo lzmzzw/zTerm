@@ -23,6 +23,7 @@ use crate::{
     services::{
         credential_service::read_system_secret,
         local_pty_service::{spawn_pty_command, PtySpawn},
+        ssh_container_service::{enabled_container_options, normalize_container_runtime},
     },
 };
 
@@ -88,6 +89,25 @@ fn spawn_system_ssh_terminal(
     rows: u16,
 ) -> AppResult<SshTerminalSpawn> {
     let args = build_ssh_arguments(session)?;
+    spawn_system_ssh_terminal_with_args(session, args, cols, rows)
+}
+
+pub fn spawn_ssh_container_terminal(
+    session: &SavedSession,
+    container_id: &str,
+    cols: u16,
+    rows: u16,
+) -> AppResult<SshTerminalSpawn> {
+    let args = build_ssh_container_arguments(session, container_id)?;
+    spawn_system_ssh_terminal_with_args(session, args, cols, rows)
+}
+
+fn spawn_system_ssh_terminal_with_args(
+    session: &SavedSession,
+    args: Vec<String>,
+    cols: u16,
+    rows: u16,
+) -> AppResult<SshTerminalSpawn> {
     let mut command = CommandBuilder::new("ssh");
     for arg in &args {
         command.arg(arg.as_str());
@@ -174,10 +194,6 @@ fn requires_system_ssh(session: &SavedSession) -> bool {
             .iter()
             .any(|host| !host.trim().is_empty())
         || options.tunnels.iter().any(|tunnel| tunnel.auto_open)
-        || options
-            .container
-            .as_ref()
-            .is_some_and(|container| container.enabled)
 }
 
 pub fn build_ssh_arguments(session: &SavedSession) -> AppResult<Vec<String>> {
@@ -250,13 +266,16 @@ pub fn build_ssh_arguments(session: &SavedSession) -> AppResult<Vec<String>> {
     args.push("-p".to_string());
     args.push(session.port.to_string());
     args.push(ssh_target(session));
-    if let Some(command) = session
-        .ssh_options
-        .as_ref()
-        .and_then(|options| container_command(options.container.as_ref()))
-    {
-        args.push(command);
-    }
+    Ok(args)
+}
+
+pub fn build_ssh_container_arguments(
+    session: &SavedSession,
+    container_id: &str,
+) -> AppResult<Vec<String>> {
+    let mut args = build_ssh_arguments(session)?;
+    let container = enabled_container_options(session)?;
+    args.push(container_command(container, container_id)?);
     Ok(args)
 }
 
@@ -741,14 +760,12 @@ fn tunnel_port(label: &str, value: Option<u16>) -> AppResult<u16> {
 }
 
 fn container_command(
-    container: Option<&crate::models::session::SshContainerOptions>,
-) -> Option<String> {
-    let container = container?;
-    if !container.enabled {
-        return None;
-    }
-    let runtime = normalize_token(&container.runtime).unwrap_or_else(|| "docker".to_string());
-    let container_id = normalize_token(&container.container)?;
+    container: &crate::models::session::SshContainerOptions,
+    container_id: &str,
+) -> AppResult<String> {
+    let runtime = normalize_container_runtime(&container.runtime)?;
+    let container_id = normalize_token(container_id)
+        .ok_or_else(|| AppError::validation("容器 ID 或名称不能为空"))?;
     let shell = normalize_text(container.shell.as_deref()).unwrap_or_else(|| "/bin/sh".to_string());
     let mut parts = vec![runtime, "exec".to_string(), "-it".to_string()];
     if let Some(user) = normalize_text(container.user.as_deref()) {
@@ -761,7 +778,7 @@ fn container_command(
     }
     parts.push(shell_quote(&container_id));
     parts.push(shell_quote(&shell));
-    Some(parts.join(" "))
+    Ok(parts.join(" "))
 }
 
 fn normalize_token(value: &str) -> Option<String> {

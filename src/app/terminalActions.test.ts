@@ -93,6 +93,30 @@ describe("terminalActions", () => {
     expect(deps.setTerminalError).toHaveBeenLastCalledWith("connection refused");
   });
 
+  it("reconnects an ssh_container pane tab with its saved container target", async () => {
+    const deps = dependencies({
+      activePaneTab: paneTab({
+        connection_source: "ssh_container",
+        container_target: { id: "abc123", name: "api" },
+      }),
+      openSshContainerTerminal: vi.fn(async () => runtimeInfo({ kind: "ssh_container", title: "容器: api" })),
+    });
+    const actions = createTerminalActions(deps);
+
+    await actions.reconnectTerminal("pane-1", "pane-tab-1", "session-1", "runtime-1");
+
+    expect(deps.closeTerminal).toHaveBeenCalledWith("runtime-1");
+    expect(deps.openTerminal).not.toHaveBeenCalled();
+    expect(deps.openSshContainerTerminal).toHaveBeenCalledWith("session-1", "pane-1", "abc123", "api");
+    expect(deps.updatePaneTerminalTab).toHaveBeenLastCalledWith("workspace-1", "tab-1", "pane-1", "pane-tab-1", {
+      runtime_session_id: "runtime-1",
+      saved_session_id: "session-1",
+      title: "容器: api",
+      restore_status: "connected",
+      restore_error: null,
+    });
+  });
+
   it("sends trimmed commands to the active runtime", async () => {
     const deps = dependencies({ activeRuntimeSessionId: "runtime-active" });
     const actions = createTerminalActions(deps);
@@ -134,12 +158,19 @@ function dependencies({
   addedPaneTab = paneTab({ id: "pane-tab-added" }),
   activeRuntimeSessionId = "runtime-active",
   openTerminal = vi.fn(async () => runtimeInfo()),
+  openSshContainerTerminal = vi.fn(async () => runtimeInfo({ kind: "ssh_container", title: "容器: api" })),
   writeTerminal = vi.fn(async () => undefined),
 }: {
   activePaneTab?: PaneTerminalTab | null;
   addedPaneTab?: PaneTerminalTab;
   activeRuntimeSessionId?: string | null;
   openTerminal?: (savedSessionId: string, paneId: string) => Promise<RuntimeSessionInfo>;
+  openSshContainerTerminal?: (
+    savedSessionId: string,
+    paneId: string,
+    containerId: string,
+    containerName?: string | null,
+  ) => Promise<RuntimeSessionInfo>;
   writeTerminal?: (runtimeSessionId: string, data: string) => Promise<void>;
 } = {}) {
   return {
@@ -152,6 +183,7 @@ function dependencies({
     bindRuntimeToPaneTab: vi.fn(),
     updatePaneTerminalTab: vi.fn(),
     openTerminal,
+    openSshContainerTerminal,
     closeTerminal: vi.fn(async () => undefined),
     writeTerminal,
     activeRuntimeSessionId,
@@ -188,7 +220,7 @@ function paneTab(overrides: Partial<PaneTerminalTab> = {}): PaneTerminalTab {
   };
 }
 
-function runtimeInfo(): RuntimeSessionInfo {
+function runtimeInfo(overrides: Partial<RuntimeSessionInfo> = {}): RuntimeSessionInfo {
   return {
     runtime_session_id: "runtime-1",
     saved_session_id: "session-1",
@@ -199,6 +231,7 @@ function runtimeInfo(): RuntimeSessionInfo {
     kind: "ssh",
     cols: 120,
     rows: 32,
+    ...overrides,
   };
 }
 

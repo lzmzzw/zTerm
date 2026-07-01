@@ -38,6 +38,12 @@ interface WorkspaceRestoreQueueOptions {
     paneId: string,
     workingDirectory?: string | null,
   ) => Promise<RuntimeSessionInfo>;
+  openSshContainerTerminal: (
+    savedSessionId: string,
+    paneId: string,
+    containerId: string,
+    containerName?: string | null,
+  ) => Promise<RuntimeSessionInfo>;
   writeTerminal: (runtimeSessionId: string, data: string) => Promise<unknown>;
   closeTerminal: (runtimeSessionId: string) => Promise<unknown>;
   isCancelled?: () => boolean;
@@ -301,7 +307,13 @@ async function runSingleTarget(
 
   try {
     if (options.isCancelled?.()) return false;
-    runtime = await openWorkspaceTerminal(target, options.sessions, options.openTerminal, options.openDefaultLocalTerminal);
+    runtime = await openWorkspaceTerminal(
+      target,
+      options.sessions,
+      options.openTerminal,
+      options.openDefaultLocalTerminal,
+      options.openSshContainerTerminal,
+    );
     if (options.isCancelled?.()) {
       await options.closeTerminal(runtime.runtime_session_id).catch(() => undefined);
       return false;
@@ -347,6 +359,12 @@ async function openWorkspaceTerminal(
   sessions: SavedSession[],
   openTerminal: (savedSessionId: string, paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>,
   openDefaultLocalTerminal: (paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>,
+  openSshContainerTerminal: (
+    savedSessionId: string,
+    paneId: string,
+    containerId: string,
+    containerName?: string | null,
+  ) => Promise<RuntimeSessionInfo>,
 ): Promise<RuntimeSessionInfo> {
   const source =
     target.terminalTab.connection_source ?? (target.terminalTab.saved_session_id ? "saved_session" : "default_local");
@@ -355,13 +373,24 @@ async function openWorkspaceTerminal(
   if (source === "missing") {
     throw new Error("连接已缺失");
   }
-  if (source === "default_local" || !target.terminalTab.saved_session_id) {
+  if (source === "default_local") {
     return openDefaultLocalTerminal(target.paneId, path);
+  }
+
+  if (!target.terminalTab.saved_session_id) {
+    throw new Error(source === "ssh_container" ? "保存会话不存在" : "连接已缺失");
   }
 
   const session = sessions.find((candidate) => candidate.id === target.terminalTab.saved_session_id);
   if (!session) {
     throw new Error("保存会话不存在");
+  }
+  if (source === "ssh_container") {
+    const containerId = target.terminalTab.container_target?.id?.trim();
+    if (!containerId) {
+      throw new Error("容器目标缺失");
+    }
+    return openSshContainerTerminal(session.id, target.paneId, containerId, target.terminalTab.container_target?.name ?? null);
   }
   return openTerminal(session.id, target.paneId, path);
 }
@@ -369,7 +398,7 @@ async function openWorkspaceTerminal(
 function connectionKindForTarget(target: WorkspaceRestoreTarget, sessions: SavedSession[]): "ssh" | "local" {
   const source =
     target.terminalTab.connection_source ?? (target.terminalTab.saved_session_id ? "saved_session" : "default_local");
-  if (source !== "saved_session" || !target.terminalTab.saved_session_id) return "local";
+  if ((source !== "saved_session" && source !== "ssh_container") || !target.terminalTab.saved_session_id) return "local";
   const session = sessions.find((candidate) => candidate.id === target.terminalTab.saved_session_id);
   return session?.type === "ssh" ? "ssh" : "local";
 }

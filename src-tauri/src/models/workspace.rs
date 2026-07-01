@@ -36,6 +36,8 @@ pub struct WorkspaceTerminalTab {
     #[serde(default)]
     pub connection_source: Option<String>,
     #[serde(default)]
+    pub container_target: Option<WorkspaceContainerTarget>,
+    #[serde(default)]
     pub path: Option<String>,
     #[serde(default)]
     pub startup_command: Option<String>,
@@ -43,6 +45,13 @@ pub struct WorkspaceTerminalTab {
     pub restore_status: Option<String>,
     #[serde(default)]
     pub restore_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceContainerTarget {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

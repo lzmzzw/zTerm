@@ -49,6 +49,7 @@ fn leaf_with_runtime(saved_session_id: Option<String>) -> PaneNode {
             runtime_session_id: Some("runtime-should-not-persist".to_string()),
             saved_session_id,
             connection_source: None,
+            container_target: None,
             path: Some("/srv/app".to_string()),
             startup_command: Some("source ./env.sh".to_string()),
             restore_status: Some("connected".to_string()),
