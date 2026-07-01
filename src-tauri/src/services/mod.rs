@@ -1,5 +1,6 @@
 // Author: Liz
 pub mod ai_chat_service;
+pub mod ai_chat_stream_service;
 pub mod ai_conversation_service;
 pub mod ai_risk;
 pub mod ai_tool_service;

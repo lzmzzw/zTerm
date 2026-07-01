@@ -219,6 +219,53 @@ pub struct AiChatResponse {
     pub generated_at_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AiChatStreamStartResult {
+    pub chat_id: String,
+    pub conversation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AiChatStreamCancelResult {
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AiChatStreamChunkEvent {
+    pub chat_id: String,
+    pub conversation_id: String,
+    pub delta: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AiChatStreamDoneEvent {
+    pub chat_id: String,
+    pub conversation_id: String,
+    pub message: String,
+    pub pending_invocations: Vec<AiToolPendingInvocation>,
+    pub executed_invocations: Vec<AiToolAuditRecord>,
+    pub context_used: bool,
+    pub generated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AiChatStreamErrorEvent {
+    pub chat_id: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AiChatStreamCancelledEvent {
+    pub chat_id: String,
+    pub conversation_id: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AiToolInvocationStatus {

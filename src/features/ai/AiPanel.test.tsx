@@ -12,6 +12,9 @@ function render(ui: ReactElement) {
   act(() => root.render(ui));
   return {
     container,
+    rerender(nextUi: ReactElement) {
+      act(() => root.render(nextUi));
+    },
     unmount() {
       act(() => root.unmount());
       container.remove();
@@ -162,6 +165,67 @@ describe("AiPanel", () => {
 
     expect(onSendChat).toHaveBeenCalledWith("列出文件");
     view.unmount();
+  });
+
+  it("keeps the current conversation scrolled to the latest message as messages update", () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    Object.defineProperty(HTMLElement.prototype, "scrollTo", { configurable: true, value: scrollTo });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return this.classList.contains("zt-ai-messages") ? 480 : 0;
+      },
+    });
+
+    const baseProps = {
+      activeRuntimeSessionId: "runtime-1",
+      providersAvailable: true,
+      recentOutput: "",
+      loading: false,
+      error: null,
+    };
+    const view = render(
+      <AiPanel
+        {...baseProps}
+        messages={[
+          { id: "message-1", conversation_id: "conversation-1", role: "user", content: "问题", status: "complete" },
+          { id: "message-2", conversation_id: "conversation-1", role: "assistant", content: "回复", status: "streaming" },
+        ]}
+      />,
+    );
+
+    try {
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 480, behavior: "auto" });
+      expect((scrollTo.mock.contexts.at(-1) as HTMLElement | undefined)?.classList.contains("zt-ai-messages")).toBe(true);
+
+      scrollTo.mockClear();
+      view.rerender(
+        <AiPanel
+          {...baseProps}
+          messages={[
+            { id: "message-1", conversation_id: "conversation-1", role: "user", content: "问题", status: "complete" },
+            { id: "message-2", conversation_id: "conversation-1", role: "assistant", content: "回复增量", status: "streaming" },
+          ]}
+        />,
+      );
+
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 480, behavior: "auto" });
+      expect((scrollTo.mock.contexts.at(-1) as HTMLElement | undefined)?.classList.contains("zt-ai-messages")).toBe(true);
+    } finally {
+      view.unmount();
+      if (originalScrollTo) {
+        Object.defineProperty(HTMLElement.prototype, "scrollTo", { configurable: true, value: originalScrollTo });
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "scrollTo");
+      }
+      if (originalScrollHeight) {
+        Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, "scrollHeight");
+      }
+    }
   });
 
   it("clears the composer immediately after sending without waiting for the response", async () => {

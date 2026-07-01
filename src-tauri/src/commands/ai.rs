@@ -1,15 +1,19 @@
 // Author: Liz
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
+use uuid::Uuid;
 
 use crate::{
     error::AppResult,
     models::ai::{
-        AiChatRequest, AiChatResponse, AiConversation, AiConversationApprovalModeUpdateRequest,
+        AiChatRequest, AiChatResponse, AiChatStreamCancelResult, AiChatStreamCancelledEvent,
+        AiChatStreamChunkEvent, AiChatStreamDoneEvent, AiChatStreamErrorEvent,
+        AiChatStreamStartResult, AiConversation, AiConversationApprovalModeUpdateRequest,
         AiConversationCreateRequest, AiConversationListRequest, AiConversationMessage,
         AiConversationMessageAppendRequest, AiConversationSummary, AiTerminalContextRequest,
         AiTerminalContextSnapshot, AiToolAuditListRequest, AiToolAuditRecord, AiToolConfirmRequest,
         AiToolDefinition, AiToolPendingInvocation, AiToolPrepareRequest,
     },
+    services::ai_chat_service::AiChatStreamRunResult,
     state::AppState,
 };
 
@@ -22,6 +26,95 @@ pub fn ai_chat(state: State<'_, AppState>, request: AiChatRequest) -> AppResult<
         &state.ai_tool_service(),
         request,
     )
+}
+
+#[tauri::command]
+pub fn ai_chat_stream(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: AiChatRequest,
+) -> AppResult<AiChatStreamStartResult> {
+    let storage = state.storage();
+    let work = state.ai_chat_service().start_stream_work(
+        storage.as_ref(),
+        &state.credential_service(),
+        request,
+    )?;
+    let chat_id = Uuid::new_v4().to_string();
+    let conversation_id = work.conversation_id.clone();
+    let stream_service = state.ai_chat_stream_service();
+    let cancel = stream_service.register(&chat_id)?;
+    let chat_service = state.ai_chat_service();
+    let tools = state.ai_tool_service();
+    let app_for_task = app.clone();
+    let stream_service_for_task = stream_service.clone();
+    let chat_id_for_task = chat_id.clone();
+    let conversation_id_for_task = conversation_id.clone();
+    tauri::async_runtime::spawn(async move {
+        let emit_chat_id = chat_id_for_task.clone();
+        let emit_conversation_id = conversation_id_for_task.clone();
+        let result = chat_service
+            .run_stream_work(storage, tools, work, cancel, move |delta| {
+                let _ = app_for_task.emit(
+                    "ai-chat:chunk",
+                    AiChatStreamChunkEvent {
+                        chat_id: emit_chat_id.clone(),
+                        conversation_id: emit_conversation_id.clone(),
+                        delta,
+                    },
+                );
+                Ok(())
+            })
+            .await;
+        match result {
+            Ok(AiChatStreamRunResult::Complete(response)) => {
+                let _ = app.emit(
+                    "ai-chat:done",
+                    AiChatStreamDoneEvent {
+                        chat_id: chat_id_for_task.clone(),
+                        conversation_id: conversation_id_for_task.clone(),
+                        message: response.message,
+                        pending_invocations: response.pending_invocations,
+                        executed_invocations: response.executed_invocations,
+                        context_used: response.context_used,
+                        generated_at_ms: response.generated_at_ms,
+                    },
+                );
+            }
+            Ok(AiChatStreamRunResult::Cancelled) => {
+                let _ = app.emit(
+                    "ai-chat:cancelled",
+                    AiChatStreamCancelledEvent {
+                        chat_id: chat_id_for_task.clone(),
+                        conversation_id: conversation_id_for_task.clone(),
+                    },
+                );
+            }
+            Err(error) => {
+                let _ = app.emit(
+                    "ai-chat:error",
+                    AiChatStreamErrorEvent {
+                        chat_id: chat_id_for_task.clone(),
+                        message: app_error_message(error),
+                    },
+                );
+            }
+        }
+        stream_service_for_task.finish(&chat_id_for_task);
+    });
+    Ok(AiChatStreamStartResult {
+        chat_id,
+        conversation_id,
+    })
+}
+
+#[tauri::command]
+pub fn ai_chat_cancel(
+    state: State<'_, AppState>,
+    chat_id: String,
+) -> AppResult<AiChatStreamCancelResult> {
+    let cancelled = state.ai_chat_stream_service().cancel(&chat_id)?;
+    Ok(AiChatStreamCancelResult { cancelled })
 }
 
 #[tauri::command]
@@ -220,5 +313,19 @@ fn build_target_summary(request: &AiTerminalContextRequest) -> Option<String> {
         None
     } else {
         Some(parts.join(" · "))
+    }
+}
+
+fn app_error_message(error: crate::error::AppError) -> String {
+    match error {
+        crate::error::AppError::Validation(message)
+        | crate::error::AppError::NotFound(message)
+        | crate::error::AppError::Storage(message)
+        | crate::error::AppError::Credential(message)
+        | crate::error::AppError::Terminal(message)
+        | crate::error::AppError::Ssh(message)
+        | crate::error::AppError::Sftp(message)
+        | crate::error::AppError::Ai(message)
+        | crate::error::AppError::Unsupported(message) => message,
     }
 }

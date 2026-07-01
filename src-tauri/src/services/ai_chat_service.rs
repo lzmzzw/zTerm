@@ -1,5 +1,8 @@
 // Author: Liz
 use serde_json::Value;
+use std::sync::Arc;
+
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use crate::{
@@ -8,9 +11,9 @@ use crate::{
         ai::{
             AiApprovalMode, AiChatRequest, AiChatResponse, AiConversationCreateRequest,
             AiConversationMessageAppendRequest, AiMessageRole, AiTerminalContextRequest,
-            AiToolPrepareRequest,
+            AiToolAuditRecord, AiToolPendingInvocation, AiToolPrepareRequest,
         },
-        credential::AiProviderKind,
+        credential::{AiProviderKind, AiProviderProfile},
     },
     security::redaction::redact_sensitive,
     services::{
@@ -18,8 +21,8 @@ use crate::{
         ai_tool_service::AiToolService,
         credential_service::CredentialService,
         llm_provider_service::{
-            run_text_generation_sync, run_tool_chat_sync, select_enabled_provider,
-            ProviderChatMessage,
+            generate_text_stream, generate_tool_chat, run_text_generation_sync, run_tool_chat_sync,
+            select_enabled_provider, ProviderChatMessage, ProviderTextStreamResult,
         },
     },
     storage::sqlite::SqliteStore,
@@ -27,6 +30,39 @@ use crate::{
 
 #[derive(Debug, Default, Clone)]
 pub struct AiChatService;
+
+#[derive(Debug, Clone)]
+pub struct AiChatStreamWork {
+    pub conversation_id: String,
+    pub provider: AiProviderProfile,
+    pub api_key: String,
+    pub user_message: String,
+    pub approval_mode: AiApprovalMode,
+    pub provider_messages: Vec<ProviderChatMessage>,
+    pub terminal_context: Option<AiTerminalContextRequest>,
+    pub context_used: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiChatStreamComplete {
+    pub message: String,
+    pub pending_invocations: Vec<AiToolPendingInvocation>,
+    pub executed_invocations: Vec<AiToolAuditRecord>,
+    pub context_used: bool,
+    pub tool_count: usize,
+    pub generated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AiChatStreamRunResult {
+    Complete(AiChatStreamComplete),
+    Cancelled,
+}
+
+enum AiChatResponseSource {
+    Immediate(String),
+    StreamPrompt(String),
+}
 
 impl AiChatService {
     pub fn chat_with_provider(
@@ -134,6 +170,154 @@ impl AiChatService {
             tool_count: tools.definitions().len(),
             generated_at_ms: now_ms(),
         })
+    }
+
+    pub fn start_stream_work(
+        &self,
+        store: &SqliteStore,
+        credentials: &CredentialService,
+        request: AiChatRequest,
+    ) -> AppResult<AiChatStreamWork> {
+        let message = required_text("AI 消息", &request.message)?;
+        let provider = select_enabled_provider(credentials)?;
+        let api_key = provider_api_key(credentials, provider.kind, &provider.api_key_ref)?;
+        let conversation_service = AiConversationService::default();
+        let (conversation_id, approval_mode) =
+            ensure_conversation(store, &conversation_service, &request)?;
+        conversation_service.append_message(
+            store,
+            AiConversationMessageAppendRequest {
+                conversation_id: conversation_id.clone(),
+                role: AiMessageRole::User,
+                content: message.clone(),
+                metadata_json: None,
+            },
+        )?;
+
+        let provider_messages =
+            build_provider_messages(store, &conversation_service, &request, &conversation_id)?;
+        Ok(AiChatStreamWork {
+            conversation_id,
+            provider,
+            api_key,
+            user_message: message,
+            approval_mode,
+            provider_messages,
+            terminal_context: request.terminal_context.clone(),
+            context_used: request.terminal_context.is_some() || !request.history.is_empty(),
+        })
+    }
+
+    pub async fn run_stream_work(
+        &self,
+        store: Arc<SqliteStore>,
+        tools: AiToolService,
+        work: AiChatStreamWork,
+        mut cancel: oneshot::Receiver<()>,
+        mut on_delta: impl FnMut(String) -> AppResult<()> + Send,
+    ) -> AppResult<AiChatStreamRunResult> {
+        let tool_definitions = tools.definitions();
+        let tool_response = tokio::select! {
+            _ = &mut cancel => return Ok(AiChatStreamRunResult::Cancelled),
+            response = generate_tool_chat(
+                &work.provider,
+                &work.api_key,
+                &work.provider_messages,
+                &tool_definitions,
+            ) => response?,
+        };
+
+        let mut pending_invocations = Vec::new();
+        let mut executed_invocations = Vec::new();
+        let mut tool_result_summaries = Vec::new();
+
+        for tool_call in tool_response.tool_calls.iter().take(3) {
+            let arguments = captured_tool_arguments(
+                &tool_call.tool_id,
+                tool_call.arguments.clone(),
+                work.terminal_context.as_ref(),
+            );
+            let outcome = tools.execute_if_allowed(
+                store.as_ref(),
+                AiToolPrepareRequest {
+                    tool_id: tool_call.tool_id.clone(),
+                    arguments,
+                    reason: tool_call
+                        .reason
+                        .clone()
+                        .or_else(|| Some("AI function call".to_string())),
+                    requested_by: Some("ai_chat".to_string()),
+                    conversation_id: Some(work.conversation_id.clone()),
+                    run_id: None,
+                    step_id: Some(tool_call.id.clone()),
+                },
+                work.approval_mode,
+            )?;
+            if let Some(pending) = outcome.pending_invocation {
+                pending_invocations.push(pending);
+            }
+            if let Some(audit) = outcome.audit_record {
+                if let Some(summary) = audit.result_summary.as_deref() {
+                    tool_result_summaries.push(format!("{}: {}", audit.tool_id, summary));
+                }
+                executed_invocations.push(audit);
+            }
+        }
+
+        if cancel.try_recv().is_ok() {
+            return Ok(AiChatStreamRunResult::Cancelled);
+        }
+
+        let response_source = stream_response_source(
+            &work,
+            &tool_response.message,
+            &pending_invocations,
+            &tool_result_summaries,
+        );
+        let response_message = match response_source {
+            AiChatResponseSource::Immediate(message) => {
+                on_delta(message.clone())?;
+                if cancel.try_recv().is_ok() {
+                    return Ok(AiChatStreamRunResult::Cancelled);
+                }
+                message
+            }
+            AiChatResponseSource::StreamPrompt(prompt) => {
+                match generate_text_stream(
+                    &work.provider,
+                    &work.api_key,
+                    &prompt,
+                    cancel,
+                    move |delta| on_delta(redact_sensitive(&delta)),
+                )
+                .await?
+                {
+                    ProviderTextStreamResult::Complete(output) => redact_sensitive(&output),
+                    ProviderTextStreamResult::Cancelled(_) => {
+                        return Ok(AiChatStreamRunResult::Cancelled);
+                    }
+                }
+            }
+        };
+
+        AiConversationService::default().append_message(
+            store.as_ref(),
+            AiConversationMessageAppendRequest {
+                conversation_id: work.conversation_id,
+                role: AiMessageRole::Assistant,
+                content: response_message.clone(),
+                metadata_json: None,
+            },
+        )?;
+
+        Ok(AiChatStreamRunResult::Complete(AiChatStreamComplete {
+            message: response_message,
+            pending_invocations,
+            executed_invocations,
+            context_used: work.context_used,
+            tool_count: tool_definitions.len(),
+            generated_at_ms: now_ms(),
+        }))
     }
 }
 
@@ -308,11 +492,7 @@ fn summarize_tool_results(
     user_message: &str,
     tool_result_summaries: &[String],
 ) -> String {
-    let prompt = format!(
-        "用户请求：{}\n\n工具执行结果：\n{}\n\n请基于工具结果给出简洁中文回复。",
-        user_message,
-        tool_result_summaries.join("\n")
-    );
+    let prompt = tool_result_summary_prompt(user_message, tool_result_summaries);
     run_text_generation_sync(provider, api_key, &prompt)
         .map(|value| redact_sensitive(&value))
         .unwrap_or_else(|_| {
@@ -321,6 +501,55 @@ fn summarize_tool_results(
                 redact_sensitive(&tool_result_summaries.join("；"))
             )
         })
+}
+
+fn stream_response_source(
+    work: &AiChatStreamWork,
+    tool_response_message: &str,
+    pending_invocations: &[AiToolPendingInvocation],
+    tool_result_summaries: &[String],
+) -> AiChatResponseSource {
+    if !pending_invocations.is_empty() {
+        let message = if tool_response_message.trim().is_empty() {
+            "AI 请求执行工具，等待人工确认。".to_string()
+        } else {
+            redact_sensitive(tool_response_message)
+        };
+        return AiChatResponseSource::Immediate(message);
+    }
+    if !tool_result_summaries.is_empty() {
+        return AiChatResponseSource::StreamPrompt(tool_result_summary_prompt(
+            &work.user_message,
+            tool_result_summaries,
+        ));
+    }
+    AiChatResponseSource::StreamPrompt(direct_chat_stream_prompt(&work.provider_messages))
+}
+
+fn tool_result_summary_prompt(user_message: &str, tool_result_summaries: &[String]) -> String {
+    format!(
+        "用户请求：{}\n\n工具执行结果：\n{}\n\n请基于工具结果给出简洁中文回复。",
+        redact_sensitive(user_message),
+        redact_sensitive(&tool_result_summaries.join("\n"))
+    )
+}
+
+fn direct_chat_stream_prompt(messages: &[ProviderChatMessage]) -> String {
+    let mut prompt = String::from(
+        "下面是 zTerm AI 会话上下文。请回答最后一条用户消息，使用简洁中文；不要声称已经执行未通过工具完成的终端操作。\n\n",
+    );
+    for message in messages {
+        prompt.push_str(match message.role.as_str() {
+            "system" => "System",
+            "assistant" => "Assistant",
+            "tool" => "Tool",
+            _ => "User",
+        });
+        prompt.push_str(":\n");
+        prompt.push_str(&tail_chars(&redact_sensitive(&message.content), 2500));
+        prompt.push_str("\n\n");
+    }
+    prompt
 }
 
 fn non_empty(value: Option<&str>) -> Option<&str> {

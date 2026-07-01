@@ -1,5 +1,6 @@
 // Author: Liz
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
@@ -82,19 +83,46 @@ export interface AiToolPendingInvocation {
   requested_by?: string | null;
 }
 
-interface AiChatResponse {
+interface AiChatStreamStartResult {
+  chat_id: string;
   conversation_id: string;
-  provider_id: string;
-  provider_name: string;
-  model: string;
+}
+
+interface AiChatStreamCancelResult {
+  cancelled: boolean;
+}
+
+interface AiChatStreamChunkEvent {
+  chat_id: string;
+  conversation_id: string;
+  delta: string;
+}
+
+interface AiChatStreamDoneEvent {
+  chat_id: string;
+  conversation_id: string;
   message: string;
   pending_invocations: AiToolPendingInvocation[];
   executed_invocations: AiToolAuditRecord[];
-  response_redacted: boolean;
   context_used: boolean;
-  tool_count: number;
   generated_at_ms: number;
 }
+
+interface AiChatStreamErrorEvent {
+  chat_id: string;
+  message: string;
+}
+
+interface AiChatStreamCancelledEvent {
+  chat_id: string;
+  conversation_id: string;
+}
+
+type PendingAiChatStreamEvent =
+  | { kind: "chunk"; payload: AiChatStreamChunkEvent }
+  | { kind: "done"; payload: AiChatStreamDoneEvent }
+  | { kind: "error"; payload: AiChatStreamErrorEvent }
+  | { kind: "cancelled"; payload: AiChatStreamCancelledEvent };
 
 interface AiToolAuditRecord {
   id: string;
@@ -137,9 +165,12 @@ interface AiState {
 
 let contextCaptureRequestId = 0;
 let aiChatRequestId = 0;
-let assistantStreamTimer: ReturnType<typeof window.setInterval> | null = null;
-
-const ASSISTANT_STREAM_INTERVAL_MS = 20;
+let activeChatRequestId: number | null = null;
+let activeChatId: string | null = null;
+let activeAssistantMessageId: string | null = null;
+let chatStarting = false;
+let pendingAiChatEvents: PendingAiChatStreamEvent[] = [];
+let aiChatEventListenersPromise: Promise<UnlistenFn[]> | null = null;
 
 export const useAiStore = create<AiState>((set, get) => ({
   conversations: [],
@@ -195,9 +226,13 @@ export const useAiStore = create<AiState>((set, get) => ({
   async sendChat(message, context) {
     const content = message.trim();
     if (!content) return;
-    stopAssistantMessageStream();
+    await ensureAiChatEventListeners();
     const requestId = aiChatRequestId + 1;
     aiChatRequestId = requestId;
+    activeChatRequestId = requestId;
+    activeChatId = null;
+    chatStarting = true;
+    pendingAiChatEvents = [];
     const pendingConversationId = get().activeConversationId ?? `pending-conversation-${requestId}`;
     const optimisticUserMessage: AiConversationMessage = {
       id: `pending-user-${requestId}`,
@@ -215,13 +250,14 @@ export const useAiStore = create<AiState>((set, get) => ({
       status: "streaming",
       created_at_ms: Date.now(),
     };
+    activeAssistantMessageId = streamingAssistantMessage.id;
     set((state) => ({
       loading: true,
       error: null,
       messages: [...state.messages, optimisticUserMessage, streamingAssistantMessage],
     }));
     try {
-      const response = await invoke<AiChatResponse>("ai_chat", {
+      const response = await invoke<AiChatStreamStartResult>("ai_chat_stream", {
         request: {
           conversation_id: useAiStore.getState().activeConversationId,
           message: content,
@@ -230,52 +266,57 @@ export const useAiStore = create<AiState>((set, get) => ({
           terminal_context: context,
         },
       });
-      if (aiChatRequestId !== requestId) return;
-      const conversation = await invoke<AiConversation>("ai_conversation_get", { conversationId: response.conversation_id });
-      if (aiChatRequestId !== requestId) return;
-      const streamingMessages = conversationMessagesForStreaming(conversation.messages, response.message);
+      if (activeChatRequestId !== requestId) {
+        void invoke<AiChatStreamCancelResult>("ai_chat_cancel", { chatId: response.chat_id });
+        return;
+      }
+      activeChatId = response.chat_id;
       set((state) => ({
         activeConversationId: response.conversation_id,
-        messages: streamingMessages.messages,
-        approvalMode: conversation.approval_mode ?? state.approvalMode,
-        pendingInvocations: response.pending_invocations.length > 0 ? response.pending_invocations : state.pendingInvocations,
+        messages: state.messages.map((item) =>
+          item.id === optimisticUserMessage.id || item.id === streamingAssistantMessage.id
+            ? { ...item, conversation_id: response.conversation_id }
+            : item,
+        ),
       }));
-      startAssistantMessageStream(requestId, conversation, streamingMessages.assistantMessageId, streamingMessages.assistantContent);
-      try {
-        const conversations = await invoke<AiConversationSummary[]>("ai_conversation_list", {});
-        const pendingInvocations = await invoke<AiToolPendingInvocation[]>("ai_tool_pending");
-        if (aiChatRequestId === requestId) {
-          set({
-            conversations,
-            pendingInvocations,
-          });
-        }
-      } catch (refreshError) {
-        if (aiChatRequestId === requestId) {
-          set({ error: unknownErrorMessage(refreshError, "AI Agent 操作失败") });
-        }
-      }
+      replayPendingAiChatEvents(response.chat_id);
     } catch (error) {
-      if (aiChatRequestId === requestId) {
-        stopAssistantMessageStream();
+      if (activeChatRequestId === requestId) {
+        chatStarting = false;
+        activeChatRequestId = null;
+        activeChatId = null;
+        activeAssistantMessageId = null;
+        pendingAiChatEvents = [];
         set((state) => ({
           loading: false,
           error: unknownErrorMessage(error, "AI Agent 操作失败"),
           messages: state.messages.filter((message) => message.id !== streamingAssistantMessage.id),
         }));
       }
+    } finally {
+      if (activeChatRequestId === requestId) {
+        chatStarting = false;
+      }
     }
   },
   cancelChat() {
+    const chatId = activeChatId;
     aiChatRequestId += 1;
-    stopAssistantMessageStream();
+    activeChatRequestId = null;
+    activeChatId = null;
+    activeAssistantMessageId = null;
+    chatStarting = false;
+    pendingAiChatEvents = [];
+    if (chatId) {
+      void invoke<AiChatStreamCancelResult>("ai_chat_cancel", { chatId });
+    }
     set((state) => ({
       loading: false,
       messages: state.messages.filter((message) => message.status !== "streaming"),
     }));
   },
   async selectConversation(conversationId) {
-    stopAssistantMessageStream();
+    cancelActiveChatWithoutStoreMutation();
     try {
       const conversation = await invoke<AiConversation>("ai_conversation_get", { conversationId });
       set((state) => ({
@@ -346,11 +387,11 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
   },
   newConversation() {
-    stopAssistantMessageStream();
+    cancelActiveChatWithoutStoreMutation();
     set({ activeConversationId: null, approvalMode: "safe", messages: [], error: null });
   },
   async deleteConversation(conversationId) {
-    stopAssistantMessageStream();
+    cancelActiveChatWithoutStoreMutation();
     set({ loading: true, error: null });
     try {
       await invoke("ai_conversation_delete", { conversationId });
@@ -378,7 +419,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
   },
   async confirmTool(invocationId, approved) {
-    stopAssistantMessageStream();
+    cancelActiveChatWithoutStoreMutation();
     set({ loading: true, error: null });
     try {
       await invoke("ai_tool_confirm", {
@@ -407,6 +448,155 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
 }));
 
+async function ensureAiChatEventListeners() {
+  if (aiChatEventListenersPromise) return aiChatEventListenersPromise;
+  aiChatEventListenersPromise = Promise.all([
+    listen<AiChatStreamChunkEvent>("ai-chat:chunk", (event) => {
+      enqueueOrApplyAiChatEvent({ kind: "chunk", payload: event.payload });
+    }),
+    listen<AiChatStreamDoneEvent>("ai-chat:done", (event) => {
+      enqueueOrApplyAiChatEvent({ kind: "done", payload: event.payload });
+    }),
+    listen<AiChatStreamErrorEvent>("ai-chat:error", (event) => {
+      enqueueOrApplyAiChatEvent({ kind: "error", payload: event.payload });
+    }),
+    listen<AiChatStreamCancelledEvent>("ai-chat:cancelled", (event) => {
+      enqueueOrApplyAiChatEvent({ kind: "cancelled", payload: event.payload });
+    }),
+  ]);
+  return aiChatEventListenersPromise;
+}
+
+function enqueueOrApplyAiChatEvent(event: PendingAiChatStreamEvent) {
+  if (activeChatId === event.payload.chat_id) {
+    applyAiChatEvent(event);
+    return;
+  }
+  if (chatStarting && activeChatId === null) {
+    pendingAiChatEvents.push(event);
+  }
+}
+
+function replayPendingAiChatEvents(chatId: string) {
+  const pendingEvents = pendingAiChatEvents;
+  pendingAiChatEvents = pendingEvents.filter((event) => event.payload.chat_id !== chatId);
+  pendingEvents
+    .filter((event) => event.payload.chat_id === chatId)
+    .forEach((event) => {
+      applyAiChatEvent(event);
+    });
+}
+
+function applyAiChatEvent(event: PendingAiChatStreamEvent) {
+  if (activeChatId !== event.payload.chat_id) return;
+  if (event.kind === "chunk") {
+    appendAiChatDelta(event.payload.delta);
+    return;
+  }
+  if (event.kind === "done") {
+    void finishAiChatStream(event.payload);
+    return;
+  }
+  if (event.kind === "error") {
+    failAiChatStream(event.payload.message);
+    return;
+  }
+  cancelAiChatStreamFromBackend();
+}
+
+function appendAiChatDelta(delta: string) {
+  const assistantMessageId = activeAssistantMessageId;
+  if (!assistantMessageId) return;
+  useAiStore.setState((state) => ({
+    messages: state.messages.map((message) =>
+      message.id === assistantMessageId
+        ? { ...message, content: `${message.content}${delta}`, status: "streaming" }
+        : message,
+    ),
+  }));
+}
+
+async function finishAiChatStream(payload: AiChatStreamDoneEvent) {
+  const chatId = payload.chat_id;
+  const conversationId = payload.conversation_id;
+  const assistantMessageId = activeAssistantMessageId;
+  const requestId = activeChatRequestId;
+  activeChatId = null;
+  activeAssistantMessageId = null;
+  chatStarting = false;
+  useAiStore.setState((state) => ({
+    activeConversationId: conversationId,
+    loading: false,
+    pendingInvocations: payload.pending_invocations.length > 0 ? payload.pending_invocations : state.pendingInvocations,
+    messages: state.messages.map((message) =>
+      assistantMessageId && message.id === assistantMessageId
+        ? { ...message, conversation_id: conversationId, content: payload.message, status: "complete" }
+        : message,
+    ),
+  }));
+  try {
+    const conversation = await invoke<AiConversation>("ai_conversation_get", { conversationId });
+    const conversations = await invoke<AiConversationSummary[]>("ai_conversation_list", {});
+    const pendingInvocations = await invoke<AiToolPendingInvocation[]>("ai_tool_pending");
+    if (requestId !== null && activeChatRequestId === requestId && activeChatId === null) {
+      useAiStore.setState((state) => ({
+        activeConversationId: conversation.id,
+        messages: conversation.messages,
+        approvalMode: conversation.approval_mode ?? state.approvalMode,
+        conversationPreviews: withConversationPreview(state.conversationPreviews, conversation),
+        conversations,
+        pendingInvocations,
+      }));
+      activeChatRequestId = null;
+    }
+  } catch (refreshError) {
+    if (requestId !== null && activeChatRequestId === requestId) {
+      useAiStore.setState({ error: unknownErrorMessage(refreshError, "AI Agent 操作失败") });
+      activeChatRequestId = null;
+    }
+  }
+  if (activeChatId === chatId) {
+    activeChatId = null;
+  }
+}
+
+function failAiChatStream(message: string) {
+  activeChatRequestId = null;
+  activeChatId = null;
+  activeAssistantMessageId = null;
+  chatStarting = false;
+  pendingAiChatEvents = [];
+  useAiStore.setState((state) => ({
+    loading: false,
+    error: message,
+    messages: state.messages.filter((item) => item.status !== "streaming"),
+  }));
+}
+
+function cancelAiChatStreamFromBackend() {
+  activeChatRequestId = null;
+  activeChatId = null;
+  activeAssistantMessageId = null;
+  chatStarting = false;
+  pendingAiChatEvents = [];
+  useAiStore.setState((state) => ({
+    loading: false,
+    messages: state.messages.filter((item) => item.status !== "streaming"),
+  }));
+}
+
+function cancelActiveChatWithoutStoreMutation() {
+  const chatId = activeChatId;
+  activeChatRequestId = null;
+  activeChatId = null;
+  activeAssistantMessageId = null;
+  chatStarting = false;
+  pendingAiChatEvents = [];
+  if (chatId) {
+    void invoke<AiChatStreamCancelResult>("ai_chat_cancel", { chatId });
+  }
+}
+
 function withConversationPreview(
   previews: Record<string, AiConversationPreviewState>,
   conversation: AiConversation,
@@ -428,103 +618,4 @@ function withoutConversationPreview(
   const next = { ...previews };
   delete next[conversationId];
   return next;
-}
-
-function conversationMessagesForStreaming(messages: AiConversationMessage[], assistantContent: string) {
-  const assistantIndex = lastAssistantMessageIndex(messages, assistantContent);
-  if (assistantIndex < 0) {
-    const assistantMessage: AiConversationMessage = {
-      id: `streaming-assistant-${Date.now()}`,
-      conversation_id: messages[0]?.conversation_id ?? "pending-conversation",
-      role: "assistant",
-      content: "",
-      status: "streaming",
-      created_at_ms: Date.now(),
-    };
-    return {
-      messages: [...messages, assistantMessage],
-      assistantMessageId: assistantMessage.id,
-      assistantContent,
-    };
-  }
-  const assistantMessage = messages[assistantIndex];
-  return {
-    messages: messages.map((message, index) =>
-      index === assistantIndex ? { ...message, content: "", status: "streaming" } : message,
-    ),
-    assistantMessageId: assistantMessage.id,
-    assistantContent: assistantMessage.content,
-  };
-}
-
-function lastAssistantMessageIndex(messages: AiConversationMessage[], assistantContent: string) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role === "assistant" && message.content === assistantContent) {
-      return index;
-    }
-  }
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].role === "assistant") {
-      return index;
-    }
-  }
-  return -1;
-}
-
-function startAssistantMessageStream(
-  requestId: number,
-  conversation: AiConversation,
-  assistantMessageId: string,
-  assistantContent: string,
-) {
-  stopAssistantMessageStream();
-  const characters = Array.from(assistantContent);
-  if (characters.length === 0) {
-    finishAssistantMessageStream(requestId, conversation, assistantMessageId, "");
-    return;
-  }
-
-  let visibleLength = 0;
-  assistantStreamTimer = window.setInterval(() => {
-    visibleLength += 1;
-    const content = characters.slice(0, visibleLength).join("");
-    const complete = visibleLength >= characters.length;
-    if (complete) {
-      finishAssistantMessageStream(requestId, conversation, assistantMessageId, content);
-      return;
-    }
-    if (aiChatRequestId !== requestId) {
-      stopAssistantMessageStream();
-      return;
-    }
-    useAiStore.setState((state) => ({
-      messages: state.messages.map((message) =>
-        message.id === assistantMessageId ? { ...message, content, status: "streaming" } : message,
-      ),
-    }));
-  }, ASSISTANT_STREAM_INTERVAL_MS);
-}
-
-function finishAssistantMessageStream(
-  requestId: number,
-  conversation: AiConversation,
-  assistantMessageId: string,
-  content: string,
-) {
-  stopAssistantMessageStream();
-  if (aiChatRequestId !== requestId) return;
-  useAiStore.setState((state) => ({
-    messages: state.messages.map((message) =>
-      message.id === assistantMessageId ? { ...message, content, status: "complete" } : message,
-    ),
-    conversationPreviews: withConversationPreview(state.conversationPreviews, conversation),
-    loading: false,
-  }));
-}
-
-function stopAssistantMessageStream() {
-  if (!assistantStreamTimer) return;
-  window.clearInterval(assistantStreamTimer);
-  assistantStreamTimer = null;
 }

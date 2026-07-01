@@ -2,9 +2,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invokeMock = vi.hoisted(() => vi.fn());
+const eventListeners = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (eventName: string, handler: (event: { payload: unknown }) => void) => {
+    eventListeners.set(eventName, handler);
+    return () => {
+      eventListeners.delete(eventName);
+    };
+  }),
 }));
 
 import { useAiStore, type AiTerminalContextSnapshot } from "./aiStore";
@@ -27,6 +37,16 @@ function deferred<T>() {
     resolve = innerResolve;
   });
   return { promise, resolve };
+}
+
+function emitAiChatEvent(eventName: string, payload: unknown) {
+  eventListeners.get(eventName)?.({ payload });
+}
+
+async function flushPromises() {
+  for (let index = 0; index < 8; index += 1) {
+    await Promise.resolve();
+  }
 }
 
 describe("aiStore", () => {
@@ -63,23 +83,9 @@ describe("aiStore", () => {
     expect(useAiStore.getState().contextSnapshot?.runtime_session_id).toBe("runtime-current");
   });
 
-  it("shows the user message immediately and streams the assistant response into the panel", async () => {
-    vi.useFakeTimers();
-    const chat = deferred<{
-      conversation_id: string;
-      provider_id: string;
-      provider_name: string;
-      model: string;
-      message: string;
-      pending_invocations: [];
-      executed_invocations: [];
-      response_redacted: boolean;
-      context_used: boolean;
-      tool_count: number;
-      generated_at_ms: number;
-    }>();
+  it("shows the user message immediately and applies real backend stream chunks into the panel", async () => {
     invokeMock.mockImplementation((command: string) => {
-      if (command === "ai_chat") return chat.promise;
+      if (command === "ai_chat_stream") return Promise.resolve({ chat_id: "chat-1", conversation_id: "conversation-1" });
       if (command === "ai_conversation_get") {
         return Promise.resolve({
           id: "conversation-1",
@@ -106,64 +112,51 @@ describe("aiStore", () => {
     });
 
     const request = useAiStore.getState().sendChat("测试", snapshot("runtime-1"));
+    await request;
 
     expect(useAiStore.getState().loading).toBe(true);
     expect(useAiStore.getState().messages).toEqual([
       expect.objectContaining({ role: "user", content: "测试", status: "complete" }),
       expect.objectContaining({ role: "assistant", content: "", status: "streaming" }),
     ]);
+    expect(invokeMock).toHaveBeenCalledWith("ai_chat_stream", {
+      request: expect.objectContaining({
+        message: "测试",
+        terminal_context: expect.objectContaining({ runtime_session_id: "runtime-1" }),
+      }),
+    });
 
-    chat.resolve({
+    emitAiChatEvent("ai-chat:chunk", { chat_id: "chat-1", conversation_id: "conversation-1", delta: "收" });
+    expect(useAiStore.getState().messages[1]).toEqual(expect.objectContaining({ content: "收", status: "streaming" }));
+
+    emitAiChatEvent("ai-chat:chunk", { chat_id: "chat-1", conversation_id: "conversation-1", delta: "到" });
+    expect(useAiStore.getState().messages[1]).toEqual(expect.objectContaining({ content: "收到", status: "streaming" }));
+
+    emitAiChatEvent("ai-chat:done", {
+      chat_id: "chat-1",
       conversation_id: "conversation-1",
-      provider_id: "provider-1",
-      provider_name: "Provider",
-      model: "model",
       message: "收到",
       pending_invocations: [],
       executed_invocations: [],
-      response_redacted: false,
       context_used: true,
-      tool_count: 1,
       generated_at_ms: 2,
     });
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushPromises();
 
     expect(useAiStore.getState().messages).toEqual([
       expect.objectContaining({ id: "persisted-user", role: "user", content: "测试", status: "complete" }),
-      expect.objectContaining({ id: "persisted-assistant", role: "assistant", content: "", status: "streaming" }),
+      expect.objectContaining({ id: "persisted-assistant", role: "assistant", content: "收到", status: "complete" }),
     ]);
-
-    await vi.advanceTimersByTimeAsync(20);
-    expect(useAiStore.getState().messages[1]).toEqual(expect.objectContaining({ content: "收", status: "streaming" }));
-
-    await vi.advanceTimersByTimeAsync(20);
-    expect(useAiStore.getState().messages[1]).toEqual(expect.objectContaining({ content: "收到", status: "complete" }));
     expect(useAiStore.getState().loading).toBe(false);
     expect(useAiStore.getState().conversationPreviews["conversation-1"]?.messages?.[1]).toEqual(
       expect.objectContaining({ content: "收到", status: "complete" }),
     );
-
-    await request;
-    vi.useRealTimers();
   });
 
-  it("cancels the current chat request and ignores its late response", async () => {
-    const chat = deferred<{
-      conversation_id: string;
-      provider_id: string;
-      provider_name: string;
-      model: string;
-      message: string;
-      pending_invocations: [];
-      executed_invocations: [];
-      response_redacted: boolean;
-      context_used: boolean;
-      tool_count: number;
-      generated_at_ms: number;
-    }>();
+  it("cancels the current chat stream and ignores late chunks", async () => {
     invokeMock.mockImplementation((command: string) => {
-      if (command === "ai_chat") return chat.promise;
+      if (command === "ai_chat_stream") return Promise.resolve({ chat_id: "chat-cancel", conversation_id: "conversation-1" });
+      if (command === "ai_chat_cancel") return Promise.resolve({ cancelled: true });
       if (command === "ai_conversation_get") {
         return Promise.resolve({
           id: "conversation-1",
@@ -184,30 +177,32 @@ describe("aiStore", () => {
     });
 
     const request = useAiStore.getState().sendChat("测试", snapshot("runtime-1"));
+    await request;
     expect(useAiStore.getState().loading).toBe(true);
+    emitAiChatEvent("ai-chat:chunk", { chat_id: "chat-cancel", conversation_id: "conversation-1", delta: "部" });
+    expect(useAiStore.getState().messages[1]).toEqual(expect.objectContaining({ content: "部" }));
 
     useAiStore.getState().cancelChat();
+    await Promise.resolve();
     expect(useAiStore.getState().loading).toBe(false);
     expect(useAiStore.getState().messages).toEqual([
       expect.objectContaining({ role: "user", content: "测试" }),
     ]);
+    expect(invokeMock).toHaveBeenCalledWith("ai_chat_cancel", { chatId: "chat-cancel" });
 
-    chat.resolve({
+    emitAiChatEvent("ai-chat:chunk", { chat_id: "chat-cancel", conversation_id: "conversation-1", delta: "迟到" });
+    emitAiChatEvent("ai-chat:done", {
+      chat_id: "chat-cancel",
       conversation_id: "conversation-1",
-      provider_id: "provider-1",
-      provider_name: "Provider",
-      model: "model",
-      message: "迟到响应",
+      message: "部迟到",
       pending_invocations: [],
       executed_invocations: [],
-      response_redacted: false,
       context_used: true,
-      tool_count: 1,
       generated_at_ms: 2,
     });
-    await request;
+    await flushPromises();
 
-    expect(useAiStore.getState().activeConversationId).toBe(null);
+    expect(useAiStore.getState().activeConversationId).toBe("conversation-1");
     expect(useAiStore.getState().messages).toEqual([
       expect.objectContaining({ role: "user", content: "测试" }),
     ]);

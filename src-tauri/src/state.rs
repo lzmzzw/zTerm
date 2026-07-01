@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::{
     services::{
         ai_chat_service::AiChatService,
+        ai_chat_stream_service::AiChatStreamService,
         ai_conversation_service::AiConversationService,
         ai_tool_service::{AiToolService, RuntimeAiToolWriter},
         command_completion_service::CommandCompletionService,
@@ -27,6 +28,7 @@ pub struct AppState {
     command_history_service: Arc<CommandHistoryService>,
     credential_service: CredentialService,
     llm_provider_test_stream_service: LlmProviderTestStreamService,
+    ai_chat_stream_service: AiChatStreamService,
     ai_chat_service: AiChatService,
     ai_conversation_service: AiConversationService,
     ai_tool_service: AiToolService,
@@ -50,6 +52,7 @@ impl AppState {
             command_completion_service: CommandCompletionService::new(),
             command_history_service,
             llm_provider_test_stream_service: LlmProviderTestStreamService::default(),
+            ai_chat_stream_service: AiChatStreamService::default(),
             ai_chat_service: AiChatService,
             ai_conversation_service: AiConversationService,
             ai_tool_service: AiToolService::with_writer(ai_tool_writer),
@@ -85,6 +88,10 @@ impl AppState {
 
     pub fn llm_provider_test_stream_service(&self) -> LlmProviderTestStreamService {
         self.llm_provider_test_stream_service.clone()
+    }
+
+    pub fn ai_chat_stream_service(&self) -> AiChatStreamService {
+        self.ai_chat_stream_service.clone()
     }
 
     pub fn ai_chat_service(&self) -> AiChatService {

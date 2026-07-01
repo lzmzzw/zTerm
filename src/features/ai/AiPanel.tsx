@@ -1,6 +1,6 @@
 // Author: Liz
 import { ArrowLeft, ArrowUp, ChevronDown, ChevronRight, History, Plus, ShieldCheck, Square, Trash2 } from "lucide-react";
-import { useId, useState, type KeyboardEvent } from "react";
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
 import { t } from "../settings/i18n";
@@ -70,6 +70,7 @@ export function AiPanel({
   const [panelView, setPanelView] = useState<"current" | "history">("current");
   const [expandedConversationIds, setExpandedConversationIds] = useState<string[]>([]);
   const [chatPrompt, setChatPrompt] = useState("");
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const promptId = useId();
   const canSendChat = providersAvailable && Boolean(chatPrompt.trim()) && !loading && Boolean(onSendChat);
   const canCancelChat = loading && Boolean(onCancelChat);
@@ -89,6 +90,17 @@ export function AiPanel({
         .join(" · ")
     : boundTarget;
   const historyConversations = conversations.filter((conversation) => conversation.id !== activeConversationId);
+
+  useLayoutEffect(() => {
+    if (panelView !== "current") return;
+    const messagesContainer = messagesContainerRef.current;
+    if (!messagesContainer) return;
+    if (typeof messagesContainer.scrollTo === "function") {
+      messagesContainer.scrollTo({ top: messagesContainer.scrollHeight, behavior: "auto" });
+      return;
+    }
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  }, [messages, panelView]);
 
   async function sendChat() {
     const message = chatPrompt.trim();
@@ -230,7 +242,7 @@ export function AiPanel({
         </div>
       ) : (
         <>
-          <div className="zt-ai-messages" aria-label="AI 会话消息">
+          <div className="zt-ai-messages" aria-label="AI 会话消息" ref={messagesContainerRef}>
             {messages.length === 0 ? <div className="zt-empty-line">{t(language, "noAiMessages")}</div> : null}
             {messages.map((message) => renderConversationMessage(message, language))}
           </div>
