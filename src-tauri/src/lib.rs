@@ -50,6 +50,8 @@ pub fn run() {
             commands::credential::llm_provider_delete,
             commands::credential::llm_provider_test,
             commands::credential::llm_provider_test_draft,
+            commands::credential::llm_provider_test_draft_stream,
+            commands::credential::llm_provider_test_draft_cancel,
             commands::ai::ai_chat,
             commands::ai::ai_terminal_context_snapshot,
             commands::ai::ai_tool_registry_list,

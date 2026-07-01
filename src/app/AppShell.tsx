@@ -173,7 +173,8 @@ export function AppShell() {
     readCredentialSecret,
     saveProvider,
     deleteProvider,
-    testProviderDraft,
+    startProviderDraftTestStream,
+    cancelProviderDraftTest,
     detectTerminalProfiles,
     setDefaultTerminalProfile,
   } = useSettingsStore(
@@ -191,7 +192,8 @@ export function AppShell() {
       readCredentialSecret: state.readCredentialSecret,
       saveProvider: state.saveProvider,
       deleteProvider: state.deleteProvider,
-      testProviderDraft: state.testProviderDraft,
+      startProviderDraftTestStream: state.startProviderDraftTestStream,
+      cancelProviderDraftTest: state.cancelProviderDraftTest,
       detectTerminalProfiles: state.detectTerminalProfiles,
       setDefaultTerminalProfile: state.setDefaultTerminalProfile,
     })),
@@ -1349,7 +1351,8 @@ export function AppShell() {
                 error={settingsError}
                 onSaveProvider={saveProvider}
                 onDeleteProvider={deleteProvider}
-                onTestProviderDraft={testProviderDraft}
+                onStartProviderDraftTest={startProviderDraftTestStream}
+                onCancelProviderDraftTest={cancelProviderDraftTest}
               />
             ) : null}
           </div>

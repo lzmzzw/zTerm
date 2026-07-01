@@ -210,7 +210,15 @@ impl CredentialService {
         &self,
         request: AiProviderDraftTestRequest,
     ) -> AppResult<AiProviderDraftTestResult> {
-        let prompt = required_text("测试输入", request.prompt)?;
+        let (profile, secret, prompt) = self.prepare_ai_provider_draft_test(&request)?;
+        crate::services::llm_provider_service::test_provider_draft_sync(&profile, &secret, &prompt)
+    }
+
+    pub fn prepare_ai_provider_draft_test(
+        &self,
+        request: &AiProviderDraftTestRequest,
+    ) -> AppResult<(AiProviderProfile, String, String)> {
+        let prompt = required_text("测试输入", &request.prompt)?;
         let profile = profile_from_draft_for_test(&request.draft)?;
         let secret = match request.draft.api_key.as_deref() {
             Some(secret) if !secret.trim().is_empty() => secret.trim().to_string(),
@@ -222,7 +230,7 @@ impl CredentialService {
                 _ => return Err(AppError::credential("AI Provider API Key 为空")),
             },
         };
-        crate::services::llm_provider_service::test_provider_draft_sync(&profile, &secret, &prompt)
+        Ok((profile, secret, prompt))
     }
 }
 

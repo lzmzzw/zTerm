@@ -5237,26 +5237,70 @@ button {
 }
 
 .zt-model-dialog {
-  width: min(620px, calc(100vw - 96px));
+  width: min(var(--zt-dialog-width-large), calc(100vw - 96px));
   height: min(var(--zt-dialog-height-large), calc(100vh - 96px));
 }
 
 .zt-model-form {
   display: grid;
-  align-content: start;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .zt-model-dialog-body {
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.zt-model-editor-main {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: 18px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 20px 24px;
+}
+
+.zt-model-config-section,
+.zt-model-test-section {
   display: grid;
   align-content: start;
-  gap: 10px;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.zt-model-config-section {
   overflow: auto;
-  padding: 14px 20px;
+  padding-right: 2px;
+}
+
+.zt-model-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.zt-model-form-wide,
+.zt-model-switch-row,
+.zt-model-message-line {
+  grid-column: 1 / -1;
+}
+
+.zt-model-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+  min-height: 34px;
 }
 
 .zt-model-form label {
@@ -5266,6 +5310,43 @@ button {
   color: var(--zt-text-secondary);
   font-size: var(--zt-font-size-ui);
   font-weight: 500;
+}
+
+.zt-model-test-section {
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.zt-model-test-input-label,
+.zt-model-test-output-label {
+  min-height: 0;
+}
+
+.zt-model-test-composer {
+  color: inherit;
+}
+
+.zt-model-test-input-box {
+  min-height: 146px;
+}
+
+.zt-model-test-input-box textarea {
+  min-height: 92px;
+  max-height: 160px;
+}
+
+.zt-model-test-composer-footer > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--zt-text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-model-test-output-label {
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .zt-model-form input:not(.zt-input),
@@ -5294,8 +5375,8 @@ button {
 }
 
 .zt-model-test-output {
-  min-height: 96px;
-  max-height: 220px;
+  min-height: 0;
+  height: 100%;
   overflow: auto;
   margin: 0;
   white-space: pre-wrap;
@@ -6076,6 +6157,26 @@ button {
   .zt-workspace-preview-dialog {
     width: min(var(--zt-dialog-width-large), calc(100vw - 32px));
     height: min(var(--zt-dialog-height-large), calc(100vh - 48px));
+  }
+
+  .zt-model-dialog {
+    width: min(var(--zt-dialog-width-large), calc(100vw - 32px));
+    height: min(var(--zt-dialog-height-large), calc(100vh - 48px));
+  }
+
+  .zt-model-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .zt-model-editor-main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(360px, 1fr);
+    overflow: auto;
+    padding: 12px;
+  }
+
+  .zt-model-config-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .zt-workspace-preview-layout-editor {

@@ -9,6 +9,7 @@ use crate::{
         command_completion_service::CommandCompletionService,
         command_history_service::CommandHistoryService,
         credential_service::CredentialService,
+        llm_provider_test_stream_service::LlmProviderTestStreamService,
         server_info_service::ServerInfoService,
         sftp_service::SftpService,
         ssh_command_service::SshCommandService,
@@ -25,6 +26,7 @@ pub struct AppState {
     command_completion_service: CommandCompletionService,
     command_history_service: Arc<CommandHistoryService>,
     credential_service: CredentialService,
+    llm_provider_test_stream_service: LlmProviderTestStreamService,
     ai_chat_service: AiChatService,
     ai_conversation_service: AiConversationService,
     ai_tool_service: AiToolService,
@@ -47,6 +49,7 @@ impl AppState {
         Self {
             command_completion_service: CommandCompletionService::new(),
             command_history_service,
+            llm_provider_test_stream_service: LlmProviderTestStreamService::default(),
             ai_chat_service: AiChatService,
             ai_conversation_service: AiConversationService,
             ai_tool_service: AiToolService::with_writer(ai_tool_writer),
@@ -78,6 +81,10 @@ impl AppState {
 
     pub fn credential_service(&self) -> CredentialService {
         self.credential_service.clone()
+    }
+
+    pub fn llm_provider_test_stream_service(&self) -> LlmProviderTestStreamService {
+        self.llm_provider_test_stream_service.clone()
     }
 
     pub fn ai_chat_service(&self) -> AiChatService {

@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use reqwest::StatusCode;
 use serde_json::{json, Value};
+use tokio::sync::oneshot;
 
 use crate::{
     error::{AppError, AppResult},
@@ -36,6 +37,12 @@ pub struct ProviderToolCall {
 pub struct ProviderToolChatResponse {
     pub message: String,
     pub tool_calls: Vec<ProviderToolCall>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderTextStreamResult {
+    Complete(String),
+    Cancelled(String),
 }
 
 pub fn select_enabled_provider(credentials: &CredentialService) -> AppResult<AiProviderProfile> {
@@ -159,6 +166,71 @@ pub async fn generate_text(
     extract_text(provider.kind, &value).ok_or_else(|| AppError::ai("LLM 响应中未找到文本内容"))
 }
 
+pub async fn generate_text_stream(
+    provider: &AiProviderProfile,
+    api_key: &str,
+    prompt: &str,
+    mut cancel: oneshot::Receiver<()>,
+    mut on_delta: impl FnMut(String) -> AppResult<()> + Send,
+) -> AppResult<ProviderTextStreamResult> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| AppError::ai(error.to_string()))?;
+    let mut response = send_provider_stream_request(&client, provider, api_key, prompt).await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|error| AppError::ai(redact_sensitive(&error.to_string())))?;
+        return Err(AppError::ai(format!(
+            "LLM Provider 返回 {}：{}",
+            status,
+            redact_sensitive(&response_error_excerpt(&body))
+        )));
+    }
+
+    let mut buffer = String::new();
+    let mut output = String::new();
+    loop {
+        tokio::select! {
+            _ = &mut cancel => {
+                return Ok(ProviderTextStreamResult::Cancelled(output));
+            }
+            chunk = response.chunk() => {
+                let Some(chunk) = chunk
+                    .map_err(|error| AppError::ai(redact_sensitive(&error.to_string())))?
+                else {
+                    break;
+                };
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+                for data in drain_sse_data(&mut buffer) {
+                    if let Some(delta) = extract_stream_delta(provider.kind, &data)? {
+                        output.push_str(&delta);
+                        on_delta(delta)?;
+                    }
+                }
+            }
+        }
+    }
+
+    if !buffer.trim().is_empty() {
+        for data in drain_remaining_sse_data(&mut buffer) {
+            if let Some(delta) = extract_stream_delta(provider.kind, &data)? {
+                output.push_str(&delta);
+                on_delta(delta)?;
+            }
+        }
+    }
+
+    if output.trim().is_empty() {
+        return Err(AppError::ai("LLM 响应中未找到文本内容"));
+    }
+
+    Ok(ProviderTextStreamResult::Complete(output))
+}
+
 pub async fn generate_tool_chat(
     provider: &AiProviderProfile,
     api_key: &str,
@@ -246,6 +318,58 @@ async fn send_provider_request(
         .await
         .map_err(|error| AppError::ai(redact_sensitive(&error.to_string())))?;
     Ok(ProviderResponse { status, body })
+}
+
+async fn send_provider_stream_request(
+    client: &reqwest::Client,
+    provider: &AiProviderProfile,
+    api_key: &str,
+    prompt: &str,
+) -> AppResult<reqwest::Response> {
+    let request = match provider.kind {
+        AiProviderKind::OpenAiChat => {
+            let request = client.post(provider_endpoint(&provider.base_url, "chat/completions"));
+            let request = apply_optional_bearer(request, api_key);
+            request.json(&json!({
+                "model": provider.model,
+                "messages": [
+                    { "role": "system", "content": system_prompt_for_mode(ProviderRequestMode::Text) },
+                    { "role": "user", "content": prompt }
+                ],
+                "max_tokens": max_tokens_for_mode(ProviderRequestMode::Text),
+                "temperature": 0.1,
+                "stream": true
+            }))
+        }
+        AiProviderKind::OpenAiResponses => {
+            let request = client.post(provider_endpoint(&provider.base_url, "responses"));
+            let request = apply_optional_bearer(request, api_key);
+            request.json(&json!({
+                "model": provider.model,
+                "input": prompt,
+                "max_output_tokens": max_tokens_for_mode(ProviderRequestMode::Text),
+                "temperature": 0.1,
+                "stream": true
+            }))
+        }
+        AiProviderKind::Anthropic => client
+            .post(provider_endpoint(&provider.base_url, "messages"))
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&json!({
+                "model": provider.model,
+                "max_tokens": max_tokens_for_mode(ProviderRequestMode::Text),
+                "temperature": 0.1,
+                "stream": true,
+                "messages": [
+                    { "role": "user", "content": prompt }
+                ]
+            })),
+    };
+    request
+        .send()
+        .await
+        .map_err(|error| AppError::ai(redact_sensitive(&error.to_string())))
 }
 
 async fn send_tool_request(
@@ -633,6 +757,85 @@ fn extract_text(kind: AiProviderKind, value: &Value) -> Option<String> {
     }
 }
 
+fn extract_stream_delta(kind: AiProviderKind, data: &str) -> AppResult<Option<String>> {
+    let data = data.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return Ok(None);
+    }
+    let value = serde_json::from_str::<Value>(data)
+        .map_err(|error| AppError::ai(format!("LLM 流式响应不是有效 JSON: {error}")))?;
+    let delta = match kind {
+        AiProviderKind::OpenAiChat => value
+            .pointer("/choices/0/delta/content")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        AiProviderKind::OpenAiResponses => {
+            if value.get("type").and_then(Value::as_str) == Some("response.output_text.delta") {
+                value
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            } else {
+                None
+            }
+        }
+        AiProviderKind::Anthropic => {
+            if value.get("type").and_then(Value::as_str) == Some("content_block_delta") {
+                value
+                    .pointer("/delta/text")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned)
+            } else {
+                None
+            }
+        }
+    };
+    Ok(delta)
+}
+
+fn drain_sse_data(buffer: &mut String) -> Vec<String> {
+    let mut events = Vec::new();
+    while let Some((index, separator_len)) = find_sse_separator(buffer) {
+        let frame = buffer[..index].to_string();
+        buffer.drain(..index + separator_len);
+        if let Some(data) = sse_frame_data(&frame) {
+            events.push(data);
+        }
+    }
+    events
+}
+
+fn drain_remaining_sse_data(buffer: &mut String) -> Vec<String> {
+    let frame = std::mem::take(buffer);
+    sse_frame_data(&frame).into_iter().collect()
+}
+
+fn find_sse_separator(buffer: &str) -> Option<(usize, usize)> {
+    let lf = buffer.find("\n\n").map(|index| (index, 2));
+    let crlf = buffer.find("\r\n\r\n").map(|index| (index, 4));
+    match (lf, crlf) {
+        (Some(left), Some(right)) => Some(if left.0 <= right.0 { left } else { right }),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
+fn sse_frame_data(frame: &str) -> Option<String> {
+    let lines = frame
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_end_matches('\r');
+            line.strip_prefix("data:")
+                .map(|data| data.trim_start().to_string())
+        })
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
 fn extract_openai_responses_text(value: &Value) -> Option<String> {
     if let Some(text) = value.pointer("/output_text").and_then(Value::as_str) {
         return Some(text.to_string());
@@ -708,7 +911,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        extract_text, openai_responses_tools, parse_tool_response, select_enabled_provider,
+        extract_stream_delta, extract_text, openai_responses_tools, parse_tool_response,
+        select_enabled_provider,
     };
     use crate::models::{
         ai::{AiToolDefinition, RiskLevel},
@@ -859,6 +1063,56 @@ mod tests {
         assert_eq!(
             super::provider_endpoint("http://example.test/v1/responses", "responses"),
             "http://example.test/v1/responses"
+        );
+    }
+
+    #[test]
+    fn stream_delta_extracts_openai_chat_content() {
+        let delta = extract_stream_delta(
+            AiProviderKind::OpenAiChat,
+            r#"{"choices":[{"delta":{"content":"pong"}}]}"#,
+        )
+        .expect("chat stream chunk should parse");
+
+        assert_eq!(delta.as_deref(), Some("pong"));
+    }
+
+    #[test]
+    fn stream_delta_extracts_openai_responses_output_text_delta() {
+        let delta = extract_stream_delta(
+            AiProviderKind::OpenAiResponses,
+            r#"{"type":"response.output_text.delta","delta":"pong"}"#,
+        )
+        .expect("responses stream chunk should parse");
+
+        assert_eq!(delta.as_deref(), Some("pong"));
+    }
+
+    #[test]
+    fn stream_delta_extracts_anthropic_text_delta() {
+        let delta = extract_stream_delta(
+            AiProviderKind::Anthropic,
+            r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"pong"}}"#,
+        )
+        .expect("anthropic stream chunk should parse");
+
+        assert_eq!(delta.as_deref(), Some("pong"));
+    }
+
+    #[test]
+    fn stream_delta_ignores_done_marker_and_non_text_events() {
+        assert_eq!(
+            extract_stream_delta(AiProviderKind::OpenAiChat, "[DONE]")
+                .expect("done marker should be accepted"),
+            None
+        );
+        assert_eq!(
+            extract_stream_delta(
+                AiProviderKind::OpenAiResponses,
+                r#"{"type":"response.created","response":{"id":"resp_1"}}"#,
+            )
+            .expect("non text responses event should be accepted"),
+            None
         );
     }
 

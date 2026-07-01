@@ -68,6 +68,14 @@ export interface AiProviderDraftTestResult {
   output: string;
 }
 
+export interface AiProviderDraftTestStreamStartResult {
+  test_id: string;
+}
+
+export interface AiProviderDraftTestCancelResult {
+  cancelled: boolean;
+}
+
 export interface ShortcutBinding {
   action_id: string;
   accelerator: string;
@@ -130,6 +138,8 @@ interface SettingsState {
   deleteProvider: (id: string) => Promise<void>;
   testProvider: (id: string) => Promise<string>;
   testProviderDraft: (request: AiProviderDraftTestRequest) => Promise<AiProviderDraftTestResult>;
+  startProviderDraftTestStream: (request: AiProviderDraftTestRequest) => Promise<AiProviderDraftTestStreamStartResult>;
+  cancelProviderDraftTest: (testId: string) => Promise<AiProviderDraftTestCancelResult>;
   detectTerminalProfiles: () => Promise<TerminalProfile[]>;
   setDefaultTerminalProfile: (draft: TerminalProfileDraft) => Promise<TerminalProfile>;
 }
@@ -198,6 +208,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
   async testProviderDraft(request) {
     return invoke<AiProviderDraftTestResult>("llm_provider_test_draft", { request });
+  },
+  async startProviderDraftTestStream(request) {
+    return invoke<AiProviderDraftTestStreamStartResult>("llm_provider_test_draft_stream", { request });
+  },
+  async cancelProviderDraftTest(testId) {
+    return invoke<AiProviderDraftTestCancelResult>("llm_provider_test_draft_cancel", { testId });
   },
   async detectTerminalProfiles() {
     const profiles = await invoke<TerminalProfile[]>("terminal_profile_detect");

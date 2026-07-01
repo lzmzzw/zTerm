@@ -415,6 +415,8 @@ vi.mock("../features/settings/settingsStore", () => {
     deleteProvider: storeMocks.asyncNoop,
     testProvider: vi.fn().mockResolvedValue("ok"),
     testProviderDraft: vi.fn().mockResolvedValue({ ok: true, message: "ok", output: "pong" }),
+    startProviderDraftTestStream: vi.fn().mockResolvedValue({ test_id: "test-1" }),
+    cancelProviderDraftTest: vi.fn().mockResolvedValue({ cancelled: true }),
     detectTerminalProfiles: vi.fn().mockResolvedValue([]),
     setDefaultTerminalProfile: storeMocks.asyncNoop,
   });

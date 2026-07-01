@@ -1,6 +1,7 @@
 // Author: Liz
-import { Pencil, Plus, Save, Star, TestTube2, Trash2 } from "lucide-react";
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { ArrowUp, Pencil, Plus, Save, Square, Star, Trash2 } from "lucide-react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
 import {
@@ -15,7 +16,8 @@ import {
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 import type {
   AiProviderDraftTestRequest,
-  AiProviderDraftTestResult,
+  AiProviderDraftTestCancelResult,
+  AiProviderDraftTestStreamStartResult,
   AiProviderKind,
   AiProviderProfile,
   AiProviderProfileDraft,
@@ -27,8 +29,37 @@ interface ModelManagerPanelProps {
   error: string | null;
   onSaveProvider: (draft: AiProviderProfileDraft) => Promise<unknown> | unknown;
   onDeleteProvider: (id: string) => Promise<unknown> | unknown;
-  onTestProviderDraft: (request: AiProviderDraftTestRequest) => Promise<AiProviderDraftTestResult> | AiProviderDraftTestResult;
+  onStartProviderDraftTest: (
+    request: AiProviderDraftTestRequest,
+  ) => Promise<AiProviderDraftTestStreamStartResult> | AiProviderDraftTestStreamStartResult;
+  onCancelProviderDraftTest: (testId: string) => Promise<AiProviderDraftTestCancelResult> | AiProviderDraftTestCancelResult;
 }
+
+interface ProviderDraftTestChunkEvent {
+  test_id: string;
+  delta: string;
+}
+
+interface ProviderDraftTestDoneEvent {
+  test_id: string;
+  message: string;
+  output: string;
+}
+
+interface ProviderDraftTestErrorEvent {
+  test_id: string;
+  message: string;
+}
+
+interface ProviderDraftTestCancelledEvent {
+  test_id: string;
+}
+
+type PendingProviderTestEvent =
+  | { kind: "chunk"; payload: ProviderDraftTestChunkEvent }
+  | { kind: "done"; payload: ProviderDraftTestDoneEvent }
+  | { kind: "error"; payload: ProviderDraftTestErrorEvent }
+  | { kind: "cancelled"; payload: ProviderDraftTestCancelledEvent };
 
 interface FormState {
   id: string | null;
@@ -73,7 +104,8 @@ export function ModelManagerPanel({
   error,
   onSaveProvider,
   onDeleteProvider,
-  onTestProviderDraft,
+  onStartProviderDraftTest,
+  onCancelProviderDraftTest,
 }: ModelManagerPanelProps) {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -81,7 +113,11 @@ export function ModelManagerPanel({
   const [formError, setFormError] = useState<string | null>(null);
   const [testOutput, setTestOutput] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
+  const [testStarting, setTestStartingState] = useState(false);
+  const [activeTestId, setActiveTestIdState] = useState<string | null>(null);
+  const testStartingRef = useRef(false);
+  const activeTestIdRef = useRef<string | null>(null);
+  const pendingTestEventsRef = useRef<PendingProviderTestEvent[]>([]);
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AiProviderProfile | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -89,9 +125,63 @@ export function ModelManagerPanel({
 
   const editingProvider = providers.find((provider) => provider.id === form.id) ?? null;
   const isEditing = Boolean(form.id);
+  const testing = testStarting || activeTestId !== null;
 
   function patchForm(patch: Partial<FormState>) {
     setForm((current) => ({ ...current, ...patch }));
+  }
+
+  function setActiveTestId(testId: string | null) {
+    activeTestIdRef.current = testId;
+    setActiveTestIdState(testId);
+  }
+
+  function setTestStarting(testing: boolean) {
+    testStartingRef.current = testing;
+    setTestStartingState(testing);
+  }
+
+  function applyProviderTestEvent(event: PendingProviderTestEvent) {
+    if (activeTestIdRef.current !== event.payload.test_id) return;
+    if (event.kind === "chunk") {
+      setTestOutput((current) => `${current ?? ""}${event.payload.delta}`);
+      return;
+    }
+    if (event.kind === "done") {
+      setMessage(event.payload.message || "模型测试通过");
+      setTestOutput(event.payload.output || "模型未返回文本");
+      setActiveTestId(null);
+      return;
+    }
+    if (event.kind === "error") {
+      setFormError(event.payload.message);
+      setTestOutput(event.payload.message);
+      setActiveTestId(null);
+      return;
+    }
+    setTestOutput((current) => {
+      const output = current?.trim() ? current : "";
+      return output ? `${output}\n\n已取消` : "已取消";
+    });
+    setActiveTestId(null);
+  }
+
+  function enqueueOrApplyProviderTestEvent(event: PendingProviderTestEvent) {
+    if (activeTestIdRef.current === event.payload.test_id) {
+      applyProviderTestEvent(event);
+      return;
+    }
+    if (testStartingRef.current && activeTestIdRef.current === null) {
+      pendingTestEventsRef.current.push(event);
+    }
+  }
+
+  function replayPendingProviderTestEvents(testId: string) {
+    const pendingEvents = pendingTestEventsRef.current;
+    pendingTestEventsRef.current = pendingEvents.filter((event) => event.payload.test_id !== testId);
+    pendingEvents
+      .filter((event) => event.payload.test_id === testId)
+      .forEach((event) => applyProviderTestEvent(event));
   }
 
   function openCreateEditor() {
@@ -100,6 +190,8 @@ export function ModelManagerPanel({
     setMessage(null);
     setFormError(null);
     setTestOutput(null);
+    setActiveTestId(null);
+    setTestStarting(false);
     setPendingDelete(null);
   }
 
@@ -120,6 +212,8 @@ export function ModelManagerPanel({
     setMessage(null);
     setFormError(null);
     setTestOutput(null);
+    setActiveTestId(null);
+    setTestStarting(false);
     setPendingDelete(null);
   }
 
@@ -170,6 +264,7 @@ export function ModelManagerPanel({
       setEditorOpen(false);
       setForm({ ...emptyForm, testInput: form.testInput.trim() ? form.testInput : emptyForm.testInput });
       setTestOutput(null);
+      setActiveTestId(null);
     } catch (saveError) {
       setFormError(unknownErrorMessage(saveError, "保存模型失败", panelErrorMessageOptions));
     } finally {
@@ -177,7 +272,7 @@ export function ModelManagerPanel({
     }
   }
 
-  async function testDraft() {
+  async function startDraftTest() {
     const draft = buildDraft();
     const prompt = form.testInput.trim();
     if (!draft) return;
@@ -185,20 +280,40 @@ export function ModelManagerPanel({
       setFormError("请填写测试输入");
       return;
     }
-    setTesting(true);
+    setTestStarting(true);
     setFormError(null);
     setMessage(null);
-    setTestOutput("测试中...");
+    setTestOutput("");
+    pendingTestEventsRef.current = [];
     try {
-      const result = await onTestProviderDraft({ draft, prompt });
-      setMessage(result.message || "模型测试通过");
-      setTestOutput(result.output || "模型未返回文本");
+      const result = await onStartProviderDraftTest({ draft, prompt });
+      setActiveTestId(result.test_id);
+      replayPendingProviderTestEvents(result.test_id);
     } catch (testError) {
       const message = unknownErrorMessage(testError, "测试模型失败", panelErrorMessageOptions);
       setFormError(message);
       setTestOutput(message);
+      pendingTestEventsRef.current = [];
     } finally {
-      setTesting(false);
+      setTestStarting(false);
+    }
+  }
+
+  async function cancelDraftTest() {
+    const testId = activeTestIdRef.current;
+    if (!testId) return;
+    try {
+      const result = await onCancelProviderDraftTest(testId);
+      if (result.cancelled && activeTestIdRef.current === testId) {
+        setTestOutput((current) => {
+          const output = current?.trim() ? current : "";
+          return output ? `${output}\n\n已取消` : "已取消";
+        });
+        setActiveTestId(null);
+      }
+    } catch (cancelError) {
+      const message = unknownErrorMessage(cancelError, "取消模型测试失败", panelErrorMessageOptions);
+      setFormError(message);
     }
   }
 
@@ -239,6 +354,40 @@ export function ModelManagerPanel({
     window.addEventListener("click", closeMenu);
     return () => window.removeEventListener("click", closeMenu);
   }, [contextMenu]);
+
+  useEffect(() => {
+    let disposed = false;
+    const unlistenFns: UnlistenFn[] = [];
+
+    async function bindProviderTestEvents() {
+      const chunk = await listen<ProviderDraftTestChunkEvent>("llm-provider-test:chunk", (event) => {
+        enqueueOrApplyProviderTestEvent({ kind: "chunk", payload: event.payload });
+      });
+      const done = await listen<ProviderDraftTestDoneEvent>("llm-provider-test:done", (event) => {
+        enqueueOrApplyProviderTestEvent({ kind: "done", payload: event.payload });
+      });
+      const error = await listen<ProviderDraftTestErrorEvent>("llm-provider-test:error", (event) => {
+        enqueueOrApplyProviderTestEvent({ kind: "error", payload: event.payload });
+      });
+      const cancelled = await listen<ProviderDraftTestCancelledEvent>("llm-provider-test:cancelled", (event) => {
+        enqueueOrApplyProviderTestEvent({ kind: "cancelled", payload: event.payload });
+      });
+      if (disposed) {
+        chunk();
+        done();
+        error();
+        cancelled();
+        return;
+      }
+      unlistenFns.push(chunk, done, error, cancelled);
+    }
+
+    void bindProviderTestEvents();
+    return () => {
+      disposed = true;
+      unlistenFns.forEach((unlisten) => unlisten());
+    };
+  }, []);
 
   return (
     <section
@@ -300,18 +449,18 @@ export function ModelManagerPanel({
         <ZtDialog
           ariaLabel="模型配置"
           title={isEditing ? "编辑模型" : "新增模型"}
-          size="medium"
+          size="large"
           className="zt-model-dialog"
           bodyClassName="zt-model-dialog-body"
           onClose={closeEditor}
+          closeDisabled={testing || saving}
           closeLabel="关闭模型配置"
           footer={
             <>
-              <ZtButton disabled={testing || loading} onClick={() => void testDraft()}>
-                <TestTube2 size={14} aria-hidden="true" />
-                {testing ? "测试中" : "测试模型"}
+              <ZtButton disabled={testing || saving} onClick={closeEditor}>
+                取消
               </ZtButton>
-              <ZtButton form={editorFormId} type="submit" disabled={saving || loading} variant="primary">
+              <ZtButton form={editorFormId} type="submit" disabled={saving || loading || testing} variant="primary">
                 <Save size={14} aria-hidden="true" />
                 {saving ? "保存中" : "保存模型"}
               </ZtButton>
@@ -319,60 +468,122 @@ export function ModelManagerPanel({
           }
         >
           <form id={editorFormId} className="zt-model-form" onSubmit={(event) => void saveProvider(event)}>
-            {formError ? <p className="zt-session-error">{formError}</p> : null}
-            {message ? <p className="zt-settings-status">{message}</p> : null}
-            <label>
-              <span>模型名称</span>
-              <ZtInput aria-label="模型名称" value={form.name} onChange={(event) => patchForm({ name: event.currentTarget.value })} />
-            </label>
-            <label>
-              <span>协议类型</span>
-              <ZtSelect
-                ariaLabel="协议类型"
-                value={form.kind}
-                options={providerKindOptions}
-                onChange={(nextValue) => patchForm({ kind: nextValue as AiProviderKind })}
-              />
-            </label>
-            <label>
-              <span>模型 URL</span>
-              <ZtInput aria-label="模型 URL" value={form.baseUrl} onChange={(event) => patchForm({ baseUrl: event.currentTarget.value })} />
-            </label>
-            <label>
-              <span>模型标识</span>
-              <ZtInput aria-label="模型标识" value={form.model} onChange={(event) => patchForm({ model: event.currentTarget.value })} />
-            </label>
-            <label>
-              <span>API Key{form.kind === "anthropic" ? "" : "（可选）"}</span>
-              <ZtInput
-                aria-label="API Key"
-                type="password"
-                placeholder={editingProvider?.api_key_ref ? "留空则保留已保存 Key" : ""}
-                value={form.apiKey}
-                onChange={(event) => patchForm({ apiKey: event.currentTarget.value })}
-              />
-            </label>
-            <ZtSwitch label="启用" checked={form.enabled} onChange={(checked) => patchForm({ enabled: checked })} />
-            <ZtSwitch label="默认模型" checked={form.isDefault} onChange={(checked) => patchForm({ isDefault: checked })} />
-            <label>
-              <span>测试输入</span>
-              <ZtTextarea
-                aria-label="测试输入"
-                rows={4}
-                value={form.testInput}
-                onChange={(event) => patchForm({ testInput: event.currentTarget.value })}
-              />
-            </label>
-            <label>
-              <span>测试输出</span>
-              <ZtTextarea
-                aria-label="测试输出"
-                className="zt-model-test-output"
-                readOnly
-                rows={5}
-                value={testOutput ?? "等待测试输出"}
-              />
-            </label>
+            <div className="zt-model-editor-main">
+              <section className="zt-model-config-section" aria-label="模型基础配置">
+                {formError ? <p className="zt-session-error zt-model-message-line">{formError}</p> : null}
+                {message ? <p className="zt-settings-status zt-model-message-line">{message}</p> : null}
+                <div className="zt-model-config-grid">
+                  <label>
+                    <span>模型名称</span>
+                    <ZtInput
+                      aria-label="模型名称"
+                      disabled={testing}
+                      value={form.name}
+                      onChange={(event) => patchForm({ name: event.currentTarget.value })}
+                    />
+                  </label>
+                  <label>
+                    <span>协议类型</span>
+                    <ZtSelect
+                      ariaLabel="协议类型"
+                      value={form.kind}
+                      options={providerKindOptions}
+                      disabled={testing}
+                      onChange={(nextValue) => patchForm({ kind: nextValue as AiProviderKind })}
+                    />
+                  </label>
+                  <label className="zt-model-form-wide">
+                    <span>模型 URL</span>
+                    <ZtInput
+                      aria-label="模型 URL"
+                      disabled={testing}
+                      value={form.baseUrl}
+                      onChange={(event) => patchForm({ baseUrl: event.currentTarget.value })}
+                    />
+                  </label>
+                  <label>
+                    <span>模型标识</span>
+                    <ZtInput
+                      aria-label="模型标识"
+                      disabled={testing}
+                      value={form.model}
+                      onChange={(event) => patchForm({ model: event.currentTarget.value })}
+                    />
+                  </label>
+                  <label>
+                    <span>API Key{form.kind === "anthropic" ? "" : "（可选）"}</span>
+                    <ZtInput
+                      aria-label="API Key"
+                      type="password"
+                      disabled={testing}
+                      placeholder={editingProvider?.api_key_ref ? "留空则保留已保存 Key" : ""}
+                      value={form.apiKey}
+                      onChange={(event) => patchForm({ apiKey: event.currentTarget.value })}
+                    />
+                  </label>
+                  <div className="zt-model-switch-row">
+                    <ZtSwitch label="启用" checked={form.enabled} disabled={testing} onChange={(checked) => patchForm({ enabled: checked })} />
+                    <ZtSwitch
+                      label="默认模型"
+                      checked={form.isDefault}
+                      disabled={testing}
+                      onChange={(checked) => patchForm({ isDefault: checked })}
+                    />
+                  </div>
+                </div>
+              </section>
+              <section className="zt-model-test-section" aria-label="模型测试">
+                <label className="zt-model-test-input-label">
+                  <span>测试输入</span>
+                  <div className="zt-ai-prompt zt-model-test-composer">
+                    <div className="zt-ai-composer-box zt-model-test-input-box">
+                      <textarea
+                        aria-label="测试输入"
+                        disabled={testing}
+                        value={form.testInput}
+                        onChange={(event) => patchForm({ testInput: event.currentTarget.value })}
+                      />
+                      <div className="zt-ai-composer-footer zt-model-test-composer-footer">
+                        <span>{testing ? "测试中" : "单轮测试"}</span>
+                        {testing ? (
+                          <button
+                            type="button"
+                            className="zt-ai-send is-cancel"
+                            aria-label="取消测试"
+                            title="取消测试"
+                            disabled={!activeTestId}
+                            onClick={() => void cancelDraftTest()}
+                          >
+                            <Square size={14} fill="currentColor" aria-hidden="true" />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="zt-ai-send"
+                            aria-label="发送测试消息"
+                            title="发送测试消息"
+                            disabled={loading || saving || !form.testInput.trim()}
+                            onClick={() => void startDraftTest()}
+                          >
+                            <ArrowUp size={18} strokeWidth={2.6} aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </label>
+                <label className="zt-model-test-output-label">
+                  <span>测试输出</span>
+                  <ZtTextarea
+                    aria-label="测试输出"
+                    className="zt-model-test-output"
+                    readOnly
+                    rows={10}
+                    value={testOutput === "" && testing ? "测试中..." : testOutput ?? "等待测试输出"}
+                  />
+                </label>
+              </section>
+            </div>
           </form>
         </ZtDialog>
       ) : null}
