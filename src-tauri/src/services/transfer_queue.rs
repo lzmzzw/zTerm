@@ -12,7 +12,8 @@ use tokio::sync::Notify;
 use crate::{
     error::{AppError, AppResult},
     models::sftp::{
-        TransferConflictPolicy, TransferDirection, TransferKind, TransferStatus, TransferTask,
+        TransferConflictPolicy, TransferDirection, TransferEndpoint, TransferKind, TransferStatus,
+        TransferTask, TransferTaskOrigin,
     },
     storage::{sqlite::SqliteStore, transfers},
 };
@@ -101,6 +102,35 @@ impl TransferQueue {
             kind,
             conflict_policy,
             total_bytes,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn enqueue_with_endpoints(
+        &self,
+        saved_session_id: &str,
+        direction: TransferDirection,
+        local_path: &str,
+        remote_path: &str,
+        kind: Option<TransferKind>,
+        conflict_policy: TransferConflictPolicy,
+        total_bytes: u64,
+        task_origin: TransferTaskOrigin,
+        source_endpoint: &TransferEndpoint,
+        destination_endpoint: &TransferEndpoint,
+    ) -> AppResult<TransferTask> {
+        transfers::insert_transfer_task_with_endpoints(
+            self.store.as_ref(),
+            saved_session_id,
+            direction,
+            local_path,
+            remote_path,
+            kind,
+            conflict_policy,
+            total_bytes,
+            task_origin,
+            source_endpoint,
+            destination_endpoint,
         )
     }
 

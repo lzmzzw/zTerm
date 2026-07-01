@@ -5,7 +5,10 @@ use zterm_lib::{
     error::AppError,
     models::{
         session::{AuthMode, SavedSessionDraft, SessionType},
-        sftp::{TransferConflictPolicy, TransferDirection, TransferKind, TransferStatus},
+        sftp::{
+            TransferConflictPolicy, TransferDirection, TransferEndpoint, TransferEndpointKind,
+            TransferKind, TransferStatus, TransferTaskOrigin,
+        },
     },
     services::transfer_queue::TransferQueue,
     storage::{sessions::save_session, sqlite::SqliteStore, transfers},
@@ -80,6 +83,94 @@ fn transfer_queue_records_progress_failure_and_retry() {
     let list = transfers::list_transfer_tasks(store.as_ref(), Some(&session.id), 20)
         .expect("transfers should list");
     assert_eq!(list, vec![retry]);
+}
+
+#[test]
+fn transfer_queue_records_file_transfer_endpoints_without_polluting_sftp_panel_lists() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite store should open"));
+    let source_session =
+        save_session(store.as_ref(), ssh_draft()).expect("source session should save");
+    let destination_session = save_session(
+        store.as_ref(),
+        SavedSessionDraft {
+            id: None,
+            name: "SFTP Destination".to_string(),
+            host: "destination.example.test".to_string(),
+            ..ssh_draft()
+        },
+    )
+    .expect("destination session should save");
+    let queue = TransferQueue::from_storage(Arc::clone(&store));
+
+    let sftp_panel_task = queue
+        .enqueue(
+            &source_session.id,
+            TransferDirection::Upload,
+            "C:/tmp/local.txt",
+            "/tmp/remote.txt",
+            Some(TransferKind::File),
+            TransferConflictPolicy::Overwrite,
+            10,
+        )
+        .expect("legacy SFTP panel task should enqueue");
+    let source_endpoint = TransferEndpoint {
+        kind: TransferEndpointKind::Ssh,
+        saved_session_id: Some(source_session.id.clone()),
+        path: "/var/app.log".to_string(),
+    };
+    let destination_endpoint = TransferEndpoint {
+        kind: TransferEndpointKind::Ssh,
+        saved_session_id: Some(destination_session.id.clone()),
+        path: "/backup/app.log".to_string(),
+    };
+
+    let file_transfer_task = queue
+        .enqueue_with_endpoints(
+            &source_session.id,
+            TransferDirection::Upload,
+            "/var/app.log",
+            "/backup/app.log",
+            Some(TransferKind::File),
+            TransferConflictPolicy::Rename,
+            0,
+            TransferTaskOrigin::FileTransfer,
+            &source_endpoint,
+            &destination_endpoint,
+        )
+        .expect("file transfer task should enqueue");
+
+    assert_eq!(
+        file_transfer_task.task_origin,
+        TransferTaskOrigin::FileTransfer
+    );
+    assert_eq!(file_transfer_task.source_endpoint, source_endpoint);
+    assert_eq!(
+        file_transfer_task.destination_endpoint,
+        destination_endpoint
+    );
+    assert_eq!(
+        file_transfer_task.conflict_policy,
+        TransferConflictPolicy::Rename
+    );
+
+    let source_sftp_panel_tasks =
+        transfers::list_transfer_tasks(store.as_ref(), Some(&source_session.id), 20)
+            .expect("source SFTP panel tasks should list");
+    assert_eq!(source_sftp_panel_tasks, vec![sftp_panel_task]);
+
+    let destination_sftp_panel_tasks =
+        transfers::list_transfer_tasks(store.as_ref(), Some(&destination_session.id), 20)
+            .expect("destination SFTP panel tasks should list");
+    assert!(destination_sftp_panel_tasks.is_empty());
+
+    let global_tasks = transfers::list_transfer_tasks(store.as_ref(), None, 20)
+        .expect("global transfer tasks should list");
+    assert!(global_tasks
+        .iter()
+        .any(|task| task.id == file_transfer_task.id));
+    assert!(global_tasks
+        .iter()
+        .any(|task| task.id == source_sftp_panel_tasks[0].id));
 }
 
 #[test]

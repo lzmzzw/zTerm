@@ -1,8 +1,9 @@
 // Author: Liz
 import { ChevronDown, ChevronUp, Pause, Play, RotateCcw, Trash2, XCircle } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
-import type { TransferTask } from "./fileStore";
+import type { TransferStatus, TransferTask } from "./fileStore";
+import { legacyTransferDestinationPath, legacyTransferSourcePath } from "./fileTransferPaths";
 
 interface TransferPanelProps {
   collapsible?: boolean;
@@ -12,9 +13,13 @@ interface TransferPanelProps {
   onPause: (taskId: string) => Promise<void> | void;
   onRetry: (taskId: string) => Promise<void> | void;
   onResume: (taskId: string) => Promise<void> | void;
+  onClearAll?: (taskIds: string[]) => Promise<void> | void;
+  onPauseAll?: (taskIds: string[]) => Promise<void> | void;
+  onResumeAll?: (taskIds: string[]) => Promise<void> | void;
 }
 
 const activeTransferStatuses = new Set<TransferTask["status"]>(["queued", "running", "paused"]);
+const pausableTransferStatuses = new Set<TransferStatus>(["queued", "running"]);
 
 export function TransferPanel({
   collapsible = false,
@@ -24,18 +29,15 @@ export function TransferPanel({
   onPause,
   onRetry,
   onResume,
+  onClearAll,
+  onPauseAll,
+  onResumeAll,
 }: TransferPanelProps) {
   const activeCount = tasks.filter((task) => activeTransferStatuses.has(task.status)).length;
-  const previousActiveCountRef = useRef(activeCount);
-  const [collapsed, setCollapsed] = useState(collapsible && tasks.length === 0);
-
-  useEffect(() => {
-    if (!collapsible) return;
-    if (activeCount > 0 && previousActiveCountRef.current === 0) {
-      setCollapsed(false);
-    }
-    previousActiveCountRef.current = activeCount;
-  }, [activeCount, collapsible]);
+  const pausableTaskIds = tasks.filter((task) => pausableTransferStatuses.has(task.status)).map((task) => task.id);
+  const resumableTaskIds = tasks.filter((task) => task.status === "paused").map((task) => task.id);
+  const allTaskIds = tasks.map((task) => task.id);
+  const [collapsed, setCollapsed] = useState(collapsible);
 
   const list = renderTransferList(tasks, onRetry, onPause, onResume, onCancel, onDelete);
 
@@ -48,6 +50,48 @@ export function TransferPanel({
         <div className="zt-transfer-dock-header">
           <strong>传输任务</strong>
           <span>{activeCount > 0 ? `${activeCount} 个进行中` : `${tasks.length} 个任务`}</span>
+          {onPauseAll || onResumeAll || onClearAll ? (
+            <div className="zt-transfer-dock-actions" aria-label="传输任务批量操作">
+              {onPauseAll ? (
+                <button
+                  type="button"
+                  aria-label="暂停全部传输任务"
+                  title="暂停全部"
+                  disabled={pausableTaskIds.length === 0}
+                  onClick={() => void onPauseAll(pausableTaskIds)}
+                >
+                  <Pause size={14} aria-hidden="true" />
+                </button>
+              ) : null}
+              {onResumeAll ? (
+                <button
+                  type="button"
+                  aria-label="恢复全部传输任务"
+                  title="恢复全部"
+                  disabled={resumableTaskIds.length === 0}
+                  onClick={() => void onResumeAll(resumableTaskIds)}
+                >
+                  <Play size={14} aria-hidden="true" />
+                </button>
+              ) : null}
+              {onClearAll ? (
+                <button
+                  type="button"
+                  aria-label="清理全部传输任务"
+                  title="清理全部"
+                  disabled={allTaskIds.length === 0}
+                  onClick={() => {
+                    if (!window.confirm("清理全部任务会取消进行中的传输并删除任务记录，确认清理？")) {
+                      return;
+                    }
+                    void onClearAll(allTaskIds);
+                  }}
+                >
+                  <Trash2 size={14} aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <button
             type="button"
             aria-label={collapsed ? "展开传输任务" : "折叠传输任务"}
@@ -81,11 +125,13 @@ function renderTransferList(
     <div className="zt-transfer-list" aria-label="传输任务列表">
       {tasks.map((task) => {
         const percent = task.total_bytes > 0 ? Math.min(100, Math.round((task.transferred_bytes / task.total_bytes) * 100)) : null;
+        const sourcePath = task.source_endpoint?.path ?? legacyTransferSourcePath(task);
+        const destinationPath = task.destination_endpoint?.path ?? legacyTransferDestinationPath(task);
         return (
           <div className="zt-transfer-row" key={task.id}>
             <div className="zt-transfer-main">
-              <strong>{task.direction === "upload" ? task.local_path : task.remote_path}</strong>
-              <span>{task.direction === "upload" ? task.remote_path : task.local_path}</span>
+              <strong>{sourcePath}</strong>
+              <span>{destinationPath}</span>
             </div>
             <div className="zt-transfer-progress" aria-label={`${task.id} 进度`}>
               <span style={{ width: `${percent ?? 0}%` }} />

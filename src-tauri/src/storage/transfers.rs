@@ -7,7 +7,8 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, AppResult},
     models::sftp::{
-        TransferConflictPolicy, TransferDirection, TransferKind, TransferStatus, TransferTask,
+        TransferConflictPolicy, TransferDirection, TransferEndpoint, TransferEndpointKind,
+        TransferKind, TransferStatus, TransferTask, TransferTaskOrigin,
     },
     storage::sqlite::SqliteStore,
 };
@@ -24,9 +25,64 @@ pub fn insert_transfer_task(
     conflict_policy: TransferConflictPolicy,
     total_bytes: u64,
 ) -> AppResult<TransferTask> {
+    let source_endpoint = match direction {
+        TransferDirection::Upload => TransferEndpoint {
+            kind: TransferEndpointKind::Local,
+            saved_session_id: None,
+            path: local_path.to_string(),
+        },
+        TransferDirection::Download => TransferEndpoint {
+            kind: TransferEndpointKind::Ssh,
+            saved_session_id: Some(saved_session_id.to_string()),
+            path: remote_path.to_string(),
+        },
+    };
+    let destination_endpoint = match direction {
+        TransferDirection::Upload => TransferEndpoint {
+            kind: TransferEndpointKind::Ssh,
+            saved_session_id: Some(saved_session_id.to_string()),
+            path: remote_path.to_string(),
+        },
+        TransferDirection::Download => TransferEndpoint {
+            kind: TransferEndpointKind::Local,
+            saved_session_id: None,
+            path: local_path.to_string(),
+        },
+    };
+    insert_transfer_task_with_endpoints(
+        store,
+        saved_session_id,
+        direction,
+        local_path,
+        remote_path,
+        kind,
+        conflict_policy,
+        total_bytes,
+        TransferTaskOrigin::SftpPanel,
+        &source_endpoint,
+        &destination_endpoint,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn insert_transfer_task_with_endpoints(
+    store: &SqliteStore,
+    saved_session_id: &str,
+    direction: TransferDirection,
+    local_path: &str,
+    remote_path: &str,
+    kind: Option<TransferKind>,
+    conflict_policy: TransferConflictPolicy,
+    total_bytes: u64,
+    task_origin: TransferTaskOrigin,
+    source_endpoint: &TransferEndpoint,
+    destination_endpoint: &TransferEndpoint,
+) -> AppResult<TransferTask> {
     let saved_session_id = required_text("会话 ID", saved_session_id)?;
     let local_path = required_text("本地路径", local_path)?;
     let remote_path = required_text("远程路径", remote_path)?;
+    validate_endpoint(source_endpoint, "来源端点")?;
+    validate_endpoint(destination_endpoint, "目标端点")?;
     let id = Uuid::new_v4().to_string();
     let now = now_ms();
     let total_bytes = u64_to_i64(total_bytes)?;
@@ -37,9 +93,14 @@ pub fn insert_transfer_task(
             insert into transfer_tasks (
               id, saved_session_id, direction, local_path, remote_path,
               kind, conflict_policy, total_bytes, transferred_bytes, status,
-              error_message, created_at_ms, updated_at_ms
+              error_message, created_at_ms, updated_at_ms,
+              task_origin, source_kind, source_session_id, source_path,
+              destination_kind, destination_session_id, destination_path
             )
-            values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, null, ?10, ?11)
+            values (
+              ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, null, ?10, ?11,
+              ?12, ?13, ?14, ?15, ?16, ?17, ?18
+            )
             ",
             params![
                 id,
@@ -53,6 +114,13 @@ pub fn insert_transfer_task(
                 TransferStatus::Queued.as_str(),
                 now,
                 now,
+                task_origin.as_str(),
+                source_endpoint.kind.as_str(),
+                source_endpoint.saved_session_id.as_deref(),
+                source_endpoint.path,
+                destination_endpoint.kind.as_str(),
+                destination_endpoint.saved_session_id.as_deref(),
+                destination_endpoint.path,
             ],
         )?;
         get_transfer_task_in_transaction(transaction, &id)
@@ -67,7 +135,9 @@ pub fn get_transfer_task(store: &SqliteStore, id: &str) -> AppResult<TransferTas
                 "
                 select id, saved_session_id, direction, local_path, remote_path,
                        kind, conflict_policy, total_bytes, transferred_bytes, status, error_message,
-                       created_at_ms, updated_at_ms
+                       created_at_ms, updated_at_ms,
+                       task_origin, source_kind, source_session_id, source_path,
+                       destination_kind, destination_session_id, destination_path
                 from transfer_tasks
                 where id = ?1
                 ",
@@ -92,9 +162,12 @@ pub fn list_transfer_tasks(
                 "
                 select id, saved_session_id, direction, local_path, remote_path,
                        kind, conflict_policy, total_bytes, transferred_bytes, status, error_message,
-                       created_at_ms, updated_at_ms
+                       created_at_ms, updated_at_ms,
+                       task_origin, source_kind, source_session_id, source_path,
+                       destination_kind, destination_session_id, destination_path
                 from transfer_tasks
                 where saved_session_id = ?1
+                  and task_origin = 'sftp_panel'
                 order by created_at_ms desc
                 limit ?2
                 ",
@@ -108,7 +181,9 @@ pub fn list_transfer_tasks(
                 "
                 select id, saved_session_id, direction, local_path, remote_path,
                        kind, conflict_policy, total_bytes, transferred_bytes, status, error_message,
-                       created_at_ms, updated_at_ms
+                       created_at_ms, updated_at_ms,
+                       task_origin, source_kind, source_session_id, source_path,
+                       destination_kind, destination_session_id, destination_path
                 from transfer_tasks
                 order by created_at_ms desc
                 limit ?1
@@ -292,7 +367,9 @@ fn get_transfer_task_in_transaction(
             "
             select id, saved_session_id, direction, local_path, remote_path,
                    kind, conflict_policy, total_bytes, transferred_bytes, status, error_message,
-                   created_at_ms, updated_at_ms
+                   created_at_ms, updated_at_ms,
+                   task_origin, source_kind, source_session_id, source_path,
+                   destination_kind, destination_session_id, destination_path
             from transfer_tasks
             where id = ?1
             ",
@@ -308,6 +385,9 @@ fn map_transfer_task(row: &Row<'_>) -> rusqlite::Result<TransferTask> {
     let kind_value: Option<String> = row.get(5)?;
     let conflict_policy_value: String = row.get(6)?;
     let status_value: String = row.get(9)?;
+    let task_origin_value: String = row.get(13)?;
+    let source_kind_value: String = row.get(14)?;
+    let destination_kind_value: String = row.get(17)?;
     Ok(TransferTask {
         id: row.get(0)?,
         saved_session_id: row.get(1)?,
@@ -337,7 +417,47 @@ fn map_transfer_task(row: &Row<'_>) -> rusqlite::Result<TransferTask> {
         error_message: row.get(10)?,
         created_at_ms: row.get(11)?,
         updated_at_ms: row.get(12)?,
+        task_origin: TransferTaskOrigin::from_db(&task_origin_value).ok_or_else(|| {
+            conversion_error(13, format!("invalid task origin: {task_origin_value}"))
+        })?,
+        source_endpoint: TransferEndpoint {
+            kind: TransferEndpointKind::from_db(&source_kind_value).ok_or_else(|| {
+                conversion_error(14, format!("invalid source kind: {source_kind_value}"))
+            })?,
+            saved_session_id: row.get(15)?,
+            path: row.get(16)?,
+        },
+        destination_endpoint: TransferEndpoint {
+            kind: TransferEndpointKind::from_db(&destination_kind_value).ok_or_else(|| {
+                conversion_error(
+                    17,
+                    format!("invalid destination kind: {destination_kind_value}"),
+                )
+            })?,
+            saved_session_id: row.get(18)?,
+            path: row.get(19)?,
+        },
     })
+}
+
+fn validate_endpoint(endpoint: &TransferEndpoint, label: &str) -> AppResult<()> {
+    required_text(&format!("{label}路径"), &endpoint.path)?;
+    match endpoint.kind {
+        TransferEndpointKind::Local => {
+            if endpoint.saved_session_id.is_some() {
+                return Err(AppError::validation(format!(
+                    "{label}本机端点不能带会话 ID"
+                )));
+            }
+        }
+        TransferEndpointKind::Ssh => {
+            let Some(saved_session_id) = endpoint.saved_session_id.as_deref() else {
+                return Err(AppError::validation(format!("{label}SSH 端点必须选择会话")));
+            };
+            required_text(&format!("{label}会话 ID"), saved_session_id)?;
+        }
+    }
+    Ok(())
 }
 
 fn required_text(label: &str, value: impl AsRef<str>) -> AppResult<String> {

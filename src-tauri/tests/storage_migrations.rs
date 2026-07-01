@@ -150,7 +150,7 @@ fn migrations_add_history_scope_columns_and_reset_workspace_status() {
 }
 
 #[test]
-fn transfer_tasks_schema_adds_kind_and_conflict_policy_columns() {
+fn transfer_tasks_schema_adds_strategy_and_endpoint_columns() {
     let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
 
     run_migrations(&mut connection).expect("migrations should run on an empty database");
@@ -161,6 +161,20 @@ fn transfer_tasks_schema_adds_kind_and_conflict_policy_columns() {
         "transfer_tasks",
         "conflict_policy"
     ));
+    for column in [
+        "task_origin",
+        "source_kind",
+        "source_session_id",
+        "source_path",
+        "destination_kind",
+        "destination_session_id",
+        "destination_path",
+    ] {
+        assert!(
+            column_exists(&connection, "transfer_tasks", column),
+            "expected transfer_tasks.{column} to exist",
+        );
+    }
 }
 
 #[test]
@@ -223,14 +237,55 @@ fn migrations_upgrade_legacy_transfer_tasks_with_default_conflict_policy() {
 
     run_migrations(&mut connection).expect("migrations should upgrade legacy transfer tasks");
 
-    let row: (Option<String>, String) = connection
+    let row: (
+        Option<String>,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        Option<String>,
+        String,
+    ) = connection
         .query_row(
-            "select kind, conflict_policy from transfer_tasks where id = 'transfer-1'",
+            "
+            select kind, conflict_policy, task_origin,
+                   source_kind, source_session_id, source_path,
+                   destination_kind, destination_session_id, destination_path
+            from transfer_tasks
+            where id = 'transfer-1'
+            ",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            },
         )
         .expect("upgraded transfer task should read");
-    assert_eq!(row, (None, "overwrite".to_string()));
+    assert_eq!(
+        row,
+        (
+            None,
+            "overwrite".to_string(),
+            "sftp_panel".to_string(),
+            "ssh".to_string(),
+            Some("ssh-1".to_string()),
+            "/tmp/a.txt".to_string(),
+            "local".to_string(),
+            None,
+            "C:/tmp/a.txt".to_string(),
+        )
+    );
 }
 
 #[test]

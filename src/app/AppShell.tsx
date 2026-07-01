@@ -1,5 +1,5 @@
 // Author: Liz
-import { Bot, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-react";
+import { ArrowLeftRight, Bot, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
@@ -21,6 +21,7 @@ import { useAppTextInputDialog } from "./useAppTextInputDialog";
 import { useWorkspaceVisualSwitch } from "./useWorkspaceVisualSwitch";
 import { useAiStore } from "../features/ai/aiStore";
 import { buildAiTerminalContext } from "../features/ai/aiTerminalContextModel";
+import { FileTransferDialog } from "../features/files/FileTransferDialog";
 import { useFileStore, type TransferConflict, type TransferConflictPolicy } from "../features/files/fileStore";
 import type { CommandHistoryView } from "../features/history/CommandHistoryPanel";
 import { resolveHistoryScope } from "../features/history/historyScopeModel";
@@ -189,6 +190,7 @@ export function AppShell() {
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
   const [sessionFolderDialogOpen, setSessionFolderDialogOpen] = useState(false);
+  const [fileTransferDialogOpen, setFileTransferDialogOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"workbench" | "settings">("workbench");
   const [activeLeftTool, setActiveLeftTool] = useState<LeftTool | null>(null);
   const [activeTool, setActiveTool] = useState<RightTool | null>(null);
@@ -1144,6 +1146,12 @@ export function AppShell() {
             onClick={() => toggleLeftTool("sessions")}
           />
           <ToolButton
+            label="文件传输"
+            active={fileTransferDialogOpen}
+            icon={<ArrowLeftRight size={16} aria-hidden="true" />}
+            onClick={() => setFileTransferDialogOpen((current) => !current)}
+          />
+          <ToolButton
             label="模型"
             active={activeLeftTool === "models"}
             icon={<Bot size={16} aria-hidden="true" />}
@@ -1230,6 +1238,10 @@ export function AppShell() {
           onCancel={() => setSessionFolderDialogOpen(false)}
           onSave={createSessionFolder}
         />
+      ) : null}
+
+      {fileTransferDialogOpen ? (
+        <FileTransferDialog language={language} onClose={() => setFileTransferDialogOpen(false)} />
       ) : null}
 
       {workspaceEditor ? (

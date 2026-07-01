@@ -174,4 +174,114 @@ describe("TransferPanel", () => {
 
     view.unmount();
   });
+
+  it("prefers endpoint snapshot paths for file transfer tasks", () => {
+    const view = render(
+      <TransferPanel
+        tasks={[
+          {
+            ...tasks[0],
+            id: "task-remote-copy",
+            task_origin: "file_transfer",
+            source_endpoint: { kind: "ssh", saved_session_id: "source-ssh", path: "/var/app.log" },
+            destination_endpoint: { kind: "ssh", saved_session_id: "destination-ssh", path: "/backup/app.log" },
+          },
+        ]}
+        onRetry={vi.fn()}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(view.container.textContent).toContain("/var/app.log");
+    expect(view.container.textContent).toContain("/backup/app.log");
+    expect(view.container.textContent).not.toContain("C:/tmp/a.txt");
+
+    view.unmount();
+  });
+
+  it("keeps the collapsible transfer dock collapsed by default and expands with the original toggle", async () => {
+    const view = render(
+      <TransferPanel
+        collapsible
+        tasks={tasks}
+        onRetry={vi.fn()}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(button(view.container, "展开传输任务")).toBeTruthy();
+    expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
+
+    await click(button(view.container, "展开传输任务"));
+
+    expect(button(view.container, "折叠传输任务")).toBeTruthy();
+    expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeTruthy();
+    expect(view.container.textContent).toContain("permission denied");
+
+    view.unmount();
+  });
+
+  it("runs collapsible transfer dock bulk actions", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValueOnce(true);
+    const onPauseAll = vi.fn();
+    const onResumeAll = vi.fn();
+    const onClearAll = vi.fn();
+    const view = render(
+      <TransferPanel
+        collapsible
+        tasks={tasks}
+        onRetry={vi.fn()}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+        onPauseAll={onPauseAll}
+        onResumeAll={onResumeAll}
+        onClearAll={onClearAll}
+      />,
+    );
+
+    await click(button(view.container, "暂停全部传输任务"));
+    expect(onPauseAll).toHaveBeenCalledWith(["task-1"]);
+
+    await click(button(view.container, "恢复全部传输任务"));
+    expect(onResumeAll).toHaveBeenCalledWith(["task-3"]);
+
+    await click(button(view.container, "清理全部传输任务"));
+    expect(confirmSpy).toHaveBeenCalledWith("清理全部任务会取消进行中的传输并删除任务记录，确认清理？");
+    expect(onClearAll).toHaveBeenCalledWith(["task-1", "task-2", "task-3", "task-4"]);
+
+    confirmSpy.mockRestore();
+    view.unmount();
+  });
+
+  it("does not clear all transfers when the bulk clear confirmation is rejected", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValueOnce(false);
+    const onClearAll = vi.fn();
+    const view = render(
+      <TransferPanel
+        collapsible
+        tasks={tasks}
+        onRetry={vi.fn()}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+        onClearAll={onClearAll}
+      />,
+    );
+
+    await click(button(view.container, "清理全部传输任务"));
+
+    expect(onClearAll).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
+    view.unmount();
+  });
 });

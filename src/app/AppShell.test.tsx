@@ -60,6 +60,7 @@ const storeMocks = vi.hoisted(() => ({
   monitorPanelProps: null as Record<string, unknown> | null,
   modelPanelProps: null as Record<string, unknown> | null,
   transferPanelProps: null as Record<string, unknown> | null,
+  fileTransferPanelProps: null as Record<string, unknown> | null,
   loadCommandGroups: vi.fn().mockResolvedValue(undefined),
   saveCommandGroup: vi.fn().mockResolvedValue(undefined),
   searchHistory: vi.fn().mockResolvedValue(undefined),
@@ -160,6 +161,13 @@ vi.mock("../features/files/TransferPanel", () => ({
   TransferPanel: (props: Record<string, unknown>) => {
     storeMocks.transferPanelProps = props;
     return <section aria-label="传输任务列表" />;
+  },
+}));
+
+vi.mock("../features/files/FileTransferPanel", () => ({
+  FileTransferPanel: (props: Record<string, unknown>) => {
+    storeMocks.fileTransferPanelProps = props;
+    return <section aria-label="文件传输面板" />;
   },
 }));
 
@@ -895,6 +903,7 @@ describe("AppShell", () => {
     storeMocks.historyPanelProps = null;
     storeMocks.monitorPanelProps = null;
     storeMocks.transferPanelProps = null;
+    storeMocks.fileTransferPanelProps = null;
     storeMocks.pauseTransfer.mockResolvedValue(undefined);
     storeMocks.resumeTransfer.mockResolvedValue(undefined);
     storeMocks.cancelTransfer.mockResolvedValue(undefined);
@@ -1030,10 +1039,15 @@ describe("AppShell", () => {
     const workbench = view.container.querySelector(".zt-workbench");
     const workspaceButton = button(view.container, "工作区");
     const sessionButton = button(view.container, "会话");
+    const fileTransferButton = button(view.container, "文件传输");
     const modelButton = button(view.container, "模型");
+    const leftRailLabels = Array.from(view.container.querySelectorAll(".zt-left-rail button")).map((item) =>
+      item.getAttribute("aria-label"),
+    );
 
     expect(view.container.querySelector('[aria-label="左侧管理"]')).not.toBe(null);
     expect(view.container.querySelector('[aria-label="左侧管理切换"]')).not.toBe(null);
+    expect(leftRailLabels).toEqual(["工作区", "会话", "文件传输", "模型", "打开设置"]);
     expect(view.container.querySelector('[aria-label="工作区管理"]')).toBe(null);
     expect(view.container.querySelector('[aria-label="会话管理"]')).toBe(null);
     expect(view.container.querySelector('[aria-label="会话树"]')).toBe(null);
@@ -1045,6 +1059,8 @@ describe("AppShell", () => {
     expect(workspaceButton.querySelector("svg")?.classList.contains("lucide-panels-top-left")).toBe(true);
     expect(sessionButton.getAttribute("aria-pressed")).toBe("false");
     expect(sessionButton.getAttribute("aria-expanded")).toBe("false");
+    expect(fileTransferButton.getAttribute("aria-pressed")).toBe("false");
+    expect(fileTransferButton.getAttribute("aria-expanded")).toBe("false");
     expect(modelButton.querySelector("svg")?.classList.contains("lucide-bot")).toBe(true);
 
     view.unmount();
@@ -3032,6 +3048,71 @@ describe("AppShell", () => {
     expect(storeMocks.transferPanelProps?.onResume).toBeTypeOf("function");
     expect(storeMocks.transferPanelProps?.onCancel).toBeTypeOf("function");
     expect(storeMocks.transferPanelProps?.onDelete).toBeTypeOf("function");
+
+    view.unmount();
+  });
+
+  it("opens the independent file transfer panel without loading current-session SFTP data", async () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "session-1",
+        name: "开发机 A",
+        host: "172.16.41.180",
+        port: 22,
+        username: "ubuntu",
+        type: "ssh",
+        auth_mode: "none",
+        group_id: null,
+        tags: [],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+      },
+    ];
+    storeMocks.workspaceState.tabs = [
+      {
+        id: "tab-1",
+        title: "开发机 A",
+        active_pane_id: "pane-1",
+        root: {
+          kind: "leaf",
+          id: "pane-1",
+          title: "开发机 A",
+          runtime_session_id: "runtime-1",
+          saved_session_id: "session-1",
+          active_terminal_tab_id: "pane-1-tab-1",
+          terminal_tabs: [
+            {
+              id: "pane-1-tab-1",
+              title: "开发机 A",
+              runtime_session_id: "runtime-1",
+              saved_session_id: "session-1",
+            },
+          ],
+        },
+      },
+    ];
+    const view = render(<AppShell />);
+    const transferButton = view.container.querySelector('.zt-left-rail [aria-label="文件传输"]') as HTMLButtonElement;
+
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="文件传输"]')).toBe(null);
+    expect(transferButton).not.toBe(null);
+
+    await act(async () => {
+      transferButton.click();
+      await Promise.resolve();
+    });
+
+    expect(view.container.querySelector('[role="dialog"][aria-label="文件传输"]')).not.toBe(null);
+    expect(view.container.querySelector('[aria-label="文件传输面板"]')).not.toBe(null);
+    expect(storeMocks.fileTransferPanelProps?.language).toBe("zhCN");
+    expect(transferButton.getAttribute("aria-pressed")).toBe("true");
+    expect(storeMocks.listFiles).not.toHaveBeenCalled();
+    expect(storeMocks.loadTransfers).not.toHaveBeenCalled();
+
+    await clickButton(view.container, "关闭文件传输");
+
+    expect(view.container.querySelector('[role="dialog"][aria-label="文件传输"]')).toBe(null);
 
     view.unmount();
   });

@@ -6,10 +6,14 @@ use crate::{
     models::sftp::{
         FileEntry, LocalPathInfo, SftpDeleteResult, SftpMkdirResult, SftpRenameResult,
         TransferConflict, TransferConflictCheckItem, TransferConflictPolicy, TransferDirection,
-        TransferKind, TransferTask,
+        TransferEndpoint, TransferEndpointConflict, TransferEndpointConflictCheckItem,
+        TransferEndpointKind, TransferKind, TransferTask, TransferTaskOrigin,
     },
     services::{
-        sftp_service::{local_path_total_bytes, SftpService, TransferProgressUpdate},
+        sftp_service::{
+            default_local_directory, list_local_directory, local_path_total_bytes, SftpService,
+            TransferProgressUpdate,
+        },
         transfer_queue::TransferQueue,
     },
     state::AppState,
@@ -142,6 +146,123 @@ pub async fn sftp_check_transfer_conflicts(
 }
 
 #[tauri::command]
+pub fn file_transfer_default_local_path() -> AppResult<String> {
+    default_local_directory()
+}
+
+#[tauri::command]
+pub async fn file_transfer_list_endpoint(
+    state: State<'_, AppState>,
+    endpoint: TransferEndpoint,
+) -> AppResult<Vec<FileEntry>> {
+    match endpoint.kind {
+        TransferEndpointKind::Local => list_local_directory(&endpoint.path).await,
+        TransferEndpointKind::Ssh => {
+            let session = session_for_endpoint(&state, &endpoint)?;
+            state.sftp_service().list(&session, &endpoint.path).await
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn file_transfer_check_conflicts(
+    state: State<'_, AppState>,
+    items: Vec<TransferEndpointConflictCheckItem>,
+) -> AppResult<Vec<TransferEndpointConflict>> {
+    let mut conflicts = Vec::new();
+    for item in items {
+        let exists = match item.destination.kind {
+            TransferEndpointKind::Local => {
+                let path = std::path::PathBuf::from(item.destination.path.trim());
+                path.exists()
+            }
+            TransferEndpointKind::Ssh => {
+                let session = session_for_endpoint(&state, &item.destination)?;
+                state
+                    .sftp_service()
+                    .exists(&session, &item.destination.path)
+                    .await?
+            }
+        };
+        if exists {
+            conflicts.push(TransferEndpointConflict {
+                path: item.destination.path,
+            });
+        }
+    }
+    Ok(conflicts)
+}
+
+#[tauri::command]
+pub async fn file_transfer_enqueue(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source: TransferEndpoint,
+    destination: TransferEndpoint,
+    kind: Option<TransferKind>,
+    conflict_policy: Option<TransferConflictPolicy>,
+) -> AppResult<TransferTask> {
+    if source.kind == TransferEndpointKind::Local && destination.kind == TransferEndpointKind::Local
+    {
+        return Err(crate::error::AppError::validation(
+            "文件传输栏暂不支持本机到本机复制",
+        ));
+    }
+    let source_session = optional_session_for_endpoint(&state, &source)?;
+    let destination_session = optional_session_for_endpoint(&state, &destination)?;
+    let saved_session_id = source
+        .saved_session_id
+        .as_deref()
+        .or(destination.saved_session_id.as_deref())
+        .ok_or_else(|| crate::error::AppError::validation("文件传输任务必须包含 SSH 端点"))?;
+    let direction = if destination.kind == TransferEndpointKind::Ssh {
+        TransferDirection::Upload
+    } else {
+        TransferDirection::Download
+    };
+    let local_path = if source.kind == TransferEndpointKind::Local {
+        source.path.as_str()
+    } else if destination.kind == TransferEndpointKind::Local {
+        destination.path.as_str()
+    } else {
+        source.path.as_str()
+    };
+    let remote_path = if destination.kind == TransferEndpointKind::Ssh {
+        destination.path.as_str()
+    } else {
+        source.path.as_str()
+    };
+    let total_bytes = if source.kind == TransferEndpointKind::Local {
+        local_path_total_bytes(&source.path).await?
+    } else {
+        0
+    };
+    let conflict_policy = conflict_policy.unwrap_or(TransferConflictPolicy::Overwrite);
+    let queue = state.transfer_queue();
+    let task = queue.enqueue_with_endpoints(
+        saved_session_id,
+        direction,
+        local_path,
+        remote_path,
+        kind,
+        conflict_policy,
+        total_bytes,
+        TransferTaskOrigin::FileTransfer,
+        &source,
+        &destination,
+    )?;
+    spawn_file_transfer(
+        app,
+        state.sftp_service(),
+        queue,
+        source_session,
+        destination_session,
+        task.clone(),
+    );
+    Ok(task)
+}
+
+#[tauri::command]
 pub fn transfer_list(
     state: State<'_, AppState>,
     saved_session_id: Option<String>,
@@ -156,6 +277,15 @@ pub fn transfer_list(
 }
 
 #[tauri::command]
+pub fn file_transfer_list(
+    state: State<'_, AppState>,
+    limit: Option<u32>,
+) -> AppResult<Vec<TransferTask>> {
+    let storage = state.storage();
+    list_transfer_tasks(storage.as_ref(), None, limit.unwrap_or(200))
+}
+
+#[tauri::command]
 pub fn transfer_retry(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -163,9 +293,23 @@ pub fn transfer_retry(
 ) -> AppResult<TransferTask> {
     let queue = state.transfer_queue();
     let task = queue.retry_failed(&task_id)?;
-    let storage = state.storage();
-    let session = get_session(storage.as_ref(), &task.saved_session_id)?;
-    spawn_transfer(app, state.sftp_service(), queue, session, task.clone());
+    if task.task_origin == TransferTaskOrigin::FileTransfer {
+        let source_session = optional_session_for_endpoint(&state, &task.source_endpoint)?;
+        let destination_session =
+            optional_session_for_endpoint(&state, &task.destination_endpoint)?;
+        spawn_file_transfer(
+            app,
+            state.sftp_service(),
+            queue,
+            source_session,
+            destination_session,
+            task.clone(),
+        );
+    } else {
+        let storage = state.storage();
+        let session = get_session(storage.as_ref(), &task.saved_session_id)?;
+        spawn_transfer(app, state.sftp_service(), queue, session, task.clone());
+    }
     Ok(task)
 }
 
@@ -290,4 +434,175 @@ fn spawn_transfer(
         }
         let _ = queue.unregister_control(&task.id);
     });
+}
+
+fn spawn_file_transfer(
+    app: AppHandle,
+    service: SftpService,
+    queue: TransferQueue,
+    source_session: Option<crate::models::session::SavedSession>,
+    destination_session: Option<crate::models::session::SavedSession>,
+    task: TransferTask,
+) {
+    let control = match queue.register_control(&task.id) {
+        Ok(control) => control,
+        Err(error) => {
+            let _ = app.emit("transfer:done", error.to_string());
+            return;
+        }
+    };
+    tauri::async_runtime::spawn(async move {
+        let running = match queue.mark_running(&task.id) {
+            Ok(task) => task,
+            Err(error) => {
+                let _ = app.emit("transfer:done", error.to_string());
+                return;
+            }
+        };
+        let _ = app.emit("transfer:progress", running.clone());
+
+        let progress_queue = queue.clone();
+        let progress_app = app.clone();
+        let progress_task_id = task.id.clone();
+        let mut progress = move |update: TransferProgressUpdate| -> AppResult<()> {
+            let updated = progress_queue.mark_progress_with_total(
+                &progress_task_id,
+                update.transferred_bytes,
+                update.total_bytes,
+            )?;
+            let _ = progress_app.emit("transfer:progress", updated);
+            Ok(())
+        };
+
+        let result = match (task.source_endpoint.kind, task.destination_endpoint.kind) {
+            (TransferEndpointKind::Local, TransferEndpointKind::Ssh) => {
+                let Some(destination_session) = destination_session.as_ref() else {
+                    return finish_missing_endpoint(app, queue, &task.id, "目标 SSH 会话不存在");
+                };
+                service
+                    .upload_path(
+                        destination_session,
+                        &task.source_endpoint.path,
+                        &task.destination_endpoint.path,
+                        task.kind,
+                        task.conflict_policy,
+                        Some(control.clone()),
+                        &mut progress,
+                    )
+                    .await
+            }
+            (TransferEndpointKind::Ssh, TransferEndpointKind::Local) => {
+                let Some(source_session) = source_session.as_ref() else {
+                    return finish_missing_endpoint(app, queue, &task.id, "来源 SSH 会话不存在");
+                };
+                service
+                    .download_path(
+                        source_session,
+                        &task.source_endpoint.path,
+                        &task.destination_endpoint.path,
+                        task.kind,
+                        task.conflict_policy,
+                        Some(control.clone()),
+                        &mut progress,
+                    )
+                    .await
+            }
+            (TransferEndpointKind::Ssh, TransferEndpointKind::Ssh) => {
+                let Some(source_session) = source_session.as_ref() else {
+                    return finish_missing_endpoint(app, queue, &task.id, "来源 SSH 会话不存在");
+                };
+                let Some(destination_session) = destination_session.as_ref() else {
+                    return finish_missing_endpoint(app, queue, &task.id, "目标 SSH 会话不存在");
+                };
+                service
+                    .copy_remote_to_remote_path(
+                        source_session,
+                        &task.source_endpoint.path,
+                        destination_session,
+                        &task.destination_endpoint.path,
+                        task.kind,
+                        task.conflict_policy,
+                        Some(control.clone()),
+                        &mut progress,
+                    )
+                    .await
+            }
+            (TransferEndpointKind::Local, TransferEndpointKind::Local) => Err(
+                crate::error::AppError::validation("文件传输栏暂不支持本机到本机复制"),
+            ),
+        };
+
+        let done = match result {
+            Ok(()) => match queue.get(&task.id) {
+                Ok(current) if current.status == crate::models::sftp::TransferStatus::Cancelled => {
+                    Ok(current)
+                }
+                Ok(_) => queue.mark_done(&task.id),
+                Err(crate::error::AppError::NotFound(_)) => {
+                    let _ = queue.unregister_control(&task.id);
+                    return;
+                }
+                Err(error) => Err(error),
+            },
+            Err(error) => match queue.get(&task.id) {
+                Ok(current) if current.status == crate::models::sftp::TransferStatus::Cancelled => {
+                    Ok(current)
+                }
+                Ok(_) => queue.mark_failed(&task.id, &error.to_string()),
+                Err(crate::error::AppError::NotFound(_)) => {
+                    let _ = queue.unregister_control(&task.id);
+                    return;
+                }
+                Err(error) => Err(error),
+            },
+        };
+        match done {
+            Ok(task) => {
+                let _ = app.emit("transfer:done", task);
+            }
+            Err(error) => {
+                let _ = app.emit("transfer:done", error.to_string());
+            }
+        }
+        let _ = queue.unregister_control(&task.id);
+    });
+}
+
+fn finish_missing_endpoint(app: AppHandle, queue: TransferQueue, task_id: &str, message: &str) {
+    let done = queue.mark_failed(task_id, message);
+    match done {
+        Ok(task) => {
+            let _ = app.emit("transfer:done", task);
+        }
+        Err(error) => {
+            let _ = app.emit("transfer:done", error.to_string());
+        }
+    }
+    let _ = queue.unregister_control(task_id);
+}
+
+fn session_for_endpoint(
+    state: &State<'_, AppState>,
+    endpoint: &TransferEndpoint,
+) -> AppResult<crate::models::session::SavedSession> {
+    optional_session_for_endpoint(state, endpoint)?
+        .ok_or_else(|| crate::error::AppError::validation("SSH 端点必须选择已保存会话"))
+}
+
+fn optional_session_for_endpoint(
+    state: &State<'_, AppState>,
+    endpoint: &TransferEndpoint,
+) -> AppResult<Option<crate::models::session::SavedSession>> {
+    match endpoint.kind {
+        TransferEndpointKind::Local => Ok(None),
+        TransferEndpointKind::Ssh => {
+            let Some(saved_session_id) = endpoint.saved_session_id.as_deref() else {
+                return Err(crate::error::AppError::validation(
+                    "SSH 端点必须选择已保存会话",
+                ));
+            };
+            let storage = state.storage();
+            get_session(storage.as_ref(), saved_session_id).map(Some)
+        }
+    }
 }

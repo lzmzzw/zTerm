@@ -19,8 +19,16 @@ export interface FileEntry {
   permissions: string | null;
 }
 
-type TransferDirection = "upload" | "download";
-type TransferStatus = "queued" | "running" | "paused" | "done" | "failed" | "cancelled";
+export type TransferDirection = "upload" | "download";
+export type TransferStatus = "queued" | "running" | "paused" | "done" | "failed" | "cancelled";
+export type TransferTaskOrigin = "sftp_panel" | "file_transfer";
+export type TransferEndpointKind = "local" | "ssh";
+
+export interface TransferEndpoint {
+  kind: TransferEndpointKind;
+  saved_session_id?: string | null;
+  path: string;
+}
 
 export interface TransferTask {
   id: string;
@@ -36,6 +44,9 @@ export interface TransferTask {
   error_message: string | null;
   created_at_ms: number;
   updated_at_ms: number;
+  task_origin?: TransferTaskOrigin;
+  source_endpoint?: TransferEndpoint;
+  destination_endpoint?: TransferEndpoint;
 }
 
 export interface LocalPathInfo {

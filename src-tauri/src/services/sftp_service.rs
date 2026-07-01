@@ -119,6 +119,16 @@ impl SftpService {
         })
     }
 
+    pub async fn exists(&self, session: &SavedSession, path: &str) -> AppResult<bool> {
+        let path = required_remote_path(path)?;
+        let lease = self.cached_sftp_session(session).await?;
+        let sftp = lease.entry.sftp.lock().await;
+        sftp.try_exists(path).await.map_err(|error| {
+            self.cache.remove_key_if_entry(&lease.key, &lease.entry);
+            AppError::sftp(error.to_string())
+        })
+    }
+
     pub async fn rename(&self, session: &SavedSession, from: &str, to: &str) -> AppResult<()> {
         let from = validate_destructive_remote_path(from)?;
         let to = validate_destructive_remote_path(to)?;
@@ -312,6 +322,92 @@ impl SftpService {
 
         on_progress(progress_update(transferred, None))?;
         let _ = sftp.close().await;
+        Ok(())
+    }
+
+    pub async fn copy_remote_to_remote_path<F>(
+        &self,
+        source_session: &SavedSession,
+        source_path: &str,
+        destination_session: &SavedSession,
+        destination_path: &str,
+        _kind: Option<TransferKind>,
+        conflict_policy: TransferConflictPolicy,
+        control: Option<TransferRunControl>,
+        mut on_progress: F,
+    ) -> AppResult<()>
+    where
+        F: FnMut(TransferProgressUpdate) -> AppResult<()>,
+    {
+        let source_path = required_remote_path(source_path)?;
+        let destination_path = validate_destructive_remote_path(destination_path)?;
+        let source_sftp = connect_sftp(source_session).await?;
+        let destination_sftp = connect_sftp(destination_session).await?;
+        transfer_checkpoint(control.as_ref()).await?;
+        let metadata = source_sftp
+            .symlink_metadata(source_path.clone())
+            .await
+            .map_err(|error| AppError::sftp(error.to_string()))?;
+        let mut transferred = 0_u64;
+
+        if metadata.file_type().is_dir() {
+            let Some(destination_root) = prepare_remote_directory_root(
+                &destination_sftp,
+                &destination_path,
+                conflict_policy,
+            )
+            .await?
+            else {
+                let _ = source_sftp.close().await;
+                let _ = destination_sftp.close().await;
+                return Ok(());
+            };
+            let mut stack = vec![(source_path, destination_root)];
+            while let Some((source_dir, destination_dir)) = stack.pop() {
+                transfer_checkpoint(control.as_ref()).await?;
+                let entries = source_sftp
+                    .read_dir(source_dir.clone())
+                    .await
+                    .map_err(|error| AppError::sftp(error.to_string()))?;
+                for entry in entries {
+                    transfer_checkpoint(control.as_ref()).await?;
+                    let source_entry = entry.path();
+                    let destination_entry = join_remote_path(&destination_dir, &entry.file_name());
+                    if entry.metadata().file_type().is_dir() {
+                        ensure_remote_directory(&destination_sftp, &destination_entry).await?;
+                        stack.push((source_entry, destination_entry));
+                    } else {
+                        transferred = copy_remote_file(
+                            &source_sftp,
+                            &destination_sftp,
+                            &source_entry,
+                            &destination_entry,
+                            conflict_policy,
+                            transferred,
+                            control.as_ref(),
+                            &mut on_progress,
+                        )
+                        .await?;
+                    }
+                }
+            }
+        } else {
+            transferred = copy_remote_file(
+                &source_sftp,
+                &destination_sftp,
+                &source_path,
+                &destination_path,
+                conflict_policy,
+                transferred,
+                control.as_ref(),
+                &mut on_progress,
+            )
+            .await?;
+        }
+
+        on_progress(progress_update(transferred, None))?;
+        let _ = source_sftp.close().await;
+        let _ = destination_sftp.close().await;
         Ok(())
     }
 
@@ -675,6 +771,56 @@ pub async fn local_path_total_bytes(path: &str) -> AppResult<u64> {
     Ok(total)
 }
 
+pub fn default_local_directory() -> AppResult<String> {
+    dirs::home_dir()
+        .or_else(dirs::download_dir)
+        .unwrap_or_else(std::env::temp_dir)
+        .to_str()
+        .map(|value| value.to_string())
+        .ok_or_else(|| AppError::validation("无法解析默认本地目录"))
+}
+
+pub async fn list_local_directory(path: &str) -> AppResult<Vec<FileEntry>> {
+    let path = if path.trim().is_empty() {
+        default_local_directory()?
+    } else {
+        required_path(path)?
+    };
+    let mut entries = fs::read_dir(PathBuf::from(&path)).await?;
+    let mut result = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        let metadata = entry.metadata().await?;
+        let symlink_metadata = fs::symlink_metadata(entry.path()).await.ok();
+        let file_type = symlink_metadata
+            .as_ref()
+            .map(|metadata| metadata.file_type())
+            .unwrap_or_else(|| metadata.file_type());
+        let modified_at_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+            .and_then(|duration| i64::try_from(duration.as_millis()).ok());
+        result.push(FileEntry {
+            name: entry.file_name().to_string_lossy().to_string(),
+            path: entry.path().to_string_lossy().to_string(),
+            kind: local_file_kind(file_type),
+            size: if metadata.is_file() {
+                metadata.len()
+            } else {
+                0
+            },
+            modified_at_ms,
+            permissions: None,
+        });
+    }
+    result.sort_by(|left, right| {
+        left.kind
+            .cmp(&right.kind)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    Ok(result)
+}
+
 async fn connect_sftp(session: &SavedSession) -> AppResult<RusshSftpSession> {
     if session.session_type != SessionType::Ssh {
         return Err(AppError::unsupported("SFTP 只支持 SSH 会话"));
@@ -933,6 +1079,71 @@ where
     }
     transfer_checkpoint(control).await?;
     local.flush().await?;
+    Ok(transferred)
+}
+
+async fn copy_remote_file<F>(
+    source_sftp: &RusshSftpSession,
+    destination_sftp: &RusshSftpSession,
+    source_path: &str,
+    destination_path: &str,
+    conflict_policy: TransferConflictPolicy,
+    mut transferred: u64,
+    control: Option<&TransferRunControl>,
+    on_progress: &mut F,
+) -> AppResult<u64>
+where
+    F: FnMut(TransferProgressUpdate) -> AppResult<()>,
+{
+    transfer_checkpoint(control).await?;
+    if let Some(parent) = remote_parent_path(destination_path) {
+        create_remote_dir_all(destination_sftp, &parent).await?;
+    }
+    let mut source = source_sftp
+        .open(source_path.to_string())
+        .await
+        .map_err(|error| AppError::sftp(error.to_string()))?;
+    let remote_size = source
+        .metadata()
+        .await
+        .ok()
+        .and_then(|metadata| metadata.size);
+    if let Some(remote_size) = remote_size {
+        on_progress(progress_update(
+            transferred,
+            Some(transferred.saturating_add(remote_size)),
+        ))?;
+    }
+    let Some(mut destination) =
+        open_remote_write_target(destination_sftp, destination_path, conflict_policy).await?
+    else {
+        transferred = transferred.saturating_add(remote_size.unwrap_or(0));
+        on_progress(progress_update(transferred, Some(transferred)))?;
+        return Ok(transferred);
+    };
+    let mut buffer = vec![0_u8; TRANSFER_BUFFER_SIZE];
+    loop {
+        transfer_checkpoint(control).await?;
+        let read = source
+            .read(&mut buffer)
+            .await
+            .map_err(|error| AppError::sftp(error.to_string()))?;
+        if read == 0 {
+            break;
+        }
+        transfer_checkpoint(control).await?;
+        destination
+            .write_all(&buffer[..read])
+            .await
+            .map_err(|error| AppError::sftp(error.to_string()))?;
+        transferred = transferred.saturating_add(read as u64);
+        on_progress(progress_update(transferred, None))?;
+    }
+    transfer_checkpoint(control).await?;
+    destination
+        .shutdown()
+        .await
+        .map_err(|error| AppError::sftp(error.to_string()))?;
     Ok(transferred)
 }
 
@@ -1195,6 +1406,18 @@ fn file_entry(name: String, path: String, metadata: FileAttributes) -> FileEntry
 }
 
 fn file_kind(file_type: FileType) -> FileKind {
+    if file_type.is_dir() {
+        FileKind::Directory
+    } else if file_type.is_file() {
+        FileKind::File
+    } else if file_type.is_symlink() {
+        FileKind::Symlink
+    } else {
+        FileKind::Other
+    }
+}
+
+fn local_file_kind(file_type: std::fs::FileType) -> FileKind {
     if file_type.is_dir() {
         FileKind::Directory
     } else if file_type.is_file() {

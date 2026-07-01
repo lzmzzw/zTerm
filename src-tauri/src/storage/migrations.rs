@@ -111,7 +111,14 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
             status text not null check (status in ('queued', 'running', 'paused', 'done', 'failed', 'cancelled')),
             error_message text null,
             created_at_ms integer not null,
-            updated_at_ms integer not null
+            updated_at_ms integer not null,
+            task_origin text not null default 'sftp_panel' check (task_origin in ('sftp_panel', 'file_transfer')),
+            source_kind text not null default 'local' check (source_kind in ('local', 'ssh')),
+            source_session_id text null,
+            source_path text not null default '',
+            destination_kind text not null default 'ssh' check (destination_kind in ('local', 'ssh')),
+            destination_session_id text null,
+            destination_path text not null default ''
         );
 
         create table if not exists credential_records (
@@ -253,6 +260,64 @@ fn ensure_transfer_task_strategy_columns(transaction: &rusqlite::Transaction<'_>
     }
     transaction.execute(
         "update transfer_tasks set conflict_policy = 'overwrite' where conflict_policy is null or trim(conflict_policy) = ''",
+        [],
+    )?;
+    if !sqlite_column_exists(transaction, "transfer_tasks", "task_origin")? {
+        transaction.execute(
+            "alter table transfer_tasks add column task_origin text not null default 'sftp_panel'",
+            [],
+        )?;
+    }
+    if !sqlite_column_exists(transaction, "transfer_tasks", "source_kind")? {
+        transaction.execute(
+            "alter table transfer_tasks add column source_kind text not null default 'local'",
+            [],
+        )?;
+    }
+    if !sqlite_column_exists(transaction, "transfer_tasks", "source_session_id")? {
+        transaction.execute(
+            "alter table transfer_tasks add column source_session_id text null",
+            [],
+        )?;
+    }
+    if !sqlite_column_exists(transaction, "transfer_tasks", "source_path")? {
+        transaction.execute(
+            "alter table transfer_tasks add column source_path text not null default ''",
+            [],
+        )?;
+    }
+    if !sqlite_column_exists(transaction, "transfer_tasks", "destination_kind")? {
+        transaction.execute(
+            "alter table transfer_tasks add column destination_kind text not null default 'ssh'",
+            [],
+        )?;
+    }
+    if !sqlite_column_exists(transaction, "transfer_tasks", "destination_session_id")? {
+        transaction.execute(
+            "alter table transfer_tasks add column destination_session_id text null",
+            [],
+        )?;
+    }
+    if !sqlite_column_exists(transaction, "transfer_tasks", "destination_path")? {
+        transaction.execute(
+            "alter table transfer_tasks add column destination_path text not null default ''",
+            [],
+        )?;
+    }
+    transaction.execute(
+        "
+        update transfer_tasks
+        set task_origin = 'sftp_panel',
+            source_kind = case when direction = 'download' then 'ssh' else 'local' end,
+            source_session_id = case when direction = 'download' then saved_session_id else null end,
+            source_path = case when direction = 'download' then remote_path else local_path end,
+            destination_kind = case when direction = 'download' then 'local' else 'ssh' end,
+            destination_session_id = case when direction = 'download' then null else saved_session_id end,
+            destination_path = case when direction = 'download' then local_path else remote_path end
+        where task_origin is null
+           or trim(source_path) = ''
+           or trim(destination_path) = ''
+        ",
         [],
     )?;
     Ok(())

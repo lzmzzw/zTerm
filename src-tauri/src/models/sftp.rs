@@ -131,6 +131,61 @@ impl TransferStatus {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferTaskOrigin {
+    SftpPanel,
+    FileTransfer,
+}
+
+impl TransferTaskOrigin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SftpPanel => "sftp_panel",
+            Self::FileTransfer => "file_transfer",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "sftp_panel" => Some(Self::SftpPanel),
+            "file_transfer" => Some(Self::FileTransfer),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferEndpointKind {
+    Local,
+    Ssh,
+}
+
+impl TransferEndpointKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Ssh => "ssh",
+        }
+    }
+
+    pub fn from_db(value: &str) -> Option<Self> {
+        match value {
+            "local" => Some(Self::Local),
+            "ssh" => Some(Self::Ssh),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransferEndpoint {
+    pub kind: TransferEndpointKind,
+    pub saved_session_id: Option<String>,
+    pub path: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransferTask {
     pub id: String,
@@ -146,6 +201,9 @@ pub struct TransferTask {
     pub error_message: Option<String>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    pub task_origin: TransferTaskOrigin,
+    pub source_endpoint: TransferEndpoint,
+    pub destination_endpoint: TransferEndpoint,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,4 +240,16 @@ pub struct TransferConflictCheckItem {
 pub struct TransferConflict {
     pub direction: TransferDirection,
     pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransferEndpointConflict {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferEndpointConflictCheckItem {
+    pub destination: TransferEndpoint,
+    pub kind: TransferKind,
 }
