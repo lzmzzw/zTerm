@@ -12,6 +12,7 @@ import type { AuthMode, SavedSession, SshOptions, SshTunnelMode } from "./types"
 
 interface SshSessionFormProps {
   section: string;
+  host: string;
   authMode: AuthMode;
   password: string;
   keyPassphrase: string;
@@ -36,6 +37,7 @@ const authModeOptions = [
 
 export function SshSessionForm({
   section,
+  host,
   authMode,
   password,
   keyPassphrase,
@@ -167,6 +169,7 @@ export function SshSessionForm({
       {section === "隧道" ? (
         <SshTunnelsSection
           sshOptions={sshOptions}
+          host={host}
           newTunnelMode={newTunnelMode}
           onNewTunnelModeChange={setNewTunnelMode}
           onSshOptionsChange={onSshOptionsChange}

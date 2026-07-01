@@ -197,7 +197,7 @@ export function SessionEditorDialog({
         .map((tag) => tag.trim())
         .filter(Boolean),
       sort_order: initialSession?.sort_order ?? 0,
-      ssh_options: type === "ssh" ? normalizeSshOptions(sshOptions) : null,
+      ssh_options: type === "ssh" ? normalizeSshOptionsForSessionHost(sshOptions, host.trim()) : null,
       rdp_options: type === "rdp" ? rdpOptions : null,
       local_options: type === "local" ? localOptions : null,
     };
@@ -414,6 +414,7 @@ export function SessionEditorDialog({
             {type === "ssh" ? (
               <SshSessionForm
                 section={activeSection}
+                host={host}
                 authMode={authMode}
                 password={password}
                 keyPassphrase={keyPassphrase}
@@ -468,4 +469,16 @@ export function SessionEditorDialog({
       </div>
     </div>
   );
+}
+
+function normalizeSshOptionsForSessionHost(options: SshOptions, host: string): SshOptions {
+  const normalized = normalizeSshOptions(options);
+  return {
+    ...normalized,
+    tunnels: (normalized.tunnels ?? []).map((tunnel) =>
+      tunnel.mode === "host_service" || tunnel.kind === "local"
+        ? { ...tunnel, remote_host: host || tunnel.remote_host }
+        : tunnel,
+    ),
+  };
 }

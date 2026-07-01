@@ -1,5 +1,5 @@
 // Author: Liz
-import { Activity, Clock3, Folder, MessageSquareMore, type LucideIcon } from "lucide-react";
+import { Activity, Cable, Clock3, Folder, MessageSquareMore, type LucideIcon } from "lucide-react";
 
 import { AiPanel } from "../features/ai/AiPanel";
 import type {
@@ -23,6 +23,9 @@ import type {
 import type { CommandHistoryView } from "../features/history/CommandHistoryPanel";
 import { ServerMonitorPanel, type ServerMonitorTarget } from "../features/monitor/ServerMonitorPanel";
 import { useServerInfoSnapshot } from "../features/monitor/useServerInfoSnapshot";
+import { sshTunnelMode } from "../features/sessions/sshSessionModel";
+import { tunnelModes } from "../features/sessions/SshTunnelCard";
+import type { SshTunnel } from "../features/sessions/types";
 import type { AppLanguage } from "../features/settings/settingsStore";
 import { t } from "../features/settings/i18n";
 import { PanelHeader, ToolButton } from "./ShellControls";
@@ -33,6 +36,7 @@ const rightToolRailIcons: Record<RightTool, LucideIcon> = {
   files: Folder,
   history: Clock3,
   monitor: Activity,
+  tunnels: Cable,
 };
 
 interface RightToolsPanelProps {
@@ -105,6 +109,11 @@ interface RightToolsPanelProps {
   monitor: {
     target: ServerMonitorTarget | null;
   };
+  tunnels: {
+    sessionName: string | null;
+    target: string | null;
+    items: SshTunnel[];
+  };
   transfers: {
     tasks: TransferTask[];
     onCancel: (taskId: string) => Promise<void> | void;
@@ -123,11 +132,13 @@ export function RightToolsPanel({
   files,
   history,
   monitor,
+  tunnels,
   transfers,
   language = "zhCN",
   onActiveToolChange,
 }: RightToolsPanelProps) {
   const monitorSnapshot = useServerInfoSnapshot(monitor.target?.id ?? null, activeTool === "monitor");
+  const visibleTools = rightToolRailOrder.filter((tool) => tool !== "tunnels" || tunnels.items.length > 0);
 
   return (
     <aside
@@ -250,11 +261,18 @@ export function RightToolsPanel({
               />
             </>
           ) : null}
+
+          {activeTool === "tunnels" ? (
+            <>
+              <PanelHeader title={t(language, "sshTunnels")} />
+              <SshTunnelListPanel sessionName={tunnels.sessionName} target={tunnels.target} tunnels={tunnels.items} />
+            </>
+          ) : null}
         </section>
       ) : null}
 
       <nav className="zt-tool-rail" aria-label="工具切换">
-        {rightToolRailOrder.map((tool) => {
+        {visibleTools.map((tool) => {
           const Icon = rightToolRailIcons[tool];
           return (
             <ToolButton
@@ -270,4 +288,74 @@ export function RightToolsPanel({
       </nav>
     </aside>
   );
+}
+
+function SshTunnelListPanel({
+  sessionName,
+  target,
+  tunnels,
+}: {
+  sessionName: string | null;
+  target: string | null;
+  tunnels: SshTunnel[];
+}) {
+  if (tunnels.length === 0) {
+    return <div className="zt-empty-line">当前 SSH 连接没有配置隧道</div>;
+  }
+
+  return (
+    <div className="zt-tunnel-panel">
+      <div className="zt-tunnel-target">
+        <strong>{sessionName ?? "当前 SSH 连接"}</strong>
+        {target ? <span>{target}</span> : null}
+      </div>
+      <div className="zt-tunnel-list" role="list" aria-label="SSH 隧道列表">
+        {tunnels.map((tunnel, index) => {
+          const mode = sshTunnelMode(tunnel);
+          const modeInfo = tunnelModes.find((item) => item.value === mode);
+          const title = tunnel.name?.trim() || `${modeInfo?.title ?? "SSH 隧道"} ${index + 1}`;
+          return (
+            <section className="zt-tunnel-list-item" role="listitem" aria-label={title} key={`${title}-${index}`}>
+              <header>
+                <strong>{title}</strong>
+                <code>{modeInfo?.command ?? tunnel.kind}</code>
+              </header>
+              <div className="zt-tunnel-meta">
+                <span>{modeInfo?.title ?? "SSH 隧道"}</span>
+                <span>{tunnel.auto_open === false ? "手动打开" : "连接时自动打开"}</span>
+              </div>
+              <dl>
+                {tunnel.bind_address ? (
+                  <>
+                    <dt>监听</dt>
+                    <dd>{formatBindEndpoint(tunnel.bind_address, tunnel.local_port)}</dd>
+                  </>
+                ) : tunnel.local_port ? (
+                  <>
+                    <dt>监听端口</dt>
+                    <dd>{tunnel.local_port}</dd>
+                  </>
+                ) : null}
+                {tunnel.remote_host || tunnel.remote_port ? (
+                  <>
+                    <dt>目标</dt>
+                    <dd>{formatRemoteEndpoint(tunnel.remote_host, tunnel.remote_port)}</dd>
+                  </>
+                ) : null}
+              </dl>
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function formatBindEndpoint(bindAddress: string, port?: number | null) {
+  return port ? `${bindAddress}:${port}` : bindAddress;
+}
+
+function formatRemoteEndpoint(host?: string | null, port?: number | null) {
+  if (host && port) return `${host}:${port}`;
+  return host || (port ? String(port) : "-");
 }

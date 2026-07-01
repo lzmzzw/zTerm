@@ -439,6 +439,7 @@ export function AppShell() {
   const activeSavedSessionId = activePaneTab?.saved_session_id ?? null;
   const activeSavedSession = activeSavedSessionId ? sessions.find((session) => session.id === activeSavedSessionId) ?? null : null;
   const activeSshSessionId = activeSavedSession?.type === "ssh" ? activeSavedSession.id : null;
+  const activeSshTunnels = activeSavedSession?.type === "ssh" ? (activeSavedSession.ssh_options?.tunnels ?? []) : [];
   const activeRuntimeSessionId = activePaneTab?.runtime_session_id ?? null;
   const bindTerminalEvents = useTerminalStore((state) => state.bindTerminalEvents);
   const openTerminal = useTerminalStore((state) => state.openTerminal);
@@ -551,6 +552,12 @@ export function AppShell() {
       clearFiles();
     }
   }, [activeSshSessionId, activeTool, clearFiles, filePath, listFiles, workspaceVisualSwitchActive]);
+
+  useEffect(() => {
+    if (activeTool === "tunnels" && activeSshTunnels.length === 0) {
+      setActiveTool(null);
+    }
+  }, [activeSshTunnels.length, activeTool]);
 
   useEffect(() => {
     if (workspaceVisualSwitchActive) {
@@ -1445,6 +1452,13 @@ export function AppShell() {
                 username: activeSavedSession.username,
               }
             : null,
+        }}
+        tunnels={{
+          sessionName: activeSavedSession?.type === "ssh" ? activeSavedSession.name : null,
+          target: activeSavedSession?.type === "ssh"
+            ? `${activeSavedSession.username}@${activeSavedSession.host}:${activeSavedSession.port}`
+            : null,
+          items: activeSshTunnels,
         }}
         transfers={{
           tasks: transfers,

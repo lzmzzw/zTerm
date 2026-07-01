@@ -3,10 +3,11 @@ import { Plus } from "lucide-react";
 
 import { emptySshTunnel as emptyTunnel } from "./sshSessionModel";
 import { SshTunnelCard, tunnelModes } from "./SshTunnelCard";
-import type { SshOptions, SshTunnelMode } from "./types";
+import type { SshOptions, SshTunnel, SshTunnelMode } from "./types";
 
 interface SshTunnelsSectionProps {
   sshOptions: SshOptions;
+  host: string;
   newTunnelMode: SshTunnelMode;
   onNewTunnelModeChange: (mode: SshTunnelMode) => void;
   onSshOptionsChange: (options: SshOptions) => void;
@@ -14,11 +15,13 @@ interface SshTunnelsSectionProps {
 
 export function SshTunnelsSection({
   sshOptions,
+  host,
   newTunnelMode,
   onNewTunnelModeChange,
   onSshOptionsChange,
 }: SshTunnelsSectionProps) {
   const tunnels = sshOptions.tunnels ?? [];
+  const normalizedHost = host.trim();
 
   return (
     <div className="zt-session-form-wide zt-ssh-tunnel-editor" aria-label="隧道">
@@ -30,7 +33,7 @@ export function SshTunnelsSection({
           onClick={() =>
             onSshOptionsChange({
               ...sshOptions,
-              tunnels: [...tunnels, emptyTunnel(newTunnelMode)],
+              tunnels: [...tunnels, emptyTunnelForHost(newTunnelMode, normalizedHost)],
             })
           }
         >
@@ -49,9 +52,8 @@ export function SshTunnelsSection({
           >
             <span>
               <strong>{mode.title}</strong>
-              <small>{mode.description}</small>
+              <code>{mode.command}</code>
             </span>
-            <code>{mode.command}</code>
           </button>
         ))}
       </div>
@@ -61,6 +63,7 @@ export function SshTunnelsSection({
           key={index}
           index={index}
           tunnel={tunnel}
+          host={normalizedHost}
           onChange={(nextTunnel) => {
             const nextTunnels = [...tunnels];
             nextTunnels[index] = nextTunnel;
@@ -74,4 +77,12 @@ export function SshTunnelsSection({
       ))}
     </div>
   );
+}
+
+function emptyTunnelForHost(mode: SshTunnelMode, host: string): SshTunnel {
+  const tunnel = emptyTunnel(mode);
+  if (mode !== "host_service" || !host) {
+    return tunnel;
+  }
+  return { ...tunnel, remote_host: host };
 }

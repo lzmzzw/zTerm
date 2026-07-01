@@ -3556,6 +3556,136 @@ describe("AppShell", () => {
     view.unmount();
   });
 
+  it("shows the tunnel tool only when the active SSH saved session has tunnels", async () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "session-1",
+        name: "开发机 A",
+        host: "172.16.41.180",
+        port: 22,
+        username: "ubuntu",
+        type: "ssh",
+        auth_mode: "none",
+        group_id: null,
+        tags: [],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        ssh_options: {
+          tunnels: [
+            {
+              mode: "host_service",
+              kind: "local",
+              name: "管理后台",
+              auto_open: true,
+              bind_address: "127.0.0.1",
+              local_port: 18080,
+              remote_host: "127.0.0.1",
+              remote_port: 8080,
+            },
+            {
+              mode: "socks",
+              kind: "dynamic",
+              auto_open: false,
+              bind_address: "127.0.0.1",
+              local_port: 1080,
+            },
+          ],
+        },
+      },
+      {
+        id: "session-2",
+        name: "开发机 B",
+        host: "172.16.41.181",
+        port: 22,
+        username: "ubuntu",
+        type: "ssh",
+        auth_mode: "none",
+        group_id: null,
+        tags: [],
+        sort_order: 1,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        ssh_options: { tunnels: [] },
+      },
+    ];
+    storeMocks.workspaceState.tabs = [
+      {
+        id: "tab-1",
+        title: "开发机 A",
+        active_pane_id: "pane-1",
+        root: {
+          kind: "leaf",
+          id: "pane-1",
+          title: "开发机 A",
+          runtime_session_id: "runtime-1",
+          saved_session_id: "session-1",
+          active_terminal_tab_id: "pane-1-tab-1",
+          terminal_tabs: [
+            {
+              id: "pane-1-tab-1",
+              title: "开发机 A",
+              runtime_session_id: "runtime-1",
+              saved_session_id: "session-1",
+            },
+          ],
+        },
+      },
+    ];
+    const view = render(<AppShell />);
+    const tunnelButton = view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]') as HTMLButtonElement;
+
+    expect(tunnelButton).not.toBe(null);
+    expect(tunnelButton.querySelector("svg")?.classList.contains("lucide-cable")).toBe(true);
+
+    await act(async () => {
+      tunnelButton.click();
+      await Promise.resolve();
+    });
+
+    expect(view.container.querySelector('[aria-label="SSH 隧道"]')).not.toBe(null);
+    expect(view.container.textContent).toContain("开发机 A");
+    expect(view.container.textContent).toContain("ubuntu@172.16.41.180:22");
+    expect(view.container.textContent).toContain("管理后台");
+    expect(view.container.textContent).toContain("127.0.0.1:18080");
+    expect(view.container.textContent).toContain("127.0.0.1:8080");
+    expect(view.container.textContent).toContain("手动打开");
+
+    storeMocks.workspaceState.tabs = [
+      {
+        id: "tab-1",
+        title: "开发机 B",
+        active_pane_id: "pane-1",
+        root: {
+          kind: "leaf",
+          id: "pane-1",
+          title: "开发机 B",
+          runtime_session_id: "runtime-2",
+          saved_session_id: "session-2",
+          active_terminal_tab_id: "pane-1-tab-1",
+          terminal_tabs: [
+            {
+              id: "pane-1-tab-1",
+              title: "开发机 B",
+              runtime_session_id: "runtime-2",
+              saved_session_id: "session-2",
+            },
+          ],
+        },
+      },
+    ];
+
+    await act(async () => {
+      view.rerender(<AppShell />);
+      await Promise.resolve();
+    });
+
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).toBe(null);
+    expect(view.container.querySelector(".zt-workbench")?.classList.contains("zt-workbench-right-collapsed")).toBe(true);
+
+    view.unmount();
+  });
+
   it("adds a terminal tab in the active pane before opening a session when the current tab is connected", async () => {
     storeMocks.workspaceState.tabs = [
       {

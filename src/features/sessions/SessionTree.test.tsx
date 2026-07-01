@@ -442,11 +442,19 @@ describe("SessionTree", () => {
     expect(editorFields(view.container).textContent).toContain("暴露本机服务");
     expect(editorFields(view.container).textContent).toContain("主机使用本机网络");
     expect(editorFields(view.container).textContent).toContain("SOCKS / 高级");
+    expect(editorFields(view.container).textContent).not.toContain("把主机服务映射到本机端口");
+    expect(editorFields(view.container).textContent).not.toContain("把本机服务暴露到主机端口");
+    const hostServicePreset = button(view.container, "访问主机服务");
+    const hostServicePresetText = hostServicePreset.textContent ?? "";
+    expect(hostServicePresetText.indexOf("访问主机服务")).toBeLessThan(hostServicePresetText.indexOf("-L"));
 
     await click(button(view.container, "访问主机服务"));
     await click(button(view.container, "添加隧道"));
+    expect(editorFields(view.container).textContent).not.toContain("用途");
+    expect(editorFields(view.container).textContent).not.toContain("名称");
+    expect(input(view.container, "主机目标地址").readOnly).toBe(true);
+    expect(input(view.container, "主机目标地址").value).toBe("10.0.0.10");
     change(input(view.container, "隧道名称"), "PostgreSQL 隧道");
-    change(input(view.container, "主机目标地址"), "127.0.0.1");
     change(input(view.container, "主机目标端口"), "5432");
     change(input(view.container, "本机监听端口"), "15432");
 
@@ -469,7 +477,7 @@ describe("SessionTree", () => {
               auto_open: true,
               bind_address: "127.0.0.1",
               local_port: 15432,
-              remote_host: "127.0.0.1",
+              remote_host: "10.0.0.10",
               remote_port: 5432,
             }),
             expect.objectContaining({

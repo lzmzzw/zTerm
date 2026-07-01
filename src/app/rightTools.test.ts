@@ -5,8 +5,9 @@ import { rightToolFromShortcutActionId, rightToolLabelKey, rightToolRailOrder } 
 
 describe("rightTools", () => {
   it("keeps the right rail order and label keys stable", () => {
-    expect(rightToolRailOrder).toEqual(["files", "history", "monitor", "agent"]);
+    expect(rightToolRailOrder).toEqual(["files", "tunnels", "history", "monitor", "agent"]);
     expect(rightToolLabelKey("files")).toBe("sftpFiles");
+    expect(rightToolLabelKey("tunnels")).toBe("sshTunnels");
     expect(rightToolLabelKey("history")).toBe("history");
     expect(rightToolLabelKey("monitor")).toBe("resourceMonitor");
     expect(rightToolLabelKey("agent")).toBe("agent");

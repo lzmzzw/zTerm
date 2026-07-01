@@ -571,6 +571,96 @@ button {
   margin: 6px 8px;
 }
 
+.zt-tunnel-panel {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  overflow: hidden;
+}
+
+.zt-tunnel-target {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--zt-border-subtle);
+  border-radius: var(--zt-radius-control);
+  background: var(--zt-bg-main);
+  padding: 8px 10px;
+}
+
+.zt-tunnel-target strong,
+.zt-tunnel-list-item strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--zt-text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-tunnel-target span,
+.zt-tunnel-meta,
+.zt-tunnel-list-item dt {
+  color: var(--zt-text-muted);
+  font-size: 11px;
+}
+
+.zt-tunnel-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow: auto;
+}
+
+.zt-tunnel-list-item {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--zt-border);
+  border-radius: var(--zt-radius-control);
+  background: var(--zt-bg-main);
+  padding: 10px;
+}
+
+.zt-tunnel-list-item header,
+.zt-tunnel-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.zt-tunnel-list-item code {
+  flex: 0 0 auto;
+  border-radius: var(--zt-radius-control);
+  background: var(--zt-bg-input);
+  color: var(--zt-text-secondary);
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+.zt-tunnel-list-item dl {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 5px 8px;
+  margin: 0;
+}
+
+.zt-tunnel-list-item dt,
+.zt-tunnel-list-item dd {
+  margin: 0;
+}
+
+.zt-tunnel-list-item dd {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--zt-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .zt-tool-rail {
   display: flex;
   flex-direction: column;
@@ -4745,12 +4835,18 @@ button {
   gap: 10px;
 }
 
-.zt-ssh-tunnel-card-header strong {
+.zt-ssh-tunnel-card-header strong,
+.zt-ssh-tunnel-name-input {
   min-width: 0;
   overflow: hidden;
   color: var(--zt-text-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.zt-ssh-tunnel-name-input {
+  width: 100%;
+  font-weight: 700;
 }
 
 .zt-ssh-tunnel-card-actions {

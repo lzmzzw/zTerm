@@ -3,10 +3,7 @@ import { Trash2 } from "lucide-react";
 
 import { ZtNumberInput } from "../../components/ZtNumberInput";
 import { ZtSelect } from "../../components/ZtSelect";
-import {
-  applySshTunnelMode as applyTunnelMode,
-  sshTunnelMode as tunnelMode,
-} from "./sshSessionModel";
+import { sshTunnelMode as tunnelMode } from "./sshSessionModel";
 import type { SshTunnel, SshTunnelMode } from "./types";
 
 export const tunnelModes: Array<{
@@ -54,11 +51,13 @@ const socksLocationOptions = [
 export function SshTunnelCard({
   index,
   tunnel,
+  host,
   onChange,
   onDelete,
 }: {
   index: number;
   tunnel: SshTunnel;
+  host: string;
   onChange: (tunnel: SshTunnel) => void;
   onDelete: () => void;
 }) {
@@ -66,11 +65,18 @@ export function SshTunnelCard({
   const modeLabel = tunnelModes.find((item) => item.value === mode)?.title ?? "SSH 隧道";
   const displayName = tunnel.name?.trim() || `${modeLabel} ${index + 1}`;
   const socksLocation = tunnel.kind === "remote_dynamic" ? "remote" : "local";
+  const hostServiceTarget = host.trim();
 
   return (
     <section className="zt-ssh-tunnel-card" aria-label={displayName}>
       <div className="zt-ssh-tunnel-card-header">
-        <strong>{displayName}</strong>
+        <input
+          className="zt-ssh-tunnel-name-input"
+          aria-label="隧道名称"
+          value={displayName}
+          onChange={(event) => onChange({ ...tunnel, name: event.currentTarget.value || null })}
+          placeholder={modeLabel}
+        />
         <div className="zt-ssh-tunnel-card-actions">
           <label className="zt-ssh-tunnel-auto">
             <input
@@ -87,33 +93,14 @@ export function SshTunnelCard({
         </div>
       </div>
       <div className="zt-ssh-tunnel-card-grid">
-        <label>
-          <span>用途</span>
-          <ZtSelect
-            ariaLabel="隧道用途"
-            value={mode}
-            options={tunnelModes.map((item) => ({ value: item.value, label: item.title, description: item.description }))}
-            onChange={(nextValue) => onChange(applyTunnelMode(tunnel, nextValue as SshTunnelMode))}
-          />
-        </label>
-        <label>
-          <span>名称</span>
-          <input
-            aria-label="隧道名称"
-            value={tunnel.name ?? ""}
-            onChange={(event) => onChange({ ...tunnel, name: event.currentTarget.value || null })}
-            placeholder={modeLabel}
-          />
-        </label>
         {mode === "host_service" ? (
           <>
             <label>
               <span>主机目标地址</span>
               <input
                 aria-label="主机目标地址"
-                value={tunnel.remote_host ?? ""}
-                onChange={(event) => onChange({ ...tunnel, remote_host: event.currentTarget.value.trim() || null })}
-                placeholder="127.0.0.1"
+                value={hostServiceTarget}
+                readOnly
               />
             </label>
             <label>
