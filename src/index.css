@@ -3469,9 +3469,10 @@ button {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto auto;
   gap: 8px;
-  padding: 4px 10px 0;
+  padding: 4px 10px 6px;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -3933,6 +3934,8 @@ button {
 
 .zt-ai-composer {
   display: grid;
+  grid-row: -2 / -1;
+  align-self: end;
   gap: 6px;
   min-width: 0;
 }

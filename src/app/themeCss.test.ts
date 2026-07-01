@@ -228,14 +228,18 @@ describe("global dark theme colors", () => {
   });
 
   it("keeps the AI composer controls compact and anchored to the bottom", () => {
+    expect(ruleBodiesForSelector(".zt-ai-panel")).toContain("height: 100%");
+    expect(ruleBodiesForSelector(".zt-ai-panel")).toContain("padding: 4px 10px 6px");
+    expect(ruleBodiesForSelector(".zt-ai-composer")).toContain("grid-row: -2 / -1");
+    expect(ruleBodiesForSelector(".zt-ai-composer")).toContain("align-self: end");
     expect(ruleBodiesForSelector(".zt-ai-prompt textarea")).toContain("resize: none");
     expect(ruleBodiesForSelector(".zt-ai-composer-footer")).toContain("align-items: flex-end");
     expect(ruleBodiesForSelector(".zt-ai-approval-mode svg")).toContain("width: 12px");
     expect(ruleBodiesForSelector(".zt-ai-approval-mode svg")).toContain("height: 12px");
     expect(ruleBodiesForSelector(".zt-ai-approval-select.zt-select-trigger")).toContain("height: 22px");
     expect(ruleBodiesForSelector(".zt-ai-approval-select.zt-select-trigger")).toContain("font-size: 12px");
-    expect(ruleBodiesForSelector(".zt-ai-send")).toContain("width: 28px");
-    expect(ruleBodiesForSelector(".zt-ai-send")).toContain("height: 28px");
+    expect(ruleBodiesForSelector(".zt-ai-send")).toContain("width: 24px");
+    expect(ruleBodiesForSelector(".zt-ai-send")).toContain("height: 24px");
     expect(ruleBodiesForSelector(".zt-ai-send svg")).toContain("width: 15px");
     expect(ruleBodiesForSelector(".zt-ai-send svg")).toContain("height: 15px");
   });
