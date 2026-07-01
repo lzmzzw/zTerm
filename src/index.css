@@ -4111,6 +4111,24 @@ button {
   line-height: 1.35;
 }
 
+.zt-ai-tool-secret {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--zt-text-secondary);
+  font-size: var(--zt-font-size-ui);
+}
+
+.zt-ai-tool-secret input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: var(--zt-radius-control);
+  color: var(--zt-text-primary);
+  font-size: var(--zt-font-size-ui);
+}
+
 .zt-ai-tool-card footer button {
   flex: 1;
   height: 28px;

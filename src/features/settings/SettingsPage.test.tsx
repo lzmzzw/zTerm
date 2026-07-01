@@ -31,6 +31,7 @@ const baseSettings: AppSettings = {
   terminal_font_size: 13,
   default_right_tool: "agent",
   workspace_restore_strategy: "visible_first",
+  mcp: { enabled: false, port: null },
   shortcuts: [],
 };
 

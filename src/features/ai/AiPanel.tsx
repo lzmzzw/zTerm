@@ -11,6 +11,7 @@ import type {
   AiConversationPreviewState,
   AiConversationSummary,
   AiTerminalContextSnapshot,
+  AiToolSecretInputs,
   AiToolPendingInvocation,
 } from "./aiStore";
 
@@ -38,7 +39,7 @@ interface AiPanelProps {
   onLoadConversationPreview?: (conversationId: string) => Promise<unknown> | unknown;
   onNewConversation?: () => Promise<unknown> | unknown;
   onDeleteConversation?: (conversationId: string) => Promise<unknown> | unknown;
-  onConfirmTool?: (invocationId: string, approved: boolean) => Promise<unknown> | unknown;
+  onConfirmTool?: (invocationId: string, approved: boolean, secretInputs?: AiToolSecretInputs) => Promise<unknown> | unknown;
 }
 
 export function AiPanel({
@@ -70,6 +71,7 @@ export function AiPanel({
   const [panelView, setPanelView] = useState<"current" | "history">("current");
   const [expandedConversationIds, setExpandedConversationIds] = useState<string[]>([]);
   const [chatPrompt, setChatPrompt] = useState("");
+  const [toolSecretInputs, setToolSecretInputs] = useState<Record<string, string>>({});
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const promptId = useId();
   const canSendChat = providersAvailable && Boolean(chatPrompt.trim()) && !loading && Boolean(onSendChat);
@@ -134,6 +136,27 @@ export function AiPanel({
     );
     if (!isExpanded) {
       void onLoadConversationPreview?.(conversationId);
+    }
+  }
+
+  function updateToolSecretInput(invocationId: string, value: string) {
+    setToolSecretInputs((current) => ({ ...current, [invocationId]: value }));
+  }
+
+  function confirmToolInvocation(invocation: AiToolPendingInvocation, approved: boolean) {
+    const apiKey = toolSecretInputs[invocation.id]?.trim() ?? "";
+    const secretInputs = invocation.requires_secret_input && approved ? { api_key: apiKey } : undefined;
+    if (secretInputs) {
+      void onConfirmTool?.(invocation.id, approved, secretInputs);
+    } else {
+      void onConfirmTool?.(invocation.id, approved);
+    }
+    if (!approved || !invocation.requires_secret_input) {
+      setToolSecretInputs((current) => {
+        const next = { ...current };
+        delete next[invocation.id];
+        return next;
+      });
     }
   }
 
@@ -272,11 +295,29 @@ export function AiPanel({
                       </p>
                     </div>
                     {invocation.risk_summary ? <small className="zt-ai-tool-risk-note">{invocation.risk_summary}</small> : null}
+                    {invocation.requires_secret_input ? (
+                      <label className="zt-ai-tool-secret">
+                        <span>{invocation.secret_input_label || t(language, "aiToolSecretInput")}</span>
+                        <input
+                          type="password"
+                          autoComplete="off"
+                          value={toolSecretInputs[invocation.id] ?? ""}
+                          placeholder={t(language, "aiToolSecretRequired")}
+                          aria-label={invocation.secret_input_label || t(language, "aiToolSecretInput")}
+                          disabled={loading}
+                          onChange={(event) => updateToolSecretInput(invocation.id, event.currentTarget.value)}
+                        />
+                      </label>
+                    ) : null}
                     <footer>
-                      <button type="button" disabled={loading} onClick={() => void onConfirmTool?.(invocation.id, true)}>
+                      <button
+                        type="button"
+                        disabled={loading || (Boolean(invocation.requires_secret_input) && !toolSecretInputs[invocation.id]?.trim())}
+                        onClick={() => confirmToolInvocation(invocation, true)}
+                      >
                         {t(language, "approve")}
                       </button>
-                      <button type="button" disabled={loading} onClick={() => void onConfirmTool?.(invocation.id, false)}>
+                      <button type="button" disabled={loading} onClick={() => confirmToolInvocation(invocation, false)}>
                         {t(language, "reject")}
                       </button>
                     </footer>

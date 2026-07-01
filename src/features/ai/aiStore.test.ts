@@ -17,7 +17,7 @@ vi.mock("@tauri-apps/api/event", () => ({
   }),
 }));
 
-import { useAiStore, type AiTerminalContextSnapshot } from "./aiStore";
+import { setAiAffectedDomainsHandler, useAiStore, type AiTerminalContextSnapshot } from "./aiStore";
 
 function snapshot(runtimeSessionId: string): AiTerminalContextSnapshot {
   return {
@@ -64,6 +64,7 @@ describe("aiStore", () => {
       loading: false,
       error: null,
     });
+    setAiAffectedDomainsHandler(null);
   });
 
   it("does not let an older context capture overwrite the latest active terminal context", async () => {
@@ -151,6 +152,91 @@ describe("aiStore", () => {
     expect(useAiStore.getState().conversationPreviews["conversation-1"]?.messages?.[1]).toEqual(
       expect.objectContaining({ content: "收到", status: "complete" }),
     );
+  });
+
+  it("notifies affected domains after completed stream tool executions", async () => {
+    const affectedHandler = vi.fn();
+    setAiAffectedDomainsHandler(affectedHandler);
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "ai_chat_stream") return Promise.resolve({ chat_id: "chat-1", conversation_id: "conversation-1" });
+      if (command === "ai_conversation_get") {
+        return Promise.resolve({
+          id: "conversation-1",
+          title: "测试",
+          scope_kind: "follow_focus",
+          scope_ref_json: "{}",
+          approval_mode: "safe",
+          status: "active",
+          created_at_ms: 1,
+          updated_at_ms: 2,
+          messages: [],
+        });
+      }
+      if (command === "ai_conversation_list") {
+        return Promise.resolve([{ id: "conversation-1", title: "测试", updated_at_ms: 2 }]);
+      }
+      if (command === "ai_tool_pending") {
+        return Promise.resolve([]);
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    await useAiStore.getState().sendChat("测试", snapshot("runtime-1"));
+    emitAiChatEvent("ai-chat:done", {
+      chat_id: "chat-1",
+      conversation_id: "conversation-1",
+      message: "done",
+      pending_invocations: [],
+      executed_invocations: [
+        {
+          id: "audit-1",
+          invocation_id: "invocation-1",
+          tool_id: "sessions.save",
+          tool_title: "保存会话",
+          risk_level: "medium",
+          arguments_summary: "name=test",
+          status: "succeeded",
+          result_summary: "done",
+          affected_domains: ["sessions", "workspace"],
+          created_at_ms: 1,
+          completed_at_ms: 2,
+        },
+      ],
+      context_used: true,
+      generated_at_ms: 2,
+    });
+    await flushPromises();
+
+    expect(affectedHandler).toHaveBeenCalledWith(["sessions", "workspace"]);
+  });
+
+  it("notifies affected domains after confirming a pending tool", async () => {
+    const affectedHandler = vi.fn();
+    setAiAffectedDomainsHandler(affectedHandler);
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "ai_tool_confirm") {
+        return Promise.resolve({
+          id: "audit-1",
+          invocation_id: "invocation-1",
+          tool_id: "workspace.delete",
+          tool_title: "删除工作区",
+          risk_level: "critical",
+          arguments_summary: "workspace_id=w1",
+          status: "succeeded",
+          result_summary: "deleted",
+          affected_domains: ["workspace"],
+          created_at_ms: 1,
+          completed_at_ms: 2,
+        });
+      }
+      if (command === "ai_tool_pending") return Promise.resolve([]);
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    await useAiStore.getState().confirmTool("invocation-1", true);
+
+    expect(affectedHandler).toHaveBeenCalledWith(["workspace"]);
+    expect(useAiStore.getState().pendingInvocations).toEqual([]);
   });
 
   it("cancels the current chat stream and ignores late chunks", async () => {

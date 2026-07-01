@@ -65,6 +65,23 @@ pub enum SettingsSection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub port: Option<u16>,
+}
+
+impl Default for McpSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShortcutBinding {
     pub action_id: String,
     pub accelerator: String,
@@ -109,6 +126,8 @@ pub struct AppSettings {
     pub default_right_tool: Option<String>,
     #[serde(default)]
     pub workspace_restore_strategy: WorkspaceRestoreStrategy,
+    #[serde(default)]
+    pub mcp: McpSettings,
     #[serde(default = "default_shortcuts")]
     pub shortcuts: Vec<ShortcutBinding>,
 }
@@ -122,6 +141,7 @@ impl Default for AppSettings {
             terminal_font_size: default_terminal_font_size(),
             default_right_tool: default_right_tool(),
             workspace_restore_strategy: WorkspaceRestoreStrategy::default(),
+            mcp: McpSettings::default(),
             shortcuts: default_shortcuts(),
         }
     }
@@ -138,6 +158,7 @@ impl AppSettings {
                 self.terminal_font_size = defaults.terminal_font_size;
                 self.default_right_tool = defaults.default_right_tool;
                 self.workspace_restore_strategy = defaults.workspace_restore_strategy;
+                self.mcp = defaults.mcp;
             }
             SettingsSection::Shortcuts => {
                 self.shortcuts = defaults.shortcuts;
@@ -245,6 +266,10 @@ mod tests {
             terminal_font_size: 21,
             default_right_tool: Some("history".to_string()),
             workspace_restore_strategy: WorkspaceRestoreStrategy::LayoutOnly,
+            mcp: McpSettings {
+                enabled: true,
+                port: Some(39001),
+            },
             shortcuts: vec![ShortcutBinding {
                 action_id: "settings.open".to_string(),
                 accelerator: "Alt+S".to_string(),
@@ -333,5 +358,6 @@ mod tests {
             value.workspace_restore_strategy,
             WorkspaceRestoreStrategy::VisibleFirst
         );
+        assert_eq!(value.mcp, McpSettings::default());
     }
 }

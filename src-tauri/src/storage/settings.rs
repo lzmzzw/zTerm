@@ -73,6 +73,9 @@ fn validate_settings(settings: &AppSettings) -> AppResult<()> {
     if !(9..=24).contains(&settings.terminal_font_size) {
         return Err(AppError::validation("终端字号必须在 9 到 24 之间"));
     }
+    if settings.mcp.port == Some(0) {
+        return Err(AppError::validation("MCP 端口不能为 0"));
+    }
     Ok(())
 }
 
@@ -88,7 +91,8 @@ mod tests {
     use super::*;
     use crate::{
         models::settings::{
-            AppLanguage, AppTheme, ShortcutBinding, ShortcutScope, WorkspaceRestoreStrategy,
+            AppLanguage, AppTheme, McpSettings, ShortcutBinding, ShortcutScope,
+            WorkspaceRestoreStrategy,
         },
         storage::sqlite::SqliteStore,
     };
@@ -101,6 +105,10 @@ mod tests {
             terminal_font_size: 21,
             default_right_tool: Some("history".to_string()),
             workspace_restore_strategy: WorkspaceRestoreStrategy::ConnectAll,
+            mcp: McpSettings {
+                enabled: true,
+                port: Some(39001),
+            },
             shortcuts: vec![ShortcutBinding {
                 action_id: "settings.open".to_string(),
                 accelerator: "Alt+S".to_string(),
@@ -126,6 +134,7 @@ mod tests {
             reset.workspace_restore_strategy,
             WorkspaceRestoreStrategy::VisibleFirst
         );
+        assert_eq!(reset.mcp, McpSettings::default());
         assert_eq!(reset.shortcuts, current.shortcuts);
         assert_eq!(
             get_app_settings(&store).expect("settings should load"),
@@ -149,6 +158,7 @@ mod tests {
             reset.workspace_restore_strategy,
             current.workspace_restore_strategy
         );
+        assert_eq!(reset.mcp, current.mcp);
         assert_eq!(reset.shortcuts, AppSettings::default().shortcuts);
         assert_eq!(
             get_app_settings(&store).expect("settings should load"),

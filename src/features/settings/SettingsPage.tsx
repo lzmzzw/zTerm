@@ -2,7 +2,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
-import { ExternalLink, Info, Hash, Scale, GitBranch, RefreshCw, Search, Star, X } from "lucide-react";
+import { Copy, ExternalLink, Info, Hash, KeyRound, Power, Scale, GitBranch, RefreshCw, Search, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { acceleratorFromKeyboardEvent, bindingsWithDefaults, detectShortcutConflicts } from "./shortcutManager";
@@ -23,6 +23,7 @@ import type {
   AppLanguage,
   AppSettings,
   AppTheme,
+  McpServerStatus,
   SettingsSection,
   ShortcutBinding,
   ShortcutDefinition,
@@ -42,6 +43,9 @@ interface SettingsPageProps {
   onResetSettings: (section: SettingsSection) => Promise<AppSettings> | AppSettings;
   onDetectTerminalProfiles: () => Promise<TerminalProfile[]> | TerminalProfile[];
   onSetDefaultTerminalProfile: (draft: TerminalProfileDraft) => Promise<unknown> | unknown;
+  mcpStatus?: McpServerStatus;
+  onSetMcpEnabled?: (enabled: boolean, port?: number | null) => Promise<McpServerStatus> | McpServerStatus;
+  onRotateMcpToken?: () => Promise<McpServerStatus> | McpServerStatus;
 }
 
 export function SettingsPage({
@@ -55,6 +59,9 @@ export function SettingsPage({
   onResetSettings,
   onDetectTerminalProfiles,
   onSetDefaultTerminalProfile,
+  mcpStatus = { enabled: false, endpoint: null, token: null },
+  onSetMcpEnabled = async () => ({ enabled: false, endpoint: null, token: null }),
+  onRotateMcpToken = async () => ({ enabled: false, endpoint: null, token: null }),
 }: SettingsPageProps) {
   const [tab, setTab] = useState<SettingsTab>("general");
   const [draft, setDraft] = useState<AppSettings>(settings ?? fallbackSettings);
@@ -133,12 +140,104 @@ export function SettingsPage({
               onSetDefault={onSetDefaultTerminalProfile}
             />
           ) : null}
+          {tab === "mcp" ? (
+            <McpSettings
+              status={mcpStatus}
+              language={language}
+              loading={loading}
+              onSetEnabled={onSetMcpEnabled}
+              onRotateToken={onRotateMcpToken}
+            />
+          ) : null}
           {tab === "about" ? (
             <AboutSettings language={language} />
           ) : null}
         </main>
       </div>
     </div>
+  );
+}
+
+function McpSettings({
+  status,
+  language,
+  loading,
+  onSetEnabled,
+  onRotateToken,
+}: {
+  status: McpServerStatus;
+  language: AppLanguage;
+  loading: boolean;
+  onSetEnabled: (enabled: boolean, port?: number | null) => Promise<McpServerStatus> | McpServerStatus;
+  onRotateToken: () => Promise<McpServerStatus> | McpServerStatus;
+}) {
+  const [localStatus, setLocalStatus] = useState<string | null>(null);
+
+  async function setEnabled(enabled: boolean) {
+    await onSetEnabled(enabled, null);
+    setLocalStatus(enabled ? t(language, "mcpServiceStarted") : t(language, "mcpServiceStopped"));
+  }
+
+  async function rotateToken() {
+    await onRotateToken();
+    setLocalStatus(t(language, "mcpTokenRotated"));
+  }
+
+  async function copyValue(value: string | null | undefined, message: string) {
+    if (!value) return;
+    await navigator.clipboard?.writeText(value);
+    setLocalStatus(message);
+  }
+
+  return (
+    <section className="zt-settings-section" aria-label={t(language, "mcpLocalService")}>
+      <div className="zt-settings-actions">
+        <button type="button" disabled={loading} onClick={() => void setEnabled(!status.enabled)}>
+          <Power size={14} aria-hidden="true" />
+          {status.enabled ? t(language, "mcpDisable") : t(language, "mcpEnable")}
+        </button>
+        <button type="button" disabled={loading || !status.enabled} onClick={() => void rotateToken()}>
+          <RefreshCw size={14} aria-hidden="true" />
+          {t(language, "mcpRotateToken")}
+        </button>
+        {localStatus ? <span className="zt-settings-status">{localStatus}</span> : null}
+      </div>
+      <div className="zt-settings-list" aria-label={t(language, "mcpLocalService")}>
+        {!status.enabled ? <div className="zt-empty-line">{t(language, "mcpDisabled")}</div> : null}
+        <div className="zt-settings-row zt-mcp-row">
+          <ExternalLink size={14} aria-hidden="true" />
+          <div>
+            <strong>{t(language, "mcpEndpoint")}</strong>
+            <span>{status.endpoint ?? "-"}</span>
+          </div>
+          <button
+            type="button"
+            aria-label={t(language, "mcpCopyEndpoint")}
+            title={t(language, "mcpCopyEndpoint")}
+            disabled={!status.endpoint}
+            onClick={() => void copyValue(status.endpoint, t(language, "mcpEndpointCopied"))}
+          >
+            <Copy size={14} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="zt-settings-row zt-mcp-row">
+          <KeyRound size={14} aria-hidden="true" />
+          <div>
+            <strong>{t(language, "mcpToken")}</strong>
+            <span>{status.token ?? "-"}</span>
+          </div>
+          <button
+            type="button"
+            aria-label={t(language, "mcpCopyToken")}
+            title={t(language, "mcpCopyToken")}
+            disabled={!status.token}
+            onClick={() => void copyValue(status.token, t(language, "mcpTokenCopied"))}
+          >
+            <Copy size={14} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 

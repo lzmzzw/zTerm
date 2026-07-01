@@ -7,15 +7,17 @@ use zterm_lib::{
     models::ai::{
         AiApprovalMode, AiConversationCreateRequest, AiConversationMessageAppendRequest,
         AiMessageRole, AiToolConfirmRequest, AiToolInvocationStatus, AiToolPrepareRequest,
-        RiskLevel,
+        AiToolSecretInputs, RiskLevel,
     },
     models::history::{CommandHistoryDraft, HistoryScopeKind, HistorySearchOptions},
+    models::session::{AuthMode, SavedSessionDraft, SessionType},
     services::{
         ai_conversation_service::AiConversationService,
         ai_tool_service::{AiToolCommandWriter, AiToolService},
     },
     storage::{
         history::{insert_command_history, search_command_history},
+        sessions::list_sessions,
         sqlite::SqliteStore,
     },
 };
@@ -141,6 +143,7 @@ fn tool_service_prepares_confirms_and_audits_terminal_write() {
                 invocation_id: pending.id.clone(),
                 approved: true,
                 audit_context_json: Some(json!({"conversation_id": "conversation-1"}).to_string()),
+                secret_inputs: None,
             },
         )
         .expect("tool call should confirm");
@@ -195,6 +198,7 @@ fn tool_service_rejects_without_executing() {
                 invocation_id: pending.id,
                 approved: false,
                 audit_context_json: None,
+                secret_inputs: None,
             },
         )
         .expect("tool call should reject");
@@ -408,8 +412,23 @@ fn tool_service_history_tools_require_and_use_history_scope() {
             },
             AiApprovalMode::FullAccess,
         )
-        .expect("history clear should execute in full access mode");
-    assert!(clear.pending_invocation.is_none());
+        .expect("history clear should require confirmation even in full access mode");
+    assert!(clear.audit_record.is_none());
+    let clear_pending = clear
+        .pending_invocation
+        .expect("history clear should prepare pending");
+    let clear_audit = service
+        .confirm(
+            &store,
+            AiToolConfirmRequest {
+                invocation_id: clear_pending.id,
+                approved: true,
+                audit_context_json: None,
+                secret_inputs: None,
+            },
+        )
+        .expect("confirmed clear should execute");
+    assert_eq!(clear_audit.status, AiToolInvocationStatus::Succeeded);
 
     let cleared_entries = search_command_history(
         &store,
@@ -462,16 +481,262 @@ fn tool_service_request_approval_requires_confirmation_for_low_risk_and_full_acc
             terminal_write_request("rm -rf /tmp/demo\r", None, None),
             AiApprovalMode::FullAccess,
         )
-        .expect("full access should execute risk command");
-    assert!(full_access.pending_invocation.is_none());
+        .expect("full access should still prepare high risk terminal write");
+    assert!(full_access.audit_record.is_none());
+    assert!(full_access.pending_invocation.is_some());
+    assert!(writer.writes().is_empty());
+}
+
+#[test]
+fn tool_service_resource_save_executes_and_reports_affected_domains() {
+    let store = SqliteStore::open_in_memory().expect("store should open");
+    let service = AiToolService::with_writer(Arc::new(FakeToolWriter::default()));
+
+    let outcome = service
+        .execute_if_allowed(
+            &store,
+            AiToolPrepareRequest {
+                tool_id: "sessions.save".to_string(),
+                arguments: json!({
+                    "draft": local_session_draft("session-ai", "AI Local")
+                }),
+                reason: None,
+                requested_by: Some("test".to_string()),
+                conversation_id: None,
+                run_id: None,
+                step_id: None,
+            },
+            AiApprovalMode::Safe,
+        )
+        .expect("session save should auto execute in safe mode");
+
+    assert!(outcome.pending_invocation.is_none());
+    let audit = outcome.audit_record.expect("audit should be recorded");
+    assert_eq!(audit.status, AiToolInvocationStatus::Succeeded);
     assert_eq!(
-        full_access.audit_record.expect("full access audit").status,
-        AiToolInvocationStatus::Succeeded
+        audit.affected_domains,
+        vec!["sessions".to_string(), "workspace".to_string()]
     );
+    assert!(audit
+        .result_summary
+        .as_deref()
+        .expect("result summary")
+        .contains("AI Local"));
+
+    let sessions = list_sessions(&store).expect("sessions should list");
+    assert!(sessions
+        .sessions
+        .iter()
+        .any(|session| session.id == "session-ai" && session.name == "AI Local"));
+}
+
+#[test]
+fn tool_service_requires_backend_services_for_server_info_and_container_tools() {
+    let store = SqliteStore::open_in_memory().expect("store should open");
+    let service = AiToolService::with_writer(Arc::new(FakeToolWriter::default()));
+
+    let server_info = service
+        .execute_if_allowed(
+            &store,
+            AiToolPrepareRequest {
+                tool_id: "server_info.snapshot".to_string(),
+                arguments: json!({ "saved_session_id": "ssh-prod" }),
+                reason: None,
+                requested_by: Some("test".to_string()),
+                conversation_id: None,
+                run_id: None,
+                step_id: None,
+            },
+            AiApprovalMode::Safe,
+        )
+        .expect("missing server info service should be audited");
+    let server_info_audit = server_info.audit_record.expect("server info audit");
+    assert_eq!(server_info_audit.status, AiToolInvocationStatus::Failed);
     assert_eq!(
-        writer.writes(),
-        vec![("runtime-1".to_string(), "rm -rf /tmp/demo\r".to_string())]
+        server_info_audit.affected_domains,
+        vec!["monitor".to_string()]
     );
+    assert!(server_info_audit
+        .error
+        .as_deref()
+        .expect("server info error")
+        .contains("资源监控服务"));
+
+    let containers = service
+        .execute_if_allowed(
+            &store,
+            AiToolPrepareRequest {
+                tool_id: "ssh_container.list".to_string(),
+                arguments: json!({ "saved_session_id": "ssh-prod" }),
+                reason: None,
+                requested_by: Some("test".to_string()),
+                conversation_id: None,
+                run_id: None,
+                step_id: None,
+            },
+            AiApprovalMode::Safe,
+        )
+        .expect("missing ssh command service should be audited");
+    let containers_audit = containers.audit_record.expect("container audit");
+    assert_eq!(containers_audit.status, AiToolInvocationStatus::Failed);
+    assert_eq!(
+        containers_audit.affected_domains,
+        vec!["terminal".to_string()]
+    );
+    assert!(containers_audit
+        .error
+        .as_deref()
+        .expect("container error")
+        .contains("SSH 命令服务"));
+}
+
+#[test]
+fn tool_service_full_access_still_keeps_delete_and_clear_pending() {
+    let store = SqliteStore::open_in_memory().expect("store should open");
+    let service = AiToolService::with_writer(Arc::new(FakeToolWriter::default()));
+
+    let delete_outcome = service
+        .execute_if_allowed(
+            &store,
+            AiToolPrepareRequest {
+                tool_id: "sessions.delete".to_string(),
+                arguments: json!({ "id": "session-ai" }),
+                reason: None,
+                requested_by: Some("test".to_string()),
+                conversation_id: None,
+                run_id: None,
+                step_id: None,
+            },
+            AiApprovalMode::FullAccess,
+        )
+        .expect("delete should prepare pending");
+
+    assert!(delete_outcome.audit_record.is_none());
+    let pending = delete_outcome.pending_invocation.expect("delete pending");
+    assert_eq!(pending.tool_id, "sessions.delete");
+    assert!(pending.requires_confirmation);
+
+    let clear_outcome = service
+        .execute_if_allowed(
+            &store,
+            AiToolPrepareRequest {
+                tool_id: "history.clear".to_string(),
+                arguments: json!({
+                    "scope_kind": "local_profile",
+                    "scope_id": "pwsh"
+                }),
+                reason: None,
+                requested_by: Some("test".to_string()),
+                conversation_id: None,
+                run_id: None,
+                step_id: None,
+            },
+            AiApprovalMode::FullAccess,
+        )
+        .expect("clear should prepare pending");
+
+    assert!(clear_outcome.audit_record.is_none());
+    assert_eq!(
+        clear_outcome
+            .pending_invocation
+            .expect("clear pending")
+            .tool_id,
+        "history.clear"
+    );
+}
+
+#[test]
+fn tool_service_rejects_secret_values_in_tool_arguments() {
+    let store = SqliteStore::open_in_memory().expect("store should open");
+    let service = AiToolService::with_writer(Arc::new(FakeToolWriter::default()));
+
+    let error = service
+        .execute_if_allowed(
+            &store,
+            AiToolPrepareRequest {
+                tool_id: "llm_provider.create".to_string(),
+                arguments: json!({
+                    "draft": {
+                        "name": "Secret provider",
+                        "kind": "openai_responses",
+                        "base_url": "http://example.test/v1",
+                        "model": "gpt-test",
+                        "api_key": "sk-test-secret",
+                        "enabled": true,
+                        "is_default": false
+                    }
+                }),
+                reason: None,
+                requested_by: Some("test".to_string()),
+                conversation_id: None,
+                run_id: None,
+                step_id: None,
+            },
+            AiApprovalMode::Safe,
+        )
+        .expect_err("secret-bearing arguments should be rejected");
+
+    assert!(error.to_string().contains("敏感字段"));
+}
+
+#[test]
+fn tool_service_provider_secret_is_collected_only_during_confirm() {
+    let store = SqliteStore::open_in_memory().expect("store should open");
+    let service = AiToolService::with_writer(Arc::new(FakeToolWriter::default()));
+
+    let outcome = service
+        .execute_if_allowed(
+            &store,
+            AiToolPrepareRequest {
+                tool_id: "llm_provider.create".to_string(),
+                arguments: json!({
+                    "draft": {
+                        "name": "Anthropic Local Secret",
+                        "kind": "anthropic",
+                        "base_url": "https://api.anthropic.com",
+                        "model": "claude-test",
+                        "enabled": true,
+                        "is_default": false
+                    }
+                }),
+                reason: None,
+                requested_by: Some("test".to_string()),
+                conversation_id: None,
+                run_id: None,
+                step_id: None,
+            },
+            AiApprovalMode::FullAccess,
+        )
+        .expect("secret-backed provider should prepare pending");
+
+    assert!(outcome.audit_record.is_none());
+    let pending = outcome.pending_invocation.expect("provider pending");
+    assert!(pending.requires_confirmation);
+    assert!(pending.requires_secret_input);
+    assert_eq!(pending.secret_input_label.as_deref(), Some("API Key"));
+    assert!(!pending.arguments_summary.contains("sk-local-only"));
+
+    let audit = service
+        .confirm(
+            &store,
+            AiToolConfirmRequest {
+                invocation_id: pending.id,
+                approved: true,
+                audit_context_json: None,
+                secret_inputs: Some(AiToolSecretInputs {
+                    api_key: Some("sk-local-only".to_string()),
+                }),
+            },
+        )
+        .expect("confirm should produce an audit even when runtime service is missing");
+
+    assert_eq!(audit.status, AiToolInvocationStatus::Failed);
+    assert!(!audit.arguments_summary.contains("sk-local-only"));
+    assert!(!audit
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("sk-local-only"));
 }
 
 fn terminal_write_request(
@@ -492,5 +757,25 @@ fn terminal_write_request(
         conversation_id,
         run_id: None,
         step_id: None,
+    }
+}
+
+fn local_session_draft(id: &str, name: &str) -> SavedSessionDraft {
+    SavedSessionDraft {
+        id: Some(id.to_string()),
+        name: name.to_string(),
+        session_type: SessionType::Local,
+        group_id: None,
+        host: "localhost".to_string(),
+        port: 22,
+        username: String::new(),
+        auth_mode: AuthMode::None,
+        credential_ref: None,
+        description: None,
+        tags: Vec::new(),
+        sort_order: 0,
+        ssh_options: None,
+        rdp_options: None,
+        local_options: None,
     }
 }

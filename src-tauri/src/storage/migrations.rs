@@ -174,6 +174,8 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
             target_summary text null,
             risk_summary text null,
             requires_confirmation integer not null check (requires_confirmation in (0, 1)),
+            requires_secret_input integer not null default 0 check (requires_secret_input in (0, 1)),
+            secret_input_label text null,
             status text not null check (status in ('pending', 'rejected', 'succeeded', 'failed')),
             reason text null,
             requested_by text null,
@@ -195,6 +197,7 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
             result_summary text null,
             error text null,
             audit_context_json text null,
+            affected_domains_json text not null default '[]',
             created_at_ms integer not null,
             completed_at_ms integer not null
         );
@@ -240,11 +243,47 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
         ",
     )?;
     ensure_transfer_task_strategy_columns(&transaction)?;
+    ensure_ai_tool_audit_columns(&transaction)?;
+    ensure_ai_tool_pending_columns(&transaction)?;
     reset_workspace_runtime_status(&transaction)?;
     clear_default_workspace_tabs(&transaction)?;
     drop_legacy_agent_runs(&transaction)?;
     drop_source_reuse_records(&transaction)?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn ensure_ai_tool_pending_columns(transaction: &rusqlite::Transaction<'_>) -> AppResult<()> {
+    if !sqlite_column_exists(transaction, "ai_tool_pending", "requires_secret_input")? {
+        transaction.execute(
+            "alter table ai_tool_pending add column requires_secret_input integer not null default 0",
+            [],
+        )?;
+    }
+    if !sqlite_column_exists(transaction, "ai_tool_pending", "secret_input_label")? {
+        transaction.execute(
+            "alter table ai_tool_pending add column secret_input_label text null",
+            [],
+        )?;
+    }
+    transaction.execute(
+        "update ai_tool_pending set requires_secret_input = 0 where requires_secret_input is null",
+        [],
+    )?;
+    Ok(())
+}
+
+fn ensure_ai_tool_audit_columns(transaction: &rusqlite::Transaction<'_>) -> AppResult<()> {
+    if !sqlite_column_exists(transaction, "ai_tool_audits", "affected_domains_json")? {
+        transaction.execute(
+            "alter table ai_tool_audits add column affected_domains_json text not null default '[]'",
+            [],
+        )?;
+    }
+    transaction.execute(
+        "update ai_tool_audits set affected_domains_json = '[]' where affected_domains_json is null or trim(affected_domains_json) = ''",
+        [],
+    )?;
     Ok(())
 }
 

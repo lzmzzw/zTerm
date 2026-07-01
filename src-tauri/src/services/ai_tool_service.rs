@@ -4,38 +4,75 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
+use tauri::Emitter;
 use uuid::Uuid;
 
 use crate::services::{
-    command_history_service::CommandHistoryService, terminal_manager::TerminalManager,
+    command_history_service::CommandHistoryService,
+    credential_service::CredentialService,
+    server_info_service::ServerInfoService,
+    sftp_service::SftpService,
+    ssh_command_service::SshCommandService,
+    ssh_container_service::{
+        build_container_list_script, enabled_container_options, parse_container_ps_output,
+    },
+    terminal_manager::TerminalManager,
+    transfer_queue::TransferQueue,
 };
 use crate::{
     error::{AppError, AppResult},
     models::{
         ai::{
             AiApprovalMode, AiMessageRole, AiToolAuditListRequest, AiToolAuditRecord,
-            AiToolConfirmRequest, AiToolDefinition, AiToolInvocationStatus,
-            AiToolPendingInvocation, AiToolPrepareRequest, RiskLevel,
+            AiToolConfirmRequest, AiToolDefinition, AiToolFrontendActionEvent,
+            AiToolInvocationStatus, AiToolPendingInvocation, AiToolPrepareRequest,
+            AiToolSecretInputs, RiskLevel,
         },
+        credential::AiProviderProfileDraft,
         history::{HistoryScopeKind, HistorySearchOptions},
+        server_info::{ServerInfoRequest, ServerInfoSnapshot},
+        session::{SavedSessionDraft, SessionGroupDraft},
+        terminal::RuntimeSessionInfo,
+        terminal_profile::TerminalProfileDraft,
+        workspace::{
+            PaneNode, WorkspaceDefinitionDraft, WorkspaceStatus, WorkspaceTabDraft,
+            WorkspaceTerminalTab,
+        },
     },
     security::redaction::redact_sensitive,
     storage::{
         ai::{
-            delete_ai_tool_pending, get_ai_tool_pending_state, insert_ai_conversation_message,
-            insert_ai_tool_audit, list_ai_provider_profiles, list_ai_tool_audits,
-            list_ai_tool_pending, upsert_ai_tool_pending,
+            delete_ai_tool_pending, get_ai_provider_profile, get_ai_tool_pending_state,
+            insert_ai_conversation_message, insert_ai_tool_audit, list_ai_provider_profiles,
+            list_ai_tool_audits, list_ai_tool_pending, update_ai_conversation_approval_mode,
+            upsert_ai_tool_pending,
         },
         history::{clear_command_history, search_command_history},
-        sessions::list_sessions,
+        sessions::{
+            delete_session, delete_session_group, get_session, list_sessions, save_session,
+            save_session_group,
+        },
         settings::get_app_settings,
         sqlite::SqliteStore,
+        transfers::list_transfer_tasks,
+        workspace::{
+            close_workspace, get_workspace, list_workspaces, remove_workspace, save_workspace,
+        },
     },
 };
 
 pub trait AiToolCommandWriter: Send + Sync {
     fn write_terminal(&self, runtime_session_id: &str, data: &str) -> AppResult<()>;
+
+    fn emit_tool_action(&self, _event: AiToolFrontendActionEvent) -> AppResult<()> {
+        Ok(())
+    }
+
+    fn list_terminals(&self) -> AppResult<Vec<RuntimeSessionInfo>> {
+        Ok(Vec::new())
+    }
 
     fn terminal_output_cursor(&self, _runtime_session_id: &str) -> AppResult<Option<usize>> {
         Ok(None)
@@ -56,24 +93,65 @@ pub struct AiToolExecutionOutcome {
     pub audit_record: Option<AiToolAuditRecord>,
 }
 
+#[derive(Debug, Clone)]
+struct AiToolExecutionResult {
+    summary: String,
+    affected_domains: Vec<String>,
+}
+
 #[derive(Clone)]
 pub struct AiToolService {
     writer: Arc<dyn AiToolCommandWriter>,
+    credential_service: Option<CredentialService>,
+    transfer_queue: Option<TransferQueue>,
+    sftp_service: Option<SftpService>,
+    server_info_service: Option<ServerInfoService>,
+    ssh_command_service: Option<SshCommandService>,
 }
 
 #[derive(Clone)]
 pub struct RuntimeAiToolWriter {
     manager: Arc<TerminalManager>,
     history: Arc<CommandHistoryService>,
+    app_handle: Option<tauri::AppHandle>,
 }
 
 impl RuntimeAiToolWriter {
     pub fn new(manager: Arc<TerminalManager>, history: Arc<CommandHistoryService>) -> Self {
-        Self { manager, history }
+        Self {
+            manager,
+            history,
+            app_handle: None,
+        }
+    }
+
+    pub fn with_app_handle(
+        manager: Arc<TerminalManager>,
+        history: Arc<CommandHistoryService>,
+        app_handle: tauri::AppHandle,
+    ) -> Self {
+        Self {
+            manager,
+            history,
+            app_handle: Some(app_handle),
+        }
     }
 }
 
 impl AiToolCommandWriter for RuntimeAiToolWriter {
+    fn emit_tool_action(&self, event: AiToolFrontendActionEvent) -> AppResult<()> {
+        if let Some(app_handle) = &self.app_handle {
+            app_handle
+                .emit("zterm:tool-action", event)
+                .map_err(|error| AppError::ai(format!("分发前端工具动作失败: {error}")))?;
+        }
+        Ok(())
+    }
+
+    fn list_terminals(&self) -> AppResult<Vec<RuntimeSessionInfo>> {
+        self.manager.runtime_infos()
+    }
+
     fn write_terminal(&self, runtime_session_id: &str, data: &str) -> AppResult<()> {
         self.manager.write(runtime_session_id, data)?;
         self.history.capture_input(runtime_session_id, data)
@@ -95,7 +173,32 @@ impl AiToolCommandWriter for RuntimeAiToolWriter {
 
 impl AiToolService {
     pub fn with_writer(writer: Arc<dyn AiToolCommandWriter>) -> Self {
-        Self { writer }
+        Self {
+            writer,
+            credential_service: None,
+            transfer_queue: None,
+            sftp_service: None,
+            server_info_service: None,
+            ssh_command_service: None,
+        }
+    }
+
+    pub fn with_runtime_services(
+        writer: Arc<dyn AiToolCommandWriter>,
+        credential_service: CredentialService,
+        transfer_queue: TransferQueue,
+        sftp_service: SftpService,
+        server_info_service: ServerInfoService,
+        ssh_command_service: SshCommandService,
+    ) -> Self {
+        Self {
+            writer,
+            credential_service: Some(credential_service),
+            transfer_queue: Some(transfer_queue),
+            sftp_service: Some(sftp_service),
+            server_info_service: Some(server_info_service),
+            ssh_command_service: Some(ssh_command_service),
+        }
     }
 
     pub fn definitions(&self) -> Vec<AiToolDefinition> {
@@ -107,7 +210,7 @@ impl AiToolService {
         store: &SqliteStore,
         request: AiToolPrepareRequest,
     ) -> AppResult<AiToolPendingInvocation> {
-        let pending = self.build_pending(request, AiApprovalMode::RequestApproval)?;
+        let pending = self.build_pending(store, request, AiApprovalMode::RequestApproval)?;
         upsert_ai_tool_pending(store, &pending.0, &pending.1)?;
         Ok(pending.0)
     }
@@ -118,7 +221,7 @@ impl AiToolService {
         request: AiToolPrepareRequest,
         approval_mode: AiApprovalMode,
     ) -> AppResult<AiToolExecutionOutcome> {
-        let (pending, arguments) = self.build_pending(request, approval_mode)?;
+        let (pending, arguments) = self.build_pending(store, request, approval_mode)?;
         if pending.requires_confirmation {
             upsert_ai_tool_pending(store, &pending, &arguments)?;
             return Ok(AiToolExecutionOutcome {
@@ -134,6 +237,7 @@ impl AiToolService {
             pending,
             &arguments,
             true,
+            None,
             Some(
                 json!({ "approval_mode": approval_mode.as_str(), "auto_approved": true })
                     .to_string(),
@@ -147,13 +251,18 @@ impl AiToolService {
 
     fn build_pending(
         &self,
+        store: &SqliteStore,
         request: AiToolPrepareRequest,
         approval_mode: AiApprovalMode,
     ) -> AppResult<(AiToolPendingInvocation, Value)> {
         let tool = tool_definition(&request.tool_id)?;
         let arguments = normalized_arguments(request.arguments);
+        reject_secret_argument_values(&arguments)?;
         validate_arguments(&tool.id, &arguments)?;
         let risk = assess_risk(&tool, &arguments);
+        let secret_input = secret_input_requirement(store, &tool.id, &arguments)?;
+        let requires_confirmation =
+            requires_confirmation(&tool.id, approval_mode, risk.level) || secret_input.required;
         let pending = AiToolPendingInvocation {
             id: Uuid::new_v4().to_string(),
             tool_id: tool.id,
@@ -162,7 +271,9 @@ impl AiToolService {
             arguments_summary: summarize_arguments(&arguments),
             target_summary: target_summary(&arguments),
             risk_summary: risk.summary,
-            requires_confirmation: requires_confirmation(approval_mode, risk.level),
+            requires_confirmation,
+            requires_secret_input: secret_input.required,
+            secret_input_label: secret_input.label,
             status: AiToolInvocationStatus::Pending,
             created_at_ms: now_ms(),
             conversation_id: normalize_optional(request.conversation_id),
@@ -187,6 +298,7 @@ impl AiToolService {
             pending,
             &arguments,
             request.approved,
+            request.secret_inputs,
             normalize_optional(request.audit_context_json),
         )?;
         delete_ai_tool_pending(store, &audit.invocation_id)?;
@@ -200,16 +312,26 @@ impl AiToolService {
         pending: AiToolPendingInvocation,
         arguments: &Value,
         approved: bool,
+        secret_inputs: Option<AiToolSecretInputs>,
         audit_context_json: Option<String>,
     ) -> AppResult<AiToolAuditRecord> {
         let execution = if approved {
-            self.execute(store, &pending.tool_id, arguments)
+            if pending.requires_secret_input
+                && secret_inputs_api_key(secret_inputs.as_ref()).is_none()
+            {
+                Err(AppError::validation("确认该工具需要在本地输入 API Key"))
+            } else {
+                self.execute(store, &pending.tool_id, arguments, secret_inputs.as_ref())
+            }
         } else {
-            Ok("用户已拒绝执行。".to_string())
+            Ok(AiToolExecutionResult {
+                summary: "用户已拒绝执行。".to_string(),
+                affected_domains: Vec::new(),
+            })
         };
         let completed_at_ms = now_ms();
         let audit = match execution {
-            Ok(summary) => AiToolAuditRecord {
+            Ok(result) => AiToolAuditRecord {
                 id: Uuid::new_v4().to_string(),
                 invocation_id: invocation_id.clone(),
                 tool_id: pending.tool_id.clone(),
@@ -222,9 +344,10 @@ impl AiToolService {
                 } else {
                     AiToolInvocationStatus::Rejected
                 },
-                result_summary: Some(summary),
+                result_summary: Some(result.summary),
                 error: None,
                 audit_context_json: audit_context_json.clone(),
+                affected_domains: result.affected_domains,
                 created_at_ms: pending.created_at_ms,
                 completed_at_ms,
             },
@@ -240,6 +363,7 @@ impl AiToolService {
                 result_summary: None,
                 error: Some(error.to_string()),
                 audit_context_json,
+                affected_domains: affected_domains_for_tool(&pending.tool_id),
                 created_at_ms: pending.created_at_ms,
                 completed_at_ms,
             },
@@ -269,7 +393,13 @@ impl AiToolService {
         self.list_audit(store, request.and_then(|value| value.limit))
     }
 
-    fn execute(&self, store: &SqliteStore, tool_id: &str, arguments: &Value) -> AppResult<String> {
+    fn execute(
+        &self,
+        store: &SqliteStore,
+        tool_id: &str,
+        arguments: &Value,
+        secret_inputs: Option<&AiToolSecretInputs>,
+    ) -> AppResult<AiToolExecutionResult> {
         match tool_id {
             "terminal.write" => {
                 let runtime_session_id = string_arg(arguments, "runtime_session_id")?;
@@ -283,7 +413,20 @@ impl AiToolService {
                     })
                     .transpose()?
                     .flatten();
-                Ok(terminal_write_result_summary(&data, output.as_deref()))
+                Ok(execution_result(
+                    terminal_write_result_summary(&data, output.as_deref()),
+                    ["terminal", "history"],
+                ))
+            }
+            "terminal.list" => {
+                let terminals = self.writer.list_terminals()?;
+                Ok(execution_result(
+                    format!("终端运行态已读取：{} 个。", terminals.len()),
+                    ["terminal"],
+                ))
+            }
+            "terminal.open" | "terminal.split" | "terminal.focus" | "workspace.open_tool" => {
+                self.emit_frontend_action(tool_id, arguments, affected_domains_for_tool(tool_id))
             }
             "history.search" => {
                 let query = optional_string_arg(arguments, "query");
@@ -300,56 +443,417 @@ impl AiToolService {
                         deduplicate: None,
                     },
                 )?;
-                Ok(format!("命令历史已读取：{} 条。", entries.len()))
+                Ok(execution_result(
+                    format!("命令历史已读取：{} 条。", entries.len()),
+                    ["history"],
+                ))
             }
             "history.clear" => {
                 let scope_kind = history_scope_kind_arg(arguments)?;
                 let scope_id = string_arg(arguments, "scope_id")?;
                 clear_command_history(store, Some(scope_kind), Some(scope_id.as_str()))?;
-                Ok("命令历史已清理。".to_string())
+                Ok(execution_result("命令历史已清理。", ["history"]))
             }
             "sessions.list" => {
                 let sessions = list_sessions(store)?;
-                Ok(format!(
-                    "会话树已读取：{} 个分组，{} 个会话。",
-                    sessions.groups.len(),
-                    sessions.sessions.len()
+                Ok(execution_result(
+                    format!(
+                        "会话树已读取：{} 个分组，{} 个会话。",
+                        sessions.groups.len(),
+                        sessions.sessions.len()
+                    ),
+                    ["sessions"],
                 ))
+            }
+            "session_groups.save" => {
+                let draft = object_arg::<SessionGroupDraft>(arguments, "draft")?;
+                let group = save_session_group(store, draft)?;
+                Ok(execution_result(
+                    format!("会话分组已保存：{}。", group.name),
+                    ["sessions"],
+                ))
+            }
+            "session_groups.delete" => {
+                let id = string_arg(arguments, "id")?;
+                delete_session_group(store, &id)?;
+                Ok(execution_result("会话分组已删除。", ["sessions"]))
+            }
+            "sessions.save" => {
+                let draft = object_arg::<SavedSessionDraft>(arguments, "draft")?;
+                let session = save_session(store, draft)?;
+                Ok(execution_result(
+                    format!("会话已保存：{}。", session.name),
+                    ["sessions", "workspace"],
+                ))
+            }
+            "sessions.delete" => {
+                let id = string_arg(arguments, "id")?;
+                delete_session(store, &id)?;
+                Ok(execution_result("会话已删除。", ["sessions", "workspace"]))
+            }
+            "sessions.open" => {
+                self.emit_frontend_action(tool_id, arguments, affected_domains_for_tool(tool_id))
+            }
+            "sessions.test" => {
+                let draft = object_arg::<SavedSessionDraft>(arguments, "draft")?;
+                validate_session_draft_for_test(store, draft)?;
+                Ok(execution_result("会话配置测试通过。", ["sessions"]))
             }
             "llm_provider.list" => {
                 let providers = list_ai_provider_profiles(store)?;
-                Ok(format!("LLM Provider 已读取：{} 个。", providers.len()))
+                Ok(execution_result(
+                    format!("LLM Provider 已读取：{} 个。", providers.len()),
+                    ["models"],
+                ))
+            }
+            "llm_provider.create" | "llm_provider.update" => {
+                let mut draft = object_arg::<AiProviderProfileDraft>(arguments, "draft")?;
+                apply_ai_provider_secret_input(&mut draft, secret_inputs)?;
+                let credentials = self.credential_service()?;
+                let profile = credentials.save_ai_provider(draft)?;
+                Ok(execution_result(
+                    format!("LLM Provider 已保存：{}。", profile.name),
+                    ["models"],
+                ))
+            }
+            "llm_provider.delete" => {
+                let id = string_arg(arguments, "id")?;
+                self.credential_service()?.delete_ai_provider(&id)?;
+                Ok(execution_result("LLM Provider 已删除。", ["models"]))
+            }
+            "llm_provider.test" => {
+                let id = string_arg(arguments, "id")?;
+                let result = self.credential_service()?.test_ai_provider(&id)?;
+                Ok(execution_result(
+                    format!("LLM Provider 测试结果：{}。", result.message),
+                    ["models"],
+                ))
             }
             "settings.get" => {
                 let settings = get_app_settings(store)?;
-                Ok(format!(
-                    "设置已读取：主题 {:?}，UI 字号 {}，终端字号 {}。",
-                    settings.theme, settings.ui_font_size, settings.terminal_font_size
+                Ok(execution_result(
+                    format!(
+                        "设置已读取：主题 {:?}，UI 字号 {}，终端字号 {}。",
+                        settings.theme, settings.ui_font_size, settings.terminal_font_size
+                    ),
+                    ["settings"],
                 ))
             }
-            "terminal.list"
-            | "terminal.open"
-            | "terminal.split"
-            | "terminal.focus"
-            | "workspace.open_tool"
-            | "settings.update_ai_security"
-            | "llm_provider.create"
-            | "llm_provider.update"
-            | "llm_provider.delete"
-            | "llm_provider.test"
-            | "sessions.open"
-            | "sessions.test"
-            | "sftp.list"
-            | "sftp.mkdir"
-            | "sftp.upload"
-            | "sftp.download"
-            | "sftp.delete"
-            | "sftp.rename"
-            | "history.record" => Ok(format!(
-                "工具 {tool_id} 已通过 AI 审批，实际操作请通过 zTerm 对应受控 IPC 执行。"
-            )),
+            "settings.update_ai_security" => {
+                let conversation_id = string_arg(arguments, "conversation_id")?;
+                let approval_mode = ai_approval_mode_arg(arguments)?;
+                update_ai_conversation_approval_mode(store, &conversation_id, approval_mode)?;
+                Ok(execution_result("AI 会话审批模式已更新。", ["ai"]))
+            }
+            "workspace.list" => {
+                let workspaces = list_workspaces(store)?;
+                Ok(execution_result(
+                    format!("工作区已读取：{} 个。", workspaces.len()),
+                    ["workspace"],
+                ))
+            }
+            "workspace.get" => {
+                let workspace_id = string_arg(arguments, "workspace_id")?;
+                let workspace = get_workspace(store, &workspace_id)?;
+                Ok(execution_result(
+                    format!(
+                        "工作区已读取：{}，{} 个标签。",
+                        workspace.name,
+                        workspace.tabs.len()
+                    ),
+                    ["workspace"],
+                ))
+            }
+            "workspace.save" => {
+                let draft = workspace_draft_arg(arguments)?;
+                let workspace = save_workspace(store, draft)?;
+                Ok(execution_result(
+                    format!("工作区已保存：{}。", workspace.name),
+                    ["workspace"],
+                ))
+            }
+            "workspace.close" => {
+                let workspace_id = string_arg(arguments, "workspace_id")?;
+                close_workspace(store, &workspace_id)?;
+                self.emit_frontend_action(tool_id, arguments, vec!["workspace".to_string()])
+            }
+            "workspace.delete" => {
+                let workspace_id = string_arg(arguments, "workspace_id")?;
+                remove_workspace(store, &workspace_id)?;
+                Ok(execution_result("工作区定义已删除。", ["workspace"]))
+            }
+            "workspace.restore" => {
+                self.emit_frontend_action(tool_id, arguments, vec!["workspace".to_string()])
+            }
+            "terminal_profile.list" => {
+                let profiles =
+                    crate::services::terminal_profile_service::list_or_detect_terminal_profiles(
+                        store,
+                    )?;
+                Ok(execution_result(
+                    format!("终端 Profile 已读取：{} 个。", profiles.len()),
+                    ["terminal", "settings"],
+                ))
+            }
+            "terminal_profile.set_default" => {
+                let draft = object_arg::<TerminalProfileDraft>(arguments, "draft")?;
+                let profile =
+                    crate::services::terminal_profile_service::set_default_profile(store, draft)?;
+                Ok(execution_result(
+                    format!("默认终端 Profile 已设置：{}。", profile.name),
+                    ["terminal", "settings"],
+                ))
+            }
+            "transfer.list" => {
+                let saved_session_id = optional_string_arg(arguments, "saved_session_id");
+                let limit = optional_u32_arg(arguments, "limit").unwrap_or(200);
+                let tasks = list_transfer_tasks(store, saved_session_id.as_deref(), limit)?;
+                Ok(execution_result(
+                    format!("传输任务已读取：{} 个。", tasks.len()),
+                    ["transfer"],
+                ))
+            }
+            "transfer.retry" => {
+                let task_id = string_arg(arguments, "task_id")?;
+                let task = self.transfer_queue()?.retry_failed(&task_id)?;
+                Ok(execution_result(
+                    format!("传输任务已重试：{}。", task.id),
+                    ["transfer"],
+                ))
+            }
+            "transfer.pause" => {
+                let task_id = string_arg(arguments, "task_id")?;
+                let task = self.transfer_queue()?.pause(&task_id)?;
+                Ok(execution_result(
+                    format!("传输任务已暂停：{}。", task.id),
+                    ["transfer"],
+                ))
+            }
+            "transfer.resume" => {
+                let task_id = string_arg(arguments, "task_id")?;
+                let task = self.transfer_queue()?.resume(&task_id)?;
+                Ok(execution_result(
+                    format!("传输任务已恢复：{}。", task.id),
+                    ["transfer"],
+                ))
+            }
+            "transfer.cancel" => {
+                let task_id = string_arg(arguments, "task_id")?;
+                let task = self.transfer_queue()?.cancel(&task_id)?;
+                Ok(execution_result(
+                    format!("传输任务已取消：{}。", task.id),
+                    ["transfer"],
+                ))
+            }
+            "transfer.delete" => {
+                let task_id = string_arg(arguments, "task_id")?;
+                self.transfer_queue()?.delete(&task_id)?;
+                Ok(execution_result("传输任务已删除。", ["transfer"]))
+            }
+            "sftp.list" => {
+                let saved_session_id = string_arg(arguments, "saved_session_id")?;
+                let path = string_arg(arguments, "path")?;
+                let session = get_session(store, &saved_session_id)?;
+                let service = self.sftp_service()?;
+                let entries = block_on_tool(service.list(&session, &path))?;
+                Ok(execution_result(
+                    format!("SFTP 目录已读取：{} 项。", entries.len()),
+                    ["files"],
+                ))
+            }
+            "sftp.mkdir" => {
+                let saved_session_id = string_arg(arguments, "saved_session_id")?;
+                let path = string_arg(arguments, "path")?;
+                let session = get_session(store, &saved_session_id)?;
+                let service = self.sftp_service()?;
+                block_on_tool(service.create_dir(&session, &path))?;
+                Ok(execution_result("SFTP 目录已创建。", ["files"]))
+            }
+            "sftp.delete" => {
+                let saved_session_id = string_arg(arguments, "saved_session_id")?;
+                let path = string_arg(arguments, "path")?;
+                let recursive = optional_bool_arg(arguments, "recursive").unwrap_or(false);
+                let session = get_session(store, &saved_session_id)?;
+                let service = self.sftp_service()?;
+                block_on_tool(service.delete(&session, &path, recursive))?;
+                Ok(execution_result("SFTP 路径已删除。", ["files"]))
+            }
+            "sftp.rename" => {
+                let saved_session_id = string_arg(arguments, "saved_session_id")?;
+                let from = string_arg(arguments, "from")?;
+                let to = string_arg(arguments, "to")?;
+                let session = get_session(store, &saved_session_id)?;
+                let service = self.sftp_service()?;
+                block_on_tool(service.rename(&session, &from, &to))?;
+                Ok(execution_result("SFTP 路径已重命名。", ["files"]))
+            }
+            "zterm.context" => self.zterm_context(store),
+            "zterm.search" => self.zterm_search(store, arguments),
+            "server_info.snapshot" => {
+                let saved_session_id = string_arg(arguments, "saved_session_id")?;
+                let snapshot = block_on_tool(self.server_info_service()?.snapshot(
+                    store,
+                    self.ssh_command_service()?,
+                    self.credential_service()?,
+                    ServerInfoRequest { saved_session_id },
+                ))?;
+                Ok(execution_result(
+                    server_info_snapshot_summary(&snapshot),
+                    ["monitor"],
+                ))
+            }
+            "ssh_container.list" => {
+                let saved_session_id = string_arg(arguments, "saved_session_id")?;
+                let ssh_commands = self.ssh_command_service()?;
+                let credential_service = self.credential_service()?;
+                let session = get_session(store, &saved_session_id)?;
+                let container = enabled_container_options(&session)?;
+                let script = build_container_list_script(&container.runtime)?;
+                let all_sessions = list_sessions(store)?.sessions;
+                let output = block_on_tool(ssh_commands.execute(
+                    &session,
+                    &all_sessions,
+                    script,
+                    &credential_service,
+                ))?;
+                if !output.success {
+                    let detail = if output.stderr.trim().is_empty() {
+                        output.stdout.trim()
+                    } else {
+                        output.stderr.trim()
+                    };
+                    return Err(AppError::ssh(if detail.is_empty() {
+                        "容器列表获取失败".to_string()
+                    } else {
+                        detail.to_string()
+                    }));
+                }
+                let containers = parse_container_ps_output(&output.stdout);
+                let running = containers
+                    .iter()
+                    .filter(|container| container.running)
+                    .count();
+                Ok(execution_result(
+                    format!(
+                        "SSH 容器列表已读取：{} 个，运行中 {} 个。",
+                        containers.len(),
+                        running
+                    ),
+                    ["terminal"],
+                ))
+            }
+            "sftp.upload" | "sftp.download" | "history.record" => {
+                self.emit_frontend_action(tool_id, arguments, affected_domains_for_tool(tool_id))
+            }
             _ => Err(AppError::validation(format!("不支持的 AI 工具: {tool_id}"))),
         }
+    }
+
+    fn emit_frontend_action(
+        &self,
+        action: &str,
+        arguments: &Value,
+        affected_domains: Vec<String>,
+    ) -> AppResult<AiToolExecutionResult> {
+        self.writer.emit_tool_action(AiToolFrontendActionEvent {
+            action: action.to_string(),
+            arguments: arguments.clone(),
+            affected_domains: affected_domains.clone(),
+        })?;
+        Ok(AiToolExecutionResult {
+            summary: format!("已分发前端动作：{action}。"),
+            affected_domains,
+        })
+    }
+
+    fn credential_service(&self) -> AppResult<CredentialService> {
+        self.credential_service
+            .clone()
+            .ok_or_else(|| AppError::ai("AI 工具执行器未装配凭据服务"))
+    }
+
+    fn transfer_queue(&self) -> AppResult<TransferQueue> {
+        self.transfer_queue
+            .clone()
+            .ok_or_else(|| AppError::ai("AI 工具执行器未装配传输队列服务"))
+    }
+
+    fn sftp_service(&self) -> AppResult<SftpService> {
+        self.sftp_service
+            .clone()
+            .ok_or_else(|| AppError::ai("AI 工具执行器未装配 SFTP 服务"))
+    }
+
+    fn server_info_service(&self) -> AppResult<ServerInfoService> {
+        self.server_info_service
+            .clone()
+            .ok_or_else(|| AppError::ai("AI 工具执行器未装配资源监控服务"))
+    }
+
+    fn ssh_command_service(&self) -> AppResult<SshCommandService> {
+        self.ssh_command_service
+            .clone()
+            .ok_or_else(|| AppError::ai("AI 工具执行器未装配 SSH 命令服务"))
+    }
+
+    fn zterm_context(&self, store: &SqliteStore) -> AppResult<AiToolExecutionResult> {
+        let sessions = list_sessions(store)?;
+        let providers = list_ai_provider_profiles(store)?;
+        let workspaces = list_workspaces(store)?;
+        let terminals = self.writer.list_terminals()?;
+        Ok(execution_result(
+            format!(
+                "zTerm 上下文：{} 个分组，{} 个会话，{} 个模型，{} 个工作区，{} 个运行终端。",
+                sessions.groups.len(),
+                sessions.sessions.len(),
+                providers.len(),
+                workspaces.len(),
+                terminals.len()
+            ),
+            ["sessions", "models", "workspace", "terminal"],
+        ))
+    }
+
+    fn zterm_search(
+        &self,
+        store: &SqliteStore,
+        arguments: &Value,
+    ) -> AppResult<AiToolExecutionResult> {
+        let query = string_arg(arguments, "query")?.to_ascii_lowercase();
+        let sessions = list_sessions(store)?;
+        let providers = list_ai_provider_profiles(store)?;
+        let workspaces = list_workspaces(store)?;
+        let session_matches = sessions
+            .sessions
+            .iter()
+            .filter(|session| {
+                session.name.to_ascii_lowercase().contains(&query)
+                    || session.host.to_ascii_lowercase().contains(&query)
+                    || session.id.to_ascii_lowercase().contains(&query)
+            })
+            .count();
+        let provider_matches = providers
+            .iter()
+            .filter(|provider| {
+                provider.name.to_ascii_lowercase().contains(&query)
+                    || provider.model.to_ascii_lowercase().contains(&query)
+                    || provider.id.to_ascii_lowercase().contains(&query)
+            })
+            .count();
+        let workspace_matches = workspaces
+            .iter()
+            .filter(|workspace| {
+                workspace.name.to_ascii_lowercase().contains(&query)
+                    || workspace.id.to_ascii_lowercase().contains(&query)
+            })
+            .count();
+        Ok(execution_result(
+            format!(
+                "搜索完成：会话 {} 个，模型 {} 个，工作区 {} 个。",
+                session_matches, provider_matches, workspace_matches
+            ),
+            ["sessions", "models", "workspace"],
+        ))
     }
 }
 
@@ -422,15 +926,15 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
             "llm_provider.create",
             "创建 LLM Provider",
             "新增模型 Provider 配置",
-            RiskLevel::High,
-            true,
+            RiskLevel::Medium,
+            false,
         ),
         (
             "llm_provider.update",
             "更新 LLM Provider",
             "修改模型 Provider 配置",
-            RiskLevel::High,
-            true,
+            RiskLevel::Medium,
+            false,
         ),
         (
             "llm_provider.delete",
@@ -452,6 +956,34 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
             "读取保存的会话树",
             RiskLevel::Low,
             false,
+        ),
+        (
+            "session_groups.save",
+            "保存会话分组",
+            "新增或更新会话分组",
+            RiskLevel::Medium,
+            false,
+        ),
+        (
+            "session_groups.delete",
+            "删除会话分组",
+            "删除空会话分组",
+            RiskLevel::Critical,
+            true,
+        ),
+        (
+            "sessions.save",
+            "保存会话",
+            "新增或更新 SSH/Local/RDP 会话配置",
+            RiskLevel::Medium,
+            false,
+        ),
+        (
+            "sessions.delete",
+            "删除会话",
+            "删除保存的会话配置",
+            RiskLevel::Critical,
+            true,
         ),
         (
             "sessions.open",
@@ -530,6 +1062,132 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
             RiskLevel::High,
             true,
         ),
+        (
+            "workspace.list",
+            "列出工作区",
+            "读取已保存工作区列表",
+            RiskLevel::Low,
+            false,
+        ),
+        (
+            "workspace.get",
+            "读取工作区",
+            "读取单个工作区定义",
+            RiskLevel::Low,
+            false,
+        ),
+        (
+            "workspace.save",
+            "保存工作区",
+            "按简化参数新增或更新工作区定义",
+            RiskLevel::Medium,
+            false,
+        ),
+        (
+            "workspace.close",
+            "关闭工作区",
+            "关闭运行态并标记工作区为关闭",
+            RiskLevel::High,
+            true,
+        ),
+        (
+            "workspace.delete",
+            "删除工作区",
+            "物理删除非默认工作区定义",
+            RiskLevel::Critical,
+            true,
+        ),
+        (
+            "workspace.restore",
+            "恢复工作区",
+            "在前端恢复已保存工作区布局",
+            RiskLevel::Medium,
+            false,
+        ),
+        (
+            "terminal_profile.list",
+            "列出终端 Profile",
+            "读取本机终端 Profile",
+            RiskLevel::Low,
+            false,
+        ),
+        (
+            "terminal_profile.set_default",
+            "设置默认终端",
+            "设置默认本机终端 Profile",
+            RiskLevel::Medium,
+            false,
+        ),
+        (
+            "transfer.list",
+            "列出传输任务",
+            "读取传输任务列表",
+            RiskLevel::Low,
+            false,
+        ),
+        (
+            "transfer.retry",
+            "重试传输",
+            "重试失败传输任务",
+            RiskLevel::Medium,
+            false,
+        ),
+        (
+            "transfer.pause",
+            "暂停传输",
+            "暂停运行期传输任务",
+            RiskLevel::Medium,
+            false,
+        ),
+        (
+            "transfer.resume",
+            "恢复传输",
+            "恢复暂停传输任务",
+            RiskLevel::Medium,
+            false,
+        ),
+        (
+            "transfer.cancel",
+            "取消传输",
+            "取消传输任务",
+            RiskLevel::High,
+            true,
+        ),
+        (
+            "transfer.delete",
+            "删除传输记录",
+            "删除传输任务记录",
+            RiskLevel::Critical,
+            true,
+        ),
+        (
+            "server_info.snapshot",
+            "采集服务器快照",
+            "采集当前 SSH 主机资源快照",
+            RiskLevel::Low,
+            false,
+        ),
+        (
+            "ssh_container.list",
+            "列出 SSH 容器",
+            "读取 SSH 会话远端容器列表",
+            RiskLevel::Low,
+            false,
+        ),
+        (
+            "zterm.context",
+            "读取 zTerm 上下文",
+            "读取当前资源数量和工作台上下文",
+            RiskLevel::Low,
+            false,
+        ),
+        (
+            "zterm.search",
+            "搜索 zTerm 资源",
+            "按关键词搜索会话、模型和工作区",
+            RiskLevel::Low,
+            false,
+        ),
     ]
     .into_iter()
     .map(
@@ -563,9 +1221,56 @@ fn validate_arguments(tool_id: &str, arguments: &Value) -> AppResult<()> {
             let _ = string_arg(arguments, "scope_id")?;
         }
         "settings.get" | "llm_provider.list" | "sessions.list" => {}
+        "session_groups.save" => {
+            let _ = object_arg::<SessionGroupDraft>(arguments, "draft")?;
+        }
+        "session_groups.delete"
+        | "sessions.delete"
+        | "llm_provider.delete"
+        | "llm_provider.test" => {
+            let _ = string_arg(arguments, "id")?;
+        }
+        "sessions.save" | "sessions.test" => {
+            let _ = object_arg::<SavedSessionDraft>(arguments, "draft")?;
+        }
+        "llm_provider.create" | "llm_provider.update" => {
+            let _ = object_arg::<AiProviderProfileDraft>(arguments, "draft")?;
+        }
+        "settings.update_ai_security" => {
+            let _ = string_arg(arguments, "conversation_id")?;
+            let _ = ai_approval_mode_arg(arguments)?;
+        }
+        "workspace.get" | "workspace.close" | "workspace.delete" | "workspace.restore" => {
+            let _ = string_arg(arguments, "workspace_id")?;
+        }
+        "workspace.save" => {
+            let _ = workspace_draft_arg(arguments)?;
+        }
+        "terminal_profile.set_default" => {
+            let _ = object_arg::<TerminalProfileDraft>(arguments, "draft")?;
+        }
+        "zterm.search" => {
+            let _ = string_arg(arguments, "query")?;
+        }
+        "transfer.retry" | "transfer.pause" | "transfer.resume" | "transfer.cancel"
+        | "transfer.delete" => {
+            let _ = string_arg(arguments, "task_id")?;
+        }
         "sftp.delete" => {
             let _ = string_arg(arguments, "saved_session_id")?;
             let _ = string_arg(arguments, "path")?;
+        }
+        "sftp.list" | "sftp.mkdir" => {
+            let _ = string_arg(arguments, "saved_session_id")?;
+            let _ = string_arg(arguments, "path")?;
+        }
+        "sftp.rename" => {
+            let _ = string_arg(arguments, "saved_session_id")?;
+            let _ = string_arg(arguments, "from")?;
+            let _ = string_arg(arguments, "to")?;
+        }
+        "server_info.snapshot" | "ssh_container.list" => {
+            let _ = string_arg(arguments, "saved_session_id")?;
         }
         _ => {}
     }
@@ -576,6 +1281,82 @@ fn validate_arguments(tool_id: &str, arguments: &Value) -> AppResult<()> {
 struct AssessedRisk {
     level: RiskLevel,
     summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SecretInputRequirement {
+    required: bool,
+    label: Option<String>,
+}
+
+fn secret_input_requirement(
+    store: &SqliteStore,
+    tool_id: &str,
+    arguments: &Value,
+) -> AppResult<SecretInputRequirement> {
+    if !matches!(tool_id, "llm_provider.create" | "llm_provider.update") {
+        return Ok(SecretInputRequirement::default());
+    }
+    let draft = object_arg::<AiProviderProfileDraft>(arguments, "draft")?;
+    if ai_provider_draft_has_api_key_material(store, &draft) {
+        return Ok(SecretInputRequirement::default());
+    }
+    if crate::services::credential_service::allows_empty_api_key(draft.kind) {
+        return Ok(SecretInputRequirement::default());
+    }
+    Ok(SecretInputRequirement {
+        required: true,
+        label: Some("API Key".to_string()),
+    })
+}
+
+fn ai_provider_draft_has_api_key_material(
+    store: &SqliteStore,
+    draft: &AiProviderProfileDraft,
+) -> bool {
+    if draft
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return true;
+    }
+    if draft
+        .api_key_ref
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return true;
+    }
+    draft
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|id| get_ai_provider_profile(store, id).ok())
+        .is_some_and(|profile| !profile.api_key_ref.trim().is_empty())
+}
+
+fn apply_ai_provider_secret_input(
+    draft: &mut AiProviderProfileDraft,
+    secret_inputs: Option<&AiToolSecretInputs>,
+) -> AppResult<()> {
+    let Some(api_key) = secret_inputs_api_key(secret_inputs) else {
+        return Ok(());
+    };
+    draft.api_key = Some(api_key);
+    Ok(())
+}
+
+fn secret_inputs_api_key(secret_inputs: Option<&AiToolSecretInputs>) -> Option<String> {
+    secret_inputs?
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn assess_risk(tool: &AiToolDefinition, arguments: &Value) -> AssessedRisk {
@@ -597,12 +1378,39 @@ fn assess_risk(tool: &AiToolDefinition, arguments: &Value) -> AssessedRisk {
     }
 }
 
-fn requires_confirmation(approval_mode: AiApprovalMode, risk_level: RiskLevel) -> bool {
+fn requires_confirmation(
+    tool_id: &str,
+    approval_mode: AiApprovalMode,
+    risk_level: RiskLevel,
+) -> bool {
+    if force_confirmation_tool(tool_id)
+        || (tool_id == "terminal.write"
+            && matches!(risk_level, RiskLevel::High | RiskLevel::Critical))
+    {
+        return true;
+    }
     match approval_mode {
         AiApprovalMode::RequestApproval => true,
-        AiApprovalMode::Safe => risk_level != RiskLevel::Low,
+        AiApprovalMode::Safe => matches!(risk_level, RiskLevel::High | RiskLevel::Critical),
         AiApprovalMode::FullAccess => false,
     }
+}
+
+fn force_confirmation_tool(tool_id: &str) -> bool {
+    tool_id.ends_with(".delete")
+        || matches!(
+            tool_id,
+            "session_groups.delete"
+                | "workspace.close"
+                | "workspace.delete"
+                | "history.clear"
+                | "sftp.delete"
+                | "transfer.cancel"
+                | "transfer.delete"
+                | "settings.update_ai_security"
+                | "llm_provider.delete"
+                | "sessions.delete"
+        )
 }
 
 fn target_summary(arguments: &Value) -> Option<String> {
@@ -655,7 +1463,8 @@ fn persist_tool_message(
         "invocation_id": audit.invocation_id,
         "tool_id": audit.tool_id,
         "status": audit.status.as_str(),
-        "risk_level": audit.risk_level.as_str()
+        "risk_level": audit.risk_level.as_str(),
+        "affected_domains": audit.affected_domains
     })
     .to_string();
     match insert_ai_conversation_message(
@@ -692,6 +1501,69 @@ fn summarize_arguments(arguments: &Value) -> String {
         .map(|(key, value)| format!("{key}={}", summarize_value(key, value)))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn reject_secret_argument_values(arguments: &Value) -> AppResult<()> {
+    let mut path = Vec::new();
+    if let Some(secret_path) = find_secret_argument_path(arguments, &mut path) {
+        return Err(AppError::validation(format!(
+            "工具参数包含敏感字段 {secret_path}；请由本地确认弹窗写入 OS keyring"
+        )));
+    }
+    Ok(())
+}
+
+fn find_secret_argument_path(value: &Value, path: &mut Vec<String>) -> Option<String> {
+    match value {
+        Value::Object(object) => {
+            for (key, child) in object {
+                path.push(key.clone());
+                if is_plain_secret_key(key) && secret_value_present(child) {
+                    return Some(path.join("."));
+                }
+                if let Some(found) = find_secret_argument_path(child, path) {
+                    return Some(found);
+                }
+                path.pop();
+            }
+            None
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                path.push(index.to_string());
+                if let Some(found) = find_secret_argument_path(child, path) {
+                    return Some(found);
+                }
+                path.pop();
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn secret_value_present(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(value) => !value.trim().is_empty(),
+        Value::Array(items) => items.iter().any(secret_value_present),
+        Value::Object(object) => object.values().any(secret_value_present),
+        Value::Bool(_) | Value::Number(_) => true,
+    }
+}
+
+fn is_plain_secret_key(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase();
+    if normalized.ends_with("_ref") || normalized == "credential_ref" || normalized == "api_key_ref"
+    {
+        return false;
+    }
+    normalized == "api_key"
+        || normalized == "token"
+        || normalized.ends_with("_token")
+        || normalized.contains("password")
+        || normalized.contains("passwd")
+        || normalized.contains("secret")
 }
 
 fn summarize_value(key: &str, value: &Value) -> String {
@@ -745,6 +1617,331 @@ fn optional_usize_arg(arguments: &Value, key: &str) -> Option<usize> {
         .get(key)
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
+}
+
+fn optional_u32_arg(arguments: &Value, key: &str) -> Option<u32> {
+    arguments
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+fn optional_bool_arg(arguments: &Value, key: &str) -> Option<bool> {
+    arguments.get(key).and_then(Value::as_bool)
+}
+
+fn block_on_tool<T>(future: impl std::future::Future<Output = AppResult<T>>) -> AppResult<T> {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(future)),
+        Err(_) => tokio::runtime::Runtime::new()
+            .map_err(|error| AppError::ai(error.to_string()))?
+            .block_on(future),
+    }
+}
+
+fn object_arg<T: DeserializeOwned>(arguments: &Value, key: &str) -> AppResult<T> {
+    let value = arguments
+        .get(key)
+        .cloned()
+        .ok_or_else(|| AppError::validation(format!("缺少工具参数: {key}")))?;
+    serde_json::from_value(value)
+        .map_err(|error| AppError::validation(format!("工具参数 {key} 无效: {error}")))
+}
+
+fn ai_approval_mode_arg(arguments: &Value) -> AppResult<AiApprovalMode> {
+    let value = string_arg(arguments, "approval_mode")?;
+    AiApprovalMode::from_db(&value)
+        .ok_or_else(|| AppError::validation("审批模式必须是 request_approval、safe 或 full_access"))
+}
+
+fn execution_result(
+    summary: impl Into<String>,
+    affected_domains: impl IntoIterator<Item = impl AsRef<str>>,
+) -> AiToolExecutionResult {
+    AiToolExecutionResult {
+        summary: summary.into(),
+        affected_domains: affected_domains
+            .into_iter()
+            .map(|value| value.as_ref().to_string())
+            .collect(),
+    }
+}
+
+fn server_info_snapshot_summary(snapshot: &ServerInfoSnapshot) -> String {
+    let host = snapshot
+        .hostname
+        .as_deref()
+        .unwrap_or(snapshot.host_name.as_str());
+    let cpu = snapshot
+        .cpu_count
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let processes = snapshot
+        .process_count
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    format!(
+        "服务器快照已采集：{host}，CPU {cpu} 核，磁盘 {} 项，进程 {processes} 个。",
+        snapshot.disks.len()
+    )
+}
+
+fn affected_domains_for_tool(tool_id: &str) -> Vec<String> {
+    let domains: &[&str] = match tool_id {
+        "terminal.list" | "terminal.write" | "terminal.open" | "terminal.split"
+        | "terminal.focus" => &["terminal"],
+        "workspace.open_tool" => &["workspace"],
+        "settings.get" => &["settings"],
+        "settings.update_ai_security" => &["ai"],
+        tool if tool.starts_with("llm_provider.") => &["models"],
+        "sessions.list"
+        | "sessions.open"
+        | "sessions.test"
+        | "sessions.save"
+        | "sessions.delete"
+        | "session_groups.save"
+        | "session_groups.delete" => &["sessions"],
+        tool if tool.starts_with("sftp.") => &["files", "transfer"],
+        tool if tool.starts_with("history.") => &["history"],
+        tool if tool.starts_with("workspace.") => &["workspace"],
+        tool if tool.starts_with("terminal_profile.") => &["terminal", "settings"],
+        tool if tool.starts_with("transfer.") => &["transfer"],
+        "server_info.snapshot" => &["monitor"],
+        "ssh_container.list" => &["terminal"],
+        "zterm.context" | "zterm.search" => &["sessions", "models", "workspace", "terminal"],
+        _ => &[],
+    };
+    domains.iter().map(|value| (*value).to_string()).collect()
+}
+
+fn validate_session_draft_for_test(store: &SqliteStore, draft: SavedSessionDraft) -> AppResult<()> {
+    let session = preview_session_from_draft(draft);
+    match session.session_type {
+        crate::models::session::SessionType::Ssh => {
+            crate::services::ssh_terminal_service::build_ssh_arguments(&session)?;
+        }
+        crate::models::session::SessionType::Rdp => {
+            let _ = crate::services::rdp_service::build_mstsc_arguments(&session)?;
+        }
+        crate::models::session::SessionType::Local => {
+            let profiles =
+                crate::services::terminal_profile_service::list_or_detect_terminal_profiles(store)?;
+            if profiles.is_empty() {
+                return Err(AppError::validation("未检测到可用本机终端"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn preview_session_from_draft(draft: SavedSessionDraft) -> crate::models::session::SavedSession {
+    crate::models::session::SavedSession {
+        id: draft.id.unwrap_or_else(|| "preview".to_string()),
+        name: draft.name,
+        session_type: draft.session_type,
+        group_id: draft.group_id,
+        host: if draft.host.trim().is_empty() {
+            "localhost".to_string()
+        } else {
+            draft.host
+        },
+        port: draft.port,
+        username: draft.username,
+        auth_mode: draft.auth_mode,
+        credential_ref: draft.credential_ref,
+        description: draft.description,
+        tags: draft.tags,
+        sort_order: draft.sort_order,
+        created_at_ms: 0,
+        updated_at_ms: 0,
+        last_used_at_ms: None,
+        ssh_options: draft.ssh_options,
+        rdp_options: draft.rdp_options,
+        local_options: draft.local_options,
+    }
+}
+
+fn workspace_draft_arg(arguments: &Value) -> AppResult<WorkspaceDefinitionDraft> {
+    if arguments.get("draft").is_some() {
+        return object_arg::<WorkspaceDefinitionDraft>(arguments, "draft");
+    }
+    simplified_workspace_draft(arguments)
+}
+
+fn simplified_workspace_draft(arguments: &Value) -> AppResult<WorkspaceDefinitionDraft> {
+    let name = string_arg(arguments, "name")?;
+    let layout = optional_string_arg(arguments, "layout").unwrap_or_else(|| "single".to_string());
+    let connections = arguments
+        .get("connections")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let terminal_tabs = workspace_terminal_tabs(&connections)?;
+    let root = workspace_root_for_layout(&layout, &terminal_tabs)?;
+    Ok(WorkspaceDefinitionDraft {
+        id: optional_string_arg(arguments, "id"),
+        name,
+        status: WorkspaceStatus::Closed,
+        active_tab_id: "tab-1".to_string(),
+        tabs: vec![WorkspaceTabDraft {
+            id: "tab-1".to_string(),
+            title: "默认标签".to_string(),
+            active_pane_id: first_leaf_id(&root).unwrap_or_else(|| "pane-1".to_string()),
+            root,
+            sort_order: 0,
+        }],
+        sort_order: optional_usize_arg(arguments, "sort_order")
+            .and_then(|value| i64::try_from(value).ok())
+            .unwrap_or(0),
+    })
+}
+
+fn workspace_terminal_tabs(items: &[Value]) -> AppResult<Vec<WorkspaceTerminalTab>> {
+    if items.is_empty() {
+        return Ok(vec![WorkspaceTerminalTab {
+            id: "terminal-1".to_string(),
+            title: "本地终端".to_string(),
+            runtime_session_id: None,
+            saved_session_id: None,
+            connection_source: Some("default_local".to_string()),
+            container_target: None,
+            path: None,
+            startup_command: None,
+            restore_status: None,
+            restore_error: None,
+        }]);
+    }
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| workspace_terminal_tab(index + 1, item))
+        .collect()
+}
+
+fn workspace_terminal_tab(index: usize, item: &Value) -> AppResult<WorkspaceTerminalTab> {
+    let object = item.as_object();
+    let saved_session_id = item.as_str().map(ToOwned::to_owned).or_else(|| {
+        object
+            .and_then(|object| object.get("saved_session_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+    });
+    let connection_source = object
+        .and_then(|object| object.get("connection_source"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            if saved_session_id.is_some() {
+                Some("saved_session".to_string())
+            } else {
+                Some("default_local".to_string())
+            }
+        });
+    let title = object
+        .and_then(|object| object.get("title"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| saved_session_id.clone())
+        .unwrap_or_else(|| "本地终端".to_string());
+    Ok(WorkspaceTerminalTab {
+        id: format!("terminal-{index}"),
+        title,
+        runtime_session_id: None,
+        saved_session_id,
+        connection_source,
+        container_target: None,
+        path: object
+            .and_then(|object| object.get("path"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        startup_command: object
+            .and_then(|object| object.get("startup_command"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned),
+        restore_status: None,
+        restore_error: None,
+    })
+}
+
+fn workspace_root_for_layout(
+    layout: &str,
+    terminal_tabs: &[WorkspaceTerminalTab],
+) -> AppResult<PaneNode> {
+    let layout = layout.trim().to_ascii_lowercase();
+    let leaf = |index: usize, tabs: Vec<WorkspaceTerminalTab>| PaneNode::Leaf {
+        id: format!("pane-{index}"),
+        runtime_session_id: None,
+        saved_session_id: tabs.first().and_then(|tab| tab.saved_session_id.clone()),
+        title: tabs
+            .first()
+            .map(|tab| tab.title.clone())
+            .unwrap_or_else(|| format!("Pane {index}")),
+        active_terminal_tab_id: tabs.first().map(|tab| tab.id.clone()),
+        terminal_tabs: tabs,
+    };
+    let mut tabs = terminal_tabs.to_vec();
+    if tabs.is_empty() {
+        tabs = workspace_terminal_tabs(&[])?;
+    }
+    let take_tab = |tabs: &[WorkspaceTerminalTab], index: usize| {
+        vec![tabs.get(index).cloned().unwrap_or_else(|| tabs[0].clone())]
+    };
+    match layout.as_str() {
+        "single" => Ok(leaf(1, tabs)),
+        "two_columns" => Ok(PaneNode::Split {
+            id: "split-1".to_string(),
+            direction: "horizontal".to_string(),
+            ratio: 0.5,
+            first: Box::new(leaf(1, take_tab(&tabs, 0))),
+            second: Box::new(leaf(2, take_tab(&tabs, 1))),
+        }),
+        "two_rows" => Ok(PaneNode::Split {
+            id: "split-1".to_string(),
+            direction: "vertical".to_string(),
+            ratio: 0.5,
+            first: Box::new(leaf(1, take_tab(&tabs, 0))),
+            second: Box::new(leaf(2, take_tab(&tabs, 1))),
+        }),
+        "grid_2x2" => Ok(PaneNode::Split {
+            id: "split-1".to_string(),
+            direction: "vertical".to_string(),
+            ratio: 0.5,
+            first: Box::new(PaneNode::Split {
+                id: "split-2".to_string(),
+                direction: "horizontal".to_string(),
+                ratio: 0.5,
+                first: Box::new(leaf(1, take_tab(&tabs, 0))),
+                second: Box::new(leaf(2, take_tab(&tabs, 1))),
+            }),
+            second: Box::new(PaneNode::Split {
+                id: "split-3".to_string(),
+                direction: "horizontal".to_string(),
+                ratio: 0.5,
+                first: Box::new(leaf(3, take_tab(&tabs, 2))),
+                second: Box::new(leaf(4, take_tab(&tabs, 3))),
+            }),
+        }),
+        _ => Err(AppError::validation(
+            "工作区布局必须是 single、two_columns、two_rows 或 grid_2x2",
+        )),
+    }
+}
+
+fn first_leaf_id(node: &PaneNode) -> Option<String> {
+    match node {
+        PaneNode::Leaf { id, .. } => Some(id.clone()),
+        PaneNode::Split { first, .. } => first_leaf_id(first),
+    }
 }
 
 fn required_text(label: &str, value: impl AsRef<str>) -> AppResult<String> {

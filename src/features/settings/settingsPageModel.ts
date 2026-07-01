@@ -8,7 +8,7 @@ import type {
   WorkspaceRestoreStrategy,
 } from "./settingsStore";
 
-export type SettingsTab = "general" | "shortcuts" | "terminal" | "about";
+export type SettingsTab = "general" | "shortcuts" | "terminal" | "mcp" | "about";
 
 export const fallbackSettings: AppSettings = {
   language: "zhCN",
@@ -17,10 +17,11 @@ export const fallbackSettings: AppSettings = {
   terminal_font_size: 13,
   default_right_tool: null,
   workspace_restore_strategy: "visible_first",
+  mcp: { enabled: false, port: null },
   shortcuts: [],
 };
 
-export const settingsTabs: SettingsTab[] = ["general", "shortcuts", "terminal", "about"];
+export const settingsTabs: SettingsTab[] = ["general", "shortcuts", "terminal", "mcp", "about"];
 
 export const languageOptions: Array<{ value: AppLanguage; labelKey: I18nKey }> = [
   { value: "zhCN", labelKey: "chinese" },

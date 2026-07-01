@@ -12,6 +12,11 @@ export type WorkspaceRestoreStrategy = "visible_first" | "connect_all" | "layout
 export type SettingsSection = "general" | "shortcuts";
 type ShortcutScope = "app";
 
+export interface McpSettings {
+  enabled: boolean;
+  port?: number | null;
+}
+
 export interface CredentialRecord {
   id: string;
   name: string;
@@ -96,7 +101,14 @@ export interface AppSettings {
   terminal_font_size: number;
   default_right_tool: string | null;
   workspace_restore_strategy: WorkspaceRestoreStrategy;
+  mcp: McpSettings;
   shortcuts: ShortcutBinding[];
+}
+
+export interface McpServerStatus {
+  enabled: boolean;
+  endpoint?: string | null;
+  token?: string | null;
 }
 
 export interface TerminalProfile {
@@ -125,9 +137,13 @@ interface SettingsState {
   providers: AiProviderProfile[];
   terminalProfiles: TerminalProfile[];
   shortcutDefinitions: ShortcutDefinition[];
+  mcpStatus: McpServerStatus;
   loading: boolean;
   error: string | null;
   loadSettings: () => Promise<void>;
+  loadMcpStatus: () => Promise<McpServerStatus>;
+  setMcpEnabled: (enabled: boolean, port?: number | null) => Promise<McpServerStatus>;
+  rotateMcpToken: () => Promise<McpServerStatus>;
   saveAppSettings: (settings: AppSettings) => Promise<AppSettings>;
   resetAppSettingsSection: (section: SettingsSection) => Promise<AppSettings>;
   saveCredential: (draft: CredentialDraft) => Promise<CredentialRecord>;
@@ -150,19 +166,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   providers: [],
   terminalProfiles: [],
   shortcutDefinitions: [],
+  mcpStatus: { enabled: false, endpoint: null, token: null },
   loading: false,
   error: null,
   async loadSettings() {
     set({ loading: true, error: null });
     try {
-      const [appSettings, shortcutDefinitions, credentials, providers, terminalProfiles] = await Promise.all([
+      const [appSettings, shortcutDefinitions, credentials, providers, terminalProfiles, mcpStatus] = await Promise.all([
         invoke<AppSettings>("settings_get"),
         invoke<ShortcutDefinition[]>("shortcut_registry_list"),
         invoke<CredentialRecord[]>("credentials_list"),
         invoke<AiProviderProfile[]>("llm_provider_list"),
         invoke<TerminalProfile[]>("terminal_profile_list"),
+        invoke<McpServerStatus>("mcp_server_status"),
       ]);
-      set({ appSettings, shortcutDefinitions, credentials, providers, terminalProfiles, loading: false });
+      set({ appSettings, shortcutDefinitions, credentials, providers, terminalProfiles, mcpStatus, loading: false });
     } catch (error) {
       set({ loading: false, error: unknownErrorMessage(error, "设置操作失败") });
     }
@@ -176,6 +194,22 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const saved = await invoke<AppSettings>("settings_reset", { section });
     set({ appSettings: saved });
     return saved;
+  },
+  async loadMcpStatus() {
+    const status = await invoke<McpServerStatus>("mcp_server_status");
+    set({ mcpStatus: status });
+    return status;
+  },
+  async setMcpEnabled(enabled, port) {
+    const status = await invoke<McpServerStatus>("mcp_server_set_enabled", { enabled, port: port ?? null });
+    const appSettings = await invoke<AppSettings>("settings_get");
+    set({ mcpStatus: status, appSettings });
+    return status;
+  },
+  async rotateMcpToken() {
+    const status = await invoke<McpServerStatus>("mcp_server_rotate_token");
+    set({ mcpStatus: status });
+    return status;
   },
   async saveCredential(draft) {
     const credential = await invoke<CredentialRecord>("credentials_save", { draft });

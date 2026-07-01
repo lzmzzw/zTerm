@@ -74,6 +74,8 @@ export interface AiToolPendingInvocation {
   target_summary?: string | null;
   risk_summary?: string | null;
   requires_confirmation: boolean;
+  requires_secret_input?: boolean;
+  secret_input_label?: string | null;
   status: AiToolInvocationStatus;
   created_at_ms?: number;
   conversation_id?: string | null;
@@ -124,7 +126,7 @@ type PendingAiChatStreamEvent =
   | { kind: "error"; payload: AiChatStreamErrorEvent }
   | { kind: "cancelled"; payload: AiChatStreamCancelledEvent };
 
-interface AiToolAuditRecord {
+export interface AiToolAuditRecord {
   id: string;
   invocation_id: string;
   tool_id: string;
@@ -136,8 +138,15 @@ interface AiToolAuditRecord {
   result_summary?: string | null;
   error?: string | null;
   audit_context_json?: string | null;
+  affected_domains?: string[];
   created_at_ms: number;
   completed_at_ms: number;
+}
+
+type AffectedDomainsHandler = (domains: string[]) => Promise<void> | void;
+
+export interface AiToolSecretInputs {
+  api_key?: string;
 }
 
 interface AiState {
@@ -160,7 +169,7 @@ interface AiState {
   loadConversationPreview: (conversationId: string) => Promise<void>;
   newConversation: () => void;
   deleteConversation: (conversationId: string) => Promise<void>;
-  confirmTool: (invocationId: string, approved: boolean) => Promise<void>;
+  confirmTool: (invocationId: string, approved: boolean, secretInputs?: AiToolSecretInputs) => Promise<void>;
 }
 
 let contextCaptureRequestId = 0;
@@ -171,6 +180,11 @@ let activeAssistantMessageId: string | null = null;
 let chatStarting = false;
 let pendingAiChatEvents: PendingAiChatStreamEvent[] = [];
 let aiChatEventListenersPromise: Promise<UnlistenFn[]> | null = null;
+let affectedDomainsHandler: AffectedDomainsHandler | null = null;
+
+export function setAiAffectedDomainsHandler(handler: AffectedDomainsHandler | null) {
+  affectedDomainsHandler = handler;
+}
 
 export const useAiStore = create<AiState>((set, get) => ({
   conversations: [],
@@ -418,17 +432,19 @@ export const useAiStore = create<AiState>((set, get) => ({
       set({ loading: false, error: unknownErrorMessage(error, "AI Agent 操作失败") });
     }
   },
-  async confirmTool(invocationId, approved) {
+  async confirmTool(invocationId, approved, secretInputs) {
     cancelActiveChatWithoutStoreMutation();
     set({ loading: true, error: null });
     try {
-      await invoke("ai_tool_confirm", {
+      const audit = await invoke<AiToolAuditRecord>("ai_tool_confirm", {
         request: {
           invocation_id: invocationId,
           approved,
           audit_context_json: null,
+          secret_inputs: secretInputs ?? null,
         },
       });
+      await notifyAffectedDomains([audit]);
       const pendingInvocations = await invoke<AiToolPendingInvocation[]>("ai_tool_pending");
       const activeConversationId = useAiStore.getState().activeConversationId;
       if (activeConversationId) {
@@ -535,6 +551,7 @@ async function finishAiChatStream(payload: AiChatStreamDoneEvent) {
     ),
   }));
   try {
+    await notifyAffectedDomains(payload.executed_invocations);
     const conversation = await invoke<AiConversation>("ai_conversation_get", { conversationId });
     const conversations = await invoke<AiConversationSummary[]>("ai_conversation_list", {});
     const pendingInvocations = await invoke<AiToolPendingInvocation[]>("ai_tool_pending");
@@ -558,6 +575,20 @@ async function finishAiChatStream(payload: AiChatStreamDoneEvent) {
   if (activeChatId === chatId) {
     activeChatId = null;
   }
+}
+
+async function notifyAffectedDomains(records: AiToolAuditRecord[]) {
+  if (!affectedDomainsHandler) return;
+  const domains = [
+    ...new Set(
+      records
+        .flatMap((record) => record.affected_domains ?? [])
+        .map((domain) => domain.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (domains.length === 0) return;
+  await affectedDomainsHandler(domains);
 }
 
 function failAiChatStream(message: string) {

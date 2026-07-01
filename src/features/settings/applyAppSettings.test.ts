@@ -16,6 +16,7 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
     workspace_restore_strategy: "visible_first",
     shortcuts: [],
     ...overrides,
+    mcp: overrides.mcp ?? { enabled: false, port: null },
   };
 }
 

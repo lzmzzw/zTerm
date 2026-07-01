@@ -45,6 +45,7 @@ const storeMocks = vi.hoisted(() => ({
     definitions: {} as Record<string, Record<string, unknown>>,
   },
   terminalOutputAccesses: 0,
+  tauriEventHandlers: new Map<string, (event: { payload: unknown }) => void>(),
   settingsState: {
     appSettings: {
       language: "zhCN",
@@ -63,6 +64,7 @@ const storeMocks = vi.hoisted(() => ({
   transferPanelProps: null as Record<string, unknown> | null,
   fileTransferPanelProps: null as Record<string, unknown> | null,
   aiPanelProps: null as Record<string, unknown> | null,
+  aiAffectedDomainsHandler: null as ((domains: string[]) => Promise<void> | void) | null,
   loadCommandGroups: vi.fn().mockResolvedValue(undefined),
   saveCommandGroup: vi.fn().mockResolvedValue(undefined),
   searchHistory: vi.fn().mockResolvedValue(undefined),
@@ -176,6 +178,15 @@ const storeMocks = vi.hoisted(() => ({
 
 vi.mock("./TitleBar", () => ({
   TitleBar: () => <header aria-label="标题栏" />,
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (eventName: string, handler: (event: { payload: unknown }) => void) => {
+    storeMocks.tauriEventHandlers.set(eventName, handler);
+    return () => {
+      storeMocks.tauriEventHandlers.delete(eventName);
+    };
+  }),
 }));
 
 vi.mock("../features/ai/AiPanel", () => ({
@@ -455,7 +466,10 @@ vi.mock("../features/ai/aiStore", () => {
     if (selector) return selector(state);
     return state;
   };
-  return { useAiStore };
+  const setAiAffectedDomainsHandler = vi.fn((handler: ((domains: string[]) => Promise<void> | void) | null) => {
+    storeMocks.aiAffectedDomainsHandler = handler;
+  });
+  return { setAiAffectedDomainsHandler, useAiStore };
 });
 
 vi.mock("../features/files/fileStore", () => {
@@ -873,6 +887,8 @@ function runningWorkspace(id: string, sortOrder: number, updatedAtMs: number, ru
 describe("AppShell", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    storeMocks.aiAffectedDomainsHandler = null;
+    storeMocks.tauriEventHandlers.clear();
     storeMocks.addPaneTab.mockReturnValue({
       id: "pane-1-tab-created",
       title: "新建终端",
@@ -2620,6 +2636,21 @@ describe("AppShell", () => {
       }),
     );
 
+    view.unmount();
+  });
+
+  it("refreshes affected workspace domains after AI tool completion", async () => {
+    const view = render(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    storeMocks.workspaceList.mockClear();
+
+    await act(async () => {
+      await storeMocks.aiAffectedDomainsHandler?.(["workspace"]);
+    });
+
+    expect(storeMocks.workspaceList).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 

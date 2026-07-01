@@ -1,6 +1,8 @@
 // Author: Liz
 use std::sync::Arc;
 
+use tauri::AppHandle;
+
 use crate::{
     services::{
         ai_chat_service::AiChatService,
@@ -11,6 +13,7 @@ use crate::{
         command_history_service::CommandHistoryService,
         credential_service::CredentialService,
         llm_provider_test_stream_service::LlmProviderTestStreamService,
+        mcp_service::McpService,
         server_info_service::ServerInfoService,
         sftp_service::SftpService,
         ssh_command_service::SshCommandService,
@@ -32,6 +35,7 @@ pub struct AppState {
     ai_chat_service: AiChatService,
     ai_conversation_service: AiConversationService,
     ai_tool_service: AiToolService,
+    mcp_service: Arc<McpService>,
     server_info_service: ServerInfoService,
     ssh_command_service: SshCommandService,
     sftp_service: SftpService,
@@ -40,14 +44,33 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(storage: SqliteStore) -> Self {
+        Self::new_inner(storage, None)
+    }
+
+    pub fn new_with_app_handle(storage: SqliteStore, app_handle: AppHandle) -> Self {
+        Self::new_inner(storage, Some(app_handle))
+    }
+
+    fn new_inner(storage: SqliteStore, app_handle: Option<AppHandle>) -> Self {
         let storage = Arc::new(storage);
         let terminal_manager = Arc::new(TerminalManager::default());
         let command_history_service = Arc::new(CommandHistoryService::new(Arc::clone(&storage)));
         let credential_service = CredentialService::new(Arc::clone(&storage));
-        let ai_tool_writer = Arc::new(RuntimeAiToolWriter::new(
-            Arc::clone(&terminal_manager),
-            Arc::clone(&command_history_service),
-        ));
+        let ai_tool_writer = Arc::new(match app_handle {
+            Some(app_handle) => RuntimeAiToolWriter::with_app_handle(
+                Arc::clone(&terminal_manager),
+                Arc::clone(&command_history_service),
+                app_handle,
+            ),
+            None => RuntimeAiToolWriter::new(
+                Arc::clone(&terminal_manager),
+                Arc::clone(&command_history_service),
+            ),
+        });
+        let transfer_queue = TransferQueue::from_storage(Arc::clone(&storage));
+        let sftp_service = SftpService::new();
+        let server_info_service = ServerInfoService::new();
+        let ssh_command_service = SshCommandService::new();
         Self {
             command_completion_service: CommandCompletionService::new(),
             command_history_service,
@@ -55,12 +78,20 @@ impl AppState {
             ai_chat_stream_service: AiChatStreamService::default(),
             ai_chat_service: AiChatService,
             ai_conversation_service: AiConversationService,
-            ai_tool_service: AiToolService::with_writer(ai_tool_writer),
+            ai_tool_service: AiToolService::with_runtime_services(
+                ai_tool_writer,
+                credential_service.clone(),
+                transfer_queue.clone(),
+                sftp_service.clone(),
+                server_info_service.clone(),
+                ssh_command_service.clone(),
+            ),
+            mcp_service: Arc::new(McpService::default()),
             credential_service,
-            server_info_service: ServerInfoService::new(),
-            ssh_command_service: SshCommandService::new(),
-            sftp_service: SftpService::new(),
-            transfer_queue: TransferQueue::from_storage(Arc::clone(&storage)),
+            server_info_service,
+            ssh_command_service,
+            sftp_service,
+            transfer_queue,
             storage,
             terminal_manager,
         }
@@ -104,6 +135,10 @@ impl AppState {
 
     pub fn ai_tool_service(&self) -> AiToolService {
         self.ai_tool_service.clone()
+    }
+
+    pub fn mcp_service(&self) -> Arc<McpService> {
+        Arc::clone(&self.mcp_service)
     }
 
     pub fn server_info_service(&self) -> ServerInfoService {

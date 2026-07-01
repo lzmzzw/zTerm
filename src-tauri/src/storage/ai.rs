@@ -362,9 +362,9 @@ pub fn upsert_ai_tool_pending(
             "
             insert into ai_tool_pending (
               id, tool_id, tool_title, risk_level, arguments_summary, arguments_json, target_summary,
-              risk_summary, requires_confirmation, status, reason, requested_by,
-              conversation_id, run_id, step_id, created_at_ms
-            ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+              risk_summary, requires_confirmation, requires_secret_input, secret_input_label, status,
+              reason, requested_by, conversation_id, run_id, step_id, created_at_ms
+            ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
             on conflict(id) do update set
               tool_id = excluded.tool_id,
               tool_title = excluded.tool_title,
@@ -374,6 +374,8 @@ pub fn upsert_ai_tool_pending(
               target_summary = excluded.target_summary,
               risk_summary = excluded.risk_summary,
               requires_confirmation = excluded.requires_confirmation,
+              requires_secret_input = excluded.requires_secret_input,
+              secret_input_label = excluded.secret_input_label,
               status = excluded.status,
               reason = excluded.reason,
               requested_by = excluded.requested_by,
@@ -391,6 +393,8 @@ pub fn upsert_ai_tool_pending(
                 pending.target_summary,
                 pending.risk_summary,
                 bool_to_i64(pending.requires_confirmation),
+                bool_to_i64(pending.requires_secret_input),
+                pending.secret_input_label,
                 pending.status.as_str(),
                 pending.reason,
                 pending.requested_by,
@@ -409,8 +413,8 @@ pub fn list_ai_tool_pending(store: &SqliteStore) -> AppResult<Vec<AiToolPendingI
         let mut statement = connection.prepare(
             "
             select id, tool_id, tool_title, risk_level, arguments_summary, target_summary, risk_summary,
-                   requires_confirmation, status, created_at_ms, conversation_id, run_id,
-                   step_id, reason, requested_by
+                   requires_confirmation, requires_secret_input, secret_input_label, status,
+                   created_at_ms, conversation_id, run_id, step_id, reason, requested_by
             from ai_tool_pending
             order by created_at_ms desc
             ",
@@ -432,19 +436,20 @@ pub fn get_ai_tool_pending_state(
             .query_row(
                 "
                 select id, tool_id, tool_title, risk_level, arguments_summary, target_summary, risk_summary,
-                       requires_confirmation, status, created_at_ms, conversation_id, run_id,
-                       step_id, reason, requested_by, arguments_json
+                       requires_confirmation, requires_secret_input, secret_input_label, status,
+                       created_at_ms, conversation_id, run_id, step_id, reason, requested_by,
+                       arguments_json
                 from ai_tool_pending
                 where id = ?1
                 ",
                 [&id],
                 |row| {
                     let pending = map_ai_tool_pending(row)?;
-                    let arguments_json: String = row.get(15)?;
+                    let arguments_json: String = row.get(17)?;
                     let arguments =
                         serde_json::from_str::<Value>(&arguments_json).map_err(|error| {
                             rusqlite::Error::FromSqlConversionFailure(
-                                15,
+                                17,
                                 rusqlite::types::Type::Text,
                                 Box::new(AppError::storage(format!(
                                     "invalid ai tool arguments json: {error}"
@@ -474,8 +479,8 @@ pub fn insert_ai_tool_audit(store: &SqliteStore, audit: &AiToolAuditRecord) -> A
             insert into ai_tool_audits (
               id, invocation_id, tool_id, tool_title, risk_level, arguments_summary,
               risk_summary, status, result_summary, error, audit_context_json,
-              created_at_ms, completed_at_ms
-            ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+              affected_domains_json, created_at_ms, completed_at_ms
+            ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             ",
             params![
                 audit.id,
@@ -489,6 +494,8 @@ pub fn insert_ai_tool_audit(store: &SqliteStore, audit: &AiToolAuditRecord) -> A
                 audit.result_summary,
                 audit.error,
                 audit.audit_context_json,
+                serde_json::to_string(&audit.affected_domains)
+                    .map_err(|error| AppError::storage(error.to_string()))?,
                 audit.created_at_ms,
                 audit.completed_at_ms,
             ],
@@ -504,7 +511,7 @@ pub fn list_ai_tool_audits(store: &SqliteStore, limit: usize) -> AppResult<Vec<A
             "
             select id, invocation_id, tool_id, tool_title, risk_level, arguments_summary,
                    risk_summary, status, result_summary, error, audit_context_json,
-                   created_at_ms, completed_at_ms
+                   affected_domains_json, created_at_ms, completed_at_ms
             from ai_tool_audits
             order by completed_at_ms desc
             limit ?1
@@ -598,7 +605,7 @@ fn map_ai_conversation_message(row: &Row<'_>) -> rusqlite::Result<AiConversation
 
 fn map_ai_tool_pending(row: &Row<'_>) -> rusqlite::Result<AiToolPendingInvocation> {
     let risk_value: String = row.get(3)?;
-    let status_value: String = row.get(8)?;
+    let status_value: String = row.get(10)?;
     Ok(AiToolPendingInvocation {
         id: row.get(0)?,
         tool_id: row.get(1)?,
@@ -616,21 +623,23 @@ fn map_ai_tool_pending(row: &Row<'_>) -> rusqlite::Result<AiToolPendingInvocatio
         target_summary: row.get(5)?,
         risk_summary: row.get(6)?,
         requires_confirmation: row.get::<_, i64>(7)? != 0,
+        requires_secret_input: row.get::<_, i64>(8)? != 0,
+        secret_input_label: row.get(9)?,
         status: AiToolInvocationStatus::from_db(&status_value).ok_or_else(|| {
             rusqlite::Error::FromSqlConversionFailure(
-                8,
+                10,
                 rusqlite::types::Type::Text,
                 Box::new(AppError::storage(format!(
                     "invalid ai tool status: {status_value}"
                 ))),
             )
         })?,
-        created_at_ms: row.get(9)?,
-        conversation_id: row.get(10)?,
-        run_id: row.get(11)?,
-        step_id: row.get(12)?,
-        reason: row.get(13)?,
-        requested_by: row.get(14)?,
+        created_at_ms: row.get(11)?,
+        conversation_id: row.get(12)?,
+        run_id: row.get(13)?,
+        step_id: row.get(14)?,
+        reason: row.get(15)?,
+        requested_by: row.get(16)?,
     })
 }
 
@@ -665,8 +674,21 @@ fn map_ai_tool_audit(row: &Row<'_>) -> rusqlite::Result<AiToolAuditRecord> {
         result_summary: row.get(8)?,
         error: row.get(9)?,
         audit_context_json: row.get(10)?,
-        created_at_ms: row.get(11)?,
-        completed_at_ms: row.get(12)?,
+        affected_domains: parse_string_array(row.get::<_, String>(11)?.as_str(), 11)?,
+        created_at_ms: row.get(12)?,
+        completed_at_ms: row.get(13)?,
+    })
+}
+
+fn parse_string_array(value: &str, column: usize) -> rusqlite::Result<Vec<String>> {
+    serde_json::from_str::<Vec<String>>(value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            rusqlite::types::Type::Text,
+            Box::new(AppError::storage(format!(
+                "invalid string array json: {error}"
+            ))),
+        )
     })
 }
 

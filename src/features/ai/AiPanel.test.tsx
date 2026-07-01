@@ -51,6 +51,15 @@ function change(element: HTMLTextAreaElement, value: string) {
   });
 }
 
+function changeTextInput(element: HTMLInputElement, value: string) {
+  act(() => {
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+    descriptor?.set?.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((innerResolve) => {
@@ -425,6 +434,46 @@ describe("AiPanel", () => {
 
     expect(onConfirmTool).toHaveBeenNthCalledWith(1, "tool-call-1", true);
     expect(onConfirmTool).toHaveBeenNthCalledWith(2, "tool-call-1", false);
+    view.unmount();
+  });
+
+  it("requires a local secret before approving secret-backed tool invocations", async () => {
+    const onConfirmTool = vi.fn();
+    const view = render(
+      <AiPanel
+        activeRuntimeSessionId="runtime-1"
+        providersAvailable
+        recentOutput=""
+        loading={false}
+        error={null}
+        messages={[]}
+        pendingInvocations={[
+          {
+            id: "tool-call-secret",
+            tool_id: "llm_provider.create",
+            tool_title: "创建 LLM Provider",
+            risk_level: "medium",
+            arguments_summary: "draft={7 项}",
+            requires_confirmation: true,
+            requires_secret_input: true,
+            secret_input_label: "API Key",
+            status: "pending",
+          },
+        ]}
+        onConfirmTool={onConfirmTool}
+      />,
+    );
+
+    const approve = button(view.container, "批准");
+    expect(approve.disabled).toBe(true);
+
+    changeTextInput(input(view.container, "API Key") as unknown as HTMLInputElement, "sk-local-only");
+    expect(approve.disabled).toBe(false);
+    await click(approve);
+    await click(button(view.container, "拒绝"));
+
+    expect(onConfirmTool).toHaveBeenNthCalledWith(1, "tool-call-secret", true, { api_key: "sk-local-only" });
+    expect(onConfirmTool).toHaveBeenNthCalledWith(2, "tool-call-secret", false);
     view.unmount();
   });
 

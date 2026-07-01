@@ -3,6 +3,7 @@ pub mod ai;
 pub mod command_completion;
 pub mod credential;
 pub mod history;
+pub mod mcp;
 pub mod server_info;
 pub mod sessions;
 pub mod settings;

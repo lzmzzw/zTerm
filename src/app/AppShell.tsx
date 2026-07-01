@@ -1,5 +1,6 @@
 // Author: Liz
 import { ArrowLeftRight, Bot, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
@@ -20,7 +21,7 @@ import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
 import { useWorkspaceVisualSwitch } from "./useWorkspaceVisualSwitch";
 import { ZtConfirmDialog } from "../components/ZtUi";
-import { useAiStore } from "../features/ai/aiStore";
+import { setAiAffectedDomainsHandler, useAiStore } from "../features/ai/aiStore";
 import { buildAiTerminalContext } from "../features/ai/aiTerminalContextModel";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
 import { useFileStore, type TransferConflict, type TransferConflictPolicy } from "../features/files/fileStore";
@@ -81,6 +82,12 @@ type TransferConflictDialogState = {
   resolve: (policy: TransferConflictPolicy | null) => void;
 };
 
+type ZtermToolActionEvent = {
+  action: string;
+  arguments?: Record<string, unknown> | null;
+  affected_domains?: string[];
+};
+
 const DEFAULT_MAX_RUNNING_WORKSPACES = 5;
 
 const EMPTY_AI_PANEL_STATE = {
@@ -127,6 +134,20 @@ const EMPTY_WORKSPACE_SIDEBAR_STATE = {
   workspaceDefinitions: {} as Record<string, WorkspaceDefinition>,
 };
 
+function readString(value: Record<string, unknown>, key: string) {
+  const item = value[key];
+  return typeof item === "string" && item.trim() ? item.trim() : null;
+}
+
+function rightToolFromValue(value: string | null | undefined): RightTool | null {
+  if (!value) return null;
+  const normalized = value.trim();
+  if (["agent", "files", "history", "monitor", "tunnels", "containers"].includes(normalized)) {
+    return normalized as RightTool;
+  }
+  return null;
+}
+
 export function AppShell() {
   const {
     workspaceSwitchOverlay,
@@ -164,6 +185,7 @@ export function AppShell() {
     providers,
     terminalProfiles,
     shortcutDefinitions,
+    mcpStatus,
     settingsLoading,
     settingsError,
     loadSettings,
@@ -177,12 +199,15 @@ export function AppShell() {
     cancelProviderDraftTest,
     detectTerminalProfiles,
     setDefaultTerminalProfile,
+    setMcpEnabled,
+    rotateMcpToken,
   } = useSettingsStore(
     useShallow((state) => ({
       appSettings: state.appSettings,
       providers: state.providers,
       terminalProfiles: state.terminalProfiles,
       shortcutDefinitions: state.shortcutDefinitions,
+      mcpStatus: state.mcpStatus,
       settingsLoading: state.loading,
       settingsError: state.error,
       loadSettings: state.loadSettings,
@@ -196,6 +221,8 @@ export function AppShell() {
       cancelProviderDraftTest: state.cancelProviderDraftTest,
       detectTerminalProfiles: state.detectTerminalProfiles,
       setDefaultTerminalProfile: state.setDefaultTerminalProfile,
+      setMcpEnabled: state.setMcpEnabled,
+      rotateMcpToken: state.rotateMcpToken,
     })),
   );
   const [terminalError, setTerminalError] = useState<string | null>(null);
@@ -687,12 +714,128 @@ export function AppShell() {
     },
   );
 
+  useEffect(() => {
+    setAiAffectedDomainsHandler((domains) => {
+      void refreshAffectedDomains(domains);
+    });
+    return () => setAiAffectedDomainsHandler(null);
+  });
+
+  useEffect(() => {
+    let disposed = false;
+    let cleanup: (() => void) | null = null;
+    void listen<ZtermToolActionEvent>("zterm:tool-action", (event) => {
+      void handleZtermToolAction(event.payload);
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        cleanup = unlisten;
+      }
+    });
+    return () => {
+      disposed = true;
+      cleanup?.();
+    };
+  });
+
   async function refreshWorkspaceSummaries() {
     try {
       const summaries = await workspaceList();
       setWorkspaceSummaries(summaries);
     } catch (error) {
       setWorkspaceActionError(fallbackOnlyErrorMessage(error, "加载工作区失败"));
+    }
+  }
+
+  async function refreshAffectedDomains(domains: string[]) {
+    const domainSet = new Set(domains);
+    if (domainSet.has("sessions")) {
+      await loadSessions();
+    }
+    if (domainSet.has("models") || domainSet.has("settings") || domainSet.has("terminal")) {
+      await loadSettings();
+    }
+    if (domainSet.has("workspace")) {
+      await refreshWorkspaceSummaries();
+    }
+    if (domainSet.has("transfer")) {
+      await loadTransfers(activeSshSessionId);
+    }
+    if (domainSet.has("history") && activeHistoryScopeKind && activeHistoryScopeId) {
+      await searchHistory({
+        query: historyQuery,
+        scopeKind: activeHistoryScopeKind,
+        scopeId: activeHistoryScopeId,
+        deduplicate: deduplicateHistory,
+      });
+    }
+  }
+
+  async function handleZtermToolAction(event: ZtermToolActionEvent) {
+    const args = event.arguments ?? {};
+    switch (event.action) {
+      case "workspace.open_tool": {
+        const tool = rightToolFromValue(readString(args, "tool") ?? readString(args, "right_tool"));
+        if (tool) setActiveTool(tool);
+        break;
+      }
+      case "terminal.split": {
+        const direction = readString(args, "direction") === "vertical" ? "vertical" : "horizontal";
+        handleSplitPane(direction);
+        break;
+      }
+      case "terminal.focus": {
+        const paneId = readString(args, "pane_id");
+        const paneTabId = readString(args, "pane_tab_id");
+        if (paneId) setActivePane(paneId);
+        if (paneId && paneTabId) selectPaneTab(paneId, paneTabId);
+        break;
+      }
+      case "terminal.open":
+      case "sessions.open": {
+        const savedSessionId = readString(args, "saved_session_id") ?? readString(args, "id");
+        if (!savedSessionId) break;
+        const session = sessions.find((item) => item.id === savedSessionId);
+        if (session) {
+          await terminalActions.openSession(session);
+        }
+        break;
+      }
+      case "workspace.restore": {
+        const workspaceId = readString(args, "workspace_id");
+        if (workspaceId) await handleRestoreWorkspace(workspaceId);
+        break;
+      }
+      case "workspace.close": {
+        const workspaceId = readString(args, "workspace_id");
+        if (workspaceId) await handleCloseWorkspace(workspaceId);
+        break;
+      }
+      case "sftp.list":
+      case "sftp.mkdir":
+      case "sftp.upload":
+      case "sftp.download":
+      case "sftp.delete":
+      case "sftp.rename": {
+        setActiveTool("files");
+        if (activeSshSessionId) {
+          await listFiles(activeSshSessionId, filePath);
+        }
+        break;
+      }
+      case "server_info.snapshot":
+        setActiveTool("monitor");
+        break;
+      case "ssh_container.list":
+        setActiveTool("containers");
+        await refreshActiveSshContainers();
+        break;
+      default:
+        break;
+    }
+    if (event.affected_domains?.length) {
+      await refreshAffectedDomains(event.affected_domains);
     }
   }
 
@@ -1234,6 +1377,9 @@ export function AppShell() {
           onResetSettings={resetAppSettingsSection}
           onDetectTerminalProfiles={detectTerminalProfiles}
           onSetDefaultTerminalProfile={setDefaultTerminalProfile}
+          mcpStatus={mcpStatus}
+          onSetMcpEnabled={setMcpEnabled}
+          onRotateMcpToken={rotateMcpToken}
         />
       </div>
     );

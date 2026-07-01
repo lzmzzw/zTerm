@@ -305,6 +305,15 @@ pub struct AiToolDefinition {
     pub requires_confirmation: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AiToolFrontendActionEvent {
+    pub action: String,
+    #[serde(default)]
+    pub arguments: Value,
+    #[serde(default)]
+    pub affected_domains: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiToolPrepareRequest {
     pub tool_id: String,
@@ -317,11 +326,19 @@ pub struct AiToolPrepareRequest {
     pub step_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub struct AiToolSecretInputs {
+    pub api_key: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiToolConfirmRequest {
     pub invocation_id: String,
     pub approved: bool,
     pub audit_context_json: Option<String>,
+    #[serde(default)]
+    pub secret_inputs: Option<AiToolSecretInputs>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -334,6 +351,10 @@ pub struct AiToolPendingInvocation {
     pub target_summary: Option<String>,
     pub risk_summary: Option<String>,
     pub requires_confirmation: bool,
+    #[serde(default)]
+    pub requires_secret_input: bool,
+    #[serde(default)]
+    pub secret_input_label: Option<String>,
     pub status: AiToolInvocationStatus,
     pub created_at_ms: i64,
     pub conversation_id: Option<String>,
@@ -356,6 +377,8 @@ pub struct AiToolAuditRecord {
     pub result_summary: Option<String>,
     pub error: Option<String>,
     pub audit_context_json: Option<String>,
+    #[serde(default)]
+    pub affected_domains: Vec<String>,
     pub created_at_ms: i64,
     pub completed_at_ms: i64,
 }

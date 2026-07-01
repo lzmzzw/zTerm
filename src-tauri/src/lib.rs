@@ -31,6 +31,9 @@ pub fn run() {
             commands::settings::settings_save,
             commands::settings::settings_reset,
             commands::settings::shortcut_registry_list,
+            commands::mcp::mcp_server_status,
+            commands::mcp::mcp_server_set_enabled,
+            commands::mcp::mcp_server_rotate_token,
             commands::terminal_profile::terminal_profile_list,
             commands::terminal_profile::terminal_profile_detect,
             commands::terminal_profile::terminal_profile_set_default,
@@ -122,7 +125,10 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     let paths = paths::AppPaths::default_for_install()?;
     paths.ensure_dirs()?;
     let storage = storage::sqlite::SqliteStore::open(paths.db_path())?;
-    app.manage(state::AppState::new(storage));
+    app.manage(state::AppState::new_with_app_handle(
+        storage,
+        app.handle().clone(),
+    ));
     Ok(())
 }
 

@@ -19,9 +19,10 @@ describe("settingsPageModel", () => {
       terminal_font_size: 13,
       default_right_tool: null,
       workspace_restore_strategy: "visible_first",
+      mcp: { enabled: false, port: null },
       shortcuts: [],
     });
-    expect(settingsTabs).toEqual(["general", "shortcuts", "terminal", "about"]);
+    expect(settingsTabs).toEqual(["general", "shortcuts", "terminal", "mcp", "about"]);
   });
 
   it("keeps option values and label keys stable", () => {

@@ -435,6 +435,18 @@ impl TerminalManager {
             .unwrap_or(0)
     }
 
+    pub fn runtime_infos(&self) -> AppResult<Vec<RuntimeSessionInfo>> {
+        let mut infos = self
+            .infos
+            .lock()
+            .map_err(|_| AppError::terminal("terminal info lock was poisoned"))?
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        infos.sort_by(|left, right| left.title.cmp(&right.title));
+        Ok(infos)
+    }
+
     pub fn record_output(&self, runtime_session_id: &str, data: &str) -> AppResult<()> {
         let mut buffers = self
             .output_buffers
