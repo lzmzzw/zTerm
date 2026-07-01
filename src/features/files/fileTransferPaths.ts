@@ -2,12 +2,12 @@
 import type { TransferEndpoint, TransferKind } from "./fileStore";
 import { joinRemotePath, parentRemotePath, remoteFileName } from "./remotePath";
 
-export function endpointFileName(path: string) {
+function endpointFileName(path: string) {
   const normalized = path.replace(/[\\/]+$/, "");
   return normalized.split(/[\\/]/).filter(Boolean).pop() ?? "transfer";
 }
 
-export function joinEndpointPath(endpoint: TransferEndpoint, name: string) {
+function joinEndpointPath(endpoint: TransferEndpoint, name: string) {
   if (endpoint.kind === "ssh") {
     return joinRemotePath(endpoint.path, name);
   }

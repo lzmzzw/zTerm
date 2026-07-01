@@ -274,7 +274,7 @@ describe("workspaceRestoreScheduler", () => {
     activeTab.startup_command = "source ./env.sh";
 
     const writeTerminal = vi.fn().mockResolvedValue(undefined);
-    const openTerminal = vi.fn(async (savedSessionId: string, paneId: string, workingDirectory?: string | null) =>
+    const openTerminal = vi.fn(async (savedSessionId: string, paneId: string, _workingDirectory?: string | null) =>
       runtime(`runtime-${savedSessionId}`, paneId, "ssh", savedSessionId),
     );
 

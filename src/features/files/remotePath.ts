@@ -19,7 +19,7 @@ export function remoteFileName(path: string) {
   return normalized.split("/").filter(Boolean).pop() ?? "download";
 }
 
-export function normalizeRemotePath(path: string) {
+function normalizeRemotePath(path: string) {
   const normalized = path.trim().replace(/\\/g, "/");
   if (!normalized || normalized === ".") return "/";
   const withRoot = normalized.startsWith("/") ? normalized : `/${normalized}`;

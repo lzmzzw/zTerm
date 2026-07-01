@@ -56,7 +56,7 @@ export function buildDownloadTransferPlans({
   });
 }
 
-export function transferKindFromEntry(entry: FileEntry): TransferKind | null {
+function transferKindFromEntry(entry: FileEntry): TransferKind | null {
   if (entry.kind === "file" || entry.kind === "directory") return entry.kind;
   return null;
 }

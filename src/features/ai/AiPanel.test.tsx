@@ -542,6 +542,7 @@ describe("AiPanel", () => {
     await click(button(view.container, "历史会话"));
     const historyView = view.container.querySelector(".zt-ai-history-view");
     const historyMain = button(view.container, "恢复 AI 会话 历史排查");
+    expect(historyView).not.toBeNull();
     expect(view.container.textContent).toContain("历史排查");
     expect(view.container.textContent).not.toContain("当前绑定窗格");
     expect(view.container.textContent).not.toContain("列出当前目录文件");

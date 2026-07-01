@@ -121,12 +121,6 @@ const terminalMock = vi.hoisted(() => {
   return { instances, Terminal };
 });
 
-const webglAddonMock = vi.hoisted(() => ({
-  WebglAddon: vi.fn(function () {
-    return {};
-  }),
-}));
-
 vi.mock("@xterm/xterm", () => ({
   Terminal: terminalMock.Terminal,
 }));
@@ -147,10 +141,6 @@ vi.mock("@xterm/addon-web-links", () => ({
   WebLinksAddon: vi.fn(function () {
     return {};
   }),
-}));
-
-vi.mock("@xterm/addon-webgl", () => ({
-  WebglAddon: webglAddonMock.WebglAddon,
 }));
 
 import { XtermPane } from "./XtermPane";
@@ -200,7 +190,6 @@ describe("XtermPane", () => {
   beforeEach(() => {
     terminalMock.instances.length = 0;
     terminalMock.Terminal.mockClear();
-    webglAddonMock.WebglAddon.mockClear();
     delete document.documentElement.dataset.ztTheme;
   });
 
@@ -265,7 +254,6 @@ describe("XtermPane", () => {
   it("uses xterm's default renderer instead of the WebGL renderer to avoid GPU texture artifacts", () => {
     const view = render(<XtermPane data="" />);
 
-    expect(webglAddonMock.WebglAddon).not.toHaveBeenCalled();
     expect(terminalMock.instances[0]?.loadAddon).toHaveBeenCalledTimes(3);
 
     view.unmount();
