@@ -37,6 +37,7 @@ describe("aiStore", () => {
       activeConversationId: null,
       approvalMode: "safe",
       messages: [],
+      conversationPreviews: {},
       pendingInvocations: [],
       contextSnapshot: null,
       loading: false,
@@ -95,6 +96,15 @@ describe("aiStore", () => {
       messages: [
         { id: "message-1", conversation_id: "conversation-1", role: "user", content: "删除消息", status: "complete" },
       ],
+      conversationPreviews: {
+        "conversation-1": {
+          loading: false,
+          error: null,
+          messages: [
+            { id: "message-1", conversation_id: "conversation-1", role: "user", content: "删除消息", status: "complete" },
+          ],
+        },
+      },
     });
 
     await useAiStore.getState().deleteConversation("conversation-1");
@@ -105,5 +115,45 @@ describe("aiStore", () => {
     expect(useAiStore.getState().messages).toEqual([
       expect.objectContaining({ id: "message-2", content: "保留消息" }),
     ]);
+    expect(useAiStore.getState().conversationPreviews["conversation-1"]).toBeUndefined();
+  });
+
+  it("loads and caches AI conversation previews", async () => {
+    invokeMock.mockResolvedValueOnce({
+      id: "conversation-1",
+      title: "历史会话",
+      scope_kind: "terminal",
+      scope_ref_json: "{}",
+      approval_mode: "safe",
+      status: "active",
+      created_at_ms: 1,
+      updated_at_ms: 2,
+      messages: [
+        { id: "message-1", conversation_id: "conversation-1", role: "user", content: "历史消息", status: "complete" },
+      ],
+    });
+
+    await useAiStore.getState().loadConversationPreview("conversation-1");
+    await useAiStore.getState().loadConversationPreview("conversation-1");
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith("ai_conversation_get", { conversationId: "conversation-1" });
+    expect(useAiStore.getState().conversationPreviews["conversation-1"]).toEqual({
+      loading: false,
+      error: null,
+      messages: [expect.objectContaining({ id: "message-1", content: "历史消息" })],
+    });
+  });
+
+  it("records AI conversation preview loading failures", async () => {
+    invokeMock.mockRejectedValueOnce(new Error("preview failed"));
+
+    await useAiStore.getState().loadConversationPreview("conversation-1");
+
+    expect(useAiStore.getState().conversationPreviews["conversation-1"]).toEqual({
+      loading: false,
+      error: "preview failed",
+      messages: null,
+    });
   });
 });

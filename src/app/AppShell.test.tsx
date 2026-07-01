@@ -432,6 +432,7 @@ vi.mock("../features/ai/aiStore", () => {
     activeConversationId: null,
     approvalMode: "safe",
     messages: [],
+    conversationPreviews: {},
     pendingInvocations: [],
     contextSnapshot: null,
     loading: false,
@@ -442,7 +443,9 @@ vi.mock("../features/ai/aiStore", () => {
     sendChat: storeMocks.asyncNoop,
     setApprovalMode: storeMocks.asyncNoop,
     selectConversation: storeMocks.asyncNoop,
+    loadConversationPreview: storeMocks.asyncNoop,
     newConversation: storeMocks.asyncNoop,
+    deleteConversation: storeMocks.asyncNoop,
     confirmTool: storeMocks.asyncNoop,
   });
   const useAiStore = (selector?: (state: Record<string, unknown>) => unknown) => {

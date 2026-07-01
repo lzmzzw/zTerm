@@ -31,6 +31,12 @@ export interface AiConversationMessage {
   created_at_ms?: number;
 }
 
+export interface AiConversationPreviewState {
+  loading: boolean;
+  error: string | null;
+  messages: AiConversationMessage[] | null;
+}
+
 interface AiConversation {
   id: string;
   title: string;
@@ -111,6 +117,7 @@ interface AiState {
   activeConversationId: string | null;
   approvalMode: AiApprovalMode;
   messages: AiConversationMessage[];
+  conversationPreviews: Record<string, AiConversationPreviewState>;
   pendingInvocations: AiToolPendingInvocation[];
   contextSnapshot: AiTerminalContextSnapshot | null;
   loading: boolean;
@@ -121,6 +128,7 @@ interface AiState {
   sendChat: (message: string, context: AiTerminalContextSnapshot | null) => Promise<void>;
   setApprovalMode: (mode: AiApprovalMode) => Promise<void>;
   selectConversation: (conversationId: string) => Promise<void>;
+  loadConversationPreview: (conversationId: string) => Promise<void>;
   newConversation: () => void;
   deleteConversation: (conversationId: string) => Promise<void>;
   confirmTool: (invocationId: string, approved: boolean) => Promise<void>;
@@ -128,11 +136,12 @@ interface AiState {
 
 let contextCaptureRequestId = 0;
 
-export const useAiStore = create<AiState>((set) => ({
+export const useAiStore = create<AiState>((set, get) => ({
   conversations: [],
   activeConversationId: null,
   approvalMode: "safe",
   messages: [],
+  conversationPreviews: {},
   pendingInvocations: [],
   contextSnapshot: null,
   loading: false,
@@ -197,6 +206,7 @@ export const useAiStore = create<AiState>((set) => ({
         activeConversationId: response.conversation_id,
         messages: conversation.messages,
         approvalMode: conversation.approval_mode ?? state.approvalMode,
+        conversationPreviews: withConversationPreview(state.conversationPreviews, conversation),
         pendingInvocations: response.pending_invocations.length > 0 ? response.pending_invocations : state.pendingInvocations,
         loading: false,
       }));
@@ -209,14 +219,48 @@ export const useAiStore = create<AiState>((set) => ({
   async selectConversation(conversationId) {
     try {
       const conversation = await invoke<AiConversation>("ai_conversation_get", { conversationId });
-      set({
+      set((state) => ({
         activeConversationId: conversation.id,
         approvalMode: conversation.approval_mode ?? "safe",
         messages: conversation.messages,
+        conversationPreviews: withConversationPreview(state.conversationPreviews, conversation),
         error: null,
-      });
+      }));
     } catch (error) {
       set({ error: unknownErrorMessage(error, "AI Agent 操作失败") });
+    }
+  },
+  async loadConversationPreview(conversationId) {
+    const normalizedConversationId = conversationId.trim();
+    if (!normalizedConversationId) return;
+    const existing = get().conversationPreviews[normalizedConversationId];
+    if (existing?.loading || existing?.messages) return;
+    set((state) => ({
+      conversationPreviews: {
+        ...state.conversationPreviews,
+        [normalizedConversationId]: {
+          loading: true,
+          error: null,
+          messages: existing?.messages ?? null,
+        },
+      },
+    }));
+    try {
+      const conversation = await invoke<AiConversation>("ai_conversation_get", { conversationId: normalizedConversationId });
+      set((state) => ({
+        conversationPreviews: withConversationPreview(state.conversationPreviews, conversation),
+      }));
+    } catch (error) {
+      set((state) => ({
+        conversationPreviews: {
+          ...state.conversationPreviews,
+          [normalizedConversationId]: {
+            loading: false,
+            error: unknownErrorMessage(error, "AI 会话预览加载失败"),
+            messages: null,
+          },
+        },
+      }));
     }
   },
   async setApprovalMode(mode) {
@@ -261,6 +305,7 @@ export const useAiStore = create<AiState>((set) => ({
         activeConversationId: nextConversationId,
         approvalMode: nextConversationId ? state.approvalMode : "safe",
         messages: nextConversationId ? state.messages : [],
+        conversationPreviews: withoutConversationPreview(state.conversationPreviews, conversationId),
         pendingInvocations: state.pendingInvocations.filter((invocation) => invocation.conversation_id !== conversationId),
         loading: false,
       }));
@@ -285,7 +330,12 @@ export const useAiStore = create<AiState>((set) => ({
       const activeConversationId = useAiStore.getState().activeConversationId;
       if (activeConversationId) {
         const conversation = await invoke<AiConversation>("ai_conversation_get", { conversationId: activeConversationId });
-        set({ pendingInvocations, messages: conversation.messages, loading: false });
+        set((state) => ({
+          pendingInvocations,
+          messages: conversation.messages,
+          conversationPreviews: withConversationPreview(state.conversationPreviews, conversation),
+          loading: false,
+        }));
       } else {
         set({ pendingInvocations, loading: false });
       }
@@ -294,3 +344,26 @@ export const useAiStore = create<AiState>((set) => ({
     }
   },
 }));
+
+function withConversationPreview(
+  previews: Record<string, AiConversationPreviewState>,
+  conversation: AiConversation,
+): Record<string, AiConversationPreviewState> {
+  return {
+    ...previews,
+    [conversation.id]: {
+      loading: false,
+      error: null,
+      messages: conversation.messages,
+    },
+  };
+}
+
+function withoutConversationPreview(
+  previews: Record<string, AiConversationPreviewState>,
+  conversationId: string,
+): Record<string, AiConversationPreviewState> {
+  const next = { ...previews };
+  delete next[conversationId];
+  return next;
+}

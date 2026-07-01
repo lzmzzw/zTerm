@@ -85,6 +85,7 @@ const DEFAULT_MAX_RUNNING_WORKSPACES = 5;
 
 const EMPTY_AI_PANEL_STATE = {
   aiConversations: [],
+  aiConversationPreviews: {},
   activeConversationId: null,
   aiApprovalMode: "safe" as const,
   aiMessages: [],
@@ -225,6 +226,7 @@ export function AppShell() {
     sendChat,
     setApprovalMode,
     selectConversation,
+    loadConversationPreview,
     newConversation,
     deleteConversation,
     confirmTool,
@@ -236,6 +238,7 @@ export function AppShell() {
       sendChat: state.sendChat,
       setApprovalMode: state.setApprovalMode,
       selectConversation: state.selectConversation,
+      loadConversationPreview: state.loadConversationPreview,
       newConversation: state.newConversation,
       deleteConversation: state.deleteConversation,
       confirmTool: state.confirmTool,
@@ -243,6 +246,7 @@ export function AppShell() {
   );
   const {
     aiConversations,
+    aiConversationPreviews,
     activeConversationId,
     aiApprovalMode,
     aiMessages,
@@ -255,6 +259,7 @@ export function AppShell() {
       activeTool === "agent"
         ? {
             aiConversations: state.conversations,
+            aiConversationPreviews: state.conversationPreviews,
             activeConversationId: state.activeConversationId,
             aiApprovalMode: state.approvalMode,
             aiMessages: state.messages,
@@ -1468,6 +1473,7 @@ export function AppShell() {
           providersAvailable: providers.some((provider) => provider.enabled),
           recentTerminalOutput,
           conversations: aiConversations,
+          conversationPreviews: aiConversationPreviews,
           activeConversationId,
           messages: aiMessages,
           contextSnapshot: aiContextSnapshot,
@@ -1476,6 +1482,7 @@ export function AppShell() {
           onApprovalModeChange: setApprovalMode,
           onConfirmTool: confirmTool,
           onDeleteConversation: deleteConversation,
+          onLoadConversationPreview: loadConversationPreview,
           onNewConversation: newConversation,
           onSelectConversation: selectConversation,
           onSendChat: (message) => sendChat(message, aiTerminalContext),

@@ -5,6 +5,7 @@ import { AiPanel } from "../features/ai/AiPanel";
 import type {
   AiApprovalMode,
   AiConversationMessage,
+  AiConversationPreviewState,
   AiConversationSummary,
   AiTerminalContextSnapshot,
   AiToolPendingInvocation,
@@ -54,6 +55,7 @@ interface RightToolsPanelProps {
     providersAvailable: boolean;
     recentTerminalOutput: string;
     conversations: AiConversationSummary[];
+    conversationPreviews: Record<string, AiConversationPreviewState>;
     activeConversationId: string | null;
     messages: AiConversationMessage[];
     contextSnapshot: AiTerminalContextSnapshot | null;
@@ -62,6 +64,7 @@ interface RightToolsPanelProps {
     onApprovalModeChange: (mode: AiApprovalMode) => Promise<unknown> | unknown;
     onConfirmTool: (invocationId: string, approved: boolean) => Promise<unknown> | unknown;
     onDeleteConversation: (conversationId: string) => Promise<unknown> | unknown;
+    onLoadConversationPreview: (conversationId: string) => Promise<unknown> | unknown;
     onNewConversation: () => Promise<unknown> | unknown;
     onSelectConversation: (conversationId: string) => Promise<unknown> | unknown;
     onSendChat: (message: string) => Promise<unknown> | unknown;
@@ -179,6 +182,7 @@ export function RightToolsPanel({
                 providersAvailable={agent.providersAvailable}
                 recentOutput={agent.recentTerminalOutput}
                 conversations={agent.conversations}
+                conversationPreviews={agent.conversationPreviews}
                 activeConversationId={agent.activeConversationId}
                 approvalMode={agent.approvalMode}
                 messages={agent.messages}
@@ -190,6 +194,7 @@ export function RightToolsPanel({
                 onApprovalModeChange={agent.onApprovalModeChange}
                 onSendChat={agent.onSendChat}
                 onSelectConversation={agent.onSelectConversation}
+                onLoadConversationPreview={agent.onLoadConversationPreview}
                 onNewConversation={agent.onNewConversation}
                 onDeleteConversation={agent.onDeleteConversation}
                 onConfirmTool={agent.onConfirmTool}

@@ -54,6 +54,12 @@ async function click(element: HTMLElement) {
   });
 }
 
+async function doubleClick(element: HTMLElement) {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  });
+}
+
 async function chooseSelect(container: HTMLElement, label: string, value: string) {
   await click(select(container, label));
   const option = Array.from(document.querySelectorAll('[role="option"]')).find(
@@ -124,6 +130,8 @@ describe("AiPanel", () => {
     expect(view.container.querySelector(".zt-ai-bound-target")?.textContent).not.toContain("pane=pane-left");
     expect(view.container.querySelector(".zt-ai-bound-target")?.textContent).not.toContain("runtime=runtime-1");
     expect(view.container.textContent).toContain("建议命令：`pwd`");
+    expect(view.container.querySelector(".zt-ai-message.role-user")?.classList.contains("role-user")).toBe(true);
+    expect(view.container.querySelector(".zt-ai-message.role-assistant")?.classList.contains("role-assistant")).toBe(true);
     change(input(view.container, "AI 请求"), "列出文件");
     await click(button(view.container, "发送"));
 
@@ -238,18 +246,164 @@ describe("AiPanel", () => {
         recentOutput=""
         loading={false}
         error={null}
-        conversations={[{ id: "conversation-1", title: "排查终端", updated_at_ms: 1 }]}
+        conversations={[
+          { id: "conversation-1", title: "当前会话", updated_at_ms: 2 },
+          { id: "conversation-2", title: "排查终端", updated_at_ms: 1 },
+        ]}
         activeConversationId="conversation-1"
         onDeleteConversation={onDeleteConversation}
       />,
     );
 
+    await click(button(view.container, "历史会话"));
     await click(button(view.container, "删除 AI 会话 排查终端"));
     expect(onDeleteConversation).not.toHaveBeenCalled();
     expect(view.container.textContent).toContain("确认删除 AI 会话“排查终端”？");
 
     await click(button(view.container, "确认删除"));
-    expect(onDeleteConversation).toHaveBeenCalledWith("conversation-1");
+    expect(onDeleteConversation).toHaveBeenCalledWith("conversation-2");
+    view.unmount();
+  });
+
+  it("uses icon-only actions for new and history conversations", () => {
+    const view = render(
+      <AiPanel
+        activeRuntimeSessionId="runtime-1"
+        providersAvailable
+        recentOutput=""
+        loading={false}
+        error={null}
+        onNewConversation={vi.fn()}
+      />,
+    );
+
+    const newButton = button(view.container, "新会话");
+    const historyButton = button(view.container, "历史会话");
+    expect(newButton.textContent?.trim()).toBe("");
+    expect(historyButton.textContent?.trim()).toBe("");
+    expect(newButton.getAttribute("title")).toBe("新会话");
+    expect(historyButton.getAttribute("title")).toBe("历史会话");
+    view.unmount();
+  });
+
+  it("switches to history view, expands a preview, and restores a conversation on double click", async () => {
+    const onLoadConversationPreview = vi.fn();
+    const onSelectConversation = vi.fn().mockResolvedValue(undefined);
+    const view = render(
+      <AiPanel
+        activeRuntimeSessionId="runtime-1"
+        providersAvailable
+        recentOutput=""
+        loading={false}
+        error={null}
+        conversations={[
+          { id: "conversation-active", title: "当前会话", updated_at_ms: 6 },
+          { id: "conversation-old", title: "历史排查", updated_at_ms: 5 },
+        ]}
+        activeConversationId="conversation-active"
+        messages={[{ id: "active-message", conversation_id: "conversation-active", role: "assistant", content: "当前内容", status: "complete" }]}
+        conversationPreviews={{
+          "conversation-old": {
+            loading: false,
+            error: null,
+            messages: [
+              { id: "preview-1", conversation_id: "conversation-old", role: "user", content: "第一条不展示", status: "complete" },
+              { id: "preview-2", conversation_id: "conversation-old", role: "assistant", content: "第二条", status: "complete" },
+              { id: "preview-3", conversation_id: "conversation-old", role: "user", content: "第三条", status: "complete" },
+              { id: "preview-4", conversation_id: "conversation-old", role: "assistant", content: "第四条", status: "complete" },
+              { id: "preview-5", conversation_id: "conversation-old", role: "user", content: "第五条", status: "complete" },
+            ],
+          },
+        }}
+        onLoadConversationPreview={onLoadConversationPreview}
+        onSelectConversation={onSelectConversation}
+      />,
+    );
+
+    await click(button(view.container, "历史会话"));
+    const historyView = view.container.querySelector(".zt-ai-history-view");
+    expect(view.container.textContent).toContain("历史排查");
+    expect(historyView?.textContent).not.toContain("当前会话");
+    expect(view.container.querySelector(".zt-ai-composer")).toBe(null);
+
+    await click(button(view.container, "展开 AI 会话 历史排查"));
+    expect(onLoadConversationPreview).toHaveBeenCalledWith("conversation-old");
+    expect(view.container.textContent).toContain("第二条");
+    expect(view.container.textContent).toContain("第五条");
+    expect(view.container.textContent).not.toContain("第一条不展示");
+
+    await click(button(view.container, "折叠 AI 会话 历史排查"));
+    expect(view.container.textContent).not.toContain("第二条");
+
+    await doubleClick(button(view.container, "恢复 AI 会话 历史排查"));
+    expect(onSelectConversation).toHaveBeenCalledWith("conversation-old");
+    expect(view.container.textContent).toContain("当前内容");
+    view.unmount();
+  });
+
+  it("keeps delete separate from history expand and restore actions", async () => {
+    const onDeleteConversation = vi.fn().mockResolvedValue(undefined);
+    const onLoadConversationPreview = vi.fn();
+    const onSelectConversation = vi.fn();
+    const view = render(
+      <AiPanel
+        activeRuntimeSessionId="runtime-1"
+        providersAvailable
+        recentOutput=""
+        loading={false}
+        error={null}
+        conversations={[
+          { id: "conversation-active", title: "当前会话", updated_at_ms: 3 },
+          { id: "conversation-old", title: "历史排查", updated_at_ms: 2 },
+        ]}
+        activeConversationId="conversation-active"
+        onDeleteConversation={onDeleteConversation}
+        onLoadConversationPreview={onLoadConversationPreview}
+        onSelectConversation={onSelectConversation}
+      />,
+    );
+
+    await click(button(view.container, "历史会话"));
+    await click(button(view.container, "删除 AI 会话 历史排查"));
+
+    expect(onLoadConversationPreview).not.toHaveBeenCalled();
+    expect(onSelectConversation).not.toHaveBeenCalled();
+    expect(onDeleteConversation).not.toHaveBeenCalled();
+    expect(view.container.textContent).toContain("确认删除 AI 会话“历史排查”？");
+    view.unmount();
+  });
+
+  it("shows pending tool notice but hides composer in history view", async () => {
+    const view = render(
+      <AiPanel
+        activeRuntimeSessionId="runtime-1"
+        providersAvailable
+        recentOutput=""
+        loading={false}
+        error={null}
+        conversations={[
+          { id: "conversation-active", title: "当前会话", updated_at_ms: 3 },
+          { id: "conversation-old", title: "历史排查", updated_at_ms: 2 },
+        ]}
+        activeConversationId="conversation-active"
+        pendingInvocations={[
+          {
+            id: "tool-call-1",
+            tool_id: "terminal.write",
+            tool_title: "写入终端",
+            risk_level: "medium",
+            arguments_summary: "data=pwd",
+            requires_confirmation: true,
+            status: "pending",
+          },
+        ]}
+      />,
+    );
+
+    await click(button(view.container, "历史会话"));
+
+    expect(view.container.querySelector(".zt-ai-composer")).toBe(null);
+    expect(view.container.textContent).toContain("有 1 个待确认工具调用，返回当前会话处理");
     view.unmount();
   });
 });
