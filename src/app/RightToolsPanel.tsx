@@ -413,7 +413,7 @@ function SshContainerListPanel({
                       void onEnter(container);
                     }}
                   >
-                    <LogIn size={15} aria-hidden="true" />
+                    <LogIn size={14} aria-hidden="true" />
                   </button>
                 </div>
               </section>

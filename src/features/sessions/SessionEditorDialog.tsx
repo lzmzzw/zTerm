@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { ZtNumberInput } from "../../components/ZtNumberInput";
 import { ZtSelect } from "../../components/ZtSelect";
+import { ZtInput } from "../../components/ZtUi";
 import { fallbackOnlyErrorMessage } from "../../lib/unknownErrorMessage";
 import { LocalSessionForm } from "./LocalSessionForm";
 import { RdpSessionForm } from "./RdpSessionForm";
@@ -369,7 +370,7 @@ export function SessionEditorDialog({
               <div className="zt-session-form-grid">
                 <label>
                   <span>会话名称</span>
-                  <input aria-label="会话名称" value={name} onChange={(event) => setName(event.currentTarget.value)} />
+                  <ZtInput aria-label="会话名称" value={name} onChange={(event) => setName(event.currentTarget.value)} />
                 </label>
                 <label>
                   <span>分组</span>
@@ -385,7 +386,7 @@ export function SessionEditorDialog({
                   <>
                     <label>
                       <span>主机</span>
-                      <input aria-label="主机" value={host} onChange={(event) => setHost(event.currentTarget.value)} />
+                      <ZtInput aria-label="主机" value={host} onChange={(event) => setHost(event.currentTarget.value)} />
                     </label>
                     <label>
                       <span>端口</span>
@@ -400,13 +401,13 @@ export function SessionEditorDialog({
                     </label>
                     <label>
                       <span>用户名</span>
-                      <input aria-label="用户名" value={username} onChange={(event) => setUsername(event.currentTarget.value)} />
+                      <ZtInput aria-label="用户名" value={username} onChange={(event) => setUsername(event.currentTarget.value)} />
                     </label>
                   </>
                 ) : null}
                 <label className="zt-session-form-wide">
                   <span>描述</span>
-                  <input aria-label="描述" value={description} onChange={(event) => setDescription(event.currentTarget.value)} />
+                  <ZtInput aria-label="描述" value={description} onChange={(event) => setDescription(event.currentTarget.value)} />
                 </label>
               </div>
             ) : null}

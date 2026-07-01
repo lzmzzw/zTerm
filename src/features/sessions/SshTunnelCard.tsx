@@ -3,6 +3,7 @@ import { Trash2 } from "lucide-react";
 
 import { ZtNumberInput } from "../../components/ZtNumberInput";
 import { ZtSelect } from "../../components/ZtSelect";
+import { ZtSwitch } from "../../components/ZtUi";
 import { sshTunnelMode as tunnelMode } from "./sshSessionModel";
 import type { SshTunnel, SshTunnelMode } from "./types";
 
@@ -78,15 +79,12 @@ export function SshTunnelCard({
           placeholder={modeLabel}
         />
         <div className="zt-ssh-tunnel-card-actions">
-          <label className="zt-ssh-tunnel-auto">
-            <input
-              aria-label="在连接时自动打开"
-              type="checkbox"
-              checked={tunnel.auto_open ?? true}
-              onChange={(event) => onChange({ ...tunnel, auto_open: event.currentTarget.checked })}
-            />
-            <span>在连接时自动打开</span>
-          </label>
+          <ZtSwitch
+            label="在连接时自动打开"
+            ariaLabel="在连接时自动打开"
+            checked={tunnel.auto_open ?? true}
+            onChange={(checked) => onChange({ ...tunnel, auto_open: checked })}
+          />
           <button type="button" aria-label="删除隧道" title="删除隧道" onClick={onDelete}>
             <Trash2 size={14} aria-hidden="true" />
           </button>

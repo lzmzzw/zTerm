@@ -372,7 +372,7 @@ function LeafPane({
                     aria-label={`正在连接 ${terminalTab.title}`}
                     title="连接中"
                   >
-                    <LoaderCircle size={13} aria-hidden="true" />
+                    <LoaderCircle size={14} aria-hidden="true" />
                   </span>
                 ) : null}
                 {queued ? (
@@ -381,7 +381,7 @@ function LeafPane({
                     aria-label={`等待连接 ${terminalTab.title}`}
                     title="等待连接"
                   >
-                    <Clock3 size={13} aria-hidden="true" />
+                    <Clock3 size={14} aria-hidden="true" />
                   </span>
                 ) : null}
                 {failed ? (
@@ -390,7 +390,7 @@ function LeafPane({
                     aria-label={`连接失败 ${terminalTab.title}`}
                     title={terminalTab.restore_error ?? "连接失败"}
                   >
-                    <CircleAlert size={13} aria-hidden="true" />
+                    <CircleAlert size={14} aria-hidden="true" />
                   </span>
                 ) : null}
                 <button

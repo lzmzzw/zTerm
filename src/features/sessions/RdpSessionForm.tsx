@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { ZtNumberInput } from "../../components/ZtNumberInput";
 import { ZtSelect } from "../../components/ZtSelect";
+import { ZtSwitch } from "../../components/ZtUi";
 import { SshSecretInput } from "./SshSecretInput";
 import type { RdpOptions } from "./types";
 
@@ -107,34 +108,16 @@ export function RdpSessionForm({
                 }
               />
             </label>
-            <label className="zt-session-checkbox">
-              <input
-                aria-label="全屏"
-                type="checkbox"
-                checked={options.fullscreen ?? false}
-                onChange={(event) =>
-                  onOptionsChange({
-                    ...options,
-                    fullscreen: event.currentTarget.checked,
-                  })
-                }
-              />
-              <span>全屏</span>
-            </label>
-            <label className="zt-session-checkbox">
-              <input
-                aria-label="剪贴板重定向"
-                type="checkbox"
-                checked={options.redirect_clipboard}
-                onChange={(event) =>
-                  onOptionsChange({
-                    ...options,
-                    redirect_clipboard: event.currentTarget.checked,
-                  })
-                }
-              />
-              <span>剪贴板重定向</span>
-            </label>
+            <ZtSwitch
+              label="全屏"
+              checked={options.fullscreen ?? false}
+              onChange={(checked) => onOptionsChange({ ...options, fullscreen: checked })}
+            />
+            <ZtSwitch
+              label="剪贴板重定向"
+              checked={options.redirect_clipboard}
+              onChange={(checked) => onOptionsChange({ ...options, redirect_clipboard: checked })}
+            />
           </div>
         </section>
       ) : null}

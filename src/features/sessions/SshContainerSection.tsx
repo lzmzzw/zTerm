@@ -1,5 +1,6 @@
 // Author: Liz
 import { ZtSelect } from "../../components/ZtSelect";
+import { ZtSwitch } from "../../components/ZtUi";
 import { emptySshContainer as emptyContainer } from "./sshSessionModel";
 import type { SshOptions } from "./types";
 
@@ -29,15 +30,12 @@ export function SshContainerSection({ sshOptions, onSshOptionsChange }: SshConta
   return (
     <section className="zt-session-form-section zt-session-form-wide" aria-label="容器">
       <div className="zt-session-form-section-title">容器</div>
-      <label className="zt-session-checkbox">
-        <input
-          aria-label="启用容器"
-          type="checkbox"
-          checked={sshOptions.container?.enabled ?? false}
-          onChange={(event) => updateContainer({ enabled: event.currentTarget.checked })}
-        />
-        <span>启用容器入口</span>
-      </label>
+      <ZtSwitch
+        label="启用容器入口"
+        ariaLabel="启用容器"
+        checked={sshOptions.container?.enabled ?? false}
+        onChange={(checked) => updateContainer({ enabled: checked })}
+      />
       <div className="zt-session-form-grid zt-session-nested-grid">
         <label>
           <span>运行时</span>
@@ -71,7 +69,7 @@ export function SshContainerSection({ sshOptions, onSshOptionsChange }: SshConta
             aria-label="容器工作目录"
             value={sshOptions.container?.workdir ?? ""}
             onChange={(event) => updateContainer({ workdir: event.currentTarget.value.trim() || null })}
-            placeholder="/"
+            placeholder="/app"
           />
         </label>
       </div>

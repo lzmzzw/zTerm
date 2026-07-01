@@ -3,6 +3,7 @@ import { CheckSquare, Copy, Edit3, Play, Plus, Save, Search, Trash2, X } from "l
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
+import { ZtSwitch } from "../../components/ZtUi";
 import { t } from "../settings/i18n";
 import type { AppLanguage } from "../settings/settingsStore";
 import type {
@@ -219,15 +220,12 @@ export function CommandHistoryPanel({
                 placeholder={t(language, "filterHistory")}
               />
             </label>
-            <label className="zt-history-dedupe">
-              <input
-                type="checkbox"
-                aria-label={t(language, "deduplicateHistory")}
-                checked={deduplicateHistory}
-                onChange={(event) => onDeduplicateHistoryChange(event.currentTarget.checked)}
-              />
-              <span>{t(language, "deduplicated")}</span>
-            </label>
+            <ZtSwitch
+              label={t(language, "deduplicated")}
+              ariaLabel={t(language, "deduplicateHistory")}
+              checked={deduplicateHistory}
+              onChange={onDeduplicateHistoryChange}
+            />
             <button
               type="button"
               aria-label={t(language, "saveAsCommandGroup")}
@@ -236,7 +234,7 @@ export function CommandHistoryPanel({
               title={t(language, "saveAsCommandGroup")}
               disabled={loading || !hasHistoryScope || selectedCommands.length === 0}
             >
-              <Save size={13} aria-hidden="true" />
+              <Save size={14} aria-hidden="true" />
             </button>
             <button
               type="button"
@@ -246,7 +244,7 @@ export function CommandHistoryPanel({
               title={t(language, "clearHistory")}
               disabled={loading || !hasHistoryScope}
             >
-              <Trash2 size={13} aria-hidden="true" />
+              <Trash2 size={14} aria-hidden="true" />
             </button>
           </div>
 

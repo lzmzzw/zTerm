@@ -3,12 +3,14 @@ import { ArrowLeft, ArrowRight, Eye, EyeOff, FolderUp, RefreshCw } from "lucide-
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
+import { ZtSelect } from "../../components/ZtSelect";
+import { ZtConfirmDialog } from "../../components/ZtUi";
 import { formatBytes } from "../../lib/byteFormatters";
 import type { AppLanguage } from "../settings/settingsStore";
 import { useSessionStore } from "../sessions/sessionStore";
 import type { SavedSession } from "../sessions/types";
 import { TransferPanel } from "./TransferPanel";
-import type { FileEntry, TransferConflictPolicy, TransferEndpoint } from "./fileStore";
+import type { FileEntry, TransferConflictPolicy, TransferEndpoint, TransferKind } from "./fileStore";
 import {
   endpointDisplayPath,
   endpointTargetPath,
@@ -25,6 +27,12 @@ interface FileTransferPanelProps {
 type DragState = {
   sourceSide: FileTransferSide;
   paths: string[];
+};
+
+type TransferPlan = {
+  source: TransferEndpoint;
+  destination: TransferEndpoint;
+  kind: TransferKind;
 };
 
 export function FileTransferPanel({ language: _language = "zhCN" }: FileTransferPanelProps) {
@@ -92,6 +100,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   );
   const [showHidden, setShowHidden] = useState<Record<FileTransferSide, boolean>>({ left: false, right: false });
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const [pendingOverwrite, setPendingOverwrite] = useState<{ count: number; plans: TransferPlan[] } | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
 
   useEffect(() => {
@@ -134,6 +143,13 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     await transferPaths(sourceSide, sourcePane.selectedPaths);
   }
 
+  async function enqueuePlans(plans: TransferPlan[]) {
+    for (const plan of plans) {
+      await enqueueTransfer(plan.source, plan.destination, { kind: plan.kind, conflictPolicy });
+    }
+    await loadTransfers();
+  }
+
   async function transferPaths(sourceSide: FileTransferSide, paths: string[]) {
     const destinationSide = sourceSide === "left" ? "right" : "left";
     const sourcePane = sourceSide === "left" ? left : right;
@@ -151,17 +167,11 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     });
     if (plans.length === 0) return;
     const conflicts = await checkConflicts(plans.map((plan) => ({ destination: plan.destination, kind: plan.kind })));
-    if (
-      conflicts.length > 0 &&
-      conflictPolicy === "overwrite" &&
-      !window.confirm(`检测到 ${conflicts.length} 个目标已存在，确认覆盖？`)
-    ) {
+    if (conflicts.length > 0 && conflictPolicy === "overwrite") {
+      setPendingOverwrite({ count: conflicts.length, plans });
       return;
     }
-    for (const plan of plans) {
-      await enqueueTransfer(plan.source, plan.destination, { kind: plan.kind, conflictPolicy });
-    }
-    await loadTransfers();
+    await enqueuePlans(plans);
   }
 
   function beginDrag(sourceSide: FileTransferSide, path: string) {
@@ -200,15 +210,16 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       <div className="zt-file-transfer-controls">
         <label>
           <span>冲突策略</span>
-          <select
-            aria-label="文件传输冲突策略"
+          <ZtSelect
+            ariaLabel="文件传输冲突策略"
             value={conflictPolicy}
-            onChange={(event) => setConflictPolicy(event.currentTarget.value as TransferConflictPolicy)}
-          >
-            <option value="overwrite">覆盖</option>
-            <option value="skip">跳过</option>
-            <option value="rename">自动重命名</option>
-          </select>
+            options={[
+              { value: "overwrite", label: "覆盖" },
+              { value: "skip", label: "跳过" },
+              { value: "rename", label: "自动重命名" },
+            ]}
+            onChange={(value) => setConflictPolicy(value as TransferConflictPolicy)}
+          />
         </label>
         <button type="button" aria-label="刷新文件传输任务" title="刷新任务" onClick={() => void loadTransfers()}>
           <RefreshCw size={14} aria-hidden="true" />
@@ -308,6 +319,20 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
         onResumeAll={resumeTransfers}
         onClearAll={clearTransfers}
       />
+      {pendingOverwrite ? (
+        <ZtConfirmDialog
+          title="覆盖传输目标"
+          message={`检测到 ${pendingOverwrite.count} 个目标已存在，确认覆盖？`}
+          confirmLabel="确认覆盖"
+          danger
+          onCancel={() => setPendingOverwrite(null)}
+          onConfirm={() => {
+            const plans = pendingOverwrite.plans;
+            setPendingOverwrite(null);
+            void enqueuePlans(plans);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -358,6 +383,10 @@ function EndpointPane({
   dropActive: boolean;
 }) {
   const endpointValue = pane.endpoint.kind === "local" ? "local" : `ssh:${pane.endpoint.saved_session_id ?? ""}`;
+  const endpointOptions = [
+    { value: "local", label: "本机" },
+    ...sshSessions.map((session) => ({ value: `ssh:${session.id}`, label: session.name })),
+  ];
   const visibleEntries = showHidden ? pane.entries : pane.entries.filter((entry) => !entry.name.startsWith("."));
   const endpointReady = pane.endpoint.kind === "local" || Boolean(pane.endpoint.saved_session_id);
   return (
@@ -378,11 +407,11 @@ function EndpointPane({
     >
       <div className="zt-file-transfer-pane-header">
         <strong>{title}</strong>
-        <select
-          aria-label={`${title}端点`}
+        <ZtSelect
+          ariaLabel={`${title}端点`}
           value={endpointValue}
-          onChange={(event) => {
-            const value = event.currentTarget.value;
+          options={endpointOptions}
+          onChange={(value) => {
             if (value === "local") {
               onEndpointChange({ kind: "local", saved_session_id: null, path: defaultLocalPath });
               return;
@@ -390,14 +419,7 @@ function EndpointPane({
             const savedSessionId = value.replace(/^ssh:/, "");
             onEndpointChange({ kind: "ssh", saved_session_id: savedSessionId || null, path: "/" });
           }}
-        >
-          <option value="local">本机</option>
-          {sshSessions.map((session) => (
-            <option key={session.id} value={`ssh:${session.id}`}>
-              {session.name}
-            </option>
-          ))}
-        </select>
+        />
       </div>
       <div className="zt-file-transfer-path">
         <input
