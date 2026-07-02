@@ -119,8 +119,53 @@ jobs:
             });
             const latestJson = Buffer.from(latestResponse.data).toString("utf8");
             const latest = JSON.parse(latestJson);
+            const assetNames = new Set(assets.map((asset) => asset.name));
+            const downloadableAssetNames = assets
+              .map((asset) => asset.name)
+              .filter((name) => name !== "latest.json" && !name.endsWith(".sig"));
 
-            for (const platform of Object.values(latest.platforms ?? {})) {
+            function getUpdaterSuffix(fileName) {
+              const suffixes = [".app.tar.gz", ".AppImage", ".deb", ".rpm", "-setup.exe", ".msi"];
+              return suffixes.find((suffix) => fileName.endsWith(suffix));
+            }
+
+            function getPlatformArchHints(platformName) {
+              if (platformName.includes("aarch64")) {
+                return ["aarch64", "arm64"];
+              }
+              if (platformName.includes("x86_64")) {
+                return ["x86_64", "amd64", "x64"];
+              }
+              return [];
+            }
+
+            function resolveReleaseAssetName(platformName, signatureFileName) {
+              if (assetNames.has(signatureFileName)) {
+                return signatureFileName;
+              }
+
+              const suffix = getUpdaterSuffix(signatureFileName);
+              if (!suffix) {
+                throw new Error(`No release asset named ${signatureFileName} was found`);
+              }
+
+              const suffixMatches = downloadableAssetNames.filter((name) => name.endsWith(suffix));
+              const archHints = getPlatformArchHints(platformName);
+              const archMatches = suffixMatches.filter((name) => archHints.some((hint) => name.includes(hint)));
+              if (archMatches.length === 1) {
+                return archMatches[0];
+              }
+              if (suffixMatches.length === 1) {
+                return suffixMatches[0];
+              }
+
+              throw new Error(
+                `Could not map ${platformName} signature file ${signatureFileName} to one release asset. ` +
+                  `Candidates: ${suffixMatches.join(", ") || "none"}`,
+              );
+            }
+
+            for (const [platformName, platform] of Object.entries(latest.platforms ?? {})) {
               if (!platform || typeof platform !== "object" || typeof platform.signature !== "string") {
                 continue;
               }
@@ -129,7 +174,8 @@ jobs:
               if (!fileName) {
                 throw new Error(`Could not determine updater artifact filename from signature: ${signatureText}`);
               }
-              platform.url = `https://github.com/${owner}/${repo}/releases/download/${tag}/${encodeURIComponent(fileName)}`;
+              const releaseAssetName = resolveReleaseAssetName(platformName, fileName);
+              platform.url = `https://github.com/${owner}/${repo}/releases/download/${tag}/${encodeURIComponent(releaseAssetName)}`;
             }
 
             const normalized = `${JSON.stringify(latest, null, 2)}\n`;
