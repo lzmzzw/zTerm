@@ -270,15 +270,16 @@ where
     let mut auto_open_sftp = true;
     let mut remote_path = "/".to_string();
     let mut explicit_external = false;
-    let mut saw_putty_option = false;
+    let mut saw_external_client_option = false;
     let mut index = 0;
 
     while index < args.len() {
         let arg = args[index].trim().to_string();
+        let lower_arg = arg.to_ascii_lowercase();
         match arg.as_str() {
             "--external-ssh" | "-ssh" => {
                 explicit_external = true;
-                saw_putty_option |= arg == "-ssh";
+                saw_external_client_option |= arg == "-ssh";
                 index += 1;
             }
             "--host" => {
@@ -287,22 +288,22 @@ where
             "--port" | "-P" => {
                 let label = arg.clone();
                 port = Some(parse_port(&take_value(&args, &mut index, &label)?)?);
-                saw_putty_option |= arg == "-P";
+                saw_external_client_option |= arg == "-P";
             }
             "--user" | "--username" | "-l" => {
                 let label = arg.clone();
                 username = Some(take_value(&args, &mut index, &label)?);
-                saw_putty_option |= arg == "-l";
+                saw_external_client_option |= arg == "-l";
             }
             "--password" | "-pw" => {
                 let label = arg.clone();
                 password = Some(take_value(&args, &mut index, &label)?);
-                saw_putty_option |= arg == "-pw";
+                saw_external_client_option |= arg == "-pw";
             }
             "--identity-file" | "-i" => {
                 let label = arg.clone();
                 identity_file = Some(take_value(&args, &mut index, &label)?);
-                saw_putty_option |= arg == "-i";
+                saw_external_client_option |= arg == "-i";
             }
             "--sftp" => {
                 let value = take_value(&args, &mut index, "--sftp")?;
@@ -314,7 +315,67 @@ where
             "--remote-path" => {
                 remote_path = take_value(&args, &mut index, "--remote-path")?;
             }
+            _ if lower_arg == "/ssh2" => {
+                explicit_external = true;
+                saw_external_client_option = true;
+                index += 1;
+            }
+            _ if lower_arg == "/l" => {
+                username = Some(take_value(&args, &mut index, &arg)?);
+                saw_external_client_option = true;
+            }
+            _ if lower_arg == "/p" => {
+                port = Some(parse_port(&take_value(&args, &mut index, &arg)?)?);
+                saw_external_client_option = true;
+            }
+            _ if lower_arg == "/password" => {
+                password = Some(take_value(&args, &mut index, &arg)?);
+                saw_external_client_option = true;
+            }
+            _ if lower_arg == "/i" => {
+                identity_file = Some(take_value(&args, &mut index, &arg)?);
+                saw_external_client_option = true;
+            }
+            _ if lower_arg == "/n" || lower_arg == "/titlebar" => {
+                skip_option_value(&args, &mut index);
+            }
+            _ if lower_arg == "/t" || lower_arg == "/accepthostkeys" => {
+                index += 1;
+            }
+            _ if lower_arg == "-url" => {
+                let value = take_value(&args, &mut index, &arg)?;
+                apply_target(&value, &mut host, &mut port, &mut username, &mut password)?;
+                saw_external_client_option = true;
+            }
+            _ if lower_arg == "-newwin" => {
+                saw_external_client_option = true;
+                if let Some(value) = args
+                    .get(index + 1)
+                    .filter(|value| !looks_like_option(value))
+                {
+                    apply_target(value, &mut host, &mut port, &mut username, &mut password)?;
+                    index += 2;
+                } else {
+                    index += 1;
+                }
+            }
+            _ if lower_arg == "-newtab" || lower_arg == "-exec" => {
+                let value = take_value(&args, &mut index, &arg)?;
+                if apply_nested_ssh_command(
+                    &value,
+                    &mut host,
+                    &mut port,
+                    &mut username,
+                    &mut password,
+                    &mut identity_file,
+                )? {
+                    saw_external_client_option = true;
+                }
+            }
             value if value.starts_with('-') => {
+                index += 1;
+            }
+            value if value.starts_with('/') => {
                 index += 1;
             }
             value => {
@@ -324,7 +385,7 @@ where
         }
     }
 
-    if !explicit_external && !saw_putty_option {
+    if !explicit_external && !saw_external_client_option {
         return Ok(None);
     }
 
@@ -348,6 +409,137 @@ fn take_value(args: &[String], index: &mut usize, label: &str) -> AppResult<Stri
     };
     *index += 2;
     Ok(value.clone())
+}
+
+fn skip_option_value(args: &[String], index: &mut usize) {
+    if args
+        .get(*index + 1)
+        .is_some_and(|value| !looks_like_option(value))
+    {
+        *index += 2;
+    } else {
+        *index += 1;
+    }
+}
+
+fn looks_like_option(value: &str) -> bool {
+    let value = value.trim();
+    value.starts_with('-') || (value.starts_with('/') && !value.contains("://"))
+}
+
+fn apply_nested_ssh_command(
+    value: &str,
+    host: &mut Option<String>,
+    port: &mut Option<u16>,
+    username: &mut Option<String>,
+    password: &mut Option<String>,
+    identity_file: &mut Option<String>,
+) -> AppResult<bool> {
+    let tokens = split_command_line(value);
+    let Some(program) = tokens.first() else {
+        return Ok(false);
+    };
+    let program = program
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_ascii_lowercase();
+    if !matches!(program.as_str(), "ssh" | "ssh.exe")
+        && !program.ends_with("\\ssh.exe")
+        && !program.ends_with("/ssh")
+        && !program.ends_with("/ssh.exe")
+    {
+        return Ok(false);
+    }
+
+    let mut index = 1;
+    while index < tokens.len() {
+        let arg = tokens[index].trim();
+        match arg {
+            "-p" => {
+                *port = Some(parse_port(&take_nested_value(&tokens, &mut index, "-p")?)?);
+            }
+            "-l" => {
+                *username = Some(take_nested_value(&tokens, &mut index, "-l")?);
+            }
+            "-i" => {
+                *identity_file = Some(take_nested_value(&tokens, &mut index, "-i")?);
+            }
+            value if value.starts_with("-p") && value.len() > 2 => {
+                *port = Some(parse_port(value[2..].trim_start_matches('='))?);
+                index += 1;
+            }
+            value if value.starts_with("-l") && value.len() > 2 => {
+                *username = Some(value[2..].trim_start_matches('=').to_string());
+                index += 1;
+            }
+            value if value.starts_with("-i") && value.len() > 2 => {
+                *identity_file = Some(value[2..].trim_start_matches('=').to_string());
+                index += 1;
+            }
+            "-b" | "-c" | "-D" | "-E" | "-e" | "-F" | "-I" | "-J" | "-L" | "-m" | "-O" | "-o"
+            | "-Q" | "-R" | "-S" | "-W" | "-w" => {
+                skip_nested_option_value(&tokens, &mut index);
+            }
+            value if value.starts_with('-') => {
+                index += 1;
+            }
+            value => {
+                apply_target(value, host, port, username, password)?;
+                index += 1;
+            }
+        }
+    }
+
+    Ok(true)
+}
+
+fn take_nested_value(tokens: &[String], index: &mut usize, label: &str) -> AppResult<String> {
+    let value_index = *index + 1;
+    let Some(value) = tokens.get(value_index) else {
+        return Err(AppError::validation(format!("{label} 缺少参数值")));
+    };
+    *index += 2;
+    Ok(value.clone())
+}
+
+fn skip_nested_option_value(tokens: &[String], index: &mut usize) {
+    if tokens
+        .get(*index + 1)
+        .is_some_and(|value| !value.trim().starts_with('-'))
+    {
+        *index += 2;
+    } else {
+        *index += 1;
+    }
+}
+
+fn split_command_line(value: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+
+    for character in value.chars() {
+        match (quote, character) {
+            (Some(active), next) if next == active => {
+                quote = None;
+            }
+            (None, '"' | '\'') => {
+                quote = Some(character);
+            }
+            (None, next) if next.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(character),
+        }
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    tokens
 }
 
 fn apply_target(
@@ -483,6 +675,80 @@ mod tests {
         assert_eq!(request.port, 2222);
         assert_eq!(request.username, "ops");
         assert_eq!(request.password.as_deref(), Some("secret-value"));
+    }
+
+    #[test]
+    fn parses_securecrt_compatible_password_args() {
+        let request = parse_external_ssh_launch_args([
+            "SecureCRT.exe",
+            "/SSH2",
+            "/L",
+            "ops",
+            "/P",
+            "2200",
+            "/PASSWORD",
+            "secret-value",
+            "cloud.example.test",
+        ])
+        .expect("args should parse")
+        .expect("request should exist");
+
+        assert_eq!(request.host, "cloud.example.test");
+        assert_eq!(request.port, 2200);
+        assert_eq!(request.username, "ops");
+        assert_eq!(request.password.as_deref(), Some("secret-value"));
+    }
+
+    #[test]
+    fn parses_xshell_url_args() {
+        let request = parse_external_ssh_launch_args([
+            "Xshell.exe",
+            "-url",
+            "ssh://ops:secret-value@cloud.example.test:2200",
+        ])
+        .expect("args should parse")
+        .expect("request should exist");
+
+        assert_eq!(request.host, "cloud.example.test");
+        assert_eq!(request.port, 2200);
+        assert_eq!(request.username, "ops");
+        assert_eq!(request.password.as_deref(), Some("secret-value"));
+    }
+
+    #[test]
+    fn parses_xshell_newwin_url_and_identity_file_args() {
+        let request = parse_external_ssh_launch_args([
+            "Xshell.exe",
+            "-newwin",
+            "ssh://ops@cloud.example.test:2200",
+            "-i",
+            "C:\\Users\\ops\\.ssh\\id_ed25519",
+        ])
+        .expect("args should parse")
+        .expect("request should exist");
+
+        assert_eq!(request.host, "cloud.example.test");
+        assert_eq!(request.port, 2200);
+        assert_eq!(request.username, "ops");
+        assert_eq!(
+            request.identity_file.as_deref(),
+            Some("C:\\Users\\ops\\.ssh\\id_ed25519")
+        );
+    }
+
+    #[test]
+    fn parses_mobaxterm_nested_ssh_command_args() {
+        let request = parse_external_ssh_launch_args([
+            "MobaXterm.exe",
+            "-newtab",
+            "ssh -p 2200 ops@cloud.example.test",
+        ])
+        .expect("args should parse")
+        .expect("request should exist");
+
+        assert_eq!(request.host, "cloud.example.test");
+        assert_eq!(request.port, 2200);
+        assert_eq!(request.username, "ops");
     }
 
     #[test]
