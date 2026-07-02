@@ -796,8 +796,30 @@ impl AiToolService {
 
     fn prepare_arguments_for_tool(&self, tool_id: &str, arguments: Value) -> AppResult<Value> {
         let arguments = normalized_arguments(arguments);
+        if tool_id == "session_groups.save" {
+            return self.prepare_session_group_save_arguments(arguments);
+        }
         if tool_id == "sessions.save" {
             return self.prepare_session_save_arguments(arguments);
+        }
+        Ok(arguments)
+    }
+
+    fn prepare_session_group_save_arguments(&self, mut arguments: Value) -> AppResult<Value> {
+        let Some(root) = arguments.as_object_mut() else {
+            return Ok(arguments);
+        };
+        let Some(draft_value) = root.get_mut("draft") else {
+            return Ok(arguments);
+        };
+        let Some(draft_object) = draft_value.as_object_mut() else {
+            return Ok(arguments);
+        };
+        if !draft_object.contains_key("expanded") {
+            draft_object.insert("expanded".to_string(), Value::Bool(true));
+        }
+        if !draft_object.contains_key("sort_order") {
+            draft_object.insert("sort_order".to_string(), Value::from(0));
         }
         Ok(arguments)
     }

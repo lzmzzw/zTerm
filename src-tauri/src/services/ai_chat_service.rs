@@ -382,7 +382,7 @@ fn build_provider_messages(
 
 fn system_prompt(context: Option<&AiTerminalContextRequest>) -> String {
     let mut prompt = String::from(
-        "你是 zTerm 的终端 AI 助手。需要操作终端时只能调用提供的工具；不要编造已执行的命令。回答使用简洁中文。",
+        "你是 zTerm 的终端 AI 助手。需要操作终端或创建、修改、删除 zTerm 资源时只能调用提供的工具；只读取列表或上下文不等于完成变更，不要声称已完成未通过工具执行的操作。回答使用简洁中文。",
     );
     if let Some(context) = context {
         prompt.push_str("\n当前绑定窗格上下文：");
@@ -605,4 +605,15 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn system_prompt_requires_tools_for_resource_mutations() {
+        let prompt = super::system_prompt(None);
+
+        assert!(prompt.contains("创建、修改、删除 zTerm 资源时只能调用提供的工具"));
+        assert!(prompt.contains("只读取列表或上下文不等于完成变更"));
+    }
 }

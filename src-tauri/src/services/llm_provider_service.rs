@@ -573,6 +573,42 @@ fn tool_parameters(tool: &AiToolDefinition) -> Value {
             "additionalProperties": false
         });
     }
+    if tool.id == "session_groups.save" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "draft": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "更新已有分组时填写；新建分组时省略。"
+                        },
+                        "parent_id": {
+                            "type": ["string", "null"],
+                            "description": "父分组 ID；创建顶层分组时填 null 或省略。"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "分组名称，例如 移动机房。"
+                        },
+                        "expanded": {
+                            "type": "boolean",
+                            "description": "分组是否默认展开。"
+                        },
+                        "sort_order": {
+                            "type": "integer",
+                            "description": "同级排序值；不确定时填 0。"
+                        }
+                    },
+                    "required": ["name"],
+                    "additionalProperties": false
+                }
+            },
+            "required": ["draft"],
+            "additionalProperties": false
+        });
+    }
     json!({
         "type": "object",
         "properties": {},
@@ -1019,6 +1055,35 @@ mod tests {
         assert_eq!(parsed.tool_calls[0].id, "call-2");
         assert_eq!(parsed.tool_calls[0].tool_id, "terminal.write");
         assert_eq!(parsed.tool_calls[0].arguments["data"], "whoami\r");
+    }
+
+    #[test]
+    fn session_group_save_tool_schema_exposes_required_draft_fields() {
+        let tools = vec![AiToolDefinition {
+            id: "session_groups.save".to_string(),
+            title: "保存会话分组".to_string(),
+            description: "新增或更新会话分组".to_string(),
+            risk_level: RiskLevel::Medium,
+            requires_confirmation: false,
+        }];
+
+        let chat_schema = super::openai_chat_tools(&tools);
+        let chat_parameters = &chat_schema[0]["function"]["parameters"];
+        assert_eq!(chat_parameters["required"], json!(["draft"]));
+        assert_eq!(
+            chat_parameters["properties"]["draft"]["required"],
+            json!(["name"])
+        );
+        assert_eq!(
+            chat_parameters["properties"]["draft"]["properties"]["name"]["description"],
+            "分组名称，例如 移动机房。"
+        );
+
+        let responses_schema = openai_responses_tools(&tools);
+        assert_eq!(
+            responses_schema[0]["parameters"]["properties"]["draft"]["properties"]["name"]["type"],
+            "string"
+        );
     }
 
     #[test]

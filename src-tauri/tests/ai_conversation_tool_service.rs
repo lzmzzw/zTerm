@@ -575,6 +575,51 @@ fn tool_service_resource_save_executes_and_reports_affected_domains() {
 }
 
 #[test]
+fn tool_service_session_group_save_defaults_missing_ai_draft_fields() {
+    let store = SqliteStore::open_in_memory().expect("store should open");
+    let service = AiToolService::with_writer(Arc::new(FakeToolWriter::default()));
+
+    let outcome = service
+        .execute_if_allowed(
+            &store,
+            AiToolPrepareRequest {
+                tool_id: "session_groups.save".to_string(),
+                arguments: json!({
+                    "draft": {
+                        "name": "移动机房"
+                    }
+                }),
+                reason: None,
+                requested_by: Some("test".to_string()),
+                conversation_id: None,
+                run_id: None,
+                step_id: None,
+            },
+            AiApprovalMode::Safe,
+        )
+        .expect("session group save should default optional AI fields");
+
+    assert!(outcome.pending_invocation.is_none());
+    let audit = outcome.audit_record.expect("audit should be recorded");
+    assert_eq!(audit.status, AiToolInvocationStatus::Succeeded);
+    assert_eq!(audit.affected_domains, vec!["sessions".to_string()]);
+    assert!(audit
+        .result_summary
+        .as_deref()
+        .expect("result summary")
+        .contains("移动机房"));
+
+    let sessions = list_sessions(&store).expect("sessions should list");
+    let group = sessions
+        .groups
+        .iter()
+        .find(|group| group.name == "移动机房")
+        .expect("AI group should save");
+    assert!(group.expanded);
+    assert_eq!(group.sort_order, 0);
+}
+
+#[test]
 fn tool_service_session_save_stores_ai_supplied_password_without_persisting_plaintext() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
     let secrets = Arc::new(MemorySecretStore::default());
