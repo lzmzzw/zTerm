@@ -113,7 +113,7 @@ async function selectOption(container: HTMLElement, label: string, optionText: s
 describe("SettingsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    tauriMocks.getVersion.mockResolvedValue("0.1.3");
+    tauriMocks.getVersion.mockResolvedValue("9.9.9");
   });
 
   it("renders visible form controls in the selected language", async () => {
@@ -377,7 +377,7 @@ describe("SettingsPage", () => {
     await click(button(view.container, "关于"));
     await flushAsyncUpdates();
 
-    expect(view.container.textContent).toContain("v0.1.3");
+    expect(view.container.textContent).toContain("v9.9.9");
     expect(view.container.textContent).not.toContain("v0.1.0");
     expect(view.container.textContent).toContain("GPL-3.0");
     expect(view.container.textContent).toContain("github.com/lzmzzw/zTerm");
