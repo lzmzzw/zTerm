@@ -24,9 +24,13 @@ Current RDP support is a controlled placeholder and does not establish a real
 RDP protocol connection. Cloud model invocation and remote agent orchestration
 are intentionally outside the current public MVP.
 
-## More Screenshots
+## Screenshots
 
-![SFTP panel](assets/screenshots/sftp-panel.png)
+![Split terminal workspace](assets/screenshots/split-terminals.png)
+
+![File transfer](assets/screenshots/file-transfer.png)
+
+![MCP settings](assets/screenshots/mcp-settings.png)
 
 ## Requirements
 
