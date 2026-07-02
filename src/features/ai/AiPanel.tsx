@@ -151,13 +151,11 @@ export function AiPanel({
     } else {
       void onConfirmTool?.(invocation.id, approved);
     }
-    if (!approved || !invocation.requires_secret_input) {
-      setToolSecretInputs((current) => {
-        const next = { ...current };
-        delete next[invocation.id];
-        return next;
-      });
-    }
+    setToolSecretInputs((current) => {
+      const next = { ...current };
+      delete next[invocation.id];
+      return next;
+    });
   }
 
   function renderHistoryPreview(conversationId: string) {

@@ -252,7 +252,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       id: `pending-user-${requestId}`,
       conversation_id: pendingConversationId,
       role: "user",
-      content,
+      content: redactSensitiveForDisplay(content),
       status: "complete",
       created_at_ms: Date.now(),
     };
@@ -463,6 +463,21 @@ export const useAiStore = create<AiState>((set, get) => ({
     }
   },
 }));
+
+function redactSensitiveForDisplay(value: string) {
+  return redactAssignments(redactUrlPasswords(value));
+}
+
+function redactUrlPasswords(value: string) {
+  return value.replace(/([a-z][a-z0-9+.-]*:\/\/[^/?#\s:@]+:)([^@/?#\s]+)(@)/gi, "$1<redacted-secret>$3");
+}
+
+function redactAssignments(value: string) {
+  return value.replace(
+    /\b(password|passwd|api_key|apikey|token|secret)\s*([=:])\s*([^\s;,"']+)/gi,
+    (_match, key: string, separator: string) => `${key}${separator}<redacted-secret>`,
+  );
+}
 
 async function ensureAiChatEventListeners() {
   if (aiChatEventListenersPromise) return aiChatEventListenersPromise;

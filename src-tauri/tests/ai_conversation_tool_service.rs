@@ -9,13 +9,17 @@ use zterm_lib::{
         AiMessageRole, AiToolConfirmRequest, AiToolInvocationStatus, AiToolPrepareRequest,
         AiToolSecretInputs, RiskLevel,
     },
+    models::credential::CredentialKind,
     models::history::{CommandHistoryDraft, HistoryScopeKind, HistorySearchOptions},
     models::session::{AuthMode, SavedSessionDraft, SessionType},
     services::{
         ai_conversation_service::AiConversationService,
         ai_tool_service::{AiToolCommandWriter, AiToolService},
+        credential_service::{CredentialService, MemorySecretStore},
     },
     storage::{
+        ai::get_ai_tool_pending_state,
+        credentials::list_credentials,
         history::{insert_command_history, search_command_history},
         sessions::list_sessions,
         sqlite::SqliteStore,
@@ -105,6 +109,46 @@ fn conversation_service_persists_conversation_and_messages() {
             .id,
         conversation.id
     );
+}
+
+#[test]
+fn conversation_service_redacts_user_message_secrets_before_persisting_history() {
+    let store = SqliteStore::open_in_memory().expect("store should open");
+    let service = AiConversationService::default();
+    let conversation = service
+        .create(
+            &store,
+            AiConversationCreateRequest {
+                title: Some("创建连接".to_string()),
+                scope_kind: "follow_focus".to_string(),
+                scope_ref_json: Some("{}".to_string()),
+                approval_mode: None,
+            },
+        )
+        .expect("conversation should create");
+    let password = "history-password!";
+    let message = format!("帮我创建 ssh://ops:{password}@example.test:2200");
+
+    let saved = service
+        .append_message(
+            &store,
+            AiConversationMessageAppendRequest {
+                conversation_id: conversation.id.clone(),
+                role: AiMessageRole::User,
+                content: message,
+                metadata_json: None,
+            },
+        )
+        .expect("message should append");
+
+    assert!(!saved.content.contains(password));
+    assert!(saved
+        .content
+        .contains("ssh://ops:<redacted-secret>@example.test:2200"));
+    let loaded = service
+        .get(&store, &conversation.id)
+        .expect("conversation should load");
+    assert!(!serde_json::to_string(&loaded).unwrap().contains(password));
 }
 
 #[test]
@@ -528,6 +572,123 @@ fn tool_service_resource_save_executes_and_reports_affected_domains() {
         .sessions
         .iter()
         .any(|session| session.id == "session-ai" && session.name == "AI Local"));
+}
+
+#[test]
+fn tool_service_session_save_stores_ai_supplied_password_without_persisting_plaintext() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let secrets = Arc::new(MemorySecretStore::default());
+    let credential_service = CredentialService::with_secret_store(store.clone(), secrets);
+    let conversation = AiConversationService::default()
+        .create(
+            store.as_ref(),
+            AiConversationCreateRequest {
+                title: Some("AI 创建连接".to_string()),
+                scope_kind: "follow_focus".to_string(),
+                scope_ref_json: Some("{}".to_string()),
+                approval_mode: Some(AiApprovalMode::Safe),
+            },
+        )
+        .expect("conversation should create");
+    let service = AiToolService::with_credential_service(
+        Arc::new(FakeToolWriter::default()),
+        credential_service.clone(),
+    );
+    let password = "ai-created-password!";
+    let url = format!("ssh://ops:{password}@example.test:2200");
+
+    let outcome = service
+        .execute_if_allowed(
+            store.as_ref(),
+            AiToolPrepareRequest {
+                tool_id: "sessions.save".to_string(),
+                arguments: json!({
+                    "draft": {
+                        "id": "ssh-ai-secret",
+                        "name": "AI SSH",
+                        "url": url
+                    }
+                }),
+                reason: None,
+                requested_by: Some("test".to_string()),
+                conversation_id: Some(conversation.id.clone()),
+                run_id: None,
+                step_id: None,
+            },
+            AiApprovalMode::RequestApproval,
+        )
+        .expect("session save should accept an AI supplied password");
+
+    assert!(outcome.audit_record.is_none());
+    let pending = outcome
+        .pending_invocation
+        .expect("session save should wait for approval");
+    assert!(!pending.arguments_summary.contains(password));
+    assert!(!pending.arguments_summary.contains(&url));
+    assert!(!pending
+        .target_summary
+        .unwrap_or_default()
+        .contains(password));
+    let (_stored_pending, stored_arguments) =
+        get_ai_tool_pending_state(store.as_ref(), &pending.id).expect("pending state should load");
+    let stored_arguments_json =
+        serde_json::to_string(&stored_arguments).expect("pending arguments should serialize");
+    assert!(!stored_arguments_json.contains(password));
+    assert!(!stored_arguments_json.contains(&url));
+    assert!(stored_arguments_json.contains("credential:ai-session-ssh-ai-secret-password"));
+
+    let audit = service
+        .confirm(
+            store.as_ref(),
+            AiToolConfirmRequest {
+                invocation_id: pending.id,
+                approved: true,
+                audit_context_json: None,
+                secret_inputs: None,
+            },
+        )
+        .expect("confirmed session save should execute");
+    assert_eq!(audit.status, AiToolInvocationStatus::Succeeded);
+    assert!(!audit.arguments_summary.contains(password));
+    assert!(!audit.arguments_summary.contains(&url));
+    assert!(!audit.result_summary.unwrap_or_default().contains(password));
+
+    let sessions = list_sessions(store.as_ref()).expect("sessions should list");
+    let session = sessions
+        .sessions
+        .iter()
+        .find(|session| session.id == "ssh-ai-secret")
+        .expect("AI session should save");
+    let credential_ref = session
+        .credential_ref
+        .as_deref()
+        .expect("session should point to keyring credential");
+    assert_eq!(session.host, "example.test");
+    assert_eq!(session.port, 2200);
+    assert_eq!(session.username, "ops");
+    assert_ne!(credential_ref, password);
+    assert_eq!(
+        credential_service
+            .read_secret(credential_ref)
+            .expect("password should be stored in keyring"),
+        password
+    );
+
+    let credentials = list_credentials(store.as_ref()).expect("credentials should list");
+    let credential = credentials
+        .iter()
+        .find(|record| record.credential_ref == credential_ref)
+        .expect("credential metadata should save");
+    assert_eq!(credential.kind, CredentialKind::SshPassword);
+    assert_ne!(credential.id, password);
+    assert!(!credential.name.contains(password));
+
+    let loaded = AiConversationService::default()
+        .get(store.as_ref(), &conversation.id)
+        .expect("conversation should load");
+    let serialized_messages =
+        serde_json::to_string(&loaded.messages).expect("messages should serialize");
+    assert!(!serialized_messages.contains(password));
 }
 
 #[test]

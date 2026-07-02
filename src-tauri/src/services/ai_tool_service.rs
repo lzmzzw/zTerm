@@ -5,7 +5,7 @@ use std::{
 };
 
 use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tauri::Emitter;
 use uuid::Uuid;
 
@@ -30,10 +30,10 @@ use crate::{
             AiToolInvocationStatus, AiToolPendingInvocation, AiToolPrepareRequest,
             AiToolSecretInputs, RiskLevel,
         },
-        credential::AiProviderProfileDraft,
+        credential::{AiProviderProfileDraft, CredentialDraft, CredentialKind},
         history::{HistoryScopeKind, HistorySearchOptions},
         server_info::{ServerInfoRequest, ServerInfoSnapshot},
-        session::{SavedSessionDraft, SessionGroupDraft},
+        session::{AuthMode, SavedSessionDraft, SessionGroupDraft, SessionType},
         terminal::RuntimeSessionInfo,
         terminal_profile::TerminalProfileDraft,
         workspace::{
@@ -183,6 +183,20 @@ impl AiToolService {
         }
     }
 
+    pub fn with_credential_service(
+        writer: Arc<dyn AiToolCommandWriter>,
+        credential_service: CredentialService,
+    ) -> Self {
+        Self {
+            writer,
+            credential_service: Some(credential_service),
+            transfer_queue: None,
+            sftp_service: None,
+            server_info_service: None,
+            ssh_command_service: None,
+        }
+    }
+
     pub fn with_runtime_services(
         writer: Arc<dyn AiToolCommandWriter>,
         credential_service: CredentialService,
@@ -256,7 +270,7 @@ impl AiToolService {
         approval_mode: AiApprovalMode,
     ) -> AppResult<(AiToolPendingInvocation, Value)> {
         let tool = tool_definition(&request.tool_id)?;
-        let arguments = normalized_arguments(request.arguments);
+        let arguments = self.prepare_arguments_for_tool(&tool.id, request.arguments)?;
         reject_secret_argument_values(&arguments)?;
         validate_arguments(&tool.id, &arguments)?;
         let risk = assess_risk(&tool, &arguments);
@@ -324,6 +338,7 @@ impl AiToolService {
                 self.execute(store, &pending.tool_id, arguments, secret_inputs.as_ref())
             }
         } else {
+            self.cleanup_rejected_prepared_secret(&pending.tool_id, arguments);
             Ok(AiToolExecutionResult {
                 summary: "用户已拒绝执行。".to_string(),
                 affected_domains: Vec::new(),
@@ -777,6 +792,161 @@ impl AiToolService {
             }
             _ => Err(AppError::validation(format!("不支持的 AI 工具: {tool_id}"))),
         }
+    }
+
+    fn prepare_arguments_for_tool(&self, tool_id: &str, arguments: Value) -> AppResult<Value> {
+        let arguments = normalized_arguments(arguments);
+        if tool_id == "sessions.save" {
+            return self.prepare_session_save_arguments(arguments);
+        }
+        Ok(arguments)
+    }
+
+    fn prepare_session_save_arguments(&self, mut arguments: Value) -> AppResult<Value> {
+        let Some(root) = arguments.as_object_mut() else {
+            return Ok(arguments);
+        };
+        let top_url = take_nonempty_string(root, "url");
+        let top_username = take_nonempty_string(root, "username")
+            .or_else(|| take_nonempty_string(root, "account"));
+        let top_password = take_nonempty_string(root, "password");
+        let Some(draft_value) = root.get_mut("draft") else {
+            return Ok(arguments);
+        };
+        let Some(draft_object) = draft_value.as_object_mut() else {
+            return Ok(arguments);
+        };
+
+        let draft_url = take_nonempty_string(draft_object, "url").or(top_url);
+        let explicit_password = take_nonempty_string(draft_object, "password").or(top_password);
+        let parsed_url = draft_url.as_deref().map(parse_session_url).transpose()?;
+        let password = explicit_password.or_else(|| {
+            parsed_url
+                .as_ref()
+                .and_then(|url| url.password.clone())
+                .filter(|value| !value.trim().is_empty())
+        });
+
+        if let Some(url) = parsed_url.as_ref() {
+            set_missing_string(draft_object, "type", url.session_type);
+            set_missing_string(draft_object, "host", &url.host);
+            if !draft_object.contains_key("port") {
+                draft_object.insert("port".to_string(), Value::from(url.port));
+            }
+            if !url.username.is_empty() {
+                set_missing_string(draft_object, "username", &url.username);
+            }
+            set_missing_string(draft_object, "name", &url.host);
+        }
+        if let Some(username) = top_username {
+            set_missing_string(draft_object, "username", &username);
+        }
+        if password.is_some() {
+            set_missing_string(draft_object, "auth_mode", "password");
+        }
+        set_missing_string(draft_object, "host", "localhost");
+        set_missing_string(draft_object, "username", "");
+        set_missing_string(draft_object, "auth_mode", "none");
+        if !draft_object.contains_key("port") {
+            draft_object.insert("port".to_string(), Value::from(22));
+        }
+        if !draft_object.contains_key("tags") {
+            draft_object.insert("tags".to_string(), Value::Array(Vec::new()));
+        }
+        if !draft_object.contains_key("sort_order") {
+            draft_object.insert("sort_order".to_string(), Value::from(0));
+        }
+        if draft_object
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value == "rdp")
+            && !draft_object.contains_key("rdp_options")
+        {
+            draft_object.insert(
+                "rdp_options".to_string(),
+                json!({
+                    "domain": null,
+                    "width": 1280,
+                    "height": 720,
+                    "color_depth": 32,
+                    "redirect_clipboard": true,
+                    "fullscreen": false
+                }),
+            );
+        }
+
+        let draft =
+            serde_json::from_value::<SavedSessionDraft>(Value::Object(draft_object.clone()))
+                .map_err(|error| AppError::validation(format!("工具参数 draft 无效: {error}")))?;
+        if let Some(password) = password {
+            let credential_ref = self.save_session_password_credential(&draft, password)?;
+            draft_object.insert("credential_ref".to_string(), Value::String(credential_ref));
+            draft_object.insert(
+                "_ai_created_credential_ref".to_string(),
+                draft_object
+                    .get("credential_ref")
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            );
+        }
+        Ok(arguments)
+    }
+
+    fn cleanup_rejected_prepared_secret(&self, tool_id: &str, arguments: &Value) {
+        if tool_id != "sessions.save" {
+            return;
+        }
+        let Some(credential_ref) = arguments
+            .get("draft")
+            .and_then(Value::as_object)
+            .and_then(|draft| draft.get("_ai_created_credential_ref"))
+            .and_then(Value::as_str)
+            .and_then(credential_id_from_ref)
+        else {
+            return;
+        };
+        if let Some(service) = self.credential_service.as_ref() {
+            let _ = service.delete_credential(&credential_ref);
+        }
+    }
+
+    fn save_session_password_credential(
+        &self,
+        draft: &SavedSessionDraft,
+        password: String,
+    ) -> AppResult<String> {
+        if draft.auth_mode != AuthMode::Password {
+            return Err(AppError::validation(
+                "AI 提供的会话密码只支持 SSH/RDP 密码认证",
+            ));
+        }
+        let kind = match draft.session_type {
+            SessionType::Ssh => CredentialKind::SshPassword,
+            SessionType::Rdp => CredentialKind::RdpPassword,
+            SessionType::Local => {
+                return Err(AppError::validation("本机会话不支持保存密码"));
+            }
+        };
+        let credential_id = draft
+            .credential_ref
+            .as_deref()
+            .and_then(credential_id_from_ref)
+            .or_else(|| {
+                draft
+                    .id
+                    .as_deref()
+                    .map(|id| format!("ai-session-{id}-password"))
+            })
+            .unwrap_or_else(|| format!("ai-session-{}-password", Uuid::new_v4()));
+        let record = self
+            .credential_service()?
+            .save_credential(CredentialDraft {
+                id: Some(credential_id),
+                name: format!("{} 密码", draft.name),
+                kind,
+                secret: password,
+            })?;
+        Ok(record.credential_ref)
     }
 
     fn emit_frontend_action(
@@ -1517,6 +1687,78 @@ fn normalized_arguments(arguments: Value) -> Value {
         Value::Null => json!({}),
         other => json!({ "value": other }),
     }
+}
+
+#[derive(Debug, Clone)]
+struct ParsedSessionUrl {
+    session_type: &'static str,
+    host: String,
+    port: u16,
+    username: String,
+    password: Option<String>,
+}
+
+fn parse_session_url(value: &str) -> AppResult<ParsedSessionUrl> {
+    let url = reqwest::Url::parse(value.trim())
+        .map_err(|error| AppError::validation(format!("连接 URL 无效: {error}")))?;
+    let session_type = match url.scheme().to_ascii_lowercase().as_str() {
+        "ssh" => "ssh",
+        "rdp" => "rdp",
+        scheme => {
+            return Err(AppError::validation(format!(
+                "AI 创建连接暂只支持 ssh:// 或 rdp:// URL，当前为 {scheme}://"
+            )));
+        }
+    };
+    let host = url
+        .host_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AppError::validation("连接 URL 缺少主机"))?
+        .to_string();
+    let default_port = if session_type == "rdp" { 3389 } else { 22 };
+    Ok(ParsedSessionUrl {
+        session_type,
+        host,
+        port: url.port().unwrap_or(default_port),
+        username: url.username().trim().to_string(),
+        password: url.password().map(ToOwned::to_owned),
+    })
+}
+
+fn take_nonempty_string(object: &mut Map<String, Value>, key: &str) -> Option<String> {
+    match object.remove(key)? {
+        Value::String(value) => {
+            let value = value.trim().to_string();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        }
+        other => {
+            object.insert(key.to_string(), other);
+            None
+        }
+    }
+}
+
+fn set_missing_string(object: &mut Map<String, Value>, key: &str, value: &str) {
+    let has_value = object
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    if !has_value && !value.trim().is_empty() {
+        object.insert(key.to_string(), Value::String(value.trim().to_string()));
+    }
+}
+
+fn credential_id_from_ref(credential_ref: &str) -> Option<String> {
+    credential_ref
+        .strip_prefix("credential:")
+        .map(ToOwned::to_owned)
+        .filter(|value| !value.trim().is_empty())
 }
 
 fn summarize_arguments(arguments: &Value) -> String {

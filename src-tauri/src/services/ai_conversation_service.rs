@@ -8,6 +8,7 @@ use crate::{
         AiConversationCreateRequest, AiConversationListRequest, AiConversationMessage,
         AiConversationMessageAppendRequest, AiConversationSummary,
     },
+    security::redaction::redact_sensitive,
     storage::{
         ai::{
             delete_ai_conversation, get_ai_conversation, insert_ai_conversation,
@@ -86,12 +87,13 @@ impl AiConversationService {
         store: &SqliteStore,
         request: AiConversationMessageAppendRequest,
     ) -> AppResult<AiConversationMessage> {
+        let content = redact_sensitive(&request.content);
         insert_ai_conversation_message(
             store,
             &Uuid::new_v4().to_string(),
             &request.conversation_id,
             request.role,
-            &request.content,
+            &content,
             request.metadata_json.as_deref(),
         )
     }

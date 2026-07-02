@@ -154,6 +154,30 @@ describe("aiStore", () => {
     );
   });
 
+  it("redacts secrets in optimistic user messages without changing the backend request", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "ai_chat_stream") return Promise.resolve({ chat_id: "chat-1", conversation_id: "conversation-1" });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const password = "ui-password!";
+    const message = `帮我创建 ssh://ops:${password}@example.test:2200`;
+
+    await useAiStore.getState().sendChat(message, snapshot("runtime-1"));
+
+    expect(useAiStore.getState().messages[0]).toEqual(
+      expect.objectContaining({
+        role: "user",
+        content: "帮我创建 ssh://ops:<redacted-secret>@example.test:2200",
+      }),
+    );
+    expect(JSON.stringify(useAiStore.getState().messages)).not.toContain(password);
+    expect(invokeMock).toHaveBeenCalledWith("ai_chat_stream", {
+      request: expect.objectContaining({
+        message,
+      }),
+    });
+  });
+
   it("notifies affected domains after completed stream tool executions", async () => {
     const affectedHandler = vi.fn();
     setAiAffectedDomainsHandler(affectedHandler);

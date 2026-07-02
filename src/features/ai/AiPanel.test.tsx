@@ -470,6 +470,7 @@ describe("AiPanel", () => {
     changeTextInput(input(view.container, "API Key") as unknown as HTMLInputElement, "sk-local-only");
     expect(approve.disabled).toBe(false);
     await click(approve);
+    expect(input(view.container, "API Key").value).toBe("");
     await click(button(view.container, "拒绝"));
 
     expect(onConfirmTool).toHaveBeenNthCalledWith(1, "tool-call-secret", true, { api_key: "sk-local-only" });

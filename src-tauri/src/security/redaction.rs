@@ -7,7 +7,8 @@ pub fn redact_error(error: &AppError) -> String {
 
 pub fn redact_sensitive(input: &str) -> String {
     let private_key_redacted = redact_private_key_blocks(input);
-    let token_redacted = redact_prefixed_tokens(&private_key_redacted, "sk-");
+    let url_redacted = redact_url_passwords(&private_key_redacted);
+    let token_redacted = redact_prefixed_tokens(&url_redacted, "sk-");
     let bearer_redacted = redact_bearer_tokens(&token_redacted);
     redact_assignment_values(
         &bearer_redacted,
@@ -33,6 +34,37 @@ fn redact_private_key_blocks(input: &str) -> String {
         return output;
     }
     output.push_str(rest);
+    output
+}
+
+fn redact_url_passwords(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut index = 0;
+    while let Some(relative) = input[index..].find("://") {
+        let scheme_separator = index + relative;
+        let authority_start = scheme_separator + "://".len();
+        let token_end = input[authority_start..]
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, ';' | ',' | '"' | '\''))
+            .map(|offset| authority_start + offset)
+            .unwrap_or(input.len());
+        let authority_and_path = &input[authority_start..token_end];
+        if let Some(at_offset) = authority_and_path.find('@') {
+            let userinfo = &authority_and_path[..at_offset];
+            if let Some(colon_offset) = userinfo.rfind(':') {
+                let password_start = authority_start + colon_offset + 1;
+                let password_end = authority_start + at_offset;
+                if password_start < password_end {
+                    output.push_str(&input[index..password_start]);
+                    output.push_str("<redacted-secret>");
+                    index = password_end;
+                    continue;
+                }
+            }
+        }
+        output.push_str(&input[index..authority_start]);
+        index = authority_start;
+    }
+    output.push_str(&input[index..]);
     output
 }
 

@@ -41,3 +41,14 @@ fn redacts_bearer_tokens_without_fixed_provider_prefix() {
     assert!(!redacted.contains(bearer));
     assert!(redacted.contains("Bearer <redacted-secret>"));
 }
+
+#[test]
+fn redacts_passwords_embedded_in_connection_urls() {
+    let password = "Phase8Password!";
+    let input = format!("请创建连接 ssh://ops:{password}@example.test:2200");
+
+    let redacted = redact_sensitive(&input);
+
+    assert!(!redacted.contains(password));
+    assert!(redacted.contains("ssh://ops:<redacted-secret>@example.test:2200"));
+}

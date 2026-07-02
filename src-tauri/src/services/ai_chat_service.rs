@@ -78,6 +78,8 @@ impl AiChatService {
         let conversation_service = AiConversationService::default();
         let (conversation_id, approval_mode) =
             ensure_conversation(store, &conversation_service, &request)?;
+        let provider_messages =
+            build_provider_messages(store, &conversation_service, &request, &conversation_id)?;
         conversation_service.append_message(
             store,
             AiConversationMessageAppendRequest {
@@ -88,8 +90,6 @@ impl AiChatService {
             },
         )?;
 
-        let provider_messages =
-            build_provider_messages(store, &conversation_service, &request, &conversation_id)?;
         let tool_response = run_tool_chat_sync(
             &provider,
             &api_key,
@@ -184,6 +184,8 @@ impl AiChatService {
         let conversation_service = AiConversationService::default();
         let (conversation_id, approval_mode) =
             ensure_conversation(store, &conversation_service, &request)?;
+        let provider_messages =
+            build_provider_messages(store, &conversation_service, &request, &conversation_id)?;
         conversation_service.append_message(
             store,
             AiConversationMessageAppendRequest {
@@ -194,8 +196,6 @@ impl AiChatService {
             },
         )?;
 
-        let provider_messages =
-            build_provider_messages(store, &conversation_service, &request, &conversation_id)?;
         Ok(AiChatStreamWork {
             conversation_id,
             provider,
