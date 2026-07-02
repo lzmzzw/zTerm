@@ -77,5 +77,5 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "zTerm ${{ github.ref_name }}"
           releaseBody: "Automated zTerm release for ${{ github.ref_name }}."
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
