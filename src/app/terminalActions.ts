@@ -32,7 +32,7 @@ interface TerminalActionDependencies {
     containerId: string,
     containerName?: string | null,
   ) => Promise<RuntimeSessionInfo>;
-  closeTerminal: (runtimeSessionId: string) => Promise<void>;
+  closeTerminal: (runtimeSessionId: string, options?: { releaseExternalSession?: boolean }) => Promise<void>;
   writeTerminal: (runtimeSessionId: string, data: string) => Promise<void>;
   activeRuntimeSessionId: string | null;
 }
@@ -91,7 +91,7 @@ export function createTerminalActions({
     if (!activeWorkspaceTabId) return;
     setTerminalError(null);
     try {
-      await closeTerminal(runtimeSessionId);
+      await closeTerminal(runtimeSessionId, { releaseExternalSession: !isExternalSessionId(savedSessionId) });
       updatePaneTerminalTab(activeWorkspaceId, activeWorkspaceTabId, paneId, paneTabId, {
         runtime_session_id: null,
         restore_status: "pending",
@@ -144,4 +144,8 @@ export function createTerminalActions({
     reconnectTerminal,
     sendCommand,
   };
+}
+
+function isExternalSessionId(value: string | null | undefined) {
+  return typeof value === "string" && value.startsWith("external:");
 }

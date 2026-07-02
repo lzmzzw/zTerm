@@ -9,6 +9,13 @@ export interface SshContainerInfo {
   running: boolean;
 }
 
-export async function listSshContainers(savedSessionId: string): Promise<SshContainerInfo[]> {
-  return invoke<SshContainerInfo[]>("ssh_container_list", { savedSessionId });
+export async function listSshContainers(
+  savedSessionId: string,
+  options: { runtimeSessionId?: string | null } = {},
+): Promise<SshContainerInfo[]> {
+  const payload: { savedSessionId: string; runtimeSessionId?: string } = { savedSessionId };
+  if (options.runtimeSessionId) {
+    payload.runtimeSessionId = options.runtimeSessionId;
+  }
+  return invoke<SshContainerInfo[]>("ssh_container_list", payload);
 }

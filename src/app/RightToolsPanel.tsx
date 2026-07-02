@@ -30,6 +30,7 @@ import type { SshTunnel } from "../features/sessions/types";
 import type { AppLanguage } from "../features/settings/settingsStore";
 import type { SshContainerInfo } from "../features/terminal/sshContainerApi";
 import { t } from "../features/settings/i18n";
+import { ZtSelect } from "../components/ZtSelect";
 import { PanelHeader, ToolButton } from "./ShellControls";
 import { rightToolLabelKey, rightToolRailOrder, type RightTool } from "./rightTools";
 
@@ -117,6 +118,8 @@ interface RightToolsPanelProps {
   };
   containers: {
     enabled: boolean;
+    editableRuntime: boolean;
+    runtime: string | null;
     sessionName: string | null;
     target: string | null;
     items: SshContainerInfo[];
@@ -124,11 +127,16 @@ interface RightToolsPanelProps {
     error: string | null;
     onEnter: (container: SshContainerInfo) => Promise<void> | void;
     onRefresh: () => Promise<void> | void;
+    onRuntimeChange: (runtime: string) => Promise<void> | void;
   };
   tunnels: {
+    editable: boolean;
+    needsReconnect: boolean;
     sessionName: string | null;
     target: string | null;
     items: SshTunnel[];
+    onEdit: () => void;
+    onReconnect: () => void;
   };
   transfers: {
     tasks: TransferTask[];
@@ -157,7 +165,7 @@ export function RightToolsPanel({
   const monitorSnapshot = useServerInfoSnapshot(monitor.target?.id ?? null, activeTool === "monitor");
   const visibleTools = rightToolRailOrder.filter(
     (tool) =>
-      (tool !== "tunnels" || tunnels.items.length > 0) &&
+      (tool !== "tunnels" || tunnels.items.length > 0 || tunnels.editable) &&
       (tool !== "containers" || containers.enabled),
   );
 
@@ -293,10 +301,13 @@ export function RightToolsPanel({
                 sessionName={containers.sessionName}
                 target={containers.target}
                 containers={containers.items}
+                editableRuntime={containers.editableRuntime}
+                runtime={containers.runtime}
                 loading={containers.loading}
                 error={containers.error}
                 onEnter={containers.onEnter}
                 onRefresh={containers.onRefresh}
+                onRuntimeChange={containers.onRuntimeChange}
               />
             </>
           ) : null}
@@ -304,7 +315,15 @@ export function RightToolsPanel({
           {activeTool === "tunnels" ? (
             <>
               <PanelHeader title={t(language, "sshTunnels")} />
-              <SshTunnelListPanel sessionName={tunnels.sessionName} target={tunnels.target} tunnels={tunnels.items} />
+              <SshTunnelListPanel
+                sessionName={tunnels.sessionName}
+                target={tunnels.target}
+                tunnels={tunnels.items}
+                editable={tunnels.editable}
+                needsReconnect={tunnels.needsReconnect}
+                onEdit={tunnels.onEdit}
+                onReconnect={tunnels.onReconnect}
+              />
             </>
           ) : null}
         </section>
@@ -333,18 +352,24 @@ function SshContainerListPanel({
   sessionName,
   target,
   containers,
+  editableRuntime,
+  runtime,
   loading,
   error,
   onEnter,
   onRefresh,
+  onRuntimeChange,
 }: {
   sessionName: string | null;
   target: string | null;
   containers: SshContainerInfo[];
+  editableRuntime: boolean;
+  runtime: string | null;
   loading: boolean;
   error: string | null;
   onEnter: (container: SshContainerInfo) => Promise<void> | void;
   onRefresh: () => Promise<void> | void;
+  onRuntimeChange: (runtime: string) => Promise<void> | void;
 }) {
   return (
     <div className="zt-tunnel-panel">
@@ -380,6 +405,17 @@ function SshContainerListPanel({
           <RefreshCw size={14} aria-hidden="true" />
         </button>
       </div>
+      {editableRuntime ? (
+        <label className="zt-session-form-wide">
+          <span>容器类型</span>
+          <ZtSelect
+            ariaLabel="容器运行时"
+            value={runtime ?? "docker"}
+            options={containerRuntimeOptions}
+            onChange={(nextRuntime) => void onRuntimeChange(nextRuntime)}
+          />
+        </label>
+      ) : null}
       {loading ? <div className="zt-empty-line">正在加载容器...</div> : null}
       {error ? <div className="zt-error-line">{error}</div> : null}
       {!loading && !error && containers.length === 0 ? <div className="zt-empty-line">当前 SSH 连接没有容器</div> : null}
@@ -436,21 +472,42 @@ function SshTunnelListPanel({
   sessionName,
   target,
   tunnels,
+  editable,
+  needsReconnect,
+  onEdit,
+  onReconnect,
 }: {
   sessionName: string | null;
   target: string | null;
   tunnels: SshTunnel[];
+  editable: boolean;
+  needsReconnect: boolean;
+  onEdit: () => void;
+  onReconnect: () => void;
 }) {
-  if (tunnels.length === 0) {
-    return <div className="zt-empty-line">当前 SSH 连接没有配置隧道</div>;
-  }
-
   return (
-    <div className="zt-tunnel-panel">
+    <div className={editable ? "zt-tunnel-panel zt-transient-tunnel-panel" : "zt-tunnel-panel"}>
       <div className="zt-tunnel-target">
         <strong>{sessionName ?? "当前 SSH 连接"}</strong>
         {target ? <span>{target}</span> : null}
       </div>
+      {editable ? (
+        <div className="zt-tunnel-target zt-transient-tunnel-actions">
+          <div className="zt-tunnel-target-content">
+            <strong>临时隧道</strong>
+            <span>{needsReconnect ? "配置已更新，重连后生效" : "仅当前临时 SSH 连接有效"}</span>
+          </div>
+          <button type="button" className="zt-secondary-button" aria-label="添加临时 SSH 隧道" onClick={onEdit}>
+            {tunnels.length === 0 ? "添加隧道" : "编辑隧道"}
+          </button>
+          {needsReconnect ? (
+            <button type="button" className="zt-secondary-button" aria-label="重连临时 SSH" onClick={onReconnect}>
+              重连
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {tunnels.length === 0 ? <div className="zt-empty-line">当前 SSH 连接没有配置隧道</div> : null}
       <div className="zt-tunnel-list" role="list" aria-label="SSH 隧道列表">
         {tunnels.map((tunnel, index) => {
           const mode = sshTunnelMode(tunnel);
@@ -501,3 +558,9 @@ function formatRemoteEndpoint(host?: string | null, port?: number | null) {
   if (host && port) return `${host}:${port}`;
   return host || (port ? String(port) : "-");
 }
+
+const containerRuntimeOptions = [
+  { value: "docker", label: "Docker" },
+  { value: "podman", label: "Podman" },
+  { value: "containerd", label: "containerd" },
+];

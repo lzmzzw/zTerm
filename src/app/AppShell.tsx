@@ -32,14 +32,18 @@ import { ModelManagerPanel } from "../features/models/ModelManagerPanel";
 import { SessionTree } from "../features/sessions/SessionTree";
 import { SessionGroupDialog } from "../features/sessions/SessionTreeDialogs";
 import { useSessionStore } from "../features/sessions/sessionStore";
+import { SshTunnelsSection } from "../features/sessions/SshTunnelsSection";
+import type { SshOptions, SshTunnelMode } from "../features/sessions/types";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { applyAppSettings } from "../features/settings/applyAppSettings";
 import { useDomI18n } from "../features/settings/domI18n";
 import { useSettingsStore } from "../features/settings/settingsStore";
 import { listSshContainers, type SshContainerInfo } from "../features/terminal/sshContainerApi";
 import {
+  getExternalSshOptions,
   isExternalSessionId,
   takePendingExternalLaunches,
+  updateExternalSshOptions,
   type ExternalSshLaunchEvent,
 } from "../features/terminal/externalLaunchApi";
 import { useTerminalStore } from "../features/terminal/terminalStore";
@@ -67,7 +71,7 @@ import type {
   WorkspaceSummary,
 } from "../features/workspace/types";
 import { scheduleAfterPaintDelay, scheduleIdleTask } from "../lib/renderScheduling";
-import { fallbackOnlyErrorMessage } from "../lib/unknownErrorMessage";
+import { fallbackOnlyErrorMessage, unknownErrorMessage } from "../lib/unknownErrorMessage";
 
 type LeftTool = "workspace" | "sessions" | "models";
 
@@ -123,6 +127,23 @@ const EMPTY_CONTAINER_PANEL_STATE = {
   items: [] as SshContainerInfo[],
   loading: false,
   error: null as string | null,
+};
+
+const DEFAULT_EXTERNAL_SSH_OPTIONS: SshOptions = {
+  connect_timeout_ms: null,
+  keepalive_interval_ms: null,
+  proxy_command: null,
+  identity_file: null,
+  jump_hosts: [],
+  tunnels: [],
+  container: {
+    enabled: true,
+    runtime: "docker",
+    container: "",
+    shell: "/bin/sh",
+    user: null,
+    workdir: null,
+  },
 };
 
 const EMPTY_HISTORY_PANEL_STATE = {
@@ -248,6 +269,9 @@ export function AppShell() {
   const [connectionDialogTarget, setConnectionDialogTarget] = useState<ConnectionDialogTarget | null>(null);
   const [connectionDialogError, setConnectionDialogError] = useState<string | null>(null);
   const [connectionOpening, setConnectionOpening] = useState(false);
+  const [externalSshOptionsById, setExternalSshOptionsById] = useState<Record<string, SshOptions>>({});
+  const [externalSshTunnelEditor, setExternalSshTunnelEditor] = useState<string | null>(null);
+  const [externalSshTunnelNeedsReconnect, setExternalSshTunnelNeedsReconnect] = useState<Record<string, boolean>>({});
   const restoringWorkspaceIdsRef = useRef<Set<string>>(new Set());
   const autoClosingWorkspaceIdsRef = useRef<Set<string>>(new Set());
   const processedExternalLaunchIdsRef = useRef<Set<string>>(new Set());
@@ -494,10 +518,18 @@ export function AppShell() {
   const activeSavedSession = activeSavedSessionId ? sessions.find((session) => session.id === activeSavedSessionId) ?? null : null;
   const activeExternalSshSession =
     activeSavedSessionId && isExternalSessionId(activeSavedSessionId) ? (externalSshSessions[activeSavedSessionId] ?? null) : null;
+  const activeExternalSshOptions = activeExternalSshSession
+    ? (externalSshOptionsById[activeExternalSshSession.id] ?? DEFAULT_EXTERNAL_SSH_OPTIONS)
+    : null;
   const activeSshSessionId = activeSavedSession?.type === "ssh" ? activeSavedSession.id : activeExternalSshSession?.id ?? null;
-  const activeSshTunnels = activeSavedSession?.type === "ssh" ? (activeSavedSession.ssh_options?.tunnels ?? []) : [];
+  const activeSshTunnels =
+    activeSavedSession?.type === "ssh"
+      ? (activeSavedSession.ssh_options?.tunnels ?? [])
+      : (activeExternalSshOptions?.tunnels ?? []);
   const activeSshContainersEnabled =
-    activeSavedSession?.type === "ssh" && activeSavedSession.ssh_options?.container?.enabled === true;
+    activeSavedSession?.type === "ssh"
+      ? activeSavedSession.ssh_options?.container?.enabled === true
+      : activeExternalSshOptions?.container?.enabled === true;
   const activeRuntimeSessionId = activePaneTab?.runtime_session_id ?? null;
   const bindTerminalEvents = useTerminalStore((state) => state.bindTerminalEvents);
   const openTerminal = useTerminalStore((state) => state.openTerminal);
@@ -615,10 +647,28 @@ export function AppShell() {
   }, [activeSshSessionId, activeTool, clearFiles, filePath, listFiles, workspaceVisualSwitchActive]);
 
   useEffect(() => {
-    if (activeTool === "tunnels" && activeSshTunnels.length === 0) {
+    if (!activeExternalSshSession) return undefined;
+    let cancelled = false;
+    void getExternalSshOptions(activeExternalSshSession.id)
+      .then((options) => {
+        if (cancelled) return;
+        setExternalSshOptionsById((current) => ({ ...current, [activeExternalSshSession.id]: options }));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setTerminalError(fallbackOnlyErrorMessage(error, "读取临时 SSH 配置失败"));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeExternalSshSession]);
+
+  useEffect(() => {
+    if (activeTool === "tunnels" && activeSshTunnels.length === 0 && !activeExternalSshSession) {
       setActiveTool(null);
     }
-  }, [activeSshTunnels.length, activeTool]);
+  }, [activeExternalSshSession, activeSshTunnels.length, activeTool]);
 
   useEffect(() => {
     if (activeTool === "containers" && !activeSshContainersEnabled) {
@@ -634,11 +684,15 @@ export function AppShell() {
     }
 
     let cancelled = false;
-    void loadSshContainers(activeSshSessionId, () => cancelled);
+    void loadSshContainers(
+      activeSshSessionId,
+      isExternalSessionId(activeSshSessionId) ? activeRuntimeSessionId : null,
+      () => cancelled,
+    );
     return () => {
       cancelled = true;
     };
-  }, [activeSshContainersEnabled, activeSshSessionId, activeTool, workspaceVisualSwitchActive]);
+  }, [activeRuntimeSessionId, activeSshContainersEnabled, activeSshSessionId, activeTool, workspaceVisualSwitchActive]);
 
   useEffect(() => {
     if (workspaceVisualSwitchActive) {
@@ -735,6 +789,7 @@ export function AppShell() {
       if (!launch.id || processedExternalLaunchIdsRef.current.has(launch.id)) return;
       processedExternalLaunchIdsRef.current.add(launch.id);
       setExternalSshSessions((current) => ({ ...current, [launch.id]: launch }));
+      setExternalSshOptionsById((current) => ({ ...current, [launch.id]: current[launch.id] ?? DEFAULT_EXTERNAL_SSH_OPTIONS }));
 
       const workspaceState = useWorkspaceStore.getState();
       const targetWorkspaceId = workspaceState.activeWorkspaceId;
@@ -1254,10 +1309,16 @@ export function AppShell() {
     setActiveTool((current) => (current === tool ? null : tool));
   }
 
-  async function loadSshContainers(savedSessionId: string, isCancelled: () => boolean = () => false) {
+  async function loadSshContainers(
+    savedSessionId: string,
+    runtimeSessionId: string | null = null,
+    isCancelled: () => boolean = () => false,
+  ) {
     setContainerPanelState((current) => ({ ...current, loading: true, error: null }));
     try {
-      const items = await listSshContainers(savedSessionId);
+      const items = isExternalSessionId(savedSessionId)
+        ? await listSshContainers(savedSessionId, { runtimeSessionId })
+        : await listSshContainers(savedSessionId);
       if (isCancelled()) return;
       setContainerPanelState({ items, loading: false, error: null });
     } catch (error) {
@@ -1265,7 +1326,9 @@ export function AppShell() {
       setContainerPanelState({
         items: [],
         loading: false,
-        error: fallbackOnlyErrorMessage(error, "加载容器失败"),
+        error: isExternalSessionId(savedSessionId)
+          ? unknownErrorMessage(error, "加载容器失败", { blankStringFallback: true, objectMessage: true })
+          : fallbackOnlyErrorMessage(error, "加载容器失败"),
       });
     }
   }
@@ -1275,7 +1338,54 @@ export function AppShell() {
       setContainerPanelState(EMPTY_CONTAINER_PANEL_STATE);
       return;
     }
-    await loadSshContainers(activeSshSessionId);
+    await loadSshContainers(
+      activeSshSessionId,
+      isExternalSessionId(activeSshSessionId) ? activeRuntimeSessionId : null,
+    );
+  }
+
+  async function changeExternalContainerRuntime(runtime: string) {
+    if (!activeExternalSshSession || !activeExternalSshOptions) return;
+    const nextOptions: SshOptions = {
+      ...activeExternalSshOptions,
+      container: {
+        ...(activeExternalSshOptions.container ?? DEFAULT_EXTERNAL_SSH_OPTIONS.container!),
+        enabled: true,
+        runtime,
+      },
+    };
+    try {
+      const savedOptions = await updateExternalSshOptions(activeExternalSshSession.id, nextOptions);
+      setExternalSshOptionsById((current) => ({ ...current, [activeExternalSshSession.id]: savedOptions }));
+      await loadSshContainers(activeExternalSshSession.id, activeRuntimeSessionId);
+    } catch (error) {
+      setTerminalError(fallbackOnlyErrorMessage(error, "更新临时 SSH 容器类型失败"));
+    }
+  }
+
+  async function saveExternalTunnelOptions(sessionId: string, options: SshOptions) {
+    try {
+      const savedOptions = await updateExternalSshOptions(sessionId, options);
+      setExternalSshOptionsById((current) => ({ ...current, [sessionId]: savedOptions }));
+      setExternalSshTunnelNeedsReconnect((current) => ({ ...current, [sessionId]: true }));
+      setExternalSshTunnelEditor(null);
+    } catch (error) {
+      setTerminalError(fallbackOnlyErrorMessage(error, "保存临时 SSH 隧道失败"));
+    }
+  }
+
+  function reconnectActiveExternalSsh() {
+    if (!activePaneTab?.runtime_session_id || !activePaneTab.saved_session_id) return;
+    void terminalActions.reconnectTerminal(
+      activeTab?.active_pane_id ?? "",
+      activePaneTab.id,
+      activePaneTab.saved_session_id,
+      activePaneTab.runtime_session_id,
+    );
+    setExternalSshTunnelNeedsReconnect((current) => ({
+      ...current,
+      [activePaneTab.saved_session_id as string]: false,
+    }));
   }
 
   async function enterSshContainer(container: SshContainerInfo) {
@@ -1288,14 +1398,21 @@ export function AppShell() {
     const latestSavedSession = latestSavedSessionId
       ? (useSessionStore.getState().sessions.find((session) => session.id === latestSavedSessionId) ?? null)
       : null;
-    if (!latestActiveTab || !latestActivePaneTab || latestSavedSession?.type !== "ssh") return;
-    if (latestSavedSession.ssh_options?.container?.enabled !== true) return;
+    const latestExternalOptions =
+      latestSavedSessionId && isExternalSessionId(latestSavedSessionId)
+        ? (externalSshOptionsById[latestSavedSessionId] ?? DEFAULT_EXTERNAL_SSH_OPTIONS)
+        : null;
+    const latestContainerEnabled =
+      latestSavedSession?.type === "ssh"
+        ? latestSavedSession.ssh_options?.container?.enabled === true
+        : latestExternalOptions?.container?.enabled === true;
+    if (!latestActiveTab || !latestActivePaneTab || !latestContainerEnabled || !latestSavedSessionId) return;
 
     const targetWorkspaceId = workspaceState.activeWorkspaceId;
     const targetWorkspaceTabId = latestActiveTab.id;
     const targetPaneId = latestActiveTab.active_pane_id;
     const afterPaneTabId = latestActivePaneTab.id;
-    const targetSavedSessionId = latestSavedSession.id;
+    const targetSavedSessionId = latestSavedSessionId;
     const title = container.name?.trim() || container.id.slice(0, 12);
     const targetPaneTab = addPaneTabAfter(targetPaneId, afterPaneTabId);
     setTerminalError(null);
@@ -1661,6 +1778,15 @@ export function AppShell() {
         />
       ) : null}
 
+      {externalSshTunnelEditor ? (
+        <ExternalSshTunnelEditorDialog
+          host={externalSshSessions[externalSshTunnelEditor]?.host ?? ""}
+          initialOptions={externalSshOptionsById[externalSshTunnelEditor] ?? DEFAULT_EXTERNAL_SSH_OPTIONS}
+          onCancel={() => setExternalSshTunnelEditor(null)}
+          onSave={(options) => void saveExternalTunnelOptions(externalSshTunnelEditor, options)}
+        />
+      ) : null}
+
       <main className="zt-main">
         {terminalError ? <div className="zt-terminal-error">{terminalError}</div> : null}
         <WorkspaceStage
@@ -1794,22 +1920,35 @@ export function AppShell() {
         }}
         containers={{
           enabled: activeSshContainersEnabled,
-          sessionName: activeSavedSession?.type === "ssh" ? activeSavedSession.name : null,
+          editableRuntime: Boolean(activeExternalSshSession),
+          runtime: activeExternalSshOptions?.container?.runtime ?? activeSavedSession?.ssh_options?.container?.runtime ?? null,
+          sessionName: activeSavedSession?.type === "ssh" ? activeSavedSession.name : activeExternalSshSession?.name ?? null,
           target: activeSavedSession?.type === "ssh"
             ? `${activeSavedSession.username}@${activeSavedSession.host}:${activeSavedSession.port}`
-            : null,
+            : activeExternalSshSession
+              ? `${activeExternalSshSession.username}@${activeExternalSshSession.host}:${activeExternalSshSession.port}`
+              : null,
           items: containerPanelState.items,
           loading: containerPanelState.loading,
           error: containerPanelState.error,
           onEnter: enterSshContainer,
           onRefresh: refreshActiveSshContainers,
+          onRuntimeChange: changeExternalContainerRuntime,
         }}
         tunnels={{
-          sessionName: activeSavedSession?.type === "ssh" ? activeSavedSession.name : null,
+          editable: Boolean(activeExternalSshSession),
+          needsReconnect: activeExternalSshSession ? Boolean(externalSshTunnelNeedsReconnect[activeExternalSshSession.id]) : false,
+          sessionName: activeSavedSession?.type === "ssh" ? activeSavedSession.name : activeExternalSshSession?.name ?? null,
           target: activeSavedSession?.type === "ssh"
             ? `${activeSavedSession.username}@${activeSavedSession.host}:${activeSavedSession.port}`
-            : null,
+            : activeExternalSshSession
+              ? `${activeExternalSshSession.username}@${activeExternalSshSession.host}:${activeExternalSshSession.port}`
+              : null,
           items: activeSshTunnels,
+          onEdit: () => {
+            if (activeExternalSshSession) setExternalSshTunnelEditor(activeExternalSshSession.id);
+          },
+          onReconnect: reconnectActiveExternalSsh,
         }}
         transfers={{
           tasks: transfers,
@@ -1822,6 +1961,61 @@ export function AppShell() {
         language={language}
         onActiveToolChange={toggleRightTool}
       />
+    </div>
+  );
+}
+
+function ExternalSshTunnelEditorDialog({
+  host,
+  initialOptions,
+  onCancel,
+  onSave,
+}: {
+  host: string;
+  initialOptions: SshOptions;
+  onCancel: () => void;
+  onSave: (options: SshOptions) => void;
+}) {
+  const [sshOptions, setSshOptions] = useState<SshOptions>(initialOptions);
+  const [newTunnelMode, setNewTunnelMode] = useState<SshTunnelMode>("host_service");
+
+  return (
+    <div className="zt-session-modal-backdrop">
+      <div
+        className="zt-session-dialog zt-session-editor-dialog zt-transient-tunnel-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="临时 SSH 隧道"
+      >
+        <header>
+          <strong>临时 SSH 隧道</strong>
+          <button type="button" aria-label="关闭临时 SSH 隧道编辑" onClick={onCancel}>
+            ×
+          </button>
+        </header>
+        <div className="zt-session-editor-body zt-transient-tunnel-body">
+          <div className="zt-session-editor-fields zt-transient-tunnel-fields">
+            <SshTunnelsSection
+              sshOptions={sshOptions}
+              host={host}
+              newTunnelMode={newTunnelMode}
+              onNewTunnelModeChange={setNewTunnelMode}
+              onSshOptionsChange={setSshOptions}
+            />
+          </div>
+        </div>
+        <div className="zt-session-editor-messages" aria-live="polite">
+          <p className="zt-settings-status">临时隧道保存后需要重连当前 SSH 才会生效。</p>
+        </div>
+        <footer>
+          <button type="button" onClick={onCancel}>
+            取消
+          </button>
+          <button type="button" aria-label="保存临时隧道" onClick={() => onSave(sshOptions)}>
+            保存临时隧道
+          </button>
+        </footer>
+      </div>
     </div>
   );
 }

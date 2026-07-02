@@ -82,7 +82,7 @@ interface TerminalState {
   writeTerminal: (runtimeSessionId: string, data: string) => Promise<void>;
   suggestCompletion: (runtimeSessionId: string, input: string, cursor: number) => Promise<CommandCompletionCandidate[]>;
   resizeTerminal: (runtimeSessionId: string, cols: number, rows: number) => Promise<void>;
-  closeTerminal: (runtimeSessionId: string) => Promise<void>;
+  closeTerminal: (runtimeSessionId: string, options?: { releaseExternalSession?: boolean }) => Promise<void>;
   appendOutput: (runtimeSessionId: string, data: string) => void;
 }
 
@@ -205,8 +205,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       };
     });
   },
-  async closeTerminal(runtimeSessionId) {
-    await invoke("terminal_close", { runtimeSessionId });
+  async closeTerminal(runtimeSessionId, options) {
+    await invoke("terminal_close", {
+      runtimeSessionId,
+      releaseExternalSession: options?.releaseExternalSession,
+    });
     releaseTerminalZmodemRuntime(runtimeSessionId);
     set((state) => {
       const { [runtimeSessionId]: _runtime, ...runtimes } = state.runtimes;

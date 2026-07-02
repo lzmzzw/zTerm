@@ -109,8 +109,24 @@ pub fn spawn_ssh_container_terminal(
     cols: u16,
     rows: u16,
 ) -> AppResult<SshTerminalSpawn> {
+    spawn_ssh_container_terminal_with_resolver(
+        session,
+        container_id,
+        cols,
+        rows,
+        &SystemSshSecretResolver,
+    )
+}
+
+pub fn spawn_ssh_container_terminal_with_resolver(
+    session: &SavedSession,
+    container_id: &str,
+    cols: u16,
+    rows: u16,
+    secrets: &dyn SshCommandSecretResolver,
+) -> AppResult<SshTerminalSpawn> {
     let args = build_ssh_container_arguments(session, container_id)?;
-    spawn_system_ssh_terminal_with_args(session, args, cols, rows, &SystemSshSecretResolver)
+    spawn_system_ssh_terminal_with_args(session, args, cols, rows, secrets)
 }
 
 fn spawn_system_ssh_terminal_with_args(

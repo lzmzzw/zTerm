@@ -29,7 +29,7 @@ export function SshTunnelsSection({
         <span>隧道</span>
         <button
           type="button"
-          aria-label="添加"
+          aria-label="添加隧道"
           onClick={() =>
             onSshOptionsChange({
               ...sshOptions,

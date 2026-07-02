@@ -38,4 +38,15 @@ describe("sshContainerApi", () => {
       },
     ]);
   });
+
+  it("passes the active runtime id only when transient SSH needs the existing shell", async () => {
+    invokeMock.mockResolvedValue([]);
+
+    await listSshContainers("external:launch-1", { runtimeSessionId: "runtime-external" });
+
+    expect(invokeMock).toHaveBeenCalledWith("ssh_container_list", {
+      savedSessionId: "external:launch-1",
+      runtimeSessionId: "runtime-external",
+    });
+  });
 });

@@ -47,6 +47,24 @@ const storeMocks = vi.hoisted(() => ({
   terminalOutputAccesses: 0,
   tauriEventHandlers: new Map<string, (event: { payload: unknown }) => void>(),
   pendingExternalLaunches: [] as Array<Record<string, unknown>>,
+  externalSshOptions: {
+    connect_timeout_ms: null,
+    keepalive_interval_ms: null,
+    proxy_command: null,
+    identity_file: null,
+    jump_hosts: [] as string[],
+    tunnels: [] as Array<Record<string, unknown>>,
+    container: {
+      enabled: true,
+      runtime: "docker",
+      container: "",
+      shell: "/bin/sh",
+      user: null,
+      workdir: null,
+    },
+  },
+  getExternalSshOptions: vi.fn(),
+  updateExternalSshOptions: vi.fn(),
   settingsState: {
     appSettings: {
       language: "zhCN",
@@ -191,8 +209,10 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 vi.mock("../features/terminal/externalLaunchApi", () => ({
+  getExternalSshOptions: storeMocks.getExternalSshOptions,
   isExternalSessionId: (value: string | null | undefined) => typeof value === "string" && value.startsWith("external:"),
   takePendingExternalLaunches: vi.fn(async () => storeMocks.pendingExternalLaunches),
+  updateExternalSshOptions: storeMocks.updateExternalSshOptions,
 }));
 
 vi.mock("../features/ai/AiPanel", () => ({
@@ -896,6 +916,30 @@ describe("AppShell", () => {
     storeMocks.aiAffectedDomainsHandler = null;
     storeMocks.tauriEventHandlers.clear();
     storeMocks.pendingExternalLaunches = [];
+    storeMocks.externalSshOptions = {
+      connect_timeout_ms: null,
+      keepalive_interval_ms: null,
+      proxy_command: null,
+      identity_file: null,
+      jump_hosts: [],
+      tunnels: [],
+      container: {
+        enabled: true,
+        runtime: "docker",
+        container: "",
+        shell: "/bin/sh",
+        user: null,
+        workdir: null,
+      },
+    };
+    storeMocks.getExternalSshOptions.mockImplementation(async () => storeMocks.externalSshOptions);
+    storeMocks.updateExternalSshOptions.mockImplementation(async (_sessionId: string, nextOptions: Record<string, unknown>) => {
+      storeMocks.externalSshOptions = {
+        ...storeMocks.externalSshOptions,
+        ...nextOptions,
+      };
+      return storeMocks.externalSshOptions;
+    });
     storeMocks.addPaneTab.mockReturnValue({
       id: "pane-1-tab-created",
       title: "新建终端",
@@ -1152,6 +1196,167 @@ describe("AppShell", () => {
     );
     expect(storeMocks.listFiles).toHaveBeenCalledWith("external:launch-1", "/srv/app");
     expect(storeMocks.loadTransfers).toHaveBeenCalledWith("external:launch-1");
+
+    view.unmount();
+  });
+
+  it("shows transient SSH container and tunnel tools and updates the selected container runtime", async () => {
+    storeMocks.pendingExternalLaunches = [
+      {
+        id: "external:launch-1",
+        name: "ops@cloud.example.test:2200",
+        host: "cloud.example.test",
+        port: 2200,
+        username: "ops",
+        auto_open_sftp: false,
+        remote_path: "/",
+      },
+    ];
+    storeMocks.workspaceState.tabs = [
+      {
+        id: "tab-1",
+        title: "ops@cloud.example.test:2200",
+        active_pane_id: "pane-1",
+        root: {
+          kind: "leaf",
+          id: "pane-1",
+          title: "ops@cloud.example.test:2200",
+          runtime_session_id: "runtime-external",
+          saved_session_id: "external:launch-1",
+          active_terminal_tab_id: "pane-1-tab-1",
+          terminal_tabs: [
+            {
+              id: "pane-1-tab-1",
+              title: "ops@cloud.example.test:2200",
+              runtime_session_id: "runtime-external",
+              saved_session_id: "external:launch-1",
+              connection_source: "external_ssh",
+            },
+          ],
+        },
+      },
+    ];
+
+    const view = render(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.getExternalSshOptions).toHaveBeenCalledWith("external:launch-1");
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).not.toBe(null);
+
+    await clickButton(view.container, "SSH 容器");
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.listSshContainers).toHaveBeenCalledWith("external:launch-1", {
+      runtimeSessionId: "runtime-external",
+    });
+    expect(view.container.querySelector('[aria-label="容器运行时"]')?.textContent).toContain("Docker");
+
+    await act(async () => {
+      (view.container.querySelector('[aria-label="容器运行时"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      (document.body.querySelector('[role="option"][data-value="podman"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.updateExternalSshOptions).toHaveBeenCalledWith(
+      "external:launch-1",
+      expect.objectContaining({
+        container: expect.objectContaining({ enabled: true, runtime: "podman" }),
+      }),
+    );
+    expect(storeMocks.listSshContainers).toHaveBeenLastCalledWith("external:launch-1", {
+      runtimeSessionId: "runtime-external",
+    });
+
+    view.unmount();
+  });
+
+  it("edits transient SSH tunnels in a tunnel-only dialog and marks them as requiring reconnect", async () => {
+    storeMocks.pendingExternalLaunches = [
+      {
+        id: "external:launch-1",
+        name: "ops@cloud.example.test:2200",
+        host: "cloud.example.test",
+        port: 2200,
+        username: "ops",
+        auto_open_sftp: false,
+        remote_path: "/",
+      },
+    ];
+    storeMocks.workspaceState.tabs = [
+      {
+        id: "tab-1",
+        title: "ops@cloud.example.test:2200",
+        active_pane_id: "pane-1",
+        root: {
+          kind: "leaf",
+          id: "pane-1",
+          title: "ops@cloud.example.test:2200",
+          runtime_session_id: "runtime-external",
+          saved_session_id: "external:launch-1",
+          active_terminal_tab_id: "pane-1-tab-1",
+          terminal_tabs: [
+            {
+              id: "pane-1-tab-1",
+              title: "ops@cloud.example.test:2200",
+              runtime_session_id: "runtime-external",
+              saved_session_id: "external:launch-1",
+              connection_source: "external_ssh",
+            },
+          ],
+        },
+      },
+    ];
+
+    const view = render(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await clickButton(view.container, "SSH 隧道");
+    expect(view.container.querySelector(".zt-transient-tunnel-panel")).not.toBe(null);
+    expect(view.container.querySelector(".zt-transient-tunnel-actions")).not.toBe(null);
+    expect(view.container.textContent).toContain("当前 SSH 连接没有配置隧道");
+
+    await clickButton(view.container, "添加临时 SSH 隧道");
+    const dialog = view.container.querySelector('[role="dialog"]');
+    expect(dialog?.classList.contains("zt-transient-tunnel-dialog")).toBe(true);
+    expect(dialog?.querySelector(".zt-transient-tunnel-body")).not.toBe(null);
+    expect(dialog?.textContent).toContain("临时 SSH 隧道");
+    expect(dialog?.textContent).toContain("添加隧道");
+    expect(dialog?.querySelector('[aria-label="认证方式"]')).toBe(null);
+    expect(dialog?.querySelector('input[aria-label="主机"]')).toBe(null);
+
+    await clickButton(view.container, "添加隧道");
+    await clickButton(view.container, "保存临时隧道");
+
+    expect(storeMocks.updateExternalSshOptions).toHaveBeenCalledWith(
+      "external:launch-1",
+      expect.objectContaining({
+        tunnels: [
+          expect.objectContaining({
+            mode: "host_service",
+            kind: "local",
+            remote_host: "cloud.example.test",
+          }),
+        ],
+      }),
+    );
+    expect(view.container.textContent).toContain("重连后生效");
+    expect(view.container.querySelector('[aria-label="重连临时 SSH"]')).not.toBe(null);
 
     view.unmount();
   });

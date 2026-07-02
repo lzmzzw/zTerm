@@ -1222,6 +1222,22 @@ button {
   white-space: nowrap;
 }
 
+.zt-transient-tunnel-panel {
+  grid-template-rows: none;
+  grid-auto-rows: max-content;
+  align-content: start;
+  overflow: auto;
+}
+
+.zt-transient-tunnel-actions {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.zt-transient-tunnel-actions .zt-secondary-button {
+  flex: 0 0 auto;
+}
+
 .zt-tool-rail {
   display: flex;
   flex-direction: column;
@@ -4253,6 +4269,35 @@ button {
   color: var(--zt-text-primary);
 }
 
+.zt-transient-tunnel-dialog {
+  width: min(920px, calc(100vw - 96px));
+  height: min(720px, calc(100vh - 96px));
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr) auto 64px;
+}
+
+.zt-transient-tunnel-dialog .zt-transient-tunnel-body {
+  grid-row: 2;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.zt-transient-tunnel-dialog .zt-transient-tunnel-fields {
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+}
+
+.zt-transient-tunnel-dialog .zt-session-editor-messages {
+  grid-row: 3;
+}
+
+.zt-transient-tunnel-dialog footer {
+  grid-row: 4;
+}
+
 .zt-file-transfer-dialog button svg {
   flex: 0 0 auto;
   stroke: currentColor;
@@ -6172,6 +6217,12 @@ button {
     height: min(var(--zt-dialog-height-large), calc(100vh - 48px));
   }
 
+  .zt-transient-tunnel-dialog {
+    width: min(920px, calc(100vw - 32px));
+    height: min(720px, calc(100vh - 48px));
+    grid-template-rows: 52px minmax(0, 1fr) auto auto;
+  }
+
   .zt-workspace-preview-dialog {
     width: min(var(--zt-dialog-width-large), calc(100vw - 32px));
     height: min(var(--zt-dialog-height-large), calc(100vh - 48px));
@@ -6244,6 +6295,10 @@ button {
   }
 
   .zt-session-editor-fields {
+    padding: 12px;
+  }
+
+  .zt-transient-tunnel-dialog .zt-transient-tunnel-fields {
     padding: 12px;
   }
 

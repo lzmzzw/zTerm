@@ -56,6 +56,8 @@ pub fn run() {
             commands::credential::llm_provider_test_draft_stream,
             commands::credential::llm_provider_test_draft_cancel,
             commands::external_launch::external_launch_take_pending,
+            commands::external_launch::external_launch_get_ssh_options,
+            commands::external_launch::external_launch_update_ssh_options,
             commands::ai::ai_chat,
             commands::ai::ai_chat_stream,
             commands::ai::ai_chat_cancel,

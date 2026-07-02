@@ -182,19 +182,29 @@ pub fn terminal_open_ssh_container(
     container_name: Option<String>,
 ) -> AppResult<RuntimeSessionInfo> {
     let storage = state.storage();
-    let session = get_session(storage.as_ref(), &saved_session_id)?;
+    let is_external = is_external_session_id(&saved_session_id);
+    let session = session_for_terminal(&state, &saved_session_id)?;
     if session.session_type != SessionType::Ssh {
         return Err(AppError::unsupported("进入容器只支持 SSH 会话"));
     }
-    let (session, mut auth_secrets) = resolve_ssh_jump_context(storage.as_ref(), &session)?;
+    let (session, mut auth_secrets) = if is_external {
+        (session, Vec::new())
+    } else {
+        resolve_ssh_jump_context(storage.as_ref(), &session)?
+    };
     let manager = state.terminal_manager();
-    let opened = manager.open_ssh_container_session(
+    let secrets = state
+        .external_launch_service()
+        .composite_secret_resolver(state.credential_service());
+    let opened = manager.open_ssh_container_session_with_resolver(
         &session,
         pane_id,
         container_id,
         container_name,
         120,
         32,
+        &secrets,
+        !is_external,
     )?;
     if let Some(secret) = opened.auth_secret {
         auth_secrets.push(AuthPromptSecret::new(ssh_prompt_target(&session), secret));
@@ -334,6 +344,7 @@ pub fn terminal_resize(
 pub fn terminal_close(
     state: State<'_, AppState>,
     runtime_session_id: String,
+    release_external_session: Option<bool>,
 ) -> AppResult<TerminalClosed> {
     let runtime_info = state
         .terminal_manager()
@@ -347,7 +358,7 @@ pub fn terminal_close(
         .command_completion_service()
         .unregister_runtime(&runtime_session_id);
     if let Some(saved_session_id) = runtime_info.and_then(|info| info.saved_session_id) {
-        if is_external_session_id(&saved_session_id) {
+        if is_external_session_id(&saved_session_id) && release_external_session.unwrap_or(true) {
             state
                 .external_launch_service()
                 .remove_session(&saved_session_id);

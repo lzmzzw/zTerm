@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    models::session::{AuthMode, SavedSession, SessionType, SshOptions},
+    models::session::{AuthMode, SavedSession, SessionType, SshContainerOptions, SshOptions},
     services::{
         credential_service::CredentialService, ssh_command_service::SshCommandSecretResolver,
     },
@@ -125,7 +125,7 @@ impl ExternalLaunchService {
                     .filter(|value| !value.is_empty()),
                 jump_hosts: Vec::new(),
                 tunnels: Vec::new(),
-                container: None,
+                container: Some(default_external_container_options()),
             }),
             rdp_options: None,
             local_options: None,
@@ -186,6 +186,50 @@ impl ExternalLaunchService {
             .map_err(|_| AppError::terminal("external session lock was poisoned"))?
             .get(id)
             .map(|entry| entry.session.clone()))
+    }
+
+    pub fn get_ssh_options(&self, id: &str) -> AppResult<SshOptions> {
+        if !is_external_session_id(id) {
+            return Err(AppError::validation("只能读取临时 SSH 连接配置"));
+        }
+        let sessions = self
+            .inner
+            .sessions
+            .lock()
+            .map_err(|_| AppError::terminal("external session lock was poisoned"))?;
+        let entry = sessions
+            .get(id)
+            .ok_or_else(|| AppError::validation("临时 SSH 连接不存在"))?;
+        Ok(entry
+            .session
+            .ssh_options
+            .clone()
+            .unwrap_or_else(default_external_ssh_options))
+    }
+
+    pub fn update_ssh_options(&self, id: &str, next_options: SshOptions) -> AppResult<SshOptions> {
+        if !is_external_session_id(id) {
+            return Err(AppError::validation("只能更新临时 SSH 连接配置"));
+        }
+        let mut sessions = self
+            .inner
+            .sessions
+            .lock()
+            .map_err(|_| AppError::terminal("external session lock was poisoned"))?;
+        let entry = sessions
+            .get_mut(id)
+            .ok_or_else(|| AppError::validation("临时 SSH 连接不存在"))?;
+        let mut options = entry
+            .session
+            .ssh_options
+            .clone()
+            .unwrap_or_else(default_external_ssh_options);
+        options.tunnels = next_options.tunnels;
+        options.container = next_options
+            .container
+            .or(Some(default_external_container_options()));
+        entry.session.ssh_options = Some(options.clone());
+        Ok(options)
     }
 
     pub fn remove_session(&self, id: &str) {
@@ -933,6 +977,29 @@ fn required_text(label: &str, value: impl AsRef<str>) -> AppResult<String> {
     Ok(value.to_string())
 }
 
+fn default_external_ssh_options() -> SshOptions {
+    SshOptions {
+        connect_timeout_ms: None,
+        keepalive_interval_ms: None,
+        proxy_command: None,
+        identity_file: None,
+        jump_hosts: Vec::new(),
+        tunnels: Vec::new(),
+        container: Some(default_external_container_options()),
+    }
+}
+
+fn default_external_container_options() -> SshContainerOptions {
+    SshContainerOptions {
+        enabled: true,
+        runtime: "docker".to_string(),
+        container: String::new(),
+        shell: Some("/bin/sh".to_string()),
+        user: None,
+        workdir: None,
+    }
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -946,6 +1013,7 @@ mod tests {
         is_external_session_id, parse_external_ssh_launch_args,
         parse_external_ssh_launch_args_inner, ExternalLaunchService,
     };
+    use crate::models::session::{SshContainerOptions, SshOptions, SshTunnel, SshTunnelKind};
 
     #[test]
     fn parses_recommended_external_ssh_cli_without_leaking_password_to_event() {
@@ -1280,5 +1348,121 @@ mod tests {
             .get_session(&launch.id)
             .expect("lookup should succeed")
             .is_none());
+    }
+
+    #[test]
+    fn transient_session_defaults_to_enabled_docker_container_options() {
+        let service = ExternalLaunchService::default();
+        let request = parse_external_ssh_launch_args([
+            "zTerm.exe",
+            "--external-ssh",
+            "--host",
+            "cloud.example.test",
+            "--user",
+            "ops",
+            "--password",
+            "secret-value",
+        ])
+        .expect("args should parse")
+        .expect("request should exist");
+        let launch = service
+            .register_request(request)
+            .expect("transient launch should register");
+
+        let options = service
+            .get_ssh_options(&launch.id)
+            .expect("external ssh options should load");
+        let container = options
+            .container
+            .expect("container should be enabled by default");
+
+        assert!(container.enabled);
+        assert_eq!(container.runtime, "docker");
+        assert_eq!(container.shell.as_deref(), Some("/bin/sh"));
+        assert!(options.tunnels.is_empty());
+    }
+
+    #[test]
+    fn transient_ssh_options_update_only_mutable_runtime_fields() {
+        let service = ExternalLaunchService::default();
+        let request = parse_external_ssh_launch_args([
+            "zTerm.exe",
+            "--external-ssh",
+            "--host",
+            "cloud.example.test",
+            "--user",
+            "ops",
+            "--password",
+            "secret-value",
+            "--identity-file",
+            "C:\\Users\\ops\\.ssh\\id_ed25519",
+        ])
+        .expect("args should parse")
+        .expect("request should exist");
+        let launch = service
+            .register_request(request)
+            .expect("transient launch should register");
+
+        let updated = service
+            .update_ssh_options(
+                &launch.id,
+                SshOptions {
+                    connect_timeout_ms: Some(1),
+                    keepalive_interval_ms: Some(2),
+                    proxy_command: Some("ignored".to_string()),
+                    identity_file: None,
+                    jump_hosts: vec!["ignored".to_string()],
+                    tunnels: vec![SshTunnel {
+                        mode: Some("host_service".to_string()),
+                        name: Some("管理后台".to_string()),
+                        kind: SshTunnelKind::Local,
+                        auto_open: true,
+                        bind_address: Some("127.0.0.1".to_string()),
+                        local_port: Some(18080),
+                        remote_host: Some("127.0.0.1".to_string()),
+                        remote_port: Some(8080),
+                    }],
+                    container: Some(SshContainerOptions {
+                        enabled: true,
+                        runtime: "podman".to_string(),
+                        container: String::new(),
+                        shell: Some("/bin/sh".to_string()),
+                        user: None,
+                        workdir: None,
+                    }),
+                },
+            )
+            .expect("external options should update");
+        let session = service
+            .get_session(&launch.id)
+            .expect("lookup should succeed")
+            .expect("session should remain");
+        let session_options = session.ssh_options.expect("ssh options should remain");
+
+        assert_eq!(updated.tunnels.len(), 1);
+        assert_eq!(
+            updated
+                .container
+                .as_ref()
+                .map(|container| container.runtime.as_str()),
+            Some("podman")
+        );
+        assert_eq!(
+            session_options.identity_file.as_deref(),
+            Some("C:\\Users\\ops\\.ssh\\id_ed25519")
+        );
+        assert!(session_options.proxy_command.is_none());
+        assert!(session_options.jump_hosts.is_empty());
+    }
+
+    #[test]
+    fn transient_ssh_options_reject_non_external_ids() {
+        let service = ExternalLaunchService::default();
+
+        let error = service
+            .get_ssh_options("session-1")
+            .expect_err("saved sessions are not external launch options");
+
+        assert!(error.to_string().contains("临时 SSH"));
     }
 }

@@ -66,7 +66,7 @@ describe("terminalActions", () => {
 
     await actions.reconnectTerminal("pane-1", "pane-tab-1", "session-1", "runtime-1");
 
-    expect(deps.closeTerminal).toHaveBeenCalledWith("runtime-1");
+    expect(deps.closeTerminal).toHaveBeenCalledWith("runtime-1", { releaseExternalSession: true });
     expect(deps.updatePaneTerminalTab).toHaveBeenNthCalledWith(
       1,
       "workspace-1",
@@ -105,7 +105,7 @@ describe("terminalActions", () => {
 
     await actions.reconnectTerminal("pane-1", "pane-tab-1", "session-1", "runtime-1");
 
-    expect(deps.closeTerminal).toHaveBeenCalledWith("runtime-1");
+    expect(deps.closeTerminal).toHaveBeenCalledWith("runtime-1", { releaseExternalSession: true });
     expect(deps.openTerminal).not.toHaveBeenCalled();
     expect(deps.openSshContainerTerminal).toHaveBeenCalledWith("session-1", "pane-1", "abc123", "api");
     expect(deps.updatePaneTerminalTab).toHaveBeenLastCalledWith("workspace-1", "tab-1", "pane-1", "pane-tab-1", {
@@ -115,6 +115,16 @@ describe("terminalActions", () => {
       restore_status: "connected",
       restore_error: null,
     });
+  });
+
+  it("keeps the transient external SSH session in memory while reconnecting", async () => {
+    const deps = dependencies();
+    const actions = createTerminalActions(deps);
+
+    await actions.reconnectTerminal("pane-1", "pane-tab-1", "external:launch-1", "runtime-1");
+
+    expect(deps.closeTerminal).toHaveBeenCalledWith("runtime-1", { releaseExternalSession: false });
+    expect(deps.openTerminal).toHaveBeenCalledWith("external:launch-1", "pane-1");
   });
 
   it("sends trimmed commands to the active runtime", async () => {

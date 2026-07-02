@@ -218,7 +218,10 @@ describe("terminalStore", () => {
 
     await useTerminalStore.getState().closeTerminal("runtime-1");
 
-    expect(invokeMock).toHaveBeenCalledWith("terminal_close", { runtimeSessionId: "runtime-1" });
+    expect(invokeMock).toHaveBeenCalledWith("terminal_close", {
+      runtimeSessionId: "runtime-1",
+      releaseExternalSession: undefined,
+    });
     expect(zmodemTransferMock.releaseTerminalZmodemRuntime).toHaveBeenCalledWith("runtime-1");
     expect(useTerminalStore.getState().runtimes["runtime-1"]).toBeUndefined();
     expect(useTerminalStore.getState().inputSerialByRuntime["runtime-1"]).toBeUndefined();
