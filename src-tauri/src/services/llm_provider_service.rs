@@ -586,7 +586,7 @@ fn tool_parameters(tool: &AiToolDefinition) -> Value {
                         },
                         "name": {
                             "type": "string",
-                            "description": "连接显示名称。"
+                            "description": "连接显示名称；如果用户未指定名称，使用主机名或 IP。不要把密码填到 name。"
                         },
                         "type": {
                             "type": "string",
@@ -622,7 +622,7 @@ fn tool_parameters(tool: &AiToolDefinition) -> Value {
                         },
                         "password": {
                             "type": "string",
-                            "description": "仅用于 SSH/RDP 密码认证的一次性密码；工具会写入本机凭据存储，不进入 SQLite。"
+                            "description": "用户提供的 SSH/RDP 登录密码必须填在这里；工具会写入本机凭据存储，不进入 SQLite。"
                         },
                         "url": {
                             "type": "string",
@@ -1191,8 +1191,12 @@ mod tests {
             "现有分组名称；不知道 group_id 但用户指定分组名时填写，工具会解析为已有分组。"
         );
         assert_eq!(
+            draft_properties["name"]["description"],
+            "连接显示名称；如果用户未指定名称，使用主机名或 IP。不要把密码填到 name。"
+        );
+        assert_eq!(
             draft_properties["password"]["description"],
-            "仅用于 SSH/RDP 密码认证的一次性密码；工具会写入本机凭据存储，不进入 SQLite。"
+            "用户提供的 SSH/RDP 登录密码必须填在这里；工具会写入本机凭据存储，不进入 SQLite。"
         );
 
         let responses_schema = openai_responses_tools(&tools);

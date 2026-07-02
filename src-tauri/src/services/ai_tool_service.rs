@@ -852,7 +852,7 @@ impl AiToolService {
         let draft_url = take_nonempty_string(draft_object, "url").or(top_url);
         let explicit_password = take_nonempty_string(draft_object, "password").or(top_password);
         let parsed_url = draft_url.as_deref().map(parse_session_url).transpose()?;
-        let password = explicit_password.or_else(|| {
+        let mut password = explicit_password.or_else(|| {
             parsed_url
                 .as_ref()
                 .and_then(|url| url.password.clone())
@@ -872,6 +872,9 @@ impl AiToolService {
         }
         if let Some(username) = top_username {
             set_missing_string(draft_object, "username", &username);
+        }
+        if password.is_none() {
+            password = recover_password_misplaced_in_name(draft_object);
         }
         let group_name = take_nonempty_string(draft_object, "group_name").or(top_group_name);
         if draft_object
@@ -1798,6 +1801,68 @@ fn set_missing_string(object: &mut Map<String, Value>, key: &str, value: &str) {
     if !has_value && !value.trim().is_empty() {
         object.insert(key.to_string(), Value::String(value.trim().to_string()));
     }
+}
+
+fn recover_password_misplaced_in_name(draft_object: &mut Map<String, Value>) -> Option<String> {
+    let session_type = draft_object.get("type").and_then(Value::as_str)?;
+    if !matches!(session_type, "ssh" | "rdp") {
+        return None;
+    }
+    let auth_mode = draft_object
+        .get("auth_mode")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if !auth_mode.is_empty() && auth_mode != "password" {
+        return None;
+    }
+    if draft_object
+        .get("credential_ref")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+    {
+        return None;
+    }
+
+    let name = draft_object
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let host = draft_object
+        .get("host")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let username = draft_object
+        .get("username")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if name == host || name.contains(host) || name.contains(username) {
+        return None;
+    }
+    if !looks_like_misplaced_secret(name) {
+        return None;
+    }
+
+    let password = name.to_string();
+    draft_object.insert("name".to_string(), Value::String(host.to_string()));
+    Some(password)
+}
+
+fn looks_like_misplaced_secret(value: &str) -> bool {
+    let value = value.trim();
+    value.len() >= 8
+        && !value.chars().any(char::is_whitespace)
+        && value.chars().any(|ch| {
+            matches!(
+                ch,
+                '@' | '!' | '#' | '$' | '%' | '^' | '&' | '*' | '+' | '='
+            )
+        })
 }
 
 fn resolve_session_group_id_by_name(
