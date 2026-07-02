@@ -620,6 +620,92 @@ fn tool_service_session_group_save_defaults_missing_ai_draft_fields() {
 }
 
 #[test]
+fn tool_service_session_save_resolves_existing_group_name_without_creating_duplicate_group() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let secrets = Arc::new(MemorySecretStore::default());
+    let credential_service = CredentialService::with_secret_store(store.clone(), secrets);
+    let service = AiToolService::with_credential_service(
+        Arc::new(FakeToolWriter::default()),
+        credential_service.clone(),
+    );
+    let group = zterm_lib::storage::sessions::save_session_group(
+        store.as_ref(),
+        zterm_lib::models::session::SessionGroupDraft {
+            id: Some("group-mobile-room".to_string()),
+            parent_id: None,
+            name: "移动机房".to_string(),
+            expanded: true,
+            sort_order: 0,
+        },
+    )
+    .expect("group should save");
+    zterm_lib::storage::sessions::save_session_group(
+        store.as_ref(),
+        zterm_lib::models::session::SessionGroupDraft {
+            id: Some("group-mobile-room-duplicate".to_string()),
+            parent_id: None,
+            name: "移动机房".to_string(),
+            expanded: true,
+            sort_order: 1,
+        },
+    )
+    .expect("duplicate existing group should save");
+
+    let outcome = service
+        .execute_if_allowed(
+            store.as_ref(),
+            AiToolPrepareRequest {
+                tool_id: "sessions.save".to_string(),
+                arguments: json!({
+                    "draft": {
+                        "name": "172.16.41.181",
+                        "type": "ssh",
+                        "group_name": "移动机房",
+                        "host": "172.16.41.181",
+                        "username": "ubuntu",
+                        "password": "ai-created-password"
+                    }
+                }),
+                reason: None,
+                requested_by: Some("test".to_string()),
+                conversation_id: None,
+                run_id: None,
+                step_id: None,
+            },
+            AiApprovalMode::Safe,
+        )
+        .expect("session save should resolve group_name");
+
+    assert!(outcome.pending_invocation.is_none());
+    let audit = outcome.audit_record.expect("audit should be recorded");
+    assert_eq!(audit.status, AiToolInvocationStatus::Succeeded);
+    assert!(audit
+        .result_summary
+        .as_deref()
+        .expect("result summary")
+        .contains("172.16.41.181"));
+
+    let sessions = list_sessions(store.as_ref()).expect("sessions should list");
+    assert_eq!(
+        sessions
+            .groups
+            .iter()
+            .filter(|item| item.name == "移动机房")
+            .count(),
+        2
+    );
+    let session = sessions
+        .sessions
+        .iter()
+        .find(|item| item.name == "172.16.41.181")
+        .expect("AI session should save");
+    assert_eq!(session.group_id.as_deref(), Some(group.id.as_str()));
+    assert_eq!(session.host, "172.16.41.181");
+    assert_eq!(session.username, "ubuntu");
+    assert!(session.credential_ref.is_some());
+}
+
+#[test]
 fn tool_service_session_save_stores_ai_supplied_password_without_persisting_plaintext() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
     let secrets = Arc::new(MemorySecretStore::default());

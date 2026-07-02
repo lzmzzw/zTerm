@@ -270,7 +270,7 @@ impl AiToolService {
         approval_mode: AiApprovalMode,
     ) -> AppResult<(AiToolPendingInvocation, Value)> {
         let tool = tool_definition(&request.tool_id)?;
-        let arguments = self.prepare_arguments_for_tool(&tool.id, request.arguments)?;
+        let arguments = self.prepare_arguments_for_tool(store, &tool.id, request.arguments)?;
         reject_secret_argument_values(&arguments)?;
         validate_arguments(&tool.id, &arguments)?;
         let risk = assess_risk(&tool, &arguments);
@@ -794,13 +794,18 @@ impl AiToolService {
         }
     }
 
-    fn prepare_arguments_for_tool(&self, tool_id: &str, arguments: Value) -> AppResult<Value> {
+    fn prepare_arguments_for_tool(
+        &self,
+        store: &SqliteStore,
+        tool_id: &str,
+        arguments: Value,
+    ) -> AppResult<Value> {
         let arguments = normalized_arguments(arguments);
         if tool_id == "session_groups.save" {
             return self.prepare_session_group_save_arguments(arguments);
         }
         if tool_id == "sessions.save" {
-            return self.prepare_session_save_arguments(arguments);
+            return self.prepare_session_save_arguments(store, arguments);
         }
         Ok(arguments)
     }
@@ -824,7 +829,11 @@ impl AiToolService {
         Ok(arguments)
     }
 
-    fn prepare_session_save_arguments(&self, mut arguments: Value) -> AppResult<Value> {
+    fn prepare_session_save_arguments(
+        &self,
+        store: &SqliteStore,
+        mut arguments: Value,
+    ) -> AppResult<Value> {
         let Some(root) = arguments.as_object_mut() else {
             return Ok(arguments);
         };
@@ -832,6 +841,7 @@ impl AiToolService {
         let top_username = take_nonempty_string(root, "username")
             .or_else(|| take_nonempty_string(root, "account"));
         let top_password = take_nonempty_string(root, "password");
+        let top_group_name = take_nonempty_string(root, "group_name");
         let Some(draft_value) = root.get_mut("draft") else {
             return Ok(arguments);
         };
@@ -862,6 +872,20 @@ impl AiToolService {
         }
         if let Some(username) = top_username {
             set_missing_string(draft_object, "username", &username);
+        }
+        let group_name = take_nonempty_string(draft_object, "group_name").or(top_group_name);
+        if draft_object
+            .get("group_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
+        {
+            if let Some(group_name) = group_name {
+                if let Some(group_id) = resolve_session_group_id_by_name(store, &group_name)? {
+                    draft_object.insert("group_id".to_string(), Value::String(group_id));
+                }
+            }
         }
         if password.is_some() {
             set_missing_string(draft_object, "auth_mode", "password");
@@ -1773,6 +1797,30 @@ fn set_missing_string(object: &mut Map<String, Value>, key: &str, value: &str) {
         .is_some_and(|value| !value.is_empty());
     if !has_value && !value.trim().is_empty() {
         object.insert(key.to_string(), Value::String(value.trim().to_string()));
+    }
+}
+
+fn resolve_session_group_id_by_name(
+    store: &SqliteStore,
+    group_name: &str,
+) -> AppResult<Option<String>> {
+    let group_name = required_text("分组名称", group_name)?;
+    let sessions = list_sessions(store)?;
+    let exact = sessions
+        .groups
+        .iter()
+        .find(|group| group.name.trim() == group_name)
+        .or_else(|| {
+            sessions
+                .groups
+                .iter()
+                .find(|group| group.name.trim().eq_ignore_ascii_case(&group_name))
+        });
+    match exact {
+        Some(group) => Ok(Some(group.id.clone())),
+        None => Err(AppError::validation(format!(
+            "未找到会话分组：{group_name}，请先创建分组或提供 group_id"
+        ))),
     }
 }
 

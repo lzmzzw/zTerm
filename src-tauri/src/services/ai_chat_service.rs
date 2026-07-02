@@ -23,10 +23,14 @@ use crate::{
         llm_provider_service::{
             generate_text_stream, generate_tool_chat, run_text_generation_sync, run_tool_chat_sync,
             select_enabled_provider, ProviderChatMessage, ProviderTextStreamResult,
+            ProviderToolChatResponse,
         },
     },
     storage::sqlite::SqliteStore,
 };
+
+const MAX_TOOL_ROUNDS: usize = 5;
+const MAX_TOOL_CALLS_PER_ROUND: usize = 3;
 
 #[derive(Debug, Default, Clone)]
 pub struct AiChatService;
@@ -64,6 +68,26 @@ enum AiChatResponseSource {
     StreamPrompt(String),
 }
 
+struct ToolLoopResult {
+    last_message: String,
+    pending_invocations: Vec<AiToolPendingInvocation>,
+    executed_invocations: Vec<AiToolAuditRecord>,
+    tool_result_summaries: Vec<String>,
+    final_message_from_model: bool,
+}
+
+impl Default for ToolLoopResult {
+    fn default() -> Self {
+        Self {
+            last_message: String::new(),
+            pending_invocations: Vec::new(),
+            executed_invocations: Vec::new(),
+            tool_result_summaries: Vec::new(),
+            final_message_from_model: false,
+        }
+    }
+}
+
 impl AiChatService {
     pub fn chat_with_provider(
         &self,
@@ -90,61 +114,38 @@ impl AiChatService {
             },
         )?;
 
-        let tool_response = run_tool_chat_sync(
-            &provider,
-            &api_key,
-            &provider_messages,
-            &tools.definitions(),
+        let tool_definitions = tools.definitions();
+        let loop_result = run_tool_rounds_sync(
+            store,
+            tools,
+            provider_messages,
+            request.terminal_context.as_ref(),
+            &conversation_id,
+            approval_mode,
+            |messages| run_tool_chat_sync(&provider, &api_key, messages, &tool_definitions),
         )?;
-        let mut pending_invocations = Vec::new();
-        let mut executed_invocations = Vec::new();
-        let mut tool_result_summaries = Vec::new();
 
-        for tool_call in tool_response.tool_calls.iter().take(3) {
-            let arguments = captured_tool_arguments(
-                &tool_call.tool_id,
-                tool_call.arguments.clone(),
-                request.terminal_context.as_ref(),
-            );
-            let outcome = tools.execute_if_allowed(
-                store,
-                AiToolPrepareRequest {
-                    tool_id: tool_call.tool_id.clone(),
-                    arguments,
-                    reason: tool_call
-                        .reason
-                        .clone()
-                        .or_else(|| Some("AI function call".to_string())),
-                    requested_by: Some("ai_chat".to_string()),
-                    conversation_id: Some(conversation_id.clone()),
-                    run_id: None,
-                    step_id: Some(tool_call.id.clone()),
-                },
-                approval_mode,
-            )?;
-            if let Some(pending) = outcome.pending_invocation {
-                pending_invocations.push(pending);
-            }
-            if let Some(audit) = outcome.audit_record {
-                if let Some(summary) = audit.result_summary.as_deref() {
-                    tool_result_summaries.push(format!("{}: {}", audit.tool_id, summary));
-                }
-                executed_invocations.push(audit);
-            }
-        }
-
-        let response_message = if !pending_invocations.is_empty() {
-            if tool_response.message.trim().is_empty() {
+        let response_message = if !loop_result.pending_invocations.is_empty() {
+            if loop_result.last_message.trim().is_empty() {
                 "AI 请求执行工具，等待人工确认。".to_string()
             } else {
-                tool_response.message
+                redact_sensitive(&loop_result.last_message)
             }
-        } else if !tool_result_summaries.is_empty() {
-            summarize_tool_results(&provider, &api_key, &message, &tool_result_summaries)
-        } else if tool_response.message.trim().is_empty() {
+        } else if loop_result.final_message_from_model
+            && !loop_result.last_message.trim().is_empty()
+        {
+            redact_sensitive(&loop_result.last_message)
+        } else if !loop_result.tool_result_summaries.is_empty() {
+            summarize_tool_results(
+                &provider,
+                &api_key,
+                &message,
+                &loop_result.tool_result_summaries,
+            )
+        } else if loop_result.last_message.trim().is_empty() {
             "AI 未返回可展示内容。".to_string()
         } else {
-            redact_sensitive(&tool_response.message)
+            redact_sensitive(&loop_result.last_message)
         };
 
         conversation_service.append_message(
@@ -163,11 +164,11 @@ impl AiChatService {
             provider_name: provider.name,
             model: provider.model,
             message: response_message,
-            pending_invocations,
-            executed_invocations,
+            pending_invocations: loop_result.pending_invocations,
+            executed_invocations: loop_result.executed_invocations,
             response_redacted: false,
             context_used: request.terminal_context.is_some() || !request.history.is_empty(),
-            tool_count: tools.definitions().len(),
+            tool_count: tool_definitions.len(),
             generated_at_ms: now_ms(),
         })
     }
@@ -217,50 +218,32 @@ impl AiChatService {
         mut on_delta: impl FnMut(String) -> AppResult<()> + Send,
     ) -> AppResult<AiChatStreamRunResult> {
         let tool_definitions = tools.definitions();
-        let tool_response = tokio::select! {
-            _ = &mut cancel => return Ok(AiChatStreamRunResult::Cancelled),
-            response = generate_tool_chat(
-                &work.provider,
-                &work.api_key,
-                &work.provider_messages,
-                &tool_definitions,
-            ) => response?,
-        };
+        let mut provider_messages = work.provider_messages.clone();
+        let mut loop_result = ToolLoopResult::default();
 
-        let mut pending_invocations = Vec::new();
-        let mut executed_invocations = Vec::new();
-        let mut tool_result_summaries = Vec::new();
+        for _ in 0..MAX_TOOL_ROUNDS {
+            let tool_response = tokio::select! {
+                _ = &mut cancel => return Ok(AiChatStreamRunResult::Cancelled),
+                response = generate_tool_chat(
+                    &work.provider,
+                    &work.api_key,
+                    &provider_messages,
+                    &tool_definitions,
+                ) => response?,
+            };
 
-        for tool_call in tool_response.tool_calls.iter().take(3) {
-            let arguments = captured_tool_arguments(
-                &tool_call.tool_id,
-                tool_call.arguments.clone(),
-                work.terminal_context.as_ref(),
-            );
-            let outcome = tools.execute_if_allowed(
+            let should_continue = handle_tool_round(
                 store.as_ref(),
-                AiToolPrepareRequest {
-                    tool_id: tool_call.tool_id.clone(),
-                    arguments,
-                    reason: tool_call
-                        .reason
-                        .clone()
-                        .or_else(|| Some("AI function call".to_string())),
-                    requested_by: Some("ai_chat".to_string()),
-                    conversation_id: Some(work.conversation_id.clone()),
-                    run_id: None,
-                    step_id: Some(tool_call.id.clone()),
-                },
+                &tools,
+                &mut provider_messages,
+                &mut loop_result,
+                tool_response,
+                work.terminal_context.as_ref(),
+                &work.conversation_id,
                 work.approval_mode,
             )?;
-            if let Some(pending) = outcome.pending_invocation {
-                pending_invocations.push(pending);
-            }
-            if let Some(audit) = outcome.audit_record {
-                if let Some(summary) = audit.result_summary.as_deref() {
-                    tool_result_summaries.push(format!("{}: {}", audit.tool_id, summary));
-                }
-                executed_invocations.push(audit);
+            if !should_continue {
+                break;
             }
         }
 
@@ -270,9 +253,10 @@ impl AiChatService {
 
         let response_source = stream_response_source(
             &work,
-            &tool_response.message,
-            &pending_invocations,
-            &tool_result_summaries,
+            &loop_result.last_message,
+            &loop_result.pending_invocations,
+            &loop_result.tool_result_summaries,
+            loop_result.final_message_from_model,
         );
         let response_message = match response_source {
             AiChatResponseSource::Immediate(message) => {
@@ -312,13 +296,141 @@ impl AiChatService {
 
         Ok(AiChatStreamRunResult::Complete(AiChatStreamComplete {
             message: response_message,
-            pending_invocations,
-            executed_invocations,
+            pending_invocations: loop_result.pending_invocations,
+            executed_invocations: loop_result.executed_invocations,
             context_used: work.context_used,
             tool_count: tool_definitions.len(),
             generated_at_ms: now_ms(),
         }))
     }
+}
+
+fn run_tool_rounds_sync(
+    store: &SqliteStore,
+    tools: &AiToolService,
+    provider_messages: Vec<ProviderChatMessage>,
+    terminal_context: Option<&AiTerminalContextRequest>,
+    conversation_id: &str,
+    approval_mode: AiApprovalMode,
+    mut run_tool_chat: impl FnMut(&[ProviderChatMessage]) -> AppResult<ProviderToolChatResponse>,
+) -> AppResult<ToolLoopResult> {
+    let mut provider_messages = provider_messages;
+    let mut result = ToolLoopResult::default();
+    for _ in 0..MAX_TOOL_ROUNDS {
+        let tool_response = run_tool_chat(&provider_messages)?;
+        let should_continue = handle_tool_round(
+            store,
+            tools,
+            &mut provider_messages,
+            &mut result,
+            tool_response,
+            terminal_context,
+            conversation_id,
+            approval_mode,
+        )?;
+        if !should_continue {
+            break;
+        }
+    }
+    Ok(result)
+}
+
+fn handle_tool_round(
+    store: &SqliteStore,
+    tools: &AiToolService,
+    provider_messages: &mut Vec<ProviderChatMessage>,
+    result: &mut ToolLoopResult,
+    tool_response: ProviderToolChatResponse,
+    terminal_context: Option<&AiTerminalContextRequest>,
+    conversation_id: &str,
+    approval_mode: AiApprovalMode,
+) -> AppResult<bool> {
+    result.last_message = tool_response.message.clone();
+    result.final_message_from_model = tool_response.tool_calls.is_empty();
+    if tool_response.tool_calls.is_empty() {
+        return Ok(false);
+    }
+
+    let mut round_summaries = Vec::new();
+    for tool_call in tool_response
+        .tool_calls
+        .iter()
+        .take(MAX_TOOL_CALLS_PER_ROUND)
+    {
+        let arguments = captured_tool_arguments(
+            &tool_call.tool_id,
+            tool_call.arguments.clone(),
+            terminal_context,
+        );
+        let outcome = tools.execute_if_allowed(
+            store,
+            AiToolPrepareRequest {
+                tool_id: tool_call.tool_id.clone(),
+                arguments,
+                reason: tool_call
+                    .reason
+                    .clone()
+                    .or_else(|| Some("AI function call".to_string())),
+                requested_by: Some("ai_chat".to_string()),
+                conversation_id: Some(conversation_id.to_string()),
+                run_id: None,
+                step_id: Some(tool_call.id.clone()),
+            },
+            approval_mode,
+        )?;
+        if let Some(pending) = outcome.pending_invocation {
+            result.pending_invocations.push(pending);
+        }
+        if let Some(audit) = outcome.audit_record {
+            let summary = tool_observation_summary(&audit);
+            round_summaries.push(summary.clone());
+            result.tool_result_summaries.push(summary);
+            result.executed_invocations.push(audit);
+        }
+    }
+
+    if !result.pending_invocations.is_empty() {
+        return Ok(false);
+    }
+    if round_summaries.is_empty() {
+        return Ok(false);
+    }
+
+    provider_messages.push(ProviderChatMessage {
+        role: "assistant".to_string(),
+        content: if tool_response.message.trim().is_empty() {
+            "我将根据工具结果继续。".to_string()
+        } else {
+            redact_sensitive(&tool_response.message)
+        },
+    });
+    provider_messages.push(ProviderChatMessage {
+        role: "user".to_string(),
+        content: tool_observation_prompt(&round_summaries),
+    });
+    result.final_message_from_model = false;
+    Ok(true)
+}
+
+fn tool_observation_summary(audit: &AiToolAuditRecord) -> String {
+    let detail = audit
+        .result_summary
+        .as_deref()
+        .or(audit.error.as_deref())
+        .unwrap_or("工具未返回结果摘要。");
+    format!(
+        "{} [{}]: {}",
+        audit.tool_id,
+        audit.status.as_str(),
+        redact_sensitive(detail)
+    )
+}
+
+fn tool_observation_prompt(round_summaries: &[String]) -> String {
+    format!(
+        "工具执行结果（Observation）：\n{}\n\n如果用户请求尚未完成，请继续调用下一步工具；如果已完成，请给出最终答复。不要声称未执行的操作已完成。",
+        redact_sensitive(&round_summaries.join("\n"))
+    )
 }
 
 fn ensure_conversation(
@@ -508,6 +620,7 @@ fn stream_response_source(
     tool_response_message: &str,
     pending_invocations: &[AiToolPendingInvocation],
     tool_result_summaries: &[String],
+    final_message_from_model: bool,
 ) -> AiChatResponseSource {
     if !pending_invocations.is_empty() {
         let message = if tool_response_message.trim().is_empty() {
@@ -516,6 +629,9 @@ fn stream_response_source(
             redact_sensitive(tool_response_message)
         };
         return AiChatResponseSource::Immediate(message);
+    }
+    if final_message_from_model && !tool_response_message.trim().is_empty() {
+        return AiChatResponseSource::Immediate(redact_sensitive(tool_response_message));
     }
     if !tool_result_summaries.is_empty() {
         return AiChatResponseSource::StreamPrompt(tool_result_summary_prompt(
@@ -609,11 +725,186 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::{
+        error::AppResult,
+        models::session::SessionGroupDraft,
+        services::{
+            ai_tool_service::AiToolCommandWriter,
+            credential_service::{CredentialService, MemorySecretStore},
+            llm_provider_service::ProviderToolCall,
+        },
+        storage::sessions::{list_sessions, save_session_group},
+    };
+
+    struct FakeToolWriter;
+
+    impl AiToolCommandWriter for FakeToolWriter {
+        fn write_terminal(&self, _runtime_session_id: &str, _data: &str) -> AppResult<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn system_prompt_requires_tools_for_resource_mutations() {
         let prompt = super::system_prompt(None);
 
         assert!(prompt.contains("创建、修改、删除 zTerm 资源时只能调用提供的工具"));
         assert!(prompt.contains("只读取列表或上下文不等于完成变更"));
+    }
+
+    #[test]
+    fn tool_rounds_continue_after_observation_to_create_session() {
+        let store = SqliteStore::open_in_memory().expect("store should open");
+        let credential_service = CredentialService::with_secret_store(
+            Arc::new(SqliteStore::open_in_memory().expect("credential store should open")),
+            Arc::new(MemorySecretStore::default()),
+        );
+        let tools =
+            AiToolService::with_credential_service(Arc::new(FakeToolWriter), credential_service);
+        let group = save_session_group(
+            &store,
+            SessionGroupDraft {
+                id: Some("group-mobile-room".to_string()),
+                parent_id: None,
+                name: "移动机房".to_string(),
+                expanded: true,
+                sort_order: 0,
+            },
+        )
+        .expect("group should save");
+        let initial_messages = vec![ProviderChatMessage {
+            role: "user".to_string(),
+            content: "在移动机房分组下创建 172.16.41.181 连接".to_string(),
+        }];
+        let mut rounds = 0;
+
+        let result = run_tool_rounds_sync(
+            &store,
+            &tools,
+            initial_messages,
+            None,
+            "conversation-1",
+            AiApprovalMode::Safe,
+            |messages| {
+                rounds += 1;
+                match rounds {
+                    1 => Ok(ProviderToolChatResponse {
+                        message: "我先查看现有分组。".to_string(),
+                        tool_calls: vec![ProviderToolCall {
+                            id: "call-list".to_string(),
+                            tool_id: "sessions.list".to_string(),
+                            arguments: json!({}),
+                            reason: None,
+                        }],
+                    }),
+                    2 => {
+                        assert!(messages.iter().any(|message| {
+                            message.content.contains("工具执行结果（Observation）")
+                                && message.content.contains("sessions.list")
+                        }));
+                        Ok(ProviderToolChatResponse {
+                            message: "找到分组后创建连接。".to_string(),
+                            tool_calls: vec![ProviderToolCall {
+                                id: "call-save".to_string(),
+                                tool_id: "sessions.save".to_string(),
+                                arguments: json!({
+                                    "draft": {
+                                        "name": "172.16.41.181",
+                                        "type": "ssh",
+                                        "group_name": "移动机房",
+                                        "host": "172.16.41.181",
+                                        "username": "ubuntu",
+                                        "password": "ai-created-password"
+                                    }
+                                }),
+                                reason: None,
+                            }],
+                        })
+                    }
+                    3 => {
+                        assert!(messages.iter().any(|message| {
+                            message.content.contains("工具执行结果（Observation）")
+                                && message.content.contains("sessions.save")
+                        }));
+                        Ok(ProviderToolChatResponse {
+                            message: "已在移动机房分组下创建连接 172.16.41.181。".to_string(),
+                            tool_calls: Vec::new(),
+                        })
+                    }
+                    _ => panic!("tool loop should stop after final model message"),
+                }
+            },
+        )
+        .expect("tool loop should run");
+
+        assert_eq!(rounds, 3);
+        assert!(result.pending_invocations.is_empty());
+        assert!(result.final_message_from_model);
+        assert_eq!(
+            result.last_message,
+            "已在移动机房分组下创建连接 172.16.41.181。"
+        );
+        assert_eq!(result.executed_invocations.len(), 2);
+
+        let sessions = list_sessions(&store).expect("sessions should list");
+        assert_eq!(
+            sessions
+                .groups
+                .iter()
+                .filter(|item| item.name == "移动机房")
+                .count(),
+            1
+        );
+        let session = sessions
+            .sessions
+            .iter()
+            .find(|item| item.name == "172.16.41.181")
+            .expect("session should be created after second tool round");
+        assert_eq!(session.group_id.as_deref(), Some(group.id.as_str()));
+        assert_eq!(session.host, "172.16.41.181");
+        assert_eq!(session.username, "ubuntu");
+        assert!(session.credential_ref.is_some());
+    }
+
+    #[test]
+    fn tool_rounds_stop_after_five_model_tool_rounds() {
+        let store = SqliteStore::open_in_memory().expect("store should open");
+        let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+        let mut rounds = 0;
+
+        let result = run_tool_rounds_sync(
+            &store,
+            &tools,
+            vec![ProviderChatMessage {
+                role: "user".to_string(),
+                content: "持续读取会话列表".to_string(),
+            }],
+            None,
+            "conversation-1",
+            AiApprovalMode::Safe,
+            |_| {
+                rounds += 1;
+                Ok(ProviderToolChatResponse {
+                    message: format!("第 {rounds} 轮读取。"),
+                    tool_calls: vec![ProviderToolCall {
+                        id: format!("call-list-{rounds}"),
+                        tool_id: "sessions.list".to_string(),
+                        arguments: json!({}),
+                        reason: None,
+                    }],
+                })
+            },
+        )
+        .expect("tool loop should stop at max rounds");
+
+        assert_eq!(rounds, MAX_TOOL_ROUNDS);
+        assert_eq!(result.executed_invocations.len(), MAX_TOOL_ROUNDS);
+        assert!(result.pending_invocations.is_empty());
+        assert!(!result.final_message_from_model);
     }
 }

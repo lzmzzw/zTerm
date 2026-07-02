@@ -573,6 +573,89 @@ fn tool_parameters(tool: &AiToolDefinition) -> Value {
             "additionalProperties": false
         });
     }
+    if tool.id == "sessions.save" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "draft": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "更新已有连接时填写；新建连接时省略。"
+                        },
+                        "name": {
+                            "type": "string",
+                            "description": "连接显示名称。"
+                        },
+                        "type": {
+                            "type": "string",
+                            "enum": ["ssh", "local", "rdp"],
+                            "description": "连接类型；远程 Linux/服务器连接通常使用 ssh。"
+                        },
+                        "group_id": {
+                            "type": ["string", "null"],
+                            "description": "已有分组 ID；不知道时优先填写 group_name。"
+                        },
+                        "group_name": {
+                            "type": "string",
+                            "description": "现有分组名称；不知道 group_id 但用户指定分组名时填写，工具会解析为已有分组。"
+                        },
+                        "host": {
+                            "type": "string",
+                            "description": "SSH/RDP 主机名或 IP。"
+                        },
+                        "port": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 65535,
+                            "description": "端口；SSH 默认 22，RDP 默认 3389。"
+                        },
+                        "username": {
+                            "type": "string",
+                            "description": "登录用户名。"
+                        },
+                        "auth_mode": {
+                            "type": "string",
+                            "enum": ["password", "key", "agent", "none"],
+                            "description": "认证方式；提供密码时填 password。"
+                        },
+                        "password": {
+                            "type": "string",
+                            "description": "仅用于 SSH/RDP 密码认证的一次性密码；工具会写入本机凭据存储，不进入 SQLite。"
+                        },
+                        "url": {
+                            "type": "string",
+                            "description": "可选 ssh:// 或 rdp:// 连接 URL；可包含用户名、密码、主机和端口。"
+                        },
+                        "description": { "type": ["string", "null"] },
+                        "tags": { "type": "array", "items": { "type": "string" } },
+                        "sort_order": { "type": "integer" }
+                    },
+                    "required": ["name", "type"],
+                    "additionalProperties": true
+                },
+                "group_name": {
+                    "type": "string",
+                    "description": "现有分组名称；等价于 draft.group_name。"
+                },
+                "url": {
+                    "type": "string",
+                    "description": "可选 ssh:// 或 rdp:// 连接 URL。"
+                },
+                "username": {
+                    "type": "string",
+                    "description": "登录用户名；draft.username 缺失时使用。"
+                },
+                "password": {
+                    "type": "string",
+                    "description": "一次性登录密码；draft.password 缺失时使用。"
+                }
+            },
+            "required": ["draft"],
+            "additionalProperties": false
+        });
+    }
     if tool.id == "session_groups.save" {
         return json!({
             "type": "object",
@@ -1083,6 +1166,39 @@ mod tests {
         assert_eq!(
             responses_schema[0]["parameters"]["properties"]["draft"]["properties"]["name"]["type"],
             "string"
+        );
+    }
+
+    #[test]
+    fn session_save_tool_schema_exposes_connection_and_group_name_fields() {
+        let tools = vec![AiToolDefinition {
+            id: "sessions.save".to_string(),
+            title: "保存会话".to_string(),
+            description: "新增或更新 SSH/Local/RDP 会话配置".to_string(),
+            risk_level: RiskLevel::Medium,
+            requires_confirmation: false,
+        }];
+
+        let chat_schema = super::openai_chat_tools(&tools);
+        let draft_properties =
+            &chat_schema[0]["function"]["parameters"]["properties"]["draft"]["properties"];
+        assert_eq!(
+            draft_properties["type"]["enum"],
+            json!(["ssh", "local", "rdp"])
+        );
+        assert_eq!(
+            draft_properties["group_name"]["description"],
+            "现有分组名称；不知道 group_id 但用户指定分组名时填写，工具会解析为已有分组。"
+        );
+        assert_eq!(
+            draft_properties["password"]["description"],
+            "仅用于 SSH/RDP 密码认证的一次性密码；工具会写入本机凭据存储，不进入 SQLite。"
+        );
+
+        let responses_schema = openai_responses_tools(&tools);
+        assert_eq!(
+            responses_schema[0]["parameters"]["properties"]["draft"]["required"],
+            json!(["name", "type"])
         );
     }
 
