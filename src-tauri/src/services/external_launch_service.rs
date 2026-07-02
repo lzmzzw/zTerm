@@ -1,10 +1,13 @@
 // Author: Liz
 use std::{
     collections::{HashMap, VecDeque},
+    fs,
+    path::Path,
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -253,6 +256,17 @@ where
     I: IntoIterator<Item = S>,
     S: Into<String>,
 {
+    parse_external_ssh_launch_args_inner(args, None)
+}
+
+fn parse_external_ssh_launch_args_inner<I, S>(
+    args: I,
+    parent_command_line: Option<String>,
+) -> AppResult<Option<ExternalSshLaunchRequest>>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
     let mut args = args.into_iter().map(Into::into).collect::<Vec<_>>();
     if args.is_empty() {
         return Ok(None);
@@ -271,6 +285,7 @@ where
     let mut remote_path = "/".to_string();
     let mut explicit_external = false;
     let mut saw_external_client_option = false;
+    let mut saw_moba_file = false;
     let mut index = 0;
 
     while index < args.len() {
@@ -360,7 +375,15 @@ where
                 }
             }
             _ if lower_arg == "-newtab" || lower_arg == "-exec" => {
-                let value = take_value(&args, &mut index, &arg)?;
+                let value_index = index + 1;
+                let Some(first_value) = args.get(value_index) else {
+                    return Err(AppError::validation(format!("{arg} 缺少参数值")));
+                };
+                let (value, next_index) = if is_single_ssh_program_token(first_value) {
+                    (args[value_index..].join(" "), args.len())
+                } else {
+                    (first_value.clone(), index + 2)
+                };
                 if apply_nested_ssh_command(
                     &value,
                     &mut host,
@@ -371,6 +394,7 @@ where
                 )? {
                     saw_external_client_option = true;
                 }
+                index = next_index;
             }
             value if value.starts_with('-') => {
                 index += 1;
@@ -378,10 +402,35 @@ where
             value if value.starts_with('/') => {
                 index += 1;
             }
+            value if value.to_ascii_lowercase().ends_with(".moba") => {
+                apply_moba_file_target(
+                    value,
+                    &mut host,
+                    &mut port,
+                    &mut username,
+                    &mut identity_file,
+                )?;
+                saw_external_client_option = true;
+                saw_moba_file = true;
+                index += 1;
+            }
             value => {
                 apply_target(value, &mut host, &mut port, &mut username, &mut password)?;
                 index += 1;
             }
+        }
+    }
+
+    if saw_moba_file && password.is_none() {
+        let parent_command_line = parent_command_line.or_else(discover_parent_command_line);
+        if let Some(parent_command_line) = parent_command_line {
+            apply_bhost_multauth_command_line(
+                &parent_command_line,
+                &mut host,
+                &mut port,
+                &mut username,
+                &mut password,
+            )?;
         }
     }
 
@@ -409,6 +458,152 @@ fn take_value(args: &[String], index: &mut usize, label: &str) -> AppResult<Stri
     };
     *index += 2;
     Ok(value.clone())
+}
+
+#[cfg(all(windows, not(test)))]
+fn discover_parent_command_line() -> Option<String> {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let script = format!(
+        "$p=Get-CimInstance Win32_Process -Filter 'ProcessId = {}'; \
+         if ($p) {{ \
+           $pp=Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $p.ParentProcessId); \
+           if ($pp) {{ [Console]::Out.Write($pp.CommandLine) }} \
+         }}",
+        std::process::id()
+    );
+    let output = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+#[cfg(any(not(windows), test))]
+fn discover_parent_command_line() -> Option<String> {
+    None
+}
+
+fn apply_moba_file_target(
+    value: &str,
+    host: &mut Option<String>,
+    port: &mut Option<u16>,
+    username: &mut Option<String>,
+    identity_file: &mut Option<String>,
+) -> AppResult<()> {
+    let path = Path::new(value);
+    let text = fs::read_to_string(path)
+        .map_err(|error| AppError::validation(format!("读取 MobaXterm 会话文件失败: {error}")))?;
+    apply_moba_session_text(&text, host, port, username, identity_file)
+}
+
+fn apply_moba_session_text(
+    text: &str,
+    host: &mut Option<String>,
+    port: &mut Option<u16>,
+    username: &mut Option<String>,
+    identity_file: &mut Option<String>,
+) -> AppResult<()> {
+    for line in text.lines() {
+        let Some((session_name, definition)) = line.split_once('=') else {
+            continue;
+        };
+        let Some((_, after_marker)) = definition.split_once("#109#") else {
+            continue;
+        };
+        let fields_text = after_marker.split('#').next().unwrap_or_default();
+        let fields = fields_text.split('%').collect::<Vec<_>>();
+        let Some(parsed_host) = fields
+            .get(1)
+            .copied()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            continue;
+        };
+        *host = Some(required_text("主机", parsed_host)?);
+        if let Some(parsed_port) = fields.get(2).filter(|value| !value.trim().is_empty()) {
+            *port = Some(parse_port(parsed_port)?);
+        }
+        if let Some(parsed_username) = fields
+            .get(3)
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty() && *value != "<none>")
+        {
+            *username = Some(parsed_username.to_string());
+        } else if let Some(derived_username) = derive_moba_username(session_name) {
+            *username = Some(derived_username);
+        }
+        if let Some(parsed_identity) = fields
+            .get(15)
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty() && *value != "<none>")
+        {
+            *identity_file = Some(parsed_identity.to_string());
+        }
+        return Ok(());
+    }
+    Err(AppError::validation("MobaXterm 会话文件中未找到 SSH 会话"))
+}
+
+fn derive_moba_username(session_name: &str) -> Option<String> {
+    let name = session_name.trim();
+    let candidate = name
+        .split_once('@')
+        .map(|(left, _)| left)
+        .or_else(|| name.split_once('_').map(|(left, _)| left))
+        .unwrap_or(name)
+        .trim();
+    if candidate.is_empty() {
+        None
+    } else {
+        Some(candidate.to_string())
+    }
+}
+
+fn apply_bhost_multauth_command_line(
+    value: &str,
+    host: &mut Option<String>,
+    port: &mut Option<u16>,
+    username: &mut Option<String>,
+    password: &mut Option<String>,
+) -> AppResult<bool> {
+    let tokens = split_command_line(value);
+    let Some(program) = tokens.first() else {
+        return Ok(false);
+    };
+    if !program.to_ascii_lowercase().ends_with("bhmultauth.exe") {
+        return Ok(false);
+    }
+    let Some(zterm_index) = tokens
+        .iter()
+        .position(|token| is_zterm_program_token(token))
+    else {
+        return Ok(false);
+    };
+    if tokens.len() <= zterm_index + 4 {
+        return Ok(false);
+    }
+
+    *host = Some(required_text("主机", &tokens[zterm_index + 1])?);
+    *port = Some(parse_port(&tokens[zterm_index + 2])?);
+    *username = Some(clean_external_token(&tokens[zterm_index + 3]));
+    *password = Some(clean_external_token(&tokens[zterm_index + 4]));
+    Ok(true)
+}
+
+fn is_zterm_program_token(value: &str) -> bool {
+    let program = value
+        .trim_matches('"')
+        .trim_matches('\'')
+        .replace('/', "\\")
+        .to_ascii_lowercase();
+    program == "zterm.exe" || program.ends_with("\\zterm.exe")
 }
 
 fn skip_option_value(args: &[String], index: &mut usize) {
@@ -439,15 +634,7 @@ fn apply_nested_ssh_command(
     let Some(program) = tokens.first() else {
         return Ok(false);
     };
-    let program = program
-        .trim_matches('"')
-        .trim_matches('\'')
-        .to_ascii_lowercase();
-    if !matches!(program.as_str(), "ssh" | "ssh.exe")
-        && !program.ends_with("\\ssh.exe")
-        && !program.ends_with("/ssh")
-        && !program.ends_with("/ssh.exe")
-    {
+    if !is_ssh_program_token(program) {
         return Ok(false);
     }
 
@@ -542,6 +729,25 @@ fn split_command_line(value: &str) -> Vec<String> {
     tokens
 }
 
+fn is_single_ssh_program_token(value: &str) -> bool {
+    let tokens = split_command_line(value);
+    tokens.len() == 1
+        && tokens
+            .first()
+            .is_some_and(|item| is_ssh_program_token(item))
+}
+
+fn is_ssh_program_token(value: &str) -> bool {
+    let program = value
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_ascii_lowercase();
+    matches!(program.as_str(), "ssh" | "ssh.exe")
+        || program.ends_with("\\ssh.exe")
+        || program.ends_with("/ssh")
+        || program.ends_with("/ssh.exe")
+}
+
 fn apply_target(
     value: &str,
     host: &mut Option<String>,
@@ -555,17 +761,35 @@ fn apply_target(
         if url.scheme() != "ssh" {
             return Err(AppError::validation("外部启动只支持 ssh:// URL"));
         }
+        let url_username = clean_external_token(url.username());
+        let url_password = url.password().map(clean_external_token);
+        if url_username.starts_with("b64>>")
+            && url_password.as_deref().is_some_and(|item| !item.is_empty())
+        {
+            if let Some(parsed_host) = url.host_str() {
+                *host = Some(parsed_host.to_string());
+            }
+            if let Some(parsed_port) = url.port() {
+                *port = Some(parsed_port);
+            }
+            *username = Some(url_username);
+            *password = url_password;
+            return Ok(());
+        }
+        if apply_xshell_b64_username(&url_username, host, port, username, password)? {
+            return Ok(());
+        }
         if let Some(parsed_host) = url.host_str() {
             *host = Some(parsed_host.to_string());
         }
         if let Some(parsed_port) = url.port() {
             *port = Some(parsed_port);
         }
-        if !url.username().trim().is_empty() {
-            *username = Some(url.username().trim().to_string());
+        if !url_username.trim().is_empty() {
+            *username = Some(url_username);
         }
-        if let Some(parsed_password) = url.password() {
-            *password = Some(parsed_password.to_string());
+        if let Some(parsed_password) = url_password {
+            *password = Some(parsed_password);
         }
         return Ok(());
     }
@@ -589,6 +813,105 @@ fn apply_target(
         *port = Some(parsed_port);
     }
     Ok(())
+}
+
+fn apply_xshell_b64_username(
+    raw_username: &str,
+    host: &mut Option<String>,
+    port: &mut Option<u16>,
+    username: &mut Option<String>,
+    password: &mut Option<String>,
+) -> AppResult<bool> {
+    let Some(payload) = raw_username.strip_prefix("b64>>") else {
+        return Ok(false);
+    };
+    let decoded_payload = general_purpose::STANDARD
+        .decode(payload)
+        .map_err(|_| AppError::validation("Xshell b64 URL 用户名无效"))?;
+    let decoded_payload = String::from_utf8(decoded_payload)
+        .map_err(|_| AppError::validation("Xshell b64 URL 用户名不是有效 UTF-8"))?;
+    apply_xshell_b64_payload(&decoded_payload, host, port, username, password)?;
+    Ok(true)
+}
+
+fn apply_xshell_b64_payload(
+    value: &str,
+    host: &mut Option<String>,
+    port: &mut Option<u16>,
+    username: &mut Option<String>,
+    password: &mut Option<String>,
+) -> AppResult<()> {
+    let (before_protocol, protocol) = value
+        .rsplit_once(':')
+        .ok_or_else(|| AppError::validation("Xshell b64 URL 缺少协议"))?;
+    if !protocol.eq_ignore_ascii_case("ssh2") && !protocol.eq_ignore_ascii_case("ssh") {
+        return Err(AppError::validation("Xshell b64 URL 只支持 SSH 协议"));
+    }
+    let (before_port, parsed_port) = before_protocol
+        .rsplit_once(':')
+        .ok_or_else(|| AppError::validation("Xshell b64 URL 缺少端口"))?;
+    let (before_host, parsed_host) = before_port
+        .rsplit_once('@')
+        .ok_or_else(|| AppError::validation("Xshell b64 URL 缺少主机"))?;
+    let (credential_part, target_user) = before_host
+        .rsplit_once('@')
+        .ok_or_else(|| AppError::validation("Xshell b64 URL 缺少用户名"))?;
+
+    let (_, parsed_password) = credential_part
+        .split_once(':')
+        .ok_or_else(|| AppError::validation("Xshell b64 URL 缺少密码"))?;
+    *host = Some(required_text("主机", parsed_host)?);
+    *port = Some(parse_port(parsed_port)?);
+    *username = Some(required_text("用户名", target_user)?);
+    if !parsed_password.is_empty() {
+        *password = Some(parsed_password.to_string());
+    }
+    Ok(())
+}
+
+fn clean_external_token(value: &str) -> String {
+    let mut value = percent_decode(value).trim().to_string();
+    loop {
+        let trimmed = value.trim();
+        let quoted = (trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\''));
+        if quoted && trimmed.len() >= 2 {
+            value = trimmed[1..trimmed.len() - 1].trim().to_string();
+        } else {
+            return trimmed.to_string();
+        }
+    }
+}
+
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Some(decoded) = hex_byte(bytes[index + 1], bytes[index + 2]) {
+                output.push(decoded);
+                index += 3;
+                continue;
+            }
+        }
+        output.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&output).into_owned()
+}
+
+fn hex_byte(high: u8, low: u8) -> Option<u8> {
+    Some(hex_digit(high)? * 16 + hex_digit(low)?)
+}
+
+fn hex_digit(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn parse_port(value: &str) -> AppResult<u16> {
@@ -619,7 +942,10 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_external_session_id, parse_external_ssh_launch_args, ExternalLaunchService};
+    use super::{
+        is_external_session_id, parse_external_ssh_launch_args,
+        parse_external_ssh_launch_args_inner, ExternalLaunchService,
+    };
 
     #[test]
     fn parses_recommended_external_ssh_cli_without_leaking_password_to_event() {
@@ -716,6 +1042,46 @@ mod tests {
     }
 
     #[test]
+    fn parses_xshell_b64_wrapped_url_args() {
+        let request = parse_external_ssh_launch_args([
+            "Xshell.exe",
+            "-url",
+            "ssh://b64%3E%3Eb3BzOnNlY3JldC12YWx1ZUByb290QDEwLjExLjAuNzU6MjI6U1NIMg%3D%3D@172.21.195.223:222",
+        ])
+        .expect("args should parse")
+        .expect("request should exist");
+
+        assert_eq!(request.host, "10.11.0.75");
+        assert_eq!(request.port, 22);
+        assert_eq!(request.username, "root");
+        assert_eq!(request.password.as_deref(), Some("secret-value"));
+    }
+
+    #[test]
+    fn parses_xshell_bhost_gateway_url_with_quoted_credentials() {
+        let request = parse_external_ssh_launch_args([
+            "Xshell.exe",
+            "-url",
+            "ssh://\"b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=\":\"en::6d49b3b3fb5721e430d82ae005431d2a\"@172.21.195.223:222",
+            "-newtab",
+            "root@10.11.0.75",
+        ])
+        .expect("args should parse")
+        .expect("request should exist");
+
+        assert_eq!(request.host, "172.21.195.223");
+        assert_eq!(request.port, 222);
+        assert_eq!(
+            request.username,
+            "b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI="
+        );
+        assert_eq!(
+            request.password.as_deref(),
+            Some("en::6d49b3b3fb5721e430d82ae005431d2a")
+        );
+    }
+
+    #[test]
     fn parses_xshell_newwin_url_and_identity_file_args() {
         let request = parse_external_ssh_launch_args([
             "Xshell.exe",
@@ -749,6 +1115,85 @@ mod tests {
         assert_eq!(request.host, "cloud.example.test");
         assert_eq!(request.port, 2200);
         assert_eq!(request.username, "ops");
+    }
+
+    #[test]
+    fn parses_mobaxterm_split_ssh_command_args() {
+        let request = parse_external_ssh_launch_args([
+            "MobaXterm.exe",
+            "-newtab",
+            "ssh",
+            "-p",
+            "2200",
+            "ops@cloud.example.test",
+        ])
+        .expect("args should parse")
+        .expect("request should exist");
+
+        assert_eq!(request.host, "cloud.example.test");
+        assert_eq!(request.port, 2200);
+        assert_eq!(request.username, "ops");
+    }
+
+    #[test]
+    fn parses_mobaxterm_moba_session_file_arg() {
+        let path = std::env::temp_dir().join(format!(
+            "zterm-mobaxterm-{}-{}.moba",
+            std::process::id(),
+            super::now_ms()
+        ));
+        std::fs::write(
+            &path,
+            "root_10.11.0.75 =  #109#0%172.21.195.223%222%%%-1%-1%%%%%0%-1%0%%%0%0%0%0%%1080%%0%0%1#MobaFont%10%0%0%-1%15%236,236,236%30,30,30%180,180,192%0%-1%0%%xterm%-1%-1%_Std_Colors_0_%80%24%0%1%-1%<none>%%0%0%-1#0# #-1",
+        )
+        .expect("temp moba file should be written");
+
+        let request = parse_external_ssh_launch_args([
+            "zterm.exe".to_string(),
+            path.to_string_lossy().into_owned(),
+        ])
+        .expect("args should parse")
+        .expect("request should exist");
+
+        let _ = std::fs::remove_file(path);
+        assert_eq!(request.host, "172.21.195.223");
+        assert_eq!(request.port, 222);
+        assert_eq!(request.username, "root");
+        assert_eq!(request.password, None);
+    }
+
+    #[test]
+    fn parses_mobaxterm_bhost_parent_credentials_for_moba_file_arg() {
+        let path = std::env::temp_dir().join(format!(
+            "zterm-bhost-mobaxterm-{}-{}.moba",
+            std::process::id(),
+            super::now_ms()
+        ));
+        std::fs::write(
+            &path,
+            "root_10.11.0.75 =  #109#0%172.21.195.223%222%%%-1%-1%%%%%0%-1%0%%%0%0%0%0%%1080%%0%0%1#MobaFont%10%0%0%-1%15%236,236,236%30,30,30%180,180,192%0%-1%0%%xterm%-1%-1%_Std_Colors_0_%80%24%0%1%-1%<none>%%0%0%-1#0# #-1",
+        )
+        .expect("temp moba file should be written");
+
+        let parent_command_line = "\"C:\\Users\\Public\\Documents\\BHost\\bhmultauth.exe\" 33 \"C:/Users/PKUWHAI/AppData/Local/zTerm/zterm.exe\" \"172.21.195.223\" \"222\" \"b64>>d2VuOjMwMTI1OTY5NDQ4OTVAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=\" \"en::6d49b3b3fb5721e430d82ae005431d2a\" \"root_10.11.0.75\"";
+        let request = parse_external_ssh_launch_args_inner(
+            ["zterm.exe".to_string(), path.to_string_lossy().into_owned()],
+            Some(parent_command_line.to_string()),
+        )
+        .expect("args should parse")
+        .expect("request should exist");
+
+        let _ = std::fs::remove_file(path);
+        assert_eq!(request.host, "172.21.195.223");
+        assert_eq!(request.port, 222);
+        assert_eq!(
+            request.username,
+            "b64>>d2VuOjMwMTI1OTY5NDQ4OTVAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI="
+        );
+        assert_eq!(
+            request.password.as_deref(),
+            Some("en::6d49b3b3fb5721e430d82ae005431d2a")
+        );
     }
 
     #[test]
