@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "zTerm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "dev.zterm.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -35,7 +35,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI0MEI3RTdGOTYxNjA0MjQKUldRa0JCYVdmMzRMSkVtcDR6ajJvWDVTdUpqUEpBSmxISFpmVVE5ZXNmNU0xMEZjc21IczBsMi8K",
       "endpoints": ["https://github.com/lzmzzw/zTerm/releases/latest/download/latest.json"]
     }
   }
