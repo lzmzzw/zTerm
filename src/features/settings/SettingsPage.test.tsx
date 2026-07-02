@@ -8,8 +8,13 @@ import type { AppSettings, ShortcutDefinition, TerminalProfile } from "./setting
 
 const tauriMocks = vi.hoisted(() => ({
   check: vi.fn(),
+  getVersion: vi.fn(),
   openUrl: vi.fn(),
   relaunch: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/app", () => ({
+  getVersion: tauriMocks.getVersion,
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
@@ -108,6 +113,7 @@ async function selectOption(container: HTMLElement, label: string, optionText: s
 describe("SettingsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    tauriMocks.getVersion.mockResolvedValue("0.1.3");
   });
 
   it("renders visible form controls in the selected language", async () => {
@@ -369,7 +375,10 @@ describe("SettingsPage", () => {
     );
 
     await click(button(view.container, "关于"));
+    await flushAsyncUpdates();
 
+    expect(view.container.textContent).toContain("v0.1.3");
+    expect(view.container.textContent).not.toContain("v0.1.0");
     expect(view.container.textContent).toContain("GPL-3.0");
     expect(view.container.textContent).toContain("github.com/lzmzzw/zTerm");
     expect(view.container.textContent).not.toContain("本地智能终端工作台。");

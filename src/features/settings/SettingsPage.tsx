@@ -2,8 +2,11 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
+import { getVersion } from "@tauri-apps/api/app";
 import { Copy, ExternalLink, Info, Hash, KeyRound, Power, Scale, GitBranch, RefreshCw, Search, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+
+import packageJson from "../../../package.json";
 
 import { acceleratorFromKeyboardEvent, bindingsWithDefaults, detectShortcutConflicts } from "./shortcutManager";
 import { t } from "./i18n";
@@ -504,10 +507,28 @@ function TerminalProfileSettings({
 }
 
 function AboutSettings({ language }: { language: AppLanguage }) {
-  const version = "0.1.0";
+  const [version, setVersion] = useState(packageJson.version);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const githubUrl = `https://${t(language, "aboutGitHubUrl")}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    void getVersion()
+      .then((runtimeVersion) => {
+        if (!cancelled && runtimeVersion.trim()) {
+          setVersion(runtimeVersion);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setVersion(packageJson.version);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function openGitHub() {
     await openUrl(githubUrl);
