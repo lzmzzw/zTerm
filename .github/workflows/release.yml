@@ -85,3 +85,67 @@ jobs:
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           updaterJsonPreferNsis: true
+
+  normalize-updater-json:
+    name: Normalize updater JSON URLs
+    runs-on: ubuntu-latest
+    needs: build-release
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Replace GitHub API asset URLs with release download URLs
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const tag = context.ref.replace("refs/tags/", "");
+            const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner,
+              repo,
+              release_id: release.data.id,
+              per_page: 100,
+            });
+            const latestAsset = assets.find((asset) => asset.name === "latest.json");
+            if (!latestAsset) {
+              throw new Error("latest.json release asset was not found");
+            }
+
+            const latestResponse = await github.request("GET /repos/{owner}/{repo}/releases/assets/{asset_id}", {
+              owner,
+              repo,
+              asset_id: latestAsset.id,
+              headers: { accept: "application/octet-stream" },
+            });
+            const latestJson = Buffer.from(latestResponse.data).toString("utf8");
+            const latest = JSON.parse(latestJson);
+
+            for (const platform of Object.values(latest.platforms ?? {})) {
+              if (!platform || typeof platform !== "object" || typeof platform.signature !== "string") {
+                continue;
+              }
+              const signatureText = Buffer.from(platform.signature, "base64").toString("utf8");
+              const fileName = signatureText.match(/(?:^|\t)file:([^\r\n]+)/)?.[1];
+              if (!fileName) {
+                throw new Error(`Could not determine updater artifact filename from signature: ${signatureText}`);
+              }
+              platform.url = `https://github.com/${owner}/${repo}/releases/download/${tag}/${encodeURIComponent(fileName)}`;
+            }
+
+            const normalized = `${JSON.stringify(latest, null, 2)}\n`;
+            await github.rest.repos.deleteReleaseAsset({
+              owner,
+              repo,
+              asset_id: latestAsset.id,
+            });
+            await github.rest.repos.uploadReleaseAsset({
+              owner,
+              repo,
+              release_id: release.data.id,
+              name: "latest.json",
+              data: Buffer.from(normalized),
+              headers: {
+                "content-type": "application/json",
+                "content-length": Buffer.byteLength(normalized),
+              },
+            });
