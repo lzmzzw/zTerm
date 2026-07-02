@@ -8,6 +8,8 @@ import type { SshOptions, SshTunnel, SshTunnelMode } from "./types";
 interface SshTunnelsSectionProps {
   sshOptions: SshOptions;
   host: string;
+  hostServiceTargetHost?: string;
+  hostServiceTargetEditable?: boolean;
   newTunnelMode: SshTunnelMode;
   onNewTunnelModeChange: (mode: SshTunnelMode) => void;
   onSshOptionsChange: (options: SshOptions) => void;
@@ -16,12 +18,15 @@ interface SshTunnelsSectionProps {
 export function SshTunnelsSection({
   sshOptions,
   host,
+  hostServiceTargetHost,
+  hostServiceTargetEditable = false,
   newTunnelMode,
   onNewTunnelModeChange,
   onSshOptionsChange,
 }: SshTunnelsSectionProps) {
   const tunnels = sshOptions.tunnels ?? [];
   const normalizedHost = host.trim();
+  const normalizedHostServiceTargetHost = hostServiceTargetHost?.trim() || normalizedHost;
 
   return (
     <div className="zt-session-form-wide zt-ssh-tunnel-editor" aria-label="隧道">
@@ -33,7 +38,7 @@ export function SshTunnelsSection({
           onClick={() =>
             onSshOptionsChange({
               ...sshOptions,
-              tunnels: [...tunnels, emptyTunnelForHost(newTunnelMode, normalizedHost)],
+              tunnels: [...tunnels, emptyTunnelForHost(newTunnelMode, normalizedHostServiceTargetHost)],
             })
           }
         >
@@ -64,6 +69,8 @@ export function SshTunnelsSection({
           index={index}
           tunnel={tunnel}
           host={normalizedHost}
+          hostServiceTargetHost={normalizedHostServiceTargetHost}
+          hostServiceTargetEditable={hostServiceTargetEditable}
           onChange={(nextTunnel) => {
             const nextTunnels = [...tunnels];
             nextTunnels[index] = nextTunnel;

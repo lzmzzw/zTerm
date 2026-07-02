@@ -53,12 +53,16 @@ export function SshTunnelCard({
   index,
   tunnel,
   host,
+  hostServiceTargetHost,
+  hostServiceTargetEditable = false,
   onChange,
   onDelete,
 }: {
   index: number;
   tunnel: SshTunnel;
   host: string;
+  hostServiceTargetHost?: string;
+  hostServiceTargetEditable?: boolean;
   onChange: (tunnel: SshTunnel) => void;
   onDelete: () => void;
 }) {
@@ -66,7 +70,10 @@ export function SshTunnelCard({
   const modeLabel = tunnelModes.find((item) => item.value === mode)?.title ?? "SSH 隧道";
   const displayName = tunnel.name?.trim() || `${modeLabel} ${index + 1}`;
   const socksLocation = tunnel.kind === "remote_dynamic" ? "remote" : "local";
-  const hostServiceTarget = host.trim();
+  const fallbackHostServiceTarget = hostServiceTargetHost?.trim() || "127.0.0.1";
+  const hostServiceTarget = hostServiceTargetEditable
+    ? (tunnel.remote_host?.trim() || fallbackHostServiceTarget)
+    : host.trim();
 
   return (
     <section className="zt-ssh-tunnel-card" aria-label={displayName}>
@@ -98,7 +105,12 @@ export function SshTunnelCard({
               <input
                 aria-label="主机目标地址"
                 value={hostServiceTarget}
-                readOnly
+                readOnly={!hostServiceTargetEditable}
+                onChange={
+                  hostServiceTargetEditable
+                    ? (event) => onChange({ ...tunnel, remote_host: event.currentTarget.value.trim() || fallbackHostServiceTarget })
+                    : undefined
+                }
               />
             </label>
             <label>

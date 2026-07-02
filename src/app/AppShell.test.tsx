@@ -1341,6 +1341,10 @@ describe("AppShell", () => {
     expect(dialog?.querySelector('input[aria-label="主机"]')).toBe(null);
 
     await clickButton(view.container, "添加隧道");
+    const targetHostInput = input(dialog!, "主机目标地址");
+    expect(targetHostInput.readOnly).toBe(false);
+    expect(targetHostInput.value).toBe("127.0.0.1");
+    change(targetHostInput, "10.11.0.75");
     await clickButton(view.container, "保存临时隧道");
 
     expect(storeMocks.updateExternalSshOptions).toHaveBeenCalledWith(
@@ -1350,7 +1354,7 @@ describe("AppShell", () => {
           expect.objectContaining({
             mode: "host_service",
             kind: "local",
-            remote_host: "cloud.example.test",
+            remote_host: "10.11.0.75",
           }),
         ],
       }),

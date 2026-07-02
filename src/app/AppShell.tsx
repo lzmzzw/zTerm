@@ -146,6 +146,8 @@ const DEFAULT_EXTERNAL_SSH_OPTIONS: SshOptions = {
   },
 };
 
+const DEFAULT_EXTERNAL_HOST_SERVICE_TARGET = "127.0.0.1";
+
 const EMPTY_HISTORY_PANEL_STATE = {
   historyEntries: [],
   commandGroups: [],
@@ -1998,6 +2000,8 @@ function ExternalSshTunnelEditorDialog({
             <SshTunnelsSection
               sshOptions={sshOptions}
               host={host}
+              hostServiceTargetHost={DEFAULT_EXTERNAL_HOST_SERVICE_TARGET}
+              hostServiceTargetEditable={true}
               newTunnelMode={newTunnelMode}
               onNewTunnelModeChange={setNewTunnelMode}
               onSshOptionsChange={setSshOptions}
