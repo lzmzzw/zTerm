@@ -7,8 +7,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use russh::keys::{load_secret_key, PrivateKey, PrivateKeyWithHashAlg};
-use russh::{client, keys::ssh_key, ChannelId};
 use russh_sftp::{
     client::fs::File as SftpFile,
     client::SftpSession as RusshSftpSession,
@@ -29,7 +27,15 @@ use crate::{
             TransferConflictPolicy, TransferDirection, TransferKind,
         },
     },
-    services::{credential_service::read_system_secret, transfer_queue::TransferRunControl},
+    services::{
+        credential_service::read_system_secret,
+        ssh_command_service::{
+            build_ssh_command_execution, connect_chain, reusable_connection_key_for_execution,
+            reusable_connection_metadata_for_execution, SshCommandSecretResolver,
+            SshConnectionChain, SshReusableConnectionMetadata,
+        },
+        transfer_queue::TransferRunControl,
+    },
 };
 
 const TRANSFER_BUFFER_SIZE: usize = 64 * 1024;
@@ -85,9 +91,17 @@ impl SftpService {
             .remove_matching(|metadata| metadata.matches_credential_ref(credential_ref));
     }
 
-    pub async fn list(&self, session: &SavedSession, path: &str) -> AppResult<Vec<FileEntry>> {
+    pub async fn list(
+        &self,
+        session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
+        path: &str,
+    ) -> AppResult<Vec<FileEntry>> {
         let path = required_remote_path(path)?;
-        let lease = self.cached_sftp_session(session).await?;
+        let lease = self
+            .cached_sftp_session(session, all_sessions, secrets)
+            .await?;
         let sftp = lease.entry.sftp.lock().await;
         let mut entries = sftp
             .read_dir(path.clone())
@@ -109,9 +123,17 @@ impl SftpService {
         Ok(entries)
     }
 
-    pub async fn create_dir(&self, session: &SavedSession, path: &str) -> AppResult<()> {
+    pub async fn create_dir(
+        &self,
+        session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
+        path: &str,
+    ) -> AppResult<()> {
         let path = validate_destructive_remote_path(path)?;
-        let lease = self.cached_sftp_session(session).await?;
+        let lease = self
+            .cached_sftp_session(session, all_sessions, secrets)
+            .await?;
         let sftp = lease.entry.sftp.lock().await;
         create_remote_dir_all(&sftp, &path).await.map_err(|error| {
             self.cache.remove_key_if_entry(&lease.key, &lease.entry);
@@ -119,9 +141,17 @@ impl SftpService {
         })
     }
 
-    pub async fn exists(&self, session: &SavedSession, path: &str) -> AppResult<bool> {
+    pub async fn exists(
+        &self,
+        session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
+        path: &str,
+    ) -> AppResult<bool> {
         let path = required_remote_path(path)?;
-        let lease = self.cached_sftp_session(session).await?;
+        let lease = self
+            .cached_sftp_session(session, all_sessions, secrets)
+            .await?;
         let sftp = lease.entry.sftp.lock().await;
         sftp.try_exists(path).await.map_err(|error| {
             self.cache.remove_key_if_entry(&lease.key, &lease.entry);
@@ -129,10 +159,19 @@ impl SftpService {
         })
     }
 
-    pub async fn rename(&self, session: &SavedSession, from: &str, to: &str) -> AppResult<()> {
+    pub async fn rename(
+        &self,
+        session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
+        from: &str,
+        to: &str,
+    ) -> AppResult<()> {
         let from = validate_destructive_remote_path(from)?;
         let to = validate_destructive_remote_path(to)?;
-        let lease = self.cached_sftp_session(session).await?;
+        let lease = self
+            .cached_sftp_session(session, all_sessions, secrets)
+            .await?;
         let sftp = lease.entry.sftp.lock().await;
         sftp.rename(from, to).await.map_err(|error| {
             self.cache.remove_key_if_entry(&lease.key, &lease.entry);
@@ -143,11 +182,15 @@ impl SftpService {
     pub async fn delete(
         &self,
         session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
         path: &str,
         recursive: bool,
     ) -> AppResult<()> {
         let path = validate_destructive_remote_path(path)?;
-        let lease = self.cached_sftp_session(session).await?;
+        let lease = self
+            .cached_sftp_session(session, all_sessions, secrets)
+            .await?;
         let sftp = lease.entry.sftp.lock().await;
         let metadata = sftp.symlink_metadata(path.clone()).await.map_err(|error| {
             self.cache.remove_key_if_entry(&lease.key, &lease.entry);
@@ -177,6 +220,8 @@ impl SftpService {
     pub async fn upload_path<F>(
         &self,
         session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
         local_path: &str,
         remote_path: &str,
         _kind: Option<TransferKind>,
@@ -190,7 +235,8 @@ impl SftpService {
         let local_path = PathBuf::from(required_path(local_path)?);
         let remote_path = validate_destructive_remote_path(remote_path)?;
         let metadata = fs::metadata(&local_path).await?;
-        let sftp = connect_sftp(session).await?;
+        let connection = connect_sftp(session, all_sessions, secrets).await?;
+        let sftp = &connection.sftp;
         let mut transferred = 0_u64;
         transfer_checkpoint(control.as_ref()).await?;
 
@@ -201,7 +247,7 @@ impl SftpService {
             else {
                 transferred = transferred.saturating_add(total_bytes);
                 on_progress(progress_update(transferred, None))?;
-                let _ = sftp.close().await;
+                connection.close("sftp upload completed").await;
                 return Ok(());
             };
             let mut stack = vec![(local_path, remote_root)];
@@ -245,13 +291,15 @@ impl SftpService {
         }
 
         on_progress(progress_update(transferred, None))?;
-        let _ = sftp.close().await;
+        connection.close("sftp upload completed").await;
         Ok(())
     }
 
     pub async fn download_path<F>(
         &self,
         session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
         remote_path: &str,
         local_path: &str,
         _kind: Option<TransferKind>,
@@ -264,7 +312,8 @@ impl SftpService {
     {
         let remote_path = required_remote_path(remote_path)?;
         let local_path = PathBuf::from(required_path(local_path)?);
-        let sftp = connect_sftp(session).await?;
+        let connection = connect_sftp(session, all_sessions, secrets).await?;
+        let sftp = &connection.sftp;
         transfer_checkpoint(control.as_ref()).await?;
         let metadata = sftp
             .symlink_metadata(remote_path.clone())
@@ -276,7 +325,7 @@ impl SftpService {
             let Some(local_root) =
                 prepare_local_directory_root(&local_path, conflict_policy).await?
             else {
-                let _ = sftp.close().await;
+                connection.close("sftp download completed").await;
                 return Ok(());
             };
             let mut stack = vec![(remote_path, local_root)];
@@ -321,15 +370,18 @@ impl SftpService {
         }
 
         on_progress(progress_update(transferred, None))?;
-        let _ = sftp.close().await;
+        connection.close("sftp download completed").await;
         Ok(())
     }
 
     pub async fn copy_remote_to_remote_path<F>(
         &self,
         source_session: &SavedSession,
+        source_all_sessions: &[SavedSession],
         source_path: &str,
         destination_session: &SavedSession,
+        destination_all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
         destination_path: &str,
         _kind: Option<TransferKind>,
         conflict_policy: TransferConflictPolicy,
@@ -341,8 +393,11 @@ impl SftpService {
     {
         let source_path = required_remote_path(source_path)?;
         let destination_path = validate_destructive_remote_path(destination_path)?;
-        let source_sftp = connect_sftp(source_session).await?;
-        let destination_sftp = connect_sftp(destination_session).await?;
+        let source_connection = connect_sftp(source_session, source_all_sessions, secrets).await?;
+        let destination_connection =
+            connect_sftp(destination_session, destination_all_sessions, secrets).await?;
+        let source_sftp = &source_connection.sftp;
+        let destination_sftp = &destination_connection.sftp;
         transfer_checkpoint(control.as_ref()).await?;
         let metadata = source_sftp
             .symlink_metadata(source_path.clone())
@@ -358,8 +413,10 @@ impl SftpService {
             )
             .await?
             else {
-                let _ = source_sftp.close().await;
-                let _ = destination_sftp.close().await;
+                source_connection.close("sftp remote copy completed").await;
+                destination_connection
+                    .close("sftp remote copy completed")
+                    .await;
                 return Ok(());
             };
             let mut stack = vec![(source_path, destination_root)];
@@ -406,14 +463,18 @@ impl SftpService {
         }
 
         on_progress(progress_update(transferred, None))?;
-        let _ = source_sftp.close().await;
-        let _ = destination_sftp.close().await;
+        source_connection.close("sftp remote copy completed").await;
+        destination_connection
+            .close("sftp remote copy completed")
+            .await;
         Ok(())
     }
 
     pub async fn check_transfer_conflicts(
         &self,
         session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
         items: Vec<TransferConflictCheckItem>,
     ) -> AppResult<Vec<TransferConflict>> {
         if items.is_empty() {
@@ -426,7 +487,9 @@ impl SftpService {
             .filter(|item| item.direction == TransferDirection::Upload)
             .collect::<Vec<_>>();
         if !upload_items.is_empty() {
-            let lease = self.cached_sftp_session(session).await?;
+            let lease = self
+                .cached_sftp_session(session, all_sessions, secrets)
+                .await?;
             let sftp = lease.entry.sftp.lock().await;
             for item in upload_items {
                 let remote_path = required_remote_path(&item.remote_path)?;
@@ -460,19 +523,28 @@ impl SftpService {
         Ok(conflicts)
     }
 
-    async fn cached_sftp_session(&self, session: &SavedSession) -> AppResult<CachedSftpLease> {
-        let key = build_sftp_cache_key(session)?;
+    async fn cached_sftp_session(
+        &self,
+        session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
+    ) -> AppResult<CachedSftpLease> {
+        let execution =
+            build_ssh_command_execution(session, all_sessions, "true".to_string(), secrets)?;
+        let key = SftpCacheKey(
+            reusable_connection_key_for_execution("sftp", &execution)
+                .as_str()
+                .to_string(),
+        );
+        let metadata = SftpSessionMetadata::from_execution(&execution);
         self.cache.prune_if_due();
         if let Some(entry) = self.cache.get(&key) {
             entry.touch();
             return Ok(CachedSftpLease { key, entry });
         }
 
-        let sftp = connect_sftp(session).await?;
-        let entry = Arc::new(CachedSftpSession::new(
-            SftpSessionMetadata::from_session(session),
-            sftp,
-        ));
+        let connection = connect_sftp_execution(execution).await?;
+        let entry = Arc::new(CachedSftpSession::new(metadata, connection));
         self.cache.insert(key.clone(), Arc::clone(&entry));
         Ok(CachedSftpLease { key, entry })
     }
@@ -573,26 +645,24 @@ fn sftp_cache_field(label: &str, value: &str) -> String {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SftpSessionMetadata {
-    credential_ref: Option<String>,
-    session_id: String,
+    ssh: SshReusableConnectionMetadata,
 }
 
 impl SftpSessionMetadata {
-    fn from_session(session: &SavedSession) -> Self {
+    fn from_execution(
+        execution: &crate::services::ssh_command_service::SshCommandExecution,
+    ) -> Self {
         Self {
-            credential_ref: session.credential_ref.clone(),
-            session_id: session.id.clone(),
+            ssh: reusable_connection_metadata_for_execution(execution),
         }
     }
 
     fn matches_credential_ref(&self, credential_ref: &str) -> bool {
-        let credential_ref = credential_ref.trim();
-        !credential_ref.is_empty() && self.credential_ref.as_deref() == Some(credential_ref)
+        self.ssh.matches_credential_ref(credential_ref)
     }
 
     fn matches_session_id(&self, session_id: &str) -> bool {
-        let session_id = session_id.trim();
-        !session_id.is_empty() && self.session_id == session_id
+        self.ssh.matches_session_id(session_id)
     }
 }
 
@@ -662,17 +732,19 @@ struct CachedSftpLease {
 }
 
 struct CachedSftpSession {
+    _connection: SshConnectionChain,
     last_used: Mutex<Instant>,
     metadata: SftpSessionMetadata,
     sftp: AsyncMutex<RusshSftpSession>,
 }
 
 impl CachedSftpSession {
-    fn new(metadata: SftpSessionMetadata, sftp: RusshSftpSession) -> Self {
+    fn new(metadata: SftpSessionMetadata, connection: ConnectedSftpSession) -> Self {
         Self {
+            _connection: connection.connection,
             last_used: Mutex::new(Instant::now()),
             metadata,
-            sftp: AsyncMutex::new(sftp),
+            sftp: AsyncMutex::new(connection.sftp),
         }
     }
 
@@ -821,81 +893,59 @@ pub async fn list_local_directory(path: &str) -> AppResult<Vec<FileEntry>> {
     Ok(result)
 }
 
-async fn connect_sftp(session: &SavedSession) -> AppResult<RusshSftpSession> {
+async fn connect_sftp(
+    session: &SavedSession,
+    all_sessions: &[SavedSession],
+    secrets: &dyn SshCommandSecretResolver,
+) -> AppResult<ConnectedSftpSession> {
     if session.session_type != SessionType::Ssh {
         return Err(AppError::unsupported("SFTP 只支持 SSH 会话"));
     }
-
-    let config = client::Config {
-        inactivity_timeout: session
-            .ssh_options
-            .as_ref()
-            .and_then(|options| options.connect_timeout_ms)
-            .map(Duration::from_millis),
-        keepalive_interval: session
-            .ssh_options
-            .as_ref()
-            .and_then(|options| options.keepalive_interval_ms)
-            .map(Duration::from_millis),
-        ..Default::default()
-    };
-
-    let mut handle = client::connect(
-        Arc::new(config),
-        (session.host.as_str(), session.port),
-        AcceptAnyServerKey,
-    )
-    .await
-    .map_err(|error| AppError::sftp(error.to_string()))?;
-
-    authenticate(&mut handle, session).await?;
-    let channel = handle
-        .channel_open_session()
-        .await
-        .map_err(|error| AppError::sftp(error.to_string()))?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .map_err(|error| AppError::sftp(error.to_string()))?;
-    RusshSftpSession::new(channel.into_stream())
-        .await
-        .map_err(|error| AppError::sftp(error.to_string()))
+    let execution =
+        build_ssh_command_execution(session, all_sessions, "true".to_string(), secrets)?;
+    connect_sftp_execution(execution).await
 }
 
-async fn authenticate(
-    handle: &mut client::Handle<AcceptAnyServerKey>,
-    session: &SavedSession,
-) -> AppResult<()> {
-    let auth_material = build_sftp_auth_material(session)?;
-    let authenticated = match auth_material {
-        SftpAuthMaterial::Password(password) => handle
-            .authenticate_password(session.username.clone(), password)
-            .await
-            .map_err(|error| AppError::credential(error.to_string()))?
-            .success(),
-        SftpAuthMaterial::None => handle
-            .authenticate_none(session.username.clone())
-            .await
-            .map_err(|error| AppError::credential(error.to_string()))?
-            .success(),
-        SftpAuthMaterial::PrivateKey {
-            identity_file,
-            passphrase,
-        } => {
-            let key = load_secret_key(&identity_file, passphrase.as_deref())
-                .map_err(|error| AppError::credential(format!("SSH 私钥解析失败: {error}")))?;
-            authenticate_private_key(handle, session.username.clone(), key).await?
+async fn connect_sftp_execution(
+    execution: crate::services::ssh_command_service::SshCommandExecution,
+) -> AppResult<ConnectedSftpSession> {
+    let connection = connect_chain(&execution).await?;
+    let channel = match connection.open_session_channel().await {
+        Ok(channel) => channel,
+        Err(error) => {
+            connection.disconnect("sftp open session failed").await;
+            return Err(error);
         }
     };
-
-    if !authenticated {
-        return Err(AppError::credential("SSH 认证失败"));
+    if let Err(error) = channel.request_subsystem(true, "sftp").await {
+        connection.disconnect("sftp subsystem failed").await;
+        return Err(AppError::sftp(error.to_string()));
     }
-    Ok(())
+    let sftp = match RusshSftpSession::new(channel.into_stream()).await {
+        Ok(sftp) => sftp,
+        Err(error) => {
+            connection.disconnect("sftp session failed").await;
+            return Err(AppError::sftp(error.to_string()));
+        }
+    };
+    Ok(ConnectedSftpSession { connection, sftp })
+}
+
+struct ConnectedSftpSession {
+    connection: SshConnectionChain,
+    sftp: RusshSftpSession,
+}
+
+impl ConnectedSftpSession {
+    async fn close(self, message: &str) {
+        let _ = self.sftp.close().await;
+        self.connection.disconnect(message).await;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SftpAuthMaterial {
+    Agent,
     None,
     Password(String),
     PrivateKey {
@@ -905,24 +955,6 @@ pub enum SftpAuthMaterial {
 }
 
 pub fn build_sftp_auth_material(session: &SavedSession) -> AppResult<SftpAuthMaterial> {
-    if let Some(options) = session.ssh_options.as_ref() {
-        if options
-            .proxy_command
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty())
-        {
-            return Err(AppError::unsupported("SFTP 暂不支持 ProxyCommand"));
-        }
-        if options
-            .jump_hosts
-            .iter()
-            .any(|host| !host.trim().is_empty())
-        {
-            return Err(AppError::unsupported("SFTP 暂不支持跳板机"));
-        }
-    }
-
     match session.auth_mode {
         AuthMode::Password => {
             let credential_ref = session
@@ -958,25 +990,8 @@ pub fn build_sftp_auth_material(session: &SavedSession) -> AppResult<SftpAuthMat
                 passphrase,
             })
         }
-        AuthMode::Agent => Err(AppError::unsupported("SFTP 暂不支持 agent 认证")),
+        AuthMode::Agent => Ok(SftpAuthMaterial::Agent),
     }
-}
-
-async fn authenticate_private_key(
-    handle: &mut client::Handle<AcceptAnyServerKey>,
-    username: String,
-    key: PrivateKey,
-) -> AppResult<bool> {
-    let hash = handle
-        .best_supported_rsa_hash()
-        .await
-        .map_err(|error| AppError::sftp(error.to_string()))?
-        .flatten();
-    handle
-        .authenticate_publickey(username, PrivateKeyWithHashAlg::new(Arc::new(key), hash))
-        .await
-        .map_err(|error| AppError::credential(error.to_string()))
-        .map(|result| result.success())
 }
 
 async fn upload_file<F>(
@@ -1471,27 +1486,4 @@ fn required_path(value: &str) -> AppResult<String> {
         return Err(AppError::validation("路径不能为空"));
     }
     Ok(value.replace('\\', "/"))
-}
-
-#[derive(Clone, Copy)]
-struct AcceptAnyServerKey;
-
-impl client::Handler for AcceptAnyServerKey {
-    type Error = russh::Error;
-
-    async fn check_server_key(
-        &mut self,
-        _server_public_key: &ssh_key::PublicKey,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
-    }
-
-    async fn data(
-        &mut self,
-        _channel: ChannelId,
-        _data: &[u8],
-        _session: &mut client::Session,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
 }

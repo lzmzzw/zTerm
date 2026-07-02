@@ -7,7 +7,10 @@ use zterm_lib::{
         session::{AuthMode, SavedSession, SessionType},
         sftp::{TransferConflictPolicy, TransferKind},
     },
-    services::sftp_service::SftpService,
+    services::{
+        credential_service::read_system_secret, sftp_service::SftpService,
+        ssh_command_service::SshCommandSecretResolver,
+    },
 };
 
 const KEYRING_SERVICE: &str = "zTerm";
@@ -69,6 +72,8 @@ async fn run_sftp_smoke(
         rdp_options: None,
         local_options: None,
     };
+    let all_sessions = vec![session.clone()];
+    let secrets = SmokeSecretResolver;
 
     let nonce = Uuid::new_v4().to_string();
     let local_root = env::temp_dir().join(format!("zterm-sftp-upload-{nonce}"));
@@ -85,6 +90,8 @@ async fn run_sftp_smoke(
         service
             .upload_path(
                 &session,
+                &all_sessions,
+                &secrets,
                 path_string(&local_root)?.as_str(),
                 &remote_root,
                 Some(TransferKind::Directory),
@@ -95,19 +102,27 @@ async fn run_sftp_smoke(
             .await
             .map_err(|error| error.to_string())?;
         let entries = service
-            .list(&session, &remote_root)
+            .list(&session, &all_sessions, &secrets, &remote_root)
             .await
             .map_err(|error| error.to_string())?;
         if !entries.iter().any(|entry| entry.name == "nested") {
             return Err("uploaded folder was not visible in SFTP list".to_string());
         }
         service
-            .rename(&session, &remote_file, &renamed_file)
+            .rename(
+                &session,
+                &all_sessions,
+                &secrets,
+                &remote_file,
+                &renamed_file,
+            )
             .await
             .map_err(|error| error.to_string())?;
         service
             .download_path(
                 &session,
+                &all_sessions,
+                &secrets,
                 &remote_root,
                 path_string(&download_root)?.as_str(),
                 Some(TransferKind::Directory),
@@ -125,17 +140,27 @@ async fn run_sftp_smoke(
         }
 
         service
-            .delete(&session, &remote_root, true)
+            .delete(&session, &all_sessions, &secrets, &remote_root, true)
             .await
             .map_err(|error| error.to_string())?;
         Ok(())
     }
     .await;
 
-    let _ = service.delete(&session, &remote_root, true).await;
+    let _ = service
+        .delete(&session, &all_sessions, &secrets, &remote_root, true)
+        .await;
     let _ = fs::remove_dir_all(local_root);
     let _ = fs::remove_dir_all(download_root);
     smoke_result
+}
+
+struct SmokeSecretResolver;
+
+impl SshCommandSecretResolver for SmokeSecretResolver {
+    fn secret_for(&self, credential_ref: &str) -> zterm_lib::error::AppResult<String> {
+        read_system_secret(credential_ref)
+    }
 }
 
 fn path_string(path: &Path) -> Result<String, String> {

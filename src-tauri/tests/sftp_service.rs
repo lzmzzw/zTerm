@@ -65,7 +65,7 @@ fn sftp_short_operations_use_cache_but_transfers_use_dedicated_sessions() {
 }
 
 #[test]
-fn sftp_key_auth_material_requires_identity_file_and_rejects_agent() {
+fn sftp_key_auth_material_requires_identity_file_and_accepts_agent() {
     let mut key_session = ssh_session("sftp-key", "files.example.test", "ops");
     key_session.auth_mode = AuthMode::Key;
     let missing_identity = build_sftp_auth_material(&key_session)
@@ -91,14 +91,16 @@ fn sftp_key_auth_material_requires_identity_file_and_rejects_agent() {
 
     let mut agent_session = key_session;
     agent_session.auth_mode = AuthMode::Agent;
-    let agent_error =
-        build_sftp_auth_material(&agent_session).expect_err("agent auth is not in this phase");
-    assert!(agent_error.to_string().contains("agent"));
+    assert_eq!(
+        build_sftp_auth_material(&agent_session).expect("agent auth material should build"),
+        SftpAuthMaterial::Agent,
+    );
 }
 
 #[test]
-fn sftp_rejects_jump_and_proxy_for_this_phase() {
+fn sftp_auth_material_does_not_reject_jump_or_proxy_options() {
     let mut session = ssh_session("sftp-jump", "files.example.test", "ops");
+    session.auth_mode = AuthMode::None;
     session.ssh_options = Some(SshOptions {
         connect_timeout_ms: None,
         keepalive_interval_ms: None,
@@ -108,9 +110,10 @@ fn sftp_rejects_jump_and_proxy_for_this_phase() {
         tunnels: Vec::new(),
         container: None,
     });
-    let proxy_error =
-        build_sftp_auth_material(&session).expect_err("proxy command should be rejected");
-    assert!(proxy_error.to_string().contains("ProxyCommand"));
+    assert_eq!(
+        build_sftp_auth_material(&session).expect("proxy command should not be rejected here"),
+        SftpAuthMaterial::None,
+    );
 
     let mut jump_session = session;
     jump_session
@@ -124,9 +127,10 @@ fn sftp_rejects_jump_and_proxy_for_this_phase() {
         .expect("options")
         .jump_hosts
         .push("jump".to_string());
-    let jump_error =
-        build_sftp_auth_material(&jump_session).expect_err("jump host should be rejected");
-    assert!(jump_error.to_string().contains("跳板机"));
+    assert_eq!(
+        build_sftp_auth_material(&jump_session).expect("jump host should not be rejected here"),
+        SftpAuthMaterial::None,
+    );
 }
 
 #[test]

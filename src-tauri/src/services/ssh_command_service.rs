@@ -14,7 +14,15 @@ use russh::{
     },
     ChannelMsg,
 };
-use tokio::sync::Mutex as AsyncMutex;
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
+use tokio::{
+    io::{AsyncRead, AsyncWrite, ReadBuf},
+    process::{Child, ChildStdin, ChildStdout, Command},
+    sync::Mutex as AsyncMutex,
+};
 
 use crate::{
     error::{AppError, AppResult},
@@ -173,7 +181,7 @@ impl SshCommandService {
             Err(SshCommandRunError::BeforeWrite(_)) => {
                 let replacement = connect_chain(execution).await?;
                 let old_connection = std::mem::replace(&mut *connection, replacement);
-                disconnect_chain(old_connection).await;
+                disconnect_chain(old_connection, "replaced").await;
                 entry.touch();
                 execute_on_connection(&connection, execution)
                     .await
@@ -391,6 +399,7 @@ pub struct SshCommandHop {
     identity_file: Option<PathBuf>,
     keepalive_interval_ms: Option<u64>,
     pub port: u16,
+    proxy_command: Option<String>,
     session_id: String,
     updated_at_ms: i64,
     pub username: String,
@@ -408,6 +417,7 @@ impl fmt::Debug for SshCommandHop {
             .field("identity_file", &self.identity_file)
             .field("keepalive_interval_ms", &self.keepalive_interval_ms)
             .field("port", &self.port)
+            .field("proxy_command", &self.proxy_command)
             .field("session_id", &self.session_id)
             .field("updated_at_ms", &self.updated_at_ms)
             .field("username", &self.username)
@@ -464,9 +474,22 @@ impl client::Handler for SshCommandHandler {
     }
 }
 
-struct SshConnectionChain {
+pub(crate) struct SshConnectionChain {
     jumps: Vec<client::Handle<SshCommandHandler>>,
     target: client::Handle<SshCommandHandler>,
+}
+
+impl SshConnectionChain {
+    pub(crate) async fn open_session_channel(&self) -> AppResult<russh::Channel<client::Msg>> {
+        self.target
+            .channel_open_session()
+            .await
+            .map_err(russh_error)
+    }
+
+    pub(crate) async fn disconnect(self, message: &str) {
+        disconnect_chain(self, message).await;
+    }
 }
 
 pub fn reusable_connection_key_for_execution(
@@ -546,6 +569,10 @@ fn append_hop_cache_fields(fields: &mut Vec<String>, prefix: &str, hop: &SshComm
         &hop.keepalive_interval_ms
             .map(|value| value.to_string())
             .unwrap_or_default(),
+    ));
+    fields.push(cache_field(
+        &format!("{prefix}.proxy_command"),
+        hop.proxy_command.as_deref().unwrap_or(""),
     ));
 }
 
@@ -653,6 +680,11 @@ fn build_hop(
         AuthMode::None => SshCommandAuth::None,
     };
     let ssh_options = session.ssh_options.as_ref();
+    let proxy_command = ssh_options
+        .and_then(|options| options.proxy_command.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string());
     Ok(SshCommandHop {
         auth,
         auth_mode: session.auth_mode,
@@ -662,6 +694,7 @@ fn build_hop(
         identity_file: identity_file_for_key,
         keepalive_interval_ms: ssh_options.and_then(|options| options.keepalive_interval_ms),
         port: session.port,
+        proxy_command,
         session_id: session.id.clone(),
         updated_at_ms: session.updated_at_ms,
         username,
@@ -761,7 +794,7 @@ async fn execute_ssh_command_inner(execution: SshCommandExecution) -> AppResult<
     let result = execute_on_connection(&connection, &execution)
         .await
         .map_err(SshCommandRunError::into_app_error);
-    disconnect_chain(connection).await;
+    disconnect_chain(connection, "command completed").await;
     result
 }
 
@@ -840,7 +873,9 @@ async fn execute_on_connection(
     })
 }
 
-async fn connect_chain(execution: &SshCommandExecution) -> AppResult<SshConnectionChain> {
+pub(crate) async fn connect_chain(
+    execution: &SshCommandExecution,
+) -> AppResult<SshConnectionChain> {
     if execution.jumps.is_empty() {
         let mut target = connect_hop(&execution.target, execution.timeout_seconds).await?;
         authenticate(&mut target, &execution.target).await?;
@@ -875,13 +910,17 @@ async fn connect_hop(
         keepalive_interval: hop.keepalive_interval_ms.map(Duration::from_millis),
         ..Default::default()
     };
-    client::connect(
-        Arc::new(config),
-        (hop.host.as_str(), hop.port),
-        SshCommandHandler,
-    )
-    .await
-    .map_err(russh_error)
+    let config = Arc::new(config);
+    if let Some(proxy_command) = hop.proxy_command.as_ref() {
+        let stream = start_proxy_command(proxy_command, hop)?;
+        client::connect_stream(config, stream, SshCommandHandler)
+            .await
+            .map_err(russh_error)
+    } else {
+        client::connect(config, (hop.host.as_str(), hop.port), SshCommandHandler)
+            .await
+            .map_err(russh_error)
+    }
 }
 
 async fn connect_hop_through(
@@ -1018,15 +1057,231 @@ async fn connect_agent() -> AppResult<
     Err(AppError::unsupported("当前平台不支持 SSH agent 认证"))
 }
 
-async fn disconnect_chain(connection: SshConnectionChain) {
+async fn disconnect_chain(connection: SshConnectionChain, message: &str) {
     let _ = connection
         .target
-        .disconnect(russh::Disconnect::ByApplication, "command completed", "")
+        .disconnect(russh::Disconnect::ByApplication, message, "")
         .await;
     for jump in connection.jumps.into_iter().rev() {
         let _ = jump
-            .disconnect(russh::Disconnect::ByApplication, "command completed", "")
+            .disconnect(russh::Disconnect::ByApplication, message, "")
             .await;
+    }
+}
+
+struct ProxyCommandStream {
+    _child: Child,
+    stdin: ChildStdin,
+    stdout: ChildStdout,
+}
+
+impl Unpin for ProxyCommandStream {}
+
+impl AsyncRead for ProxyCommandStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stdout).poll_read(context, buffer)
+    }
+}
+
+impl AsyncWrite for ProxyCommandStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.stdin).poll_write(context, buffer)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stdin).poll_flush(context)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stdin).poll_shutdown(context)
+    }
+}
+
+impl Drop for ProxyCommandStream {
+    fn drop(&mut self) {
+        let _ = self._child.start_kill();
+    }
+}
+
+fn start_proxy_command(template: &str, hop: &SshCommandHop) -> AppResult<ProxyCommandStream> {
+    let command_line = expand_proxy_command(template, hop);
+    let mut command = shell_command(&command_line);
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    let mut child = command
+        .spawn()
+        .map_err(|error| AppError::ssh(format!("ProxyCommand 启动失败: {error}")))?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| AppError::ssh("ProxyCommand stdin 不可用"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AppError::ssh("ProxyCommand stdout 不可用"))?;
+    Ok(ProxyCommandStream {
+        _child: child,
+        stdin,
+        stdout,
+    })
+}
+
+fn expand_proxy_command(template: &str, hop: &SshCommandHop) -> String {
+    let mut expanded = String::with_capacity(template.len());
+    let mut chars = template.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            expanded.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('%') => expanded.push('%'),
+            Some('h') => expanded.push_str(&hop.host),
+            Some('p') => expanded.push_str(&hop.port.to_string()),
+            Some('r') => expanded.push_str(&hop.username),
+            Some(other) => {
+                expanded.push('%');
+                expanded.push(other);
+            }
+            None => expanded.push('%'),
+        }
+    }
+    expanded
+}
+
+#[cfg(windows)]
+fn shell_command(command_line: &str) -> Command {
+    let mut command = Command::new("cmd.exe");
+    command.arg("/C").arg(command_line);
+    command
+}
+
+#[cfg(not(windows))]
+fn shell_command(command_line: &str) -> Command {
+    let mut command = Command::new("sh");
+    command.arg("-c").arg(command_line);
+    command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::session::SshOptions;
+
+    struct StaticSecrets;
+
+    impl SshCommandSecretResolver for StaticSecrets {
+        fn secret_for(&self, credential_ref: &str) -> AppResult<String> {
+            Ok(format!("{credential_ref}-secret"))
+        }
+    }
+
+    #[test]
+    fn proxy_command_expands_open_ssh_host_port_user_tokens() {
+        let hop = SshCommandHop {
+            auth: SshCommandAuth::None,
+            auth_mode: AuthMode::None,
+            connect_timeout_ms: None,
+            credential_ref: None,
+            host: "files.example.test".to_string(),
+            identity_file: None,
+            keepalive_interval_ms: None,
+            port: 2222,
+            proxy_command: Some("ssh -W %h:%p %r@jump && printf %%".to_string()),
+            session_id: "target".to_string(),
+            updated_at_ms: 1,
+            username: "deploy".to_string(),
+        };
+
+        assert_eq!(
+            expand_proxy_command(hop.proxy_command.as_deref().expect("proxy command"), &hop),
+            "ssh -W files.example.test:2222 deploy@jump && printf %"
+        );
+    }
+
+    #[test]
+    fn reusable_key_tracks_proxy_command_without_secret_values() {
+        let mut target = ssh_session("target", "files.example.test", "deploy");
+        target.credential_ref = Some("credential:target-password".to_string());
+        target.ssh_options = Some(SshOptions {
+            connect_timeout_ms: Some(15_000),
+            keepalive_interval_ms: None,
+            proxy_command: Some("ssh -W %h:%p jump-a".to_string()),
+            identity_file: None,
+            jump_hosts: Vec::new(),
+            tunnels: Vec::new(),
+            container: None,
+        });
+
+        let execution = build_ssh_command_execution(
+            &target,
+            &[target.clone()],
+            "true".to_string(),
+            &StaticSecrets,
+        )
+        .expect("execution should build");
+        let key = reusable_connection_key_for_execution("sftp", &execution);
+
+        let mut changed_proxy = target.clone();
+        changed_proxy
+            .ssh_options
+            .as_mut()
+            .expect("options")
+            .proxy_command = Some("ssh -W %h:%p jump-b".to_string());
+        let changed_execution = build_ssh_command_execution(
+            &changed_proxy,
+            &[changed_proxy.clone()],
+            "true".to_string(),
+            &StaticSecrets,
+        )
+        .expect("execution should build");
+
+        assert_ne!(
+            key,
+            reusable_connection_key_for_execution("sftp", &changed_execution)
+        );
+        let key_text = format!("{key:?} {}", key.as_str());
+        assert!(key_text.contains("ssh -W %h:%p jump-a"));
+        assert!(!key_text.contains("target-password-secret"));
+    }
+
+    fn ssh_session(id: &str, host: &str, username: &str) -> SavedSession {
+        SavedSession {
+            id: id.to_string(),
+            name: id.to_string(),
+            session_type: SessionType::Ssh,
+            group_id: None,
+            host: host.to_string(),
+            port: 22,
+            username: username.to_string(),
+            auth_mode: AuthMode::Password,
+            credential_ref: None,
+            description: None,
+            tags: Vec::new(),
+            sort_order: 0,
+            created_at_ms: 1,
+            updated_at_ms: 1,
+            last_used_at_ms: None,
+            ssh_options: None,
+            rdp_options: None,
+            local_options: None,
+        }
     }
 }
 

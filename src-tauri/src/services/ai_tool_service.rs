@@ -655,7 +655,14 @@ impl AiToolService {
                 let path = string_arg(arguments, "path")?;
                 let session = get_session(store, &saved_session_id)?;
                 let service = self.sftp_service()?;
-                let entries = block_on_tool(service.list(&session, &path))?;
+                let all_sessions = list_sessions(store)?.sessions;
+                let credential_service = self.credential_service()?;
+                let entries = block_on_tool(service.list(
+                    &session,
+                    &all_sessions,
+                    &credential_service,
+                    &path,
+                ))?;
                 Ok(execution_result(
                     format!("SFTP 目录已读取：{} 项。", entries.len()),
                     ["files"],
@@ -666,7 +673,14 @@ impl AiToolService {
                 let path = string_arg(arguments, "path")?;
                 let session = get_session(store, &saved_session_id)?;
                 let service = self.sftp_service()?;
-                block_on_tool(service.create_dir(&session, &path))?;
+                let all_sessions = list_sessions(store)?.sessions;
+                let credential_service = self.credential_service()?;
+                block_on_tool(service.create_dir(
+                    &session,
+                    &all_sessions,
+                    &credential_service,
+                    &path,
+                ))?;
                 Ok(execution_result("SFTP 目录已创建。", ["files"]))
             }
             "sftp.delete" => {
@@ -675,7 +689,15 @@ impl AiToolService {
                 let recursive = optional_bool_arg(arguments, "recursive").unwrap_or(false);
                 let session = get_session(store, &saved_session_id)?;
                 let service = self.sftp_service()?;
-                block_on_tool(service.delete(&session, &path, recursive))?;
+                let all_sessions = list_sessions(store)?.sessions;
+                let credential_service = self.credential_service()?;
+                block_on_tool(service.delete(
+                    &session,
+                    &all_sessions,
+                    &credential_service,
+                    &path,
+                    recursive,
+                ))?;
                 Ok(execution_result("SFTP 路径已删除。", ["files"]))
             }
             "sftp.rename" => {
@@ -684,7 +706,15 @@ impl AiToolService {
                 let to = string_arg(arguments, "to")?;
                 let session = get_session(store, &saved_session_id)?;
                 let service = self.sftp_service()?;
-                block_on_tool(service.rename(&session, &from, &to))?;
+                let all_sessions = list_sessions(store)?.sessions;
+                let credential_service = self.credential_service()?;
+                block_on_tool(service.rename(
+                    &session,
+                    &all_sessions,
+                    &credential_service,
+                    &from,
+                    &to,
+                ))?;
                 Ok(execution_result("SFTP 路径已重命名。", ["files"]))
             }
             "zterm.context" => self.zterm_context(store),

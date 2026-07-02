@@ -10,6 +10,7 @@ use crate::{
         TransferEndpointKind, TransferKind, TransferTask, TransferTaskOrigin,
     },
     services::{
+        credential_service::CredentialService,
         sftp_service::{
             default_local_directory, list_local_directory, local_path_total_bytes, SftpService,
             TransferProgressUpdate,
@@ -17,7 +18,10 @@ use crate::{
         transfer_queue::TransferQueue,
     },
     state::AppState,
-    storage::{sessions::get_session, transfers::list_transfer_tasks},
+    storage::{
+        sessions::{get_session, list_sessions},
+        transfers::list_transfer_tasks,
+    },
 };
 
 #[tauri::command]
@@ -28,8 +32,11 @@ pub async fn sftp_list(
 ) -> AppResult<Vec<FileEntry>> {
     let storage = state.storage();
     let session = get_session(storage.as_ref(), &saved_session_id)?;
+    let all_sessions = list_sessions(storage.as_ref())?.sessions;
     let service = state.sftp_service();
-    service.list(&session, &path).await
+    service
+        .list(&session, &all_sessions, &state.credential_service(), &path)
+        .await
 }
 
 #[tauri::command]
@@ -40,8 +47,11 @@ pub async fn sftp_mkdir(
 ) -> AppResult<SftpMkdirResult> {
     let storage = state.storage();
     let session = get_session(storage.as_ref(), &saved_session_id)?;
+    let all_sessions = list_sessions(storage.as_ref())?.sessions;
     let service = state.sftp_service();
-    service.create_dir(&session, &path).await?;
+    service
+        .create_dir(&session, &all_sessions, &state.credential_service(), &path)
+        .await?;
     Ok(SftpMkdirResult { created: true })
 }
 
@@ -54,8 +64,17 @@ pub async fn sftp_delete(
 ) -> AppResult<SftpDeleteResult> {
     let storage = state.storage();
     let session = get_session(storage.as_ref(), &saved_session_id)?;
+    let all_sessions = list_sessions(storage.as_ref())?.sessions;
     let service = state.sftp_service();
-    service.delete(&session, &path, recursive).await?;
+    service
+        .delete(
+            &session,
+            &all_sessions,
+            &state.credential_service(),
+            &path,
+            recursive,
+        )
+        .await?;
     Ok(SftpDeleteResult { deleted: true })
 }
 
@@ -68,8 +87,17 @@ pub async fn sftp_rename(
 ) -> AppResult<SftpRenameResult> {
     let storage = state.storage();
     let session = get_session(storage.as_ref(), &saved_session_id)?;
+    let all_sessions = list_sessions(storage.as_ref())?.sessions;
     let service = state.sftp_service();
-    service.rename(&session, &from, &to).await?;
+    service
+        .rename(
+            &session,
+            &all_sessions,
+            &state.credential_service(),
+            &from,
+            &to,
+        )
+        .await?;
     Ok(SftpRenameResult { renamed: true })
 }
 
@@ -85,6 +113,7 @@ pub async fn sftp_upload(
 ) -> AppResult<TransferTask> {
     let storage = state.storage();
     let session = get_session(storage.as_ref(), &saved_session_id)?;
+    let all_sessions = list_sessions(storage.as_ref())?.sessions;
     let queue = state.transfer_queue();
     let total_bytes = local_path_total_bytes(&local_path).await?;
     let conflict_policy = conflict_policy.unwrap_or(TransferConflictPolicy::Overwrite);
@@ -97,7 +126,15 @@ pub async fn sftp_upload(
         conflict_policy,
         total_bytes,
     )?;
-    spawn_transfer(app, state.sftp_service(), queue, session, task.clone());
+    spawn_transfer(
+        app,
+        state.sftp_service(),
+        queue,
+        session,
+        all_sessions,
+        state.credential_service(),
+        task.clone(),
+    );
     Ok(task)
 }
 
@@ -113,6 +150,7 @@ pub async fn sftp_download(
 ) -> AppResult<TransferTask> {
     let storage = state.storage();
     let session = get_session(storage.as_ref(), &saved_session_id)?;
+    let all_sessions = list_sessions(storage.as_ref())?.sessions;
     let queue = state.transfer_queue();
     let conflict_policy = conflict_policy.unwrap_or(TransferConflictPolicy::Overwrite);
     let task = queue.enqueue(
@@ -124,7 +162,15 @@ pub async fn sftp_download(
         conflict_policy,
         0,
     )?;
-    spawn_transfer(app, state.sftp_service(), queue, session, task.clone());
+    spawn_transfer(
+        app,
+        state.sftp_service(),
+        queue,
+        session,
+        all_sessions,
+        state.credential_service(),
+        task.clone(),
+    );
     Ok(task)
 }
 
@@ -141,8 +187,11 @@ pub async fn sftp_check_transfer_conflicts(
 ) -> AppResult<Vec<TransferConflict>> {
     let storage = state.storage();
     let session = get_session(storage.as_ref(), &saved_session_id)?;
+    let all_sessions = list_sessions(storage.as_ref())?.sessions;
     let service = state.sftp_service();
-    service.check_transfer_conflicts(&session, items).await
+    service
+        .check_transfer_conflicts(&session, &all_sessions, &state.credential_service(), items)
+        .await
 }
 
 #[tauri::command]
@@ -159,7 +208,17 @@ pub async fn file_transfer_list_endpoint(
         TransferEndpointKind::Local => list_local_directory(&endpoint.path).await,
         TransferEndpointKind::Ssh => {
             let session = session_for_endpoint(&state, &endpoint)?;
-            state.sftp_service().list(&session, &endpoint.path).await
+            let storage = state.storage();
+            let all_sessions = list_sessions(storage.as_ref())?.sessions;
+            state
+                .sftp_service()
+                .list(
+                    &session,
+                    &all_sessions,
+                    &state.credential_service(),
+                    &endpoint.path,
+                )
+                .await
         }
     }
 }
@@ -178,9 +237,16 @@ pub async fn file_transfer_check_conflicts(
             }
             TransferEndpointKind::Ssh => {
                 let session = session_for_endpoint(&state, &item.destination)?;
+                let storage = state.storage();
+                let all_sessions = list_sessions(storage.as_ref())?.sessions;
                 state
                     .sftp_service()
-                    .exists(&session, &item.destination.path)
+                    .exists(
+                        &session,
+                        &all_sessions,
+                        &state.credential_service(),
+                        &item.destination.path,
+                    )
                     .await?
             }
         };
@@ -210,6 +276,8 @@ pub async fn file_transfer_enqueue(
     }
     let source_session = optional_session_for_endpoint(&state, &source)?;
     let destination_session = optional_session_for_endpoint(&state, &destination)?;
+    let storage = state.storage();
+    let all_sessions = list_sessions(storage.as_ref())?.sessions;
     let saved_session_id = source
         .saved_session_id
         .as_deref()
@@ -257,6 +325,8 @@ pub async fn file_transfer_enqueue(
         queue,
         source_session,
         destination_session,
+        all_sessions,
+        state.credential_service(),
         task.clone(),
     );
     Ok(task)
@@ -297,18 +367,31 @@ pub fn transfer_retry(
         let source_session = optional_session_for_endpoint(&state, &task.source_endpoint)?;
         let destination_session =
             optional_session_for_endpoint(&state, &task.destination_endpoint)?;
+        let storage = state.storage();
+        let all_sessions = list_sessions(storage.as_ref())?.sessions;
         spawn_file_transfer(
             app,
             state.sftp_service(),
             queue,
             source_session,
             destination_session,
+            all_sessions,
+            state.credential_service(),
             task.clone(),
         );
     } else {
         let storage = state.storage();
         let session = get_session(storage.as_ref(), &task.saved_session_id)?;
-        spawn_transfer(app, state.sftp_service(), queue, session, task.clone());
+        let all_sessions = list_sessions(storage.as_ref())?.sessions;
+        spawn_transfer(
+            app,
+            state.sftp_service(),
+            queue,
+            session,
+            all_sessions,
+            state.credential_service(),
+            task.clone(),
+        );
     }
     Ok(task)
 }
@@ -339,6 +422,8 @@ fn spawn_transfer(
     service: SftpService,
     queue: TransferQueue,
     session: crate::models::session::SavedSession,
+    all_sessions: Vec<crate::models::session::SavedSession>,
+    credential_service: CredentialService,
     task: TransferTask,
 ) {
     let control = match queue.register_control(&task.id) {
@@ -376,6 +461,8 @@ fn spawn_transfer(
                 service
                     .upload_path(
                         &session,
+                        &all_sessions,
+                        &credential_service,
                         &task.local_path,
                         &task.remote_path,
                         task.kind,
@@ -389,6 +476,8 @@ fn spawn_transfer(
                 service
                     .download_path(
                         &session,
+                        &all_sessions,
+                        &credential_service,
                         &task.remote_path,
                         &task.local_path,
                         task.kind,
@@ -442,6 +531,8 @@ fn spawn_file_transfer(
     queue: TransferQueue,
     source_session: Option<crate::models::session::SavedSession>,
     destination_session: Option<crate::models::session::SavedSession>,
+    all_sessions: Vec<crate::models::session::SavedSession>,
+    credential_service: CredentialService,
     task: TransferTask,
 ) {
     let control = match queue.register_control(&task.id) {
@@ -482,6 +573,8 @@ fn spawn_file_transfer(
                 service
                     .upload_path(
                         destination_session,
+                        &all_sessions,
+                        &credential_service,
                         &task.source_endpoint.path,
                         &task.destination_endpoint.path,
                         task.kind,
@@ -498,6 +591,8 @@ fn spawn_file_transfer(
                 service
                     .download_path(
                         source_session,
+                        &all_sessions,
+                        &credential_service,
                         &task.source_endpoint.path,
                         &task.destination_endpoint.path,
                         task.kind,
@@ -517,8 +612,11 @@ fn spawn_file_transfer(
                 service
                     .copy_remote_to_remote_path(
                         source_session,
+                        &all_sessions,
                         &task.source_endpoint.path,
                         destination_session,
+                        &all_sessions,
+                        &credential_service,
                         &task.destination_endpoint.path,
                         task.kind,
                         task.conflict_policy,
