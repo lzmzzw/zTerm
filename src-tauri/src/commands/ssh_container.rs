@@ -87,11 +87,16 @@ async fn list_external_containers_through_runtime(
 
     let cursor = manager.output_cursor(runtime_session_id)?;
     let marker = format!("__ZTERM_CONTAINER_LIST_{}", Uuid::new_v4().simple());
+    let end_prefix = format!("{marker}:END:");
     let command = external_container_probe_command(&marker, &script);
-    manager.write(runtime_session_id, &command)?;
-
-    let output =
-        wait_for_external_container_probe(&manager, runtime_session_id, cursor, &marker).await?;
+    manager.begin_output_suppression(runtime_session_id, &end_prefix)?;
+    let result = async {
+        manager.write(runtime_session_id, &command)?;
+        wait_for_external_container_probe(&manager, runtime_session_id, cursor, &marker).await
+    }
+    .await;
+    manager.end_output_suppression(runtime_session_id);
+    let output = result?;
     if !output.success {
         let detail = output.stdout.trim();
         return Err(AppError::ssh(if detail.is_empty() {
@@ -128,8 +133,9 @@ async fn wait_for_external_container_probe(
 }
 
 fn external_container_probe_command(marker: &str, script: &str) -> String {
+    let script = script.trim();
     format!(
-        "printf '%s\\n' '{marker}:BEGIN'\n(\n{script}\n)\n__zterm_container_status=$?\nprintf '%s:%s\\n' '{marker}:END' \"$__zterm_container_status\"\n"
+        "__zterm_container_marker='{marker}'; printf '%s\\n' \"${{__zterm_container_marker}}:BEGIN\"; ({script}); __zterm_container_status=$?; printf '%s:%s\\n' \"${{__zterm_container_marker}}:END\" \"$__zterm_container_status\"\n"
     )
 }
 
@@ -203,8 +209,23 @@ __ZTERM_CONTAINER_LIST_test:END:127
     fn external_container_probe_command_wraps_the_container_script() {
         let command = external_container_probe_command("__ZTERM_CONTAINER_LIST_test", "docker ps");
 
-        assert!(command.contains("__ZTERM_CONTAINER_LIST_test:BEGIN"));
+        assert!(command.contains("__zterm_container_marker='__ZTERM_CONTAINER_LIST_test'"));
+        assert!(command.contains("${__zterm_container_marker}:BEGIN"));
         assert!(command.contains("docker ps"));
-        assert!(command.contains("__ZTERM_CONTAINER_LIST_test:END"));
+        assert!(command.contains("${__zterm_container_marker}:END"));
+        assert!(!command.contains("__ZTERM_CONTAINER_LIST_test:BEGIN"));
+        assert!(!command.contains("__ZTERM_CONTAINER_LIST_test:END"));
+    }
+
+    #[test]
+    fn external_container_probe_command_keeps_script_on_one_input_line() {
+        let command = external_container_probe_command(
+            "__ZTERM_CONTAINER_LIST_test",
+            "runtime='docker'; docker ps",
+        );
+
+        assert_eq!(command.lines().count(), 1);
+        assert!(!command.contains("\n("));
+        assert!(!command.contains("\n)"));
     }
 }

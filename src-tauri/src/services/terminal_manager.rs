@@ -34,6 +34,7 @@ pub struct TerminalManager {
     sessions: Mutex<HashMap<String, RuntimeSession>>,
     infos: Mutex<HashMap<String, RuntimeSessionInfo>>,
     output_buffers: Mutex<HashMap<String, OutputBuffer>>,
+    output_suppressions: Mutex<HashMap<String, OutputSuppression>>,
 }
 
 pub struct OpenedPtySession {
@@ -64,6 +65,11 @@ struct NativeSshRuntimeState {
 struct OutputBuffer {
     data: String,
     updated_at_ms: i64,
+}
+
+struct OutputSuppression {
+    end_prefix: String,
+    pending: String,
 }
 
 impl TerminalManager {
@@ -463,6 +469,9 @@ impl TerminalManager {
         if let Ok(mut buffers) = self.output_buffers.lock() {
             buffers.remove(runtime_session_id);
         }
+        if let Ok(mut suppressions) = self.output_suppressions.lock() {
+            suppressions.remove(runtime_session_id);
+        }
         if let Ok(mut infos) = self.infos.lock() {
             infos.remove(runtime_session_id);
         }
@@ -510,6 +519,55 @@ impl TerminalManager {
         buffer.data = tail_chars(&buffer.data, 24_000);
         buffer.updated_at_ms = now_ms();
         Ok(())
+    }
+
+    pub fn begin_output_suppression(
+        &self,
+        runtime_session_id: &str,
+        end_prefix: &str,
+    ) -> AppResult<()> {
+        self.output_suppressions
+            .lock()
+            .map_err(|_| AppError::terminal("terminal output suppression lock was poisoned"))?
+            .insert(
+                runtime_session_id.to_string(),
+                OutputSuppression {
+                    end_prefix: end_prefix.to_string(),
+                    pending: String::new(),
+                },
+            );
+        Ok(())
+    }
+
+    pub fn end_output_suppression(&self, runtime_session_id: &str) {
+        if let Ok(mut suppressions) = self.output_suppressions.lock() {
+            suppressions.remove(runtime_session_id);
+        }
+    }
+
+    pub fn visible_output_after_suppression(
+        &self,
+        runtime_session_id: &str,
+        data: &str,
+    ) -> AppResult<String> {
+        let mut suppressions = self
+            .output_suppressions
+            .lock()
+            .map_err(|_| AppError::terminal("terminal output suppression lock was poisoned"))?;
+        let Some(suppression) = suppressions.get_mut(runtime_session_id) else {
+            return Ok(data.to_string());
+        };
+
+        suppression.pending.push_str(data);
+        let Some(tail_start) =
+            suppression_tail_start(&suppression.pending, &suppression.end_prefix)
+        else {
+            suppression.pending = tail_chars(&suppression.pending, 24_000);
+            return Ok(String::new());
+        };
+        let visible = suppression.pending[tail_start..].to_string();
+        suppressions.remove(runtime_session_id);
+        Ok(visible)
     }
 
     pub fn output_cursor(&self, runtime_session_id: &str) -> AppResult<usize> {
@@ -651,6 +709,13 @@ fn tail_chars(value: &str, max_chars: usize) -> String {
     chars[start..].iter().collect()
 }
 
+fn suppression_tail_start(value: &str, end_prefix: &str) -> Option<usize> {
+    let end_start = value.find(end_prefix)?;
+    let after_prefix = end_start + end_prefix.len();
+    let after_line = value[after_prefix..].find('\n')?;
+    Some(after_prefix + after_line + 1)
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -664,5 +729,44 @@ fn short_container_id(container_id: &str) -> String {
         value.to_string()
     } else {
         value.chars().take(12).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TerminalManager;
+
+    #[test]
+    fn output_suppression_hides_probe_until_end_marker_and_returns_tail() {
+        let manager = TerminalManager::default();
+
+        manager
+            .begin_output_suppression("runtime-1", "__ZTERM_CONTAINER_LIST_test:END:")
+            .expect("suppression should start");
+
+        assert_eq!(
+            manager
+                .visible_output_after_suppression(
+                    "runtime-1",
+                    "prompt# probe command\r\n__ZTERM_CONTAINER_LIST_test:BEGIN\r\nabc\tapi\tapp\tUp\r\n",
+                )
+                .expect("output should filter"),
+            ""
+        );
+        assert_eq!(
+            manager
+                .visible_output_after_suppression(
+                    "runtime-1",
+                    "__ZTERM_CONTAINER_LIST_test:END:0\r\nprompt# ",
+                )
+                .expect("output should filter"),
+            "prompt# "
+        );
+        assert_eq!(
+            manager
+                .visible_output_after_suppression("runtime-1", "next")
+                .expect("suppression should be cleared"),
+            "next"
+        );
     }
 }

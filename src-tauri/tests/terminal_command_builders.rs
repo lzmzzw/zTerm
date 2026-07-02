@@ -8,7 +8,7 @@ use zterm_lib::{
         rdp_service::{
             build_mstsc_arguments, build_rdp_file_content, rdp_password_credential_target,
         },
-        ssh_container_service::parse_container_ps_output,
+        ssh_container_service::{build_container_list_script, parse_container_ps_output},
         ssh_terminal_service::{build_ssh_arguments, build_ssh_container_arguments},
     },
 };
@@ -321,6 +321,47 @@ fn ssh_container_list_parser_orders_running_containers_by_name() {
     );
     assert_eq!(containers[1].name, "api");
     assert_eq!(containers[2].status, "Exited (0) 2 hours ago");
+}
+
+#[test]
+fn ssh_container_list_script_is_single_line_for_interactive_probe() {
+    let script = build_container_list_script("docker").expect("container list script should build");
+
+    assert_eq!(script.lines().count(), 1);
+    assert!(script.contains("docker"));
+    assert!(script.contains("--format"));
+}
+
+#[test]
+fn ssh_container_list_parser_ignores_shell_echo_and_malformed_rows() {
+    let containers = parse_container_ps_output(
+        "\
+[root@host ~]# (
+> runtime='docker'
+> if ! command -v \"$runtime\" >/dev/null 2>&1; then
+>   exit 127
+> fi
+e0c154176415\tsanxia-data-back-new\tbwy/sanxia-data-back:1.0.1\tUp 2 weeks
+> \"$runtime\" ps -a --format '{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}'
+4b500ab83a2a\tredis\tredis:6.2.21\tUp 5 months
+> )
+",
+    );
+
+    assert_eq!(
+        containers
+            .iter()
+            .map(|container| (
+                container.id.as_str(),
+                container.name.as_str(),
+                container.running
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("4b500ab83a2a", "redis", true),
+            ("e0c154176415", "sanxia-data-back-new", true),
+        ]
+    );
 }
 
 #[test]

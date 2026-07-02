@@ -464,21 +464,30 @@ fn spawn_terminal_reader(
                 Ok(0) => break,
                 Ok(read) => {
                     let data = String::from_utf8_lossy(&buffer[..read]).to_string();
-                    let data_base64 = general_purpose::STANDARD.encode(&buffer[..read]);
                     if let Some(secret) =
                         select_auth_secret_for_prompt(&data, &auth_secrets, &mut used_auth_secrets)
                     {
                         let _ = manager.write(&runtime_session_id, &format!("{secret}\r"));
                     }
                     let _ = manager.record_output(&runtime_session_id, &data);
-                    let _ = app.emit(
-                        "terminal:data",
-                        TerminalDataEvent {
-                            runtime_session_id: runtime_session_id.clone(),
-                            data,
-                            data_base64,
-                        },
-                    );
+                    let visible_data = manager
+                        .visible_output_after_suppression(&runtime_session_id, &data)
+                        .unwrap_or_else(|_| data.clone());
+                    if !visible_data.is_empty() {
+                        let data_base64 = if visible_data == data {
+                            general_purpose::STANDARD.encode(&buffer[..read])
+                        } else {
+                            general_purpose::STANDARD.encode(visible_data.as_bytes())
+                        };
+                        let _ = app.emit(
+                            "terminal:data",
+                            TerminalDataEvent {
+                                runtime_session_id: runtime_session_id.clone(),
+                                data: visible_data,
+                                data_base64,
+                            },
+                        );
+                    }
                 }
                 Err(error) => {
                     if manager.close(&runtime_session_id).is_ok() {
