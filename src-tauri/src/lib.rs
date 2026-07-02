@@ -55,6 +55,7 @@ pub fn run() {
             commands::credential::llm_provider_test_draft,
             commands::credential::llm_provider_test_draft_stream,
             commands::credential::llm_provider_test_draft_cancel,
+            commands::external_launch::external_launch_take_pending,
             commands::ai::ai_chat,
             commands::ai::ai_chat_stream,
             commands::ai::ai_chat_cancel,
@@ -125,10 +126,18 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     let paths = paths::AppPaths::default_for_install()?;
     paths.ensure_dirs()?;
     let storage = storage::sqlite::SqliteStore::open(paths.db_path())?;
-    app.manage(state::AppState::new_with_app_handle(
-        storage,
-        app.handle().clone(),
-    ));
+    let state = state::AppState::new_with_app_handle(storage, app.handle().clone());
+    let _ = state
+        .external_launch_service()
+        .register_from_args(env::args())
+        .map_err(|error| {
+            eprintln!(
+                "external launch ignored: {}",
+                security::redaction::redact_sensitive(&error.to_string())
+            );
+            error
+        });
+    app.manage(state);
     Ok(())
 }
 

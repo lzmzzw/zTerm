@@ -23,6 +23,7 @@ use crate::{
     services::{
         credential_service::read_system_secret,
         local_pty_service::{spawn_pty_command, PtySpawn},
+        ssh_command_service::SshCommandSecretResolver,
         ssh_container_service::{enabled_container_options, normalize_container_runtime},
     },
 };
@@ -70,6 +71,15 @@ pub fn spawn_ssh_terminal(
     cols: u16,
     rows: u16,
 ) -> AppResult<SshTerminalSpawn> {
+    spawn_ssh_terminal_with_resolver(session, cols, rows, &SystemSshSecretResolver)
+}
+
+pub fn spawn_ssh_terminal_with_resolver(
+    session: &SavedSession,
+    cols: u16,
+    rows: u16,
+    secrets: &dyn SshCommandSecretResolver,
+) -> AppResult<SshTerminalSpawn> {
     if session.session_type != SessionType::Ssh {
         return Err(AppError::unsupported(
             "only SSH sessions can open an SSH terminal",
@@ -77,19 +87,20 @@ pub fn spawn_ssh_terminal(
     }
 
     if requires_system_ssh(session) {
-        return spawn_system_ssh_terminal(session, cols, rows);
+        return spawn_system_ssh_terminal(session, cols, rows, secrets);
     }
 
-    spawn_native_ssh_terminal(session, cols, rows)
+    spawn_native_ssh_terminal(session, cols, rows, secrets)
 }
 
 fn spawn_system_ssh_terminal(
     session: &SavedSession,
     cols: u16,
     rows: u16,
+    secrets: &dyn SshCommandSecretResolver,
 ) -> AppResult<SshTerminalSpawn> {
     let args = build_ssh_arguments(session)?;
-    spawn_system_ssh_terminal_with_args(session, args, cols, rows)
+    spawn_system_ssh_terminal_with_args(session, args, cols, rows, secrets)
 }
 
 pub fn spawn_ssh_container_terminal(
@@ -99,7 +110,7 @@ pub fn spawn_ssh_container_terminal(
     rows: u16,
 ) -> AppResult<SshTerminalSpawn> {
     let args = build_ssh_container_arguments(session, container_id)?;
-    spawn_system_ssh_terminal_with_args(session, args, cols, rows)
+    spawn_system_ssh_terminal_with_args(session, args, cols, rows, &SystemSshSecretResolver)
 }
 
 fn spawn_system_ssh_terminal_with_args(
@@ -107,6 +118,7 @@ fn spawn_system_ssh_terminal_with_args(
     args: Vec<String>,
     cols: u16,
     rows: u16,
+    secrets: &dyn SshCommandSecretResolver,
 ) -> AppResult<SshTerminalSpawn> {
     let mut command = CommandBuilder::new("ssh");
     for arg in &args {
@@ -117,7 +129,7 @@ fn spawn_system_ssh_terminal_with_args(
         AuthMode::Password | AuthMode::Key => session
             .credential_ref
             .as_deref()
-            .map(read_system_secret)
+            .map(|credential_ref| secrets.secret_for(credential_ref))
             .transpose()?,
         AuthMode::Agent | AuthMode::None => None,
     };
@@ -134,8 +146,9 @@ fn spawn_native_ssh_terminal(
     session: &SavedSession,
     cols: u16,
     rows: u16,
+    secrets: &dyn SshCommandSecretResolver,
 ) -> AppResult<SshTerminalSpawn> {
-    let target = NativeSshTarget::from_session(session)?;
+    let target = NativeSshTarget::from_session(session, secrets)?;
     let (command_sender, command_receiver) = tokio_mpsc::unbounded_channel();
     let (output_sender, output_receiver) = std_mpsc::channel();
     let exit_status = Arc::new(Mutex::new(None));
@@ -387,7 +400,10 @@ enum NativeSshAuth {
 }
 
 impl NativeSshTarget {
-    fn from_session(session: &SavedSession) -> AppResult<Self> {
+    fn from_session(
+        session: &SavedSession,
+        secrets: &dyn SshCommandSecretResolver,
+    ) -> AppResult<Self> {
         let host = required_text("主机", &session.host)?;
         let username = required_text("用户名", &session.username)?;
         if session.port == 0 {
@@ -396,7 +412,7 @@ impl NativeSshTarget {
         let auth = match session.auth_mode {
             AuthMode::Password => {
                 let credential_ref = required_credential_ref(session, "密码认证需要凭据引用")?;
-                NativeSshAuth::Password(read_system_secret(credential_ref)?)
+                NativeSshAuth::Password(secrets.secret_for(credential_ref)?)
             }
             AuthMode::Key => {
                 let identity_file = session
@@ -417,7 +433,7 @@ impl NativeSshTarget {
                 let passphrase = session
                     .credential_ref
                     .as_deref()
-                    .map(read_system_secret)
+                    .map(|credential_ref| secrets.secret_for(credential_ref))
                     .transpose()?;
                 NativeSshAuth::PrivateKey {
                     identity_file: PathBuf::from(identity_file),
@@ -443,6 +459,14 @@ impl NativeSshTarget {
             port: session.port,
             username,
         })
+    }
+}
+
+struct SystemSshSecretResolver;
+
+impl SshCommandSecretResolver for SystemSshSecretResolver {
+    fn secret_for(&self, credential_ref: &str) -> AppResult<String> {
+        read_system_secret(credential_ref)
     }
 }
 

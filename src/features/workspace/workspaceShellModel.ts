@@ -78,7 +78,10 @@ export function definitionFromRuntime(workspace: WorkspaceRuntime): WorkspaceDef
     name: workspace.name,
     status: workspace.status,
     active_tab_id: workspace.activeTabId ?? workspace.active_tab_id,
-    tabs: workspace.tabs,
+    tabs: workspace.tabs.map((tab) => ({
+      ...tab,
+      root: removeTransientConnections(tab.root),
+    })),
     sort_order: workspace.sort_order,
     created_at_ms: workspace.created_at_ms,
     updated_at_ms: workspace.updated_at_ms,
@@ -130,6 +133,38 @@ export function collectWorkspaceTerminalTargets(workspace: WorkspaceDefinition):
 
 export function isReusableConnectionTab(tab: PaneTerminalTab): boolean {
   return !tab.runtime_session_id && !tab.saved_session_id && tab.connection_source !== "missing";
+}
+
+function removeTransientConnections(root: PaneNode): PaneNode {
+  if (root.kind === "split") {
+    return {
+      ...root,
+      first: removeTransientConnections(root.first),
+      second: removeTransientConnections(root.second),
+    };
+  }
+
+  const terminalTabs = getLeafTerminalTabs(root).map((tab) =>
+    tab.connection_source === "external_ssh"
+      ? {
+          ...tab,
+          runtime_session_id: null,
+          saved_session_id: null,
+          connection_source: "missing" as const,
+          restore_status: "failed" as const,
+          restore_error: "外部一次性连接不会保存到工作区",
+          visual_snapshot: null,
+        }
+      : tab,
+  );
+  const activeTerminalTab = terminalTabs.find((tab) => tab.id === root.active_terminal_tab_id) ?? terminalTabs[0];
+  return {
+    ...root,
+    runtime_session_id: activeTerminalTab?.runtime_session_id ?? null,
+    saved_session_id: activeTerminalTab?.saved_session_id ?? null,
+    title: activeTerminalTab?.title ?? root.title,
+    terminal_tabs: terminalTabs,
+  };
 }
 
 function activeWorkspaceDefinitionRoot(workspace: WorkspaceDefinition) {

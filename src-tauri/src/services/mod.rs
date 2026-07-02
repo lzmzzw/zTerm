@@ -7,6 +7,7 @@ pub mod ai_tool_service;
 pub mod command_completion_service;
 pub mod command_history_service;
 pub mod credential_service;
+pub mod external_launch_service;
 pub mod llm_provider_service;
 pub mod llm_provider_test_stream_service;
 pub mod local_pty_service;

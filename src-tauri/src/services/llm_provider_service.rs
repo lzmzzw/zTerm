@@ -573,6 +573,48 @@ fn tool_parameters(tool: &AiToolDefinition) -> Value {
             "additionalProperties": false
         });
     }
+    if matches!(
+        tool.id.as_str(),
+        "llm_provider.create" | "llm_provider.update"
+    ) {
+        return json!({
+            "type": "object",
+            "properties": {
+                "draft": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "kind": {
+                            "type": "string",
+                            "enum": ["openai_chat", "openai_responses", "anthropic"],
+                            "description": "/v1/chat/completions 使用 openai_chat，/v1/responses 使用 openai_responses。"
+                        },
+                        "base_url": {
+                            "type": "string",
+                            "description": "Provider 根 URL；完整 /v1/chat/completions 会保存为去掉 /chat/completions 后的 /v1。"
+                        },
+                        "model": { "type": "string" },
+                        "enabled": { "type": "boolean" },
+                        "is_default": { "type": "boolean" }
+                    },
+                    "required": ["name", "kind", "base_url", "model", "enabled"],
+                    "additionalProperties": true
+                },
+                "curl": {
+                    "type": "string",
+                    "description": "用户提供的 curl 请求原文；工具会解析 URL 和 model。不要包含 API Key。"
+                },
+                "url": { "type": "string" },
+                "model": { "type": "string" },
+                "name": { "type": "string" },
+                "kind": {
+                    "type": "string",
+                    "enum": ["openai_chat", "openai_responses", "anthropic"]
+                }
+            },
+            "additionalProperties": false
+        });
+    }
     if tool.id == "sessions.save" {
         return json!({
             "type": "object",
@@ -1203,6 +1245,34 @@ mod tests {
         assert_eq!(
             responses_schema[0]["parameters"]["properties"]["draft"]["required"],
             json!(["name", "type"])
+        );
+    }
+
+    #[test]
+    fn llm_provider_create_tool_schema_exposes_curl_and_chat_fields() {
+        let tools = vec![AiToolDefinition {
+            id: "llm_provider.create".to_string(),
+            title: "创建 LLM Provider".to_string(),
+            description: "新增模型 Provider 配置".to_string(),
+            risk_level: RiskLevel::Medium,
+            requires_confirmation: false,
+        }];
+
+        let chat_schema = super::openai_chat_tools(&tools);
+        let parameters = &chat_schema[0]["function"]["parameters"];
+        assert_eq!(
+            parameters["properties"]["draft"]["properties"]["kind"]["enum"],
+            json!(["openai_chat", "openai_responses", "anthropic"])
+        );
+        assert!(parameters["properties"]["curl"]["description"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("curl 请求原文"));
+        assert!(
+            parameters["properties"]["draft"]["properties"]["base_url"]["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("/chat/completions")
         );
     }
 

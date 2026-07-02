@@ -1,5 +1,5 @@
 // Author: Liz
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::Arc;
 
 use tokio::sync::oneshot;
@@ -115,15 +115,24 @@ impl AiChatService {
         )?;
 
         let tool_definitions = tools.definitions();
-        let loop_result = run_tool_rounds_sync(
+        let loop_result = match run_direct_provider_create_from_curl(
             store,
             tools,
-            provider_messages,
-            request.terminal_context.as_ref(),
+            &message,
             &conversation_id,
             approval_mode,
-            |messages| run_tool_chat_sync(&provider, &api_key, messages, &tool_definitions),
-        )?;
+        )? {
+            Some(result) => result,
+            None => run_tool_rounds_sync(
+                store,
+                tools,
+                provider_messages,
+                request.terminal_context.as_ref(),
+                &conversation_id,
+                approval_mode,
+                |messages| run_tool_chat_sync(&provider, &api_key, messages, &tool_definitions),
+            )?,
+        };
 
         let response_message = if !loop_result.pending_invocations.is_empty() {
             if loop_result.last_message.trim().is_empty() {
@@ -219,31 +228,43 @@ impl AiChatService {
     ) -> AppResult<AiChatStreamRunResult> {
         let tool_definitions = tools.definitions();
         let mut provider_messages = work.provider_messages.clone();
-        let mut loop_result = ToolLoopResult::default();
+        let mut loop_result = run_direct_provider_create_from_curl(
+            store.as_ref(),
+            &tools,
+            &work.user_message,
+            &work.conversation_id,
+            work.approval_mode,
+        )?
+        .unwrap_or_default();
 
-        for _ in 0..MAX_TOOL_ROUNDS {
-            let tool_response = tokio::select! {
-                _ = &mut cancel => return Ok(AiChatStreamRunResult::Cancelled),
-                response = generate_tool_chat(
-                    &work.provider,
-                    &work.api_key,
-                    &provider_messages,
-                    &tool_definitions,
-                ) => response?,
-            };
+        if loop_result.pending_invocations.is_empty()
+            && loop_result.executed_invocations.is_empty()
+            && loop_result.last_message.is_empty()
+        {
+            for _ in 0..MAX_TOOL_ROUNDS {
+                let tool_response = tokio::select! {
+                    _ = &mut cancel => return Ok(AiChatStreamRunResult::Cancelled),
+                    response = generate_tool_chat(
+                        &work.provider,
+                        &work.api_key,
+                        &provider_messages,
+                        &tool_definitions,
+                    ) => response?,
+                };
 
-            let should_continue = handle_tool_round(
-                store.as_ref(),
-                &tools,
-                &mut provider_messages,
-                &mut loop_result,
-                tool_response,
-                work.terminal_context.as_ref(),
-                &work.conversation_id,
-                work.approval_mode,
-            )?;
-            if !should_continue {
-                break;
+                let should_continue = handle_tool_round(
+                    store.as_ref(),
+                    &tools,
+                    &mut provider_messages,
+                    &mut loop_result,
+                    tool_response,
+                    work.terminal_context.as_ref(),
+                    &work.conversation_id,
+                    work.approval_mode,
+                )?;
+                if !should_continue {
+                    break;
+                }
             }
         }
 
@@ -410,6 +431,72 @@ fn handle_tool_round(
     });
     result.final_message_from_model = false;
     Ok(true)
+}
+
+fn run_direct_provider_create_from_curl(
+    store: &SqliteStore,
+    tools: &AiToolService,
+    user_message: &str,
+    conversation_id: &str,
+    approval_mode: AiApprovalMode,
+) -> AppResult<Option<ToolLoopResult>> {
+    if !looks_like_provider_create_from_curl(user_message) {
+        return Ok(None);
+    }
+    let outcome = tools.execute_if_allowed(
+        store,
+        AiToolPrepareRequest {
+            tool_id: "llm_provider.create".to_string(),
+            arguments: json!({ "curl": user_message }),
+            reason: Some("用户提供 curl 请求并要求添加模型".to_string()),
+            requested_by: Some("ai_chat".to_string()),
+            conversation_id: Some(conversation_id.to_string()),
+            run_id: None,
+            step_id: Some("direct-llm-provider-create".to_string()),
+        },
+        approval_mode,
+    )?;
+
+    let mut result = ToolLoopResult::default();
+    if let Some(pending) = outcome.pending_invocation {
+        result.last_message = "AI 请求创建 LLM Provider，等待人工确认。".to_string();
+        result.pending_invocations.push(pending);
+    }
+    if let Some(audit) = outcome.audit_record {
+        let summary = tool_observation_summary(&audit);
+        result.last_message = audit
+            .result_summary
+            .clone()
+            .unwrap_or_else(|| "LLM Provider 创建工具已执行。".to_string());
+        result.final_message_from_model = true;
+        result.tool_result_summaries.push(summary);
+        result.executed_invocations.push(audit);
+    }
+    Ok(Some(result))
+}
+
+fn looks_like_provider_create_from_curl(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    let has_curl_request = normalized.contains("curl")
+        && (normalized.contains("http://") || normalized.contains("https://"));
+    if !has_curl_request {
+        return false;
+    }
+    let has_resource = message.contains("模型")
+        || message.contains("大模型")
+        || normalized.contains("llm")
+        || normalized.contains("provider")
+        || normalized.contains("model");
+    let has_create_intent = message.contains("添加")
+        || message.contains("新增")
+        || message.contains("创建")
+        || message.contains("保存")
+        || message.contains("配置")
+        || normalized.contains("add")
+        || normalized.contains("create")
+        || normalized.contains("save")
+        || normalized.contains("configure");
+    has_resource && has_create_intent
 }
 
 fn tool_observation_summary(audit: &AiToolAuditRecord) -> String {
@@ -732,13 +819,20 @@ mod tests {
     use super::*;
     use crate::{
         error::AppResult,
-        models::session::SessionGroupDraft,
+        models::{
+            ai::AiChatRequest,
+            credential::{AiProviderKind, AiProviderProfileDraft},
+            session::SessionGroupDraft,
+        },
         services::{
             ai_tool_service::AiToolCommandWriter,
             credential_service::{CredentialService, MemorySecretStore},
             llm_provider_service::ProviderToolCall,
         },
-        storage::sessions::{list_sessions, save_session_group},
+        storage::{
+            ai::list_ai_provider_profiles,
+            sessions::{list_sessions, save_session_group},
+        },
     };
 
     struct FakeToolWriter;
@@ -906,5 +1000,69 @@ mod tests {
         assert_eq!(result.executed_invocations.len(), MAX_TOOL_ROUNDS);
         assert!(result.pending_invocations.is_empty());
         assert!(!result.final_message_from_model);
+    }
+
+    #[test]
+    fn chat_with_provider_adds_llm_provider_from_user_curl_without_listing_only() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+        let credentials = CredentialService::with_secret_store(
+            store.clone(),
+            Arc::new(MemorySecretStore::default()),
+        );
+        credentials
+            .save_ai_provider(AiProviderProfileDraft {
+                id: Some("assistant-provider".to_string()),
+                name: "Assistant Provider".to_string(),
+                kind: AiProviderKind::OpenAiResponses,
+                base_url: "http://assistant.test/v1".to_string(),
+                model: "assistant-model".to_string(),
+                api_key: None,
+                api_key_ref: None,
+                enabled: true,
+                is_default: true,
+            })
+            .expect("assistant provider should save");
+        let tools =
+            AiToolService::with_credential_service(Arc::new(FakeToolWriter), credentials.clone());
+        let message = r#"我有大模型，请求方式如下，将该大模型添加到应用里：
+curl --request POST \
+  --url http://172.16.41.254:30086/v1/chat/completions \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "model": "Qwen3.5-35B-A3B",
+    "messages": [{"role": "user", "content": "你好"}],
+    "chat_template_kwargs": {"enable_thinking": false}
+  }'"#;
+
+        let response = AiChatService::default()
+            .chat_with_provider(
+                store.as_ref(),
+                &credentials,
+                &tools,
+                AiChatRequest {
+                    conversation_id: None,
+                    message: message.to_string(),
+                    approval_mode: Some(AiApprovalMode::Safe),
+                    history: Vec::new(),
+                    terminal_context: None,
+                },
+            )
+            .expect("provider curl should be saved through direct tool path");
+
+        assert_eq!(response.executed_invocations.len(), 1);
+        assert_eq!(
+            response.executed_invocations[0].tool_id,
+            "llm_provider.create"
+        );
+        assert!(response.message.contains("LLM Provider 已保存"));
+        let providers = list_ai_provider_profiles(store.as_ref()).expect("providers should list");
+        let created = providers
+            .iter()
+            .find(|provider| provider.model == "Qwen3.5-35B-A3B")
+            .expect("curl model should be added");
+        assert_eq!(created.kind, AiProviderKind::OpenAiChat);
+        assert_eq!(created.base_url, "http://172.16.41.254:30086/v1");
+        assert!(created.enabled);
+        assert!(!created.is_default);
     }
 }

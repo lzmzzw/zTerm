@@ -10,7 +10,7 @@ use crate::{
         TransferEndpointKind, TransferKind, TransferTask, TransferTaskOrigin,
     },
     services::{
-        credential_service::CredentialService,
+        external_launch_service::CompositeSshSecretResolver,
         sftp_service::{
             default_local_directory, list_local_directory, local_path_total_bytes, SftpService,
             TransferProgressUpdate,
@@ -30,13 +30,12 @@ pub async fn sftp_list(
     saved_session_id: String,
     path: String,
 ) -> AppResult<Vec<FileEntry>> {
-    let storage = state.storage();
-    let session = get_session(storage.as_ref(), &saved_session_id)?;
-    let all_sessions = list_sessions(storage.as_ref())?.sessions;
+    let (session, all_sessions) = ssh_session_context(&state, &saved_session_id)?;
+    let secrets = state
+        .external_launch_service()
+        .composite_secret_resolver(state.credential_service());
     let service = state.sftp_service();
-    service
-        .list(&session, &all_sessions, &state.credential_service(), &path)
-        .await
+    service.list(&session, &all_sessions, &secrets, &path).await
 }
 
 #[tauri::command]
@@ -45,12 +44,13 @@ pub async fn sftp_mkdir(
     saved_session_id: String,
     path: String,
 ) -> AppResult<SftpMkdirResult> {
-    let storage = state.storage();
-    let session = get_session(storage.as_ref(), &saved_session_id)?;
-    let all_sessions = list_sessions(storage.as_ref())?.sessions;
+    let (session, all_sessions) = ssh_session_context(&state, &saved_session_id)?;
+    let secrets = state
+        .external_launch_service()
+        .composite_secret_resolver(state.credential_service());
     let service = state.sftp_service();
     service
-        .create_dir(&session, &all_sessions, &state.credential_service(), &path)
+        .create_dir(&session, &all_sessions, &secrets, &path)
         .await?;
     Ok(SftpMkdirResult { created: true })
 }
@@ -62,18 +62,13 @@ pub async fn sftp_delete(
     path: String,
     recursive: bool,
 ) -> AppResult<SftpDeleteResult> {
-    let storage = state.storage();
-    let session = get_session(storage.as_ref(), &saved_session_id)?;
-    let all_sessions = list_sessions(storage.as_ref())?.sessions;
+    let (session, all_sessions) = ssh_session_context(&state, &saved_session_id)?;
+    let secrets = state
+        .external_launch_service()
+        .composite_secret_resolver(state.credential_service());
     let service = state.sftp_service();
     service
-        .delete(
-            &session,
-            &all_sessions,
-            &state.credential_service(),
-            &path,
-            recursive,
-        )
+        .delete(&session, &all_sessions, &secrets, &path, recursive)
         .await?;
     Ok(SftpDeleteResult { deleted: true })
 }
@@ -85,18 +80,13 @@ pub async fn sftp_rename(
     from: String,
     to: String,
 ) -> AppResult<SftpRenameResult> {
-    let storage = state.storage();
-    let session = get_session(storage.as_ref(), &saved_session_id)?;
-    let all_sessions = list_sessions(storage.as_ref())?.sessions;
+    let (session, all_sessions) = ssh_session_context(&state, &saved_session_id)?;
+    let secrets = state
+        .external_launch_service()
+        .composite_secret_resolver(state.credential_service());
     let service = state.sftp_service();
     service
-        .rename(
-            &session,
-            &all_sessions,
-            &state.credential_service(),
-            &from,
-            &to,
-        )
+        .rename(&session, &all_sessions, &secrets, &from, &to)
         .await?;
     Ok(SftpRenameResult { renamed: true })
 }
@@ -111,9 +101,7 @@ pub async fn sftp_upload(
     kind: Option<TransferKind>,
     conflict_policy: Option<TransferConflictPolicy>,
 ) -> AppResult<TransferTask> {
-    let storage = state.storage();
-    let session = get_session(storage.as_ref(), &saved_session_id)?;
-    let all_sessions = list_sessions(storage.as_ref())?.sessions;
+    let (session, all_sessions) = ssh_session_context(&state, &saved_session_id)?;
     let queue = state.transfer_queue();
     let total_bytes = local_path_total_bytes(&local_path).await?;
     let conflict_policy = conflict_policy.unwrap_or(TransferConflictPolicy::Overwrite);
@@ -132,7 +120,9 @@ pub async fn sftp_upload(
         queue,
         session,
         all_sessions,
-        state.credential_service(),
+        state
+            .external_launch_service()
+            .composite_secret_resolver(state.credential_service()),
         task.clone(),
     );
     Ok(task)
@@ -148,9 +138,7 @@ pub async fn sftp_download(
     kind: Option<TransferKind>,
     conflict_policy: Option<TransferConflictPolicy>,
 ) -> AppResult<TransferTask> {
-    let storage = state.storage();
-    let session = get_session(storage.as_ref(), &saved_session_id)?;
-    let all_sessions = list_sessions(storage.as_ref())?.sessions;
+    let (session, all_sessions) = ssh_session_context(&state, &saved_session_id)?;
     let queue = state.transfer_queue();
     let conflict_policy = conflict_policy.unwrap_or(TransferConflictPolicy::Overwrite);
     let task = queue.enqueue(
@@ -168,7 +156,9 @@ pub async fn sftp_download(
         queue,
         session,
         all_sessions,
-        state.credential_service(),
+        state
+            .external_launch_service()
+            .composite_secret_resolver(state.credential_service()),
         task.clone(),
     );
     Ok(task)
@@ -185,12 +175,13 @@ pub async fn sftp_check_transfer_conflicts(
     saved_session_id: String,
     items: Vec<TransferConflictCheckItem>,
 ) -> AppResult<Vec<TransferConflict>> {
-    let storage = state.storage();
-    let session = get_session(storage.as_ref(), &saved_session_id)?;
-    let all_sessions = list_sessions(storage.as_ref())?.sessions;
+    let (session, all_sessions) = ssh_session_context(&state, &saved_session_id)?;
+    let secrets = state
+        .external_launch_service()
+        .composite_secret_resolver(state.credential_service());
     let service = state.sftp_service();
     service
-        .check_transfer_conflicts(&session, &all_sessions, &state.credential_service(), items)
+        .check_transfer_conflicts(&session, &all_sessions, &secrets, items)
         .await
 }
 
@@ -210,14 +201,12 @@ pub async fn file_transfer_list_endpoint(
             let session = session_for_endpoint(&state, &endpoint)?;
             let storage = state.storage();
             let all_sessions = list_sessions(storage.as_ref())?.sessions;
+            let secrets = state
+                .external_launch_service()
+                .composite_secret_resolver(state.credential_service());
             state
                 .sftp_service()
-                .list(
-                    &session,
-                    &all_sessions,
-                    &state.credential_service(),
-                    &endpoint.path,
-                )
+                .list(&session, &all_sessions, &secrets, &endpoint.path)
                 .await
         }
     }
@@ -239,14 +228,12 @@ pub async fn file_transfer_check_conflicts(
                 let session = session_for_endpoint(&state, &item.destination)?;
                 let storage = state.storage();
                 let all_sessions = list_sessions(storage.as_ref())?.sessions;
+                let secrets = state
+                    .external_launch_service()
+                    .composite_secret_resolver(state.credential_service());
                 state
                     .sftp_service()
-                    .exists(
-                        &session,
-                        &all_sessions,
-                        &state.credential_service(),
-                        &item.destination.path,
-                    )
+                    .exists(&session, &all_sessions, &secrets, &item.destination.path)
                     .await?
             }
         };
@@ -278,6 +265,9 @@ pub async fn file_transfer_enqueue(
     let destination_session = optional_session_for_endpoint(&state, &destination)?;
     let storage = state.storage();
     let all_sessions = list_sessions(storage.as_ref())?.sessions;
+    let secrets = state
+        .external_launch_service()
+        .composite_secret_resolver(state.credential_service());
     let saved_session_id = source
         .saved_session_id
         .as_deref()
@@ -326,7 +316,7 @@ pub async fn file_transfer_enqueue(
         source_session,
         destination_session,
         all_sessions,
-        state.credential_service(),
+        secrets,
         task.clone(),
     );
     Ok(task)
@@ -369,6 +359,9 @@ pub fn transfer_retry(
             optional_session_for_endpoint(&state, &task.destination_endpoint)?;
         let storage = state.storage();
         let all_sessions = list_sessions(storage.as_ref())?.sessions;
+        let secrets = state
+            .external_launch_service()
+            .composite_secret_resolver(state.credential_service());
         spawn_file_transfer(
             app,
             state.sftp_service(),
@@ -376,20 +369,21 @@ pub fn transfer_retry(
             source_session,
             destination_session,
             all_sessions,
-            state.credential_service(),
+            secrets,
             task.clone(),
         );
     } else {
-        let storage = state.storage();
-        let session = get_session(storage.as_ref(), &task.saved_session_id)?;
-        let all_sessions = list_sessions(storage.as_ref())?.sessions;
+        let (session, all_sessions) = ssh_session_context(&state, &task.saved_session_id)?;
+        let secrets = state
+            .external_launch_service()
+            .composite_secret_resolver(state.credential_service());
         spawn_transfer(
             app,
             state.sftp_service(),
             queue,
             session,
             all_sessions,
-            state.credential_service(),
+            secrets,
             task.clone(),
         );
     }
@@ -423,7 +417,7 @@ fn spawn_transfer(
     queue: TransferQueue,
     session: crate::models::session::SavedSession,
     all_sessions: Vec<crate::models::session::SavedSession>,
-    credential_service: CredentialService,
+    credential_service: CompositeSshSecretResolver,
     task: TransferTask,
 ) {
     let control = match queue.register_control(&task.id) {
@@ -532,7 +526,7 @@ fn spawn_file_transfer(
     source_session: Option<crate::models::session::SavedSession>,
     destination_session: Option<crate::models::session::SavedSession>,
     all_sessions: Vec<crate::models::session::SavedSession>,
-    credential_service: CredentialService,
+    credential_service: CompositeSshSecretResolver,
     task: TransferTask,
 ) {
     let control = match queue.register_control(&task.id) {
@@ -699,8 +693,26 @@ fn optional_session_for_endpoint(
                     "SSH 端点必须选择已保存会话",
                 ));
             };
-            let storage = state.storage();
-            get_session(storage.as_ref(), saved_session_id).map(Some)
+            ssh_session_context(state, saved_session_id).map(|(session, _)| Some(session))
         }
     }
+}
+
+fn ssh_session_context(
+    state: &State<'_, AppState>,
+    saved_session_id: &str,
+) -> AppResult<(
+    crate::models::session::SavedSession,
+    Vec<crate::models::session::SavedSession>,
+)> {
+    let storage = state.storage();
+    let all_sessions = list_sessions(storage.as_ref())?.sessions;
+    if let Some(session) = state
+        .external_launch_service()
+        .get_session(saved_session_id)?
+    {
+        return Ok((session, all_sessions));
+    }
+    let session = get_session(storage.as_ref(), saved_session_id)?;
+    Ok((session, all_sessions))
 }

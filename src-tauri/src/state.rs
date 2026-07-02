@@ -12,6 +12,7 @@ use crate::{
         command_completion_service::CommandCompletionService,
         command_history_service::CommandHistoryService,
         credential_service::CredentialService,
+        external_launch_service::ExternalLaunchService,
         llm_provider_test_stream_service::LlmProviderTestStreamService,
         mcp_service::McpService,
         server_info_service::ServerInfoService,
@@ -30,6 +31,7 @@ pub struct AppState {
     command_completion_service: CommandCompletionService,
     command_history_service: Arc<CommandHistoryService>,
     credential_service: CredentialService,
+    external_launch_service: ExternalLaunchService,
     llm_provider_test_stream_service: LlmProviderTestStreamService,
     ai_chat_stream_service: AiChatStreamService,
     ai_chat_service: AiChatService,
@@ -56,6 +58,7 @@ impl AppState {
         let terminal_manager = Arc::new(TerminalManager::default());
         let command_history_service = Arc::new(CommandHistoryService::new(Arc::clone(&storage)));
         let credential_service = CredentialService::new(Arc::clone(&storage));
+        let external_launch_service = ExternalLaunchService::default();
         let ai_tool_writer = Arc::new(match app_handle {
             Some(app_handle) => RuntimeAiToolWriter::with_app_handle(
                 Arc::clone(&terminal_manager),
@@ -74,6 +77,7 @@ impl AppState {
         Self {
             command_completion_service: CommandCompletionService::new(),
             command_history_service,
+            external_launch_service,
             llm_provider_test_stream_service: LlmProviderTestStreamService::default(),
             ai_chat_stream_service: AiChatStreamService::default(),
             ai_chat_service: AiChatService,
@@ -115,6 +119,10 @@ impl AppState {
 
     pub fn credential_service(&self) -> CredentialService {
         self.credential_service.clone()
+    }
+
+    pub fn external_launch_service(&self) -> ExternalLaunchService {
+        self.external_launch_service.clone()
     }
 
     pub fn llm_provider_test_stream_service(&self) -> LlmProviderTestStreamService {

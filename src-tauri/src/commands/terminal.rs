@@ -24,7 +24,7 @@ use crate::{
     services::{
         command_completion_service::CommandCompletionService,
         command_history_service::CommandHistoryService, credential_service::read_system_secret,
-        terminal_manager::TerminalManager,
+        external_launch_service::is_external_session_id, terminal_manager::TerminalManager,
     },
     state::AppState,
     storage::{
@@ -57,7 +57,7 @@ pub fn terminal_open(
     working_directory: Option<String>,
 ) -> AppResult<RuntimeSessionInfo> {
     let storage = state.storage();
-    let session = get_session(storage.as_ref(), &saved_session_id)?;
+    let session = session_for_terminal(&state, &saved_session_id)?;
     let manager = state.terminal_manager();
 
     match session.session_type {
@@ -108,8 +108,23 @@ pub fn terminal_open(
             manager.open_rdp_placeholder(session.id, pane_id, session.name)
         }
         SessionType::Ssh => {
-            let (session, mut auth_secrets) = resolve_ssh_jump_context(storage.as_ref(), &session)?;
-            let opened = manager.open_ssh_session(&session, pane_id, 120, 32)?;
+            let is_external = is_external_session_id(&session.id);
+            let (session, mut auth_secrets) = if is_external {
+                (session, Vec::new())
+            } else {
+                resolve_ssh_jump_context(storage.as_ref(), &session)?
+            };
+            let secrets = state
+                .external_launch_service()
+                .composite_secret_resolver(state.credential_service());
+            let opened = manager.open_ssh_session_with_resolver(
+                &session,
+                pane_id,
+                120,
+                32,
+                &secrets,
+                !is_external,
+            )?;
             if let Some(secret) = opened.auth_secret {
                 auth_secrets.push(AuthPromptSecret::new(ssh_prompt_target(&session), secret));
             }
@@ -128,12 +143,14 @@ pub fn terminal_open(
                 opened.info.history_scope_kind,
                 opened.info.history_scope_id.clone(),
             );
-            completion.refresh_remote_commands(
-                state.storage(),
-                state.ssh_command_service(),
-                state.credential_service(),
-                session.id.clone(),
-            );
+            if !is_external {
+                completion.refresh_remote_commands(
+                    state.storage(),
+                    state.ssh_command_service(),
+                    state.credential_service(),
+                    session.id.clone(),
+                );
+            }
             spawn_terminal_reader(
                 app,
                 manager,
@@ -146,6 +163,13 @@ pub fn terminal_open(
             Ok(opened.info)
         }
     }
+}
+
+fn session_for_terminal(state: &State<'_, AppState>, session_id: &str) -> AppResult<SavedSession> {
+    if let Some(session) = state.external_launch_service().get_session(session_id)? {
+        return Ok(session);
+    }
+    get_session(state.storage().as_ref(), session_id)
 }
 
 #[tauri::command]
@@ -311,6 +335,10 @@ pub fn terminal_close(
     state: State<'_, AppState>,
     runtime_session_id: String,
 ) -> AppResult<TerminalClosed> {
+    let runtime_info = state
+        .terminal_manager()
+        .runtime_info(&runtime_session_id)
+        .ok();
     let result = state.terminal_manager().close(&runtime_session_id)?;
     state
         .command_history_service()
@@ -318,6 +346,13 @@ pub fn terminal_close(
     state
         .command_completion_service()
         .unregister_runtime(&runtime_session_id);
+    if let Some(saved_session_id) = runtime_info.and_then(|info| info.saved_session_id) {
+        if is_external_session_id(&saved_session_id) {
+            state
+                .external_launch_service()
+                .remove_session(&saved_session_id);
+        }
+    }
     Ok(result)
 }
 

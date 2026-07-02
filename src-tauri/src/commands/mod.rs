@@ -2,6 +2,7 @@
 pub mod ai;
 pub mod command_completion;
 pub mod credential;
+pub mod external_launch;
 pub mod history;
 pub mod mcp;
 pub mod server_info;

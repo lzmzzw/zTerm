@@ -166,10 +166,60 @@ describe("workspaceShellModel", () => {
     expect(definitionFromRuntime(runtime)).toMatchObject({
       id: "runtime-workspace",
       active_tab_id: "runtime-active-tab",
-      tabs: runtime.tabs,
+      tabs: [
+        expect.objectContaining({
+          id: "tab-1",
+          root: expect.objectContaining({ id: "pane-1" }),
+        }),
+      ],
     });
     expect(nextWorkspaceSortOrder([{ sort_order: 0 }, { sort_order: 4 }])).toBe(5);
     expect(nextWorkspaceSortOrder([])).toBe(0);
+  });
+
+  it("does not persist external one-time SSH tabs into workspace definitions", () => {
+    const runtime: WorkspaceRuntime = {
+      ...definition("runtime-workspace", [
+        tab(
+          "tab-1",
+          leaf("pane-1", {
+            runtime_session_id: "runtime-external",
+            saved_session_id: "external:launch-1",
+            title: "ops@cloud.example.test:22",
+            active_terminal_tab_id: "pane-1-tab-1",
+            terminal_tabs: [
+              {
+                id: "pane-1-tab-1",
+                title: "ops@cloud.example.test:22",
+                runtime_session_id: "runtime-external",
+                saved_session_id: "external:launch-1",
+                connection_source: "external_ssh",
+              },
+            ],
+          }),
+          0,
+        ),
+      ]),
+      activeTabId: "tab-1",
+    };
+
+    const savedDefinition = definitionFromRuntime(runtime);
+    const root = savedDefinition.tabs[0].root;
+
+    expect(root).toMatchObject({
+      kind: "leaf",
+      runtime_session_id: null,
+      saved_session_id: null,
+      terminal_tabs: [
+        {
+          runtime_session_id: null,
+          saved_session_id: null,
+          connection_source: "missing",
+          restore_status: "failed",
+          restore_error: "外部一次性连接不会保存到工作区",
+        },
+      ],
+    });
   });
 
   it("materializes terminal visual snapshots recursively", () => {

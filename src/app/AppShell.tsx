@@ -1,7 +1,7 @@
 // Author: Liz
 import { ArrowLeftRight, Bot, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import {
@@ -37,6 +37,11 @@ import { applyAppSettings } from "../features/settings/applyAppSettings";
 import { useDomI18n } from "../features/settings/domI18n";
 import { useSettingsStore } from "../features/settings/settingsStore";
 import { listSshContainers, type SshContainerInfo } from "../features/terminal/sshContainerApi";
+import {
+  isExternalSessionId,
+  takePendingExternalLaunches,
+  type ExternalSshLaunchEvent,
+} from "../features/terminal/externalLaunchApi";
 import { useTerminalStore } from "../features/terminal/terminalStore";
 import { SplitPaneView } from "../features/workspace/SplitPaneView";
 import { WorkspaceManagerPanel } from "../features/workspace/WorkspaceManagerPanel";
@@ -237,6 +242,7 @@ export function AppShell() {
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [workspaceEditor, setWorkspaceEditor] = useState<WorkspaceEditorState | null>(null);
   const [pendingDeleteWorkspace, setPendingDeleteWorkspace] = useState<WorkspaceSidebarItem | null>(null);
+  const [externalSshSessions, setExternalSshSessions] = useState<Record<string, ExternalSshLaunchEvent>>({});
   const { textInputDialog, requestTextInput, resolveTextInputDialog } = useAppTextInputDialog();
   const [transferConflictDialog, setTransferConflictDialog] = useState<TransferConflictDialogState | null>(null);
   const [connectionDialogTarget, setConnectionDialogTarget] = useState<ConnectionDialogTarget | null>(null);
@@ -244,6 +250,7 @@ export function AppShell() {
   const [connectionOpening, setConnectionOpening] = useState(false);
   const restoringWorkspaceIdsRef = useRef<Set<string>>(new Set());
   const autoClosingWorkspaceIdsRef = useRef<Set<string>>(new Set());
+  const processedExternalLaunchIdsRef = useRef<Set<string>>(new Set());
   const activeContextTokenRef = useRef(0);
   const [historyView, setHistoryView] = useState<CommandHistoryView>("history");
   const [deduplicateHistory, setDeduplicateHistory] = useState(false);
@@ -485,7 +492,9 @@ export function AppShell() {
   const activePaneTab = activeLeaf ? getActiveTerminalTab(activeLeaf) : null;
   const activeSavedSessionId = activePaneTab?.saved_session_id ?? null;
   const activeSavedSession = activeSavedSessionId ? sessions.find((session) => session.id === activeSavedSessionId) ?? null : null;
-  const activeSshSessionId = activeSavedSession?.type === "ssh" ? activeSavedSession.id : null;
+  const activeExternalSshSession =
+    activeSavedSessionId && isExternalSessionId(activeSavedSessionId) ? (externalSshSessions[activeSavedSessionId] ?? null) : null;
+  const activeSshSessionId = activeSavedSession?.type === "ssh" ? activeSavedSession.id : activeExternalSshSession?.id ?? null;
   const activeSshTunnels = activeSavedSession?.type === "ssh" ? (activeSavedSession.ssh_options?.tunnels ?? []) : [];
   const activeSshContainersEnabled =
     activeSavedSession?.type === "ssh" && activeSavedSession.ssh_options?.container?.enabled === true;
@@ -720,6 +729,84 @@ export function AppShell() {
     });
     return () => setAiAffectedDomainsHandler(null);
   });
+
+  const handleExternalSshLaunch = useCallback(
+    async (launch: ExternalSshLaunchEvent) => {
+      if (!launch.id || processedExternalLaunchIdsRef.current.has(launch.id)) return;
+      processedExternalLaunchIdsRef.current.add(launch.id);
+      setExternalSshSessions((current) => ({ ...current, [launch.id]: launch }));
+
+      const workspaceState = useWorkspaceStore.getState();
+      const targetWorkspaceId = workspaceState.activeWorkspaceId;
+      const targetWorkspaceTab = workspaceState.tabs.find((tab) => tab.id === workspaceState.activeTabId) ?? workspaceState.tabs[0];
+      const targetPane = targetWorkspaceTab ? findPane(targetWorkspaceTab.root, targetWorkspaceTab.active_pane_id) : null;
+      const targetLeaf = targetPane?.kind === "leaf" ? targetPane : null;
+      const activeTargetPaneTab = targetLeaf ? getActiveTerminalTab(targetLeaf) : null;
+      if (!targetWorkspaceTab || !targetLeaf || !activeTargetPaneTab) {
+        setTerminalError("外部 SSH 连接无法定位目标分栏");
+        return;
+      }
+
+      const targetPaneId = targetWorkspaceTab.active_pane_id;
+      const targetPaneTab = isReusableConnectionTab(activeTargetPaneTab) ? activeTargetPaneTab : addPaneTab(targetPaneId);
+      updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTab.id, targetPaneId, targetPaneTab.id, {
+        title: launch.name,
+        saved_session_id: launch.id,
+        connection_source: "external_ssh",
+        restore_status: "pending",
+        restore_error: null,
+      });
+
+      setTerminalError(null);
+      try {
+        const runtime = await openTerminal(launch.id, targetPaneId);
+        bindRuntimeToPaneTab(targetWorkspaceId, targetWorkspaceTab.id, targetPaneId, targetPaneTab.id, runtime);
+        if (launch.auto_open_sftp) {
+          const remotePath = launch.remote_path?.trim() || "/";
+          setFilePath(remotePath);
+          setActiveTool("files");
+          await listFiles(launch.id, remotePath);
+          await loadTransfers(launch.id);
+        }
+      } catch (error) {
+        const message = fallbackOnlyErrorMessage(error, "打开外部 SSH 连接失败");
+        updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTab.id, targetPaneId, targetPaneTab.id, {
+          restore_status: "failed",
+          restore_error: message,
+        });
+        setTerminalError(message);
+      }
+    },
+    [addPaneTab, bindRuntimeToPaneTab, listFiles, loadTransfers, openTerminal, setFilePath, updatePaneTerminalTab],
+  );
+
+  useEffect(() => {
+    let disposed = false;
+    let cleanup: (() => void) | null = null;
+    void takePendingExternalLaunches()
+      .then((launches) => {
+        if (disposed) return;
+        for (const launch of launches) {
+          void handleExternalSshLaunch(launch);
+        }
+      })
+      .catch((error) => {
+        if (!disposed) setTerminalError(fallbackOnlyErrorMessage(error, "读取外部启动请求失败"));
+      });
+    void listen<ExternalSshLaunchEvent>("zterm:external-ssh-launch", (event) => {
+      void handleExternalSshLaunch(event.payload);
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+      } else {
+        cleanup = unlisten;
+      }
+    });
+    return () => {
+      disposed = true;
+      cleanup?.();
+    };
+  }, [handleExternalSshLaunch]);
 
   useEffect(() => {
     let disposed = false;

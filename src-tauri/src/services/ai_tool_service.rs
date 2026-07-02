@@ -807,6 +807,9 @@ impl AiToolService {
         if tool_id == "sessions.save" {
             return self.prepare_session_save_arguments(store, arguments);
         }
+        if tool_id == "llm_provider.create" || tool_id == "llm_provider.update" {
+            return self.prepare_llm_provider_save_arguments(arguments);
+        }
         Ok(arguments)
     }
 
@@ -937,6 +940,55 @@ impl AiToolService {
                     .cloned()
                     .unwrap_or(Value::Null),
             );
+        }
+        Ok(arguments)
+    }
+
+    fn prepare_llm_provider_save_arguments(&self, mut arguments: Value) -> AppResult<Value> {
+        let Some(root) = arguments.as_object_mut() else {
+            return Ok(arguments);
+        };
+        let top_curl = take_nonempty_string(root, "curl")
+            .or_else(|| take_nonempty_string(root, "request"))
+            .or_else(|| take_nonempty_string(root, "command"))
+            .or_else(|| take_nonempty_string(root, "value"));
+        let top_url = take_nonempty_string(root, "url")
+            .or_else(|| take_nonempty_string(root, "endpoint"))
+            .or_else(|| take_nonempty_string(root, "base_url"));
+        let top_model = take_nonempty_string(root, "model");
+        let top_kind = take_nonempty_string(root, "kind");
+        let top_name = take_nonempty_string(root, "name");
+        let source = top_curl.as_deref();
+        let parsed_url = top_url
+            .or_else(|| source.and_then(extract_first_http_url))
+            .map(|url| normalize_provider_base_url(&url));
+        let parsed_model = top_model
+            .or_else(|| source.and_then(|value| extract_json_string_field(value, "model")));
+        let parsed_kind = top_kind
+            .or_else(|| parsed_url.as_deref().map(infer_provider_kind_from_url))
+            .unwrap_or_else(|| "openai_chat".to_string());
+
+        let draft_value = root
+            .entry("draft".to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        let Some(draft_object) = draft_value.as_object_mut() else {
+            return Ok(arguments);
+        };
+        if let Some(name) = top_name.or_else(|| parsed_model.clone()) {
+            set_missing_string(draft_object, "name", &name);
+        }
+        if let Some(url) = parsed_url {
+            set_missing_string(draft_object, "base_url", &url);
+        }
+        if let Some(model) = parsed_model {
+            set_missing_string(draft_object, "model", &model);
+        }
+        set_missing_string(draft_object, "kind", &parsed_kind);
+        if !draft_object.contains_key("enabled") {
+            draft_object.insert("enabled".to_string(), Value::Bool(true));
+        }
+        if !draft_object.contains_key("is_default") {
+            draft_object.insert("is_default".to_string(), Value::Bool(false));
         }
         Ok(arguments)
     }
@@ -1800,6 +1852,84 @@ fn set_missing_string(object: &mut Map<String, Value>, key: &str, value: &str) {
         .is_some_and(|value| !value.is_empty());
     if !has_value && !value.trim().is_empty() {
         object.insert(key.to_string(), Value::String(value.trim().to_string()));
+    }
+}
+
+fn extract_first_http_url(value: &str) -> Option<String> {
+    let start = value.find("http://").or_else(|| value.find("https://"))?;
+    let tail = &value[start..];
+    let end = tail
+        .char_indices()
+        .find_map(|(index, ch)| {
+            if ch.is_whitespace() || matches!(ch, '\'' | '"' | '\\' | ')' | ']') {
+                Some(index)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(tail.len());
+    let url = tail[..end].trim_matches([',', ';']);
+    if url.is_empty() {
+        None
+    } else {
+        Some(url.to_string())
+    }
+}
+
+fn normalize_provider_base_url(url: &str) -> String {
+    let mut value = url.trim().trim_end_matches('/').to_string();
+    for suffix in ["/chat/completions", "/responses", "/messages"] {
+        if value.ends_with(suffix) {
+            value.truncate(value.len().saturating_sub(suffix.len()));
+            break;
+        }
+    }
+    value
+}
+
+fn infer_provider_kind_from_url(url: &str) -> String {
+    let normalized = url.to_ascii_lowercase();
+    if normalized.contains("/responses") {
+        "openai_responses".to_string()
+    } else if normalized.contains("anthropic") || normalized.contains("/messages") {
+        "anthropic".to_string()
+    } else {
+        "openai_chat".to_string()
+    }
+}
+
+fn extract_json_string_field(value: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\"");
+    let start = value.find(&needle)?;
+    let after_key = &value[start + needle.len()..];
+    let colon = after_key.find(':')?;
+    let after_colon = after_key[colon + 1..].trim_start();
+    let mut chars = after_colon.chars();
+    if chars.next()? != '"' {
+        return None;
+    }
+    let mut output = String::new();
+    let mut escaped = false;
+    for ch in chars {
+        if escaped {
+            output.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            break;
+        }
+        output.push(ch);
+    }
+    let output = output.trim();
+    if output.is_empty() {
+        None
+    } else {
+        Some(output.to_string())
     }
 }
 

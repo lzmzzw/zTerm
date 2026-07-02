@@ -21,8 +21,11 @@ use crate::{
         },
         terminal_profile::TerminalProfile,
     },
+    services::credential_service::read_system_secret,
+    services::ssh_command_service::SshCommandSecretResolver,
     services::ssh_terminal_service::{
-        spawn_ssh_container_terminal, spawn_ssh_terminal, NativeSshControl, SshTerminalRuntime,
+        spawn_ssh_container_terminal, spawn_ssh_terminal_with_resolver, NativeSshControl,
+        SshTerminalRuntime,
     },
 };
 
@@ -99,12 +102,33 @@ impl TerminalManager {
         cols: u16,
         rows: u16,
     ) -> AppResult<OpenedPtySession> {
-        let spawn = spawn_ssh_terminal(session, cols, rows)?;
+        self.open_ssh_session_with_resolver(
+            session,
+            pane_id,
+            cols,
+            rows,
+            &SystemSshSecretResolver,
+            true,
+        )
+    }
+
+    pub fn open_ssh_session_with_resolver(
+        &self,
+        session: &SavedSession,
+        pane_id: String,
+        cols: u16,
+        rows: u16,
+        secrets: &dyn SshCommandSecretResolver,
+        history_enabled: bool,
+    ) -> AppResult<OpenedPtySession> {
+        let spawn = spawn_ssh_terminal_with_resolver(session, cols, rows, secrets)?;
+        let history_scope_kind = history_enabled.then_some(HistoryScopeKind::SavedSession);
+        let history_scope_id = history_enabled.then(|| session.id.clone());
         let info = RuntimeSessionInfo {
             runtime_session_id: Uuid::new_v4().to_string(),
             saved_session_id: Some(session.id.clone()),
-            history_scope_kind: Some(HistoryScopeKind::SavedSession),
-            history_scope_id: Some(session.id.clone()),
+            history_scope_kind,
+            history_scope_id,
             pane_id,
             title: session.name.clone(),
             kind: RuntimeSessionKind::Ssh,
@@ -548,6 +572,14 @@ impl TerminalManager {
             .map_err(|_| AppError::terminal("terminal info lock was poisoned"))?
             .insert(info.runtime_session_id.clone(), info.clone());
         Ok(())
+    }
+}
+
+struct SystemSshSecretResolver;
+
+impl SshCommandSecretResolver for SystemSshSecretResolver {
+    fn secret_for(&self, credential_ref: &str) -> AppResult<String> {
+        read_system_secret(credential_ref)
     }
 }
 

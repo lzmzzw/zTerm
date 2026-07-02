@@ -46,6 +46,7 @@ const storeMocks = vi.hoisted(() => ({
   },
   terminalOutputAccesses: 0,
   tauriEventHandlers: new Map<string, (event: { payload: unknown }) => void>(),
+  pendingExternalLaunches: [] as Array<Record<string, unknown>>,
   settingsState: {
     appSettings: {
       language: "zhCN",
@@ -187,6 +188,11 @@ vi.mock("@tauri-apps/api/event", () => ({
       storeMocks.tauriEventHandlers.delete(eventName);
     };
   }),
+}));
+
+vi.mock("../features/terminal/externalLaunchApi", () => ({
+  isExternalSessionId: (value: string | null | undefined) => typeof value === "string" && value.startsWith("external:"),
+  takePendingExternalLaunches: vi.fn(async () => storeMocks.pendingExternalLaunches),
 }));
 
 vi.mock("../features/ai/AiPanel", () => ({
@@ -889,6 +895,7 @@ describe("AppShell", () => {
     vi.clearAllMocks();
     storeMocks.aiAffectedDomainsHandler = null;
     storeMocks.tauriEventHandlers.clear();
+    storeMocks.pendingExternalLaunches = [];
     storeMocks.addPaneTab.mockReturnValue({
       id: "pane-1-tab-created",
       title: "新建终端",
@@ -1087,6 +1094,66 @@ describe("AppShell", () => {
         },
       ],
     });
+  });
+
+  it("opens a pending external SSH launch and automatically loads SFTP files", async () => {
+    storeMocks.pendingExternalLaunches = [
+      {
+        id: "external:launch-1",
+        name: "ops@cloud.example.test:2200",
+        host: "cloud.example.test",
+        port: 2200,
+        username: "ops",
+        auto_open_sftp: true,
+        remote_path: "/srv/app",
+      },
+    ];
+    storeMocks.openTerminal.mockResolvedValueOnce({
+      runtime_session_id: "runtime-external",
+      saved_session_id: "external:launch-1",
+      history_scope_kind: null,
+      history_scope_id: null,
+      pane_id: "pane-1",
+      title: "ops@cloud.example.test:2200",
+      kind: "ssh",
+      cols: 120,
+      rows: 32,
+    });
+
+    const view = render(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
+      "workspace-1",
+      "tab-1",
+      "pane-1",
+      "pane-1-tab-1",
+      expect.objectContaining({
+        title: "ops@cloud.example.test:2200",
+        saved_session_id: "external:launch-1",
+        connection_source: "external_ssh",
+        restore_status: "pending",
+      }),
+    );
+    expect(storeMocks.openTerminal).toHaveBeenCalledWith("external:launch-1", "pane-1");
+    expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
+      "workspace-1",
+      "tab-1",
+      "pane-1",
+      "pane-1-tab-1",
+      expect.objectContaining({
+        runtime_session_id: "runtime-external",
+        saved_session_id: "external:launch-1",
+      }),
+    );
+    expect(storeMocks.listFiles).toHaveBeenCalledWith("external:launch-1", "/srv/app");
+    expect(storeMocks.loadTransfers).toHaveBeenCalledWith("external:launch-1");
+
+    view.unmount();
   });
 
   it("translates workbench chrome and dynamic DOM text when language is English", async () => {
