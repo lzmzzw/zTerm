@@ -45,6 +45,28 @@ pub fn build_container_list_script(runtime: &str) -> AppResult<String> {
     ))
 }
 
+pub fn build_container_exec_command(
+    container: &SshContainerOptions,
+    container_id: &str,
+) -> AppResult<String> {
+    let runtime = normalize_container_runtime(&container.runtime)?;
+    let container_id = normalize_text(Some(container_id))
+        .ok_or_else(|| AppError::validation("容器 ID 或名称不能为空"))?;
+    let shell = normalize_text(container.shell.as_deref()).unwrap_or_else(|| "/bin/sh".to_string());
+    let mut parts = vec![runtime, "exec".to_string(), "-it".to_string()];
+    if let Some(user) = normalize_text(container.user.as_deref()) {
+        parts.push("--user".to_string());
+        parts.push(shell_quote(&user));
+    }
+    if let Some(workdir) = normalize_text(container.workdir.as_deref()) {
+        parts.push("--workdir".to_string());
+        parts.push(shell_quote(&workdir));
+    }
+    parts.push(shell_quote(&container_id));
+    parts.push(shell_quote(&shell));
+    Ok(parts.join(" "))
+}
+
 pub fn parse_container_ps_output(stdout: &str) -> Vec<SshContainerInfo> {
     let mut items = stdout
         .lines()
@@ -94,4 +116,21 @@ fn container_sort_name(container: &SshContainerInfo) -> &str {
     } else {
         container.name.as_str()
     }
+}
+
+fn normalize_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn shell_quote(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/' | ':'))
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }

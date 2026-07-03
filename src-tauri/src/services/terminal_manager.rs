@@ -25,7 +25,7 @@ use crate::{
     services::ssh_command_service::SshCommandSecretResolver,
     services::ssh_terminal_service::{
         spawn_ssh_container_terminal_with_resolver, spawn_ssh_terminal_with_resolver,
-        NativeSshControl, SshTerminalRuntime,
+        NativeSshControl, SshTerminalRuntime, SshTunnelBridge,
     },
 };
 
@@ -53,6 +53,7 @@ struct PtyRuntime {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
+    _tunnel_bridges: Vec<SshTunnelBridge>,
 }
 
 struct NativeSshRuntimeState {
@@ -148,6 +149,7 @@ impl TerminalManager {
                     master: Mutex::new(pty.master),
                     writer: Mutex::new(pty.writer),
                     child: Mutex::new(pty.child),
+                    _tunnel_bridges: spawn.tunnel_bridges,
                 }),
                 pty.reader,
             ),
@@ -237,6 +239,7 @@ impl TerminalManager {
                     master: Mutex::new(pty.master),
                     writer: Mutex::new(pty.writer),
                     child: Mutex::new(pty.child),
+                    _tunnel_bridges: spawn.tunnel_bridges,
                 }),
                 pty.reader,
             ),
@@ -308,6 +311,7 @@ impl TerminalManager {
             master: Mutex::new(pty.master),
             writer: Mutex::new(pty.writer),
             child: Mutex::new(pty.child),
+            _tunnel_bridges: Vec::new(),
         };
         self.sessions
             .lock()

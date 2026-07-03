@@ -32,6 +32,7 @@ const storeMocks = vi.hoisted(() => ({
   selectTab: vi.fn(),
   setActivePane: vi.fn(),
   writeTerminal: vi.fn().mockResolvedValue(undefined),
+  enterSshContainerRuntime: vi.fn().mockResolvedValue(undefined),
   workspaceList: vi.fn().mockResolvedValue([]),
   workspaceGet: vi.fn(),
   workspaceSave: vi.fn(),
@@ -209,6 +210,18 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 vi.mock("../features/terminal/externalLaunchApi", () => ({
+  externalSshHostServiceTarget: (launch: { host?: string; username?: string } | null | undefined) => {
+    const username = launch?.username?.trim() ?? "";
+    if (username.startsWith("b64>>")) {
+      try {
+        const decoded = globalThis.atob(username.slice("b64>>".length));
+        if (decoded.includes("@") && decoded.includes(":SSH2")) return "127.0.0.1";
+      } catch {
+        return launch?.host?.trim() ?? "";
+      }
+    }
+    return launch?.host?.trim() ?? "";
+  },
   getExternalSshOptions: storeMocks.getExternalSshOptions,
   isExternalSessionId: (value: string | null | undefined) => typeof value === "string" && value.startsWith("external:"),
   takePendingExternalLaunches: vi.fn(async () => storeMocks.pendingExternalLaunches),
@@ -566,6 +579,7 @@ vi.mock("../features/terminal/terminalStore", () => {
       bindTerminalEvents: storeMocks.bindEvents,
       openTerminal: storeMocks.openTerminal,
       openSshContainerTerminal: storeMocks.openSshContainerTerminal,
+      enterSshContainerRuntime: storeMocks.enterSshContainerRuntime,
       openDefaultLocalTerminal: storeMocks.openDefaultLocalTerminal,
       closeTerminal: storeMocks.closeTerminal,
       writeTerminal: storeMocks.writeTerminal,
@@ -1260,6 +1274,16 @@ describe("AppShell", () => {
     expect(view.container.querySelector('[aria-label="容器运行时"]')?.textContent).toContain("Docker");
 
     await act(async () => {
+      (view.container.querySelector('[aria-label="进入容器 api"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.enterSshContainerRuntime).toHaveBeenCalledWith("external:launch-1", "runtime-external", "abc123");
+    expect(storeMocks.addPaneTabAfter).not.toHaveBeenCalled();
+    expect(storeMocks.openSshContainerTerminal).not.toHaveBeenCalled();
+
+    await act(async () => {
       (view.container.querySelector('[aria-label="容器运行时"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
@@ -1286,10 +1310,10 @@ describe("AppShell", () => {
     storeMocks.pendingExternalLaunches = [
       {
         id: "external:launch-1",
-        name: "ops@cloud.example.test:2200",
-        host: "cloud.example.test",
-        port: 2200,
-        username: "ops",
+        name: "b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=@172.21.195.223:222",
+        host: "172.21.195.223",
+        port: 222,
+        username: "b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=",
         auto_open_sftp: false,
         remote_path: "/",
       },
@@ -1344,7 +1368,6 @@ describe("AppShell", () => {
     const targetHostInput = input(dialog!, "主机目标地址");
     expect(targetHostInput.readOnly).toBe(false);
     expect(targetHostInput.value).toBe("127.0.0.1");
-    change(targetHostInput, "10.11.0.75");
     await clickButton(view.container, "保存临时隧道");
 
     expect(storeMocks.updateExternalSshOptions).toHaveBeenCalledWith(
@@ -1354,7 +1377,7 @@ describe("AppShell", () => {
           expect.objectContaining({
             mode: "host_service",
             kind: "local",
-            remote_host: "10.11.0.75",
+            remote_host: "127.0.0.1",
           }),
         ],
       }),

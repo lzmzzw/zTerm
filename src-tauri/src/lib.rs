@@ -93,6 +93,7 @@ pub fn run() {
             commands::sftp::transfer_cancel,
             commands::sftp::transfer_delete,
             commands::server_info::server_info_snapshot,
+            commands::ssh_container::ssh_container_enter_runtime,
             commands::ssh_container::ssh_container_list,
             commands::workspace::workspace_list,
             commands::workspace::workspace_get,

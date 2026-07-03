@@ -77,6 +77,11 @@ interface TerminalState {
     containerId: string,
     containerName?: string | null,
   ) => Promise<RuntimeSessionInfo>;
+  enterSshContainerRuntime: (
+    savedSessionId: string,
+    runtimeSessionId: string,
+    containerId: string,
+  ) => Promise<void>;
   listSshContainers: (savedSessionId: string) => Promise<SshContainerInfo[]>;
   openDefaultLocalTerminal: (paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>;
   writeTerminal: (runtimeSessionId: string, data: string) => Promise<void>;
@@ -157,6 +162,19 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       runtimes: { ...state.runtimes, [runtime.runtime_session_id]: runtime },
     }));
     return runtime;
+  },
+  async enterSshContainerRuntime(savedSessionId, runtimeSessionId, containerId) {
+    await invoke("ssh_container_enter_runtime", {
+      savedSessionId,
+      runtimeSessionId,
+      containerId,
+    });
+    set((state) => ({
+      inputSerialByRuntime: {
+        ...state.inputSerialByRuntime,
+        [runtimeSessionId]: (state.inputSerialByRuntime[runtimeSessionId] ?? 0) + 1,
+      },
+    }));
   },
   async listSshContainers(savedSessionId) {
     return invoke<SshContainerInfo[]>("ssh_container_list", { savedSessionId });

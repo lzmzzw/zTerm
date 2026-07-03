@@ -114,6 +114,21 @@ describe("terminalStore", () => {
     expect(useTerminalStore.getState().runtimes["runtime-container"]).toEqual(runtime);
   });
 
+  it("enters an SSH container through an existing external runtime", async () => {
+    invokeMock.mockResolvedValue({ accepted: true });
+
+    await useTerminalStore
+      .getState()
+      .enterSshContainerRuntime("external:launch-1", "runtime-external", "abc123");
+
+    expect(invokeMock).toHaveBeenCalledWith("ssh_container_enter_runtime", {
+      savedSessionId: "external:launch-1",
+      runtimeSessionId: "runtime-external",
+      containerId: "abc123",
+    });
+    expect(useTerminalStore.getState().inputSerialByRuntime["runtime-external"]).toBe(1);
+  });
+
   it("lists SSH containers for a saved session", async () => {
     invokeMock.mockResolvedValue([
       {

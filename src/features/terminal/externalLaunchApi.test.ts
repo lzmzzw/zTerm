@@ -1,7 +1,7 @@
 // Author: Liz
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getExternalSshOptions, updateExternalSshOptions } from "./externalLaunchApi";
+import { externalSshHostServiceTarget, getExternalSshOptions, updateExternalSshOptions } from "./externalLaunchApi";
 import type { SshOptions } from "../sessions/types";
 
 const invokeMock = vi.hoisted(() => vi.fn());
@@ -67,5 +67,32 @@ describe("externalLaunchApi", () => {
       sessionId: "external:launch-1",
       sshOptions: options,
     });
+  });
+
+  it("uses the external launch host as the default host-service tunnel target", () => {
+    expect(
+      externalSshHostServiceTarget({
+        host: "10.11.0.75",
+        username: "root",
+      }),
+    ).toBe("10.11.0.75");
+  });
+
+  it("uses loopback as the host-service tunnel target for b64 gateway usernames", () => {
+    expect(
+      externalSshHostServiceTarget({
+        host: "172.21.195.223",
+        username: "b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=",
+      }),
+    ).toBe("127.0.0.1");
+  });
+
+  it("falls back to the external launch host when the b64 gateway username is invalid", () => {
+    expect(
+      externalSshHostServiceTarget({
+        host: "172.21.195.223",
+        username: "b64>>not-valid-base64",
+      }),
+    ).toBe("172.21.195.223");
   });
 });

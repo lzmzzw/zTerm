@@ -378,7 +378,7 @@ describe("SessionTree", () => {
     expect(editorFields(view.container).textContent).not.toContain("认证方式");
 
     await click(button(view.container, "隧道"));
-    await click(button(view.container, "添加"));
+    await click(button(view.container, "添加隧道"));
     expect(editorFields(view.container).textContent).toContain("在连接时自动打开");
     expect(editorFields(view.container).textContent).not.toContain("认证方式");
 

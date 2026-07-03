@@ -8,7 +8,8 @@ use crate::{
     error::{AppError, AppResult},
     models::{ssh_container::SshContainerInfo, terminal::RuntimeSessionKind},
     services::ssh_container_service::{
-        build_container_list_script, enabled_container_options, parse_container_ps_output,
+        build_container_exec_command, build_container_list_script, enabled_container_options,
+        parse_container_ps_output,
     },
     state::AppState,
     storage::sessions::{get_session, list_sessions},
@@ -67,6 +68,31 @@ pub async fn ssh_container_list(
         }));
     }
     Ok(parse_container_ps_output(&output.stdout))
+}
+
+#[tauri::command]
+pub async fn ssh_container_enter_runtime(
+    state: State<'_, AppState>,
+    saved_session_id: String,
+    runtime_session_id: String,
+    container_id: String,
+) -> AppResult<crate::models::terminal::TerminalAccepted> {
+    let external_launch_service = state.external_launch_service();
+    let session = external_launch_service
+        .get_session(&saved_session_id)?
+        .ok_or_else(|| AppError::validation("复用当前终端进入容器只支持临时 SSH 连接"))?;
+    let container = enabled_container_options(&session)?;
+    let manager = state.terminal_manager();
+    let info = manager.runtime_info(&runtime_session_id)?;
+    if info.saved_session_id.as_deref() != Some(&saved_session_id)
+        || info.kind != RuntimeSessionKind::Ssh
+    {
+        return Err(AppError::validation(
+            "临时 SSH 进入容器需要当前 SSH 终端连接",
+        ));
+    }
+    let command = build_container_exec_command(container, &container_id)?;
+    manager.write(&runtime_session_id, &format!("{command}\r"))
 }
 
 async fn list_external_containers_through_runtime(
@@ -169,6 +195,8 @@ fn parse_external_container_probe_output(
 #[cfg(test)]
 mod tests {
     use super::{external_container_probe_command, parse_external_container_probe_output};
+    use crate::models::session::SshContainerOptions;
+    use crate::services::ssh_container_service::build_container_exec_command;
 
     #[test]
     fn external_container_probe_parser_ignores_echo_and_reads_marked_output() {
@@ -227,5 +255,26 @@ __ZTERM_CONTAINER_LIST_test:END:127
         assert_eq!(command.lines().count(), 1);
         assert!(!command.contains("\n("));
         assert!(!command.contains("\n)"));
+    }
+
+    #[test]
+    fn external_container_enter_command_uses_interactive_exec() {
+        let command = build_container_exec_command(
+            &SshContainerOptions {
+                enabled: true,
+                runtime: "docker".to_string(),
+                container: String::new(),
+                shell: Some("/bin/bash".to_string()),
+                user: Some("app user".to_string()),
+                workdir: Some("/srv/app".to_string()),
+            },
+            "api container",
+        )
+        .expect("command should build");
+
+        assert_eq!(
+            command,
+            "docker exec -it --user 'app user' --workdir /srv/app 'api container' /bin/bash"
+        );
     }
 }

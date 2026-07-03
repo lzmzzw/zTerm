@@ -40,6 +40,7 @@ import { useDomI18n } from "../features/settings/domI18n";
 import { useSettingsStore } from "../features/settings/settingsStore";
 import { listSshContainers, type SshContainerInfo } from "../features/terminal/sshContainerApi";
 import {
+  externalSshHostServiceTarget,
   getExternalSshOptions,
   isExternalSessionId,
   takePendingExternalLaunches,
@@ -145,8 +146,6 @@ const DEFAULT_EXTERNAL_SSH_OPTIONS: SshOptions = {
     workdir: null,
   },
 };
-
-const DEFAULT_EXTERNAL_HOST_SERVICE_TARGET = "127.0.0.1";
 
 const EMPTY_HISTORY_PANEL_STATE = {
   historyEntries: [],
@@ -536,6 +535,7 @@ export function AppShell() {
   const bindTerminalEvents = useTerminalStore((state) => state.bindTerminalEvents);
   const openTerminal = useTerminalStore((state) => state.openTerminal);
   const openSshContainerTerminal = useTerminalStore((state) => state.openSshContainerTerminal);
+  const enterSshContainerRuntime = useTerminalStore((state) => state.enterSshContainerRuntime);
   const openDefaultLocalTerminal = useTerminalStore((state) => state.openDefaultLocalTerminal);
   const closeTerminal = useTerminalStore((state) => state.closeTerminal);
   const writeTerminal = useTerminalStore((state) => state.writeTerminal);
@@ -1415,6 +1415,16 @@ export function AppShell() {
     const targetPaneId = latestActiveTab.active_pane_id;
     const afterPaneTabId = latestActivePaneTab.id;
     const targetSavedSessionId = latestSavedSessionId;
+    if (isExternalSessionId(targetSavedSessionId)) {
+      const targetRuntimeSessionId = latestActivePaneTab.runtime_session_id;
+      if (!targetRuntimeSessionId) return;
+      try {
+        await enterSshContainerRuntime(targetSavedSessionId, targetRuntimeSessionId, container.id);
+      } catch (error) {
+        setTerminalError(fallbackOnlyErrorMessage(error, "进入容器失败"));
+      }
+      return;
+    }
     const title = container.name?.trim() || container.id.slice(0, 12);
     const targetPaneTab = addPaneTabAfter(targetPaneId, afterPaneTabId);
     setTerminalError(null);
@@ -1783,6 +1793,7 @@ export function AppShell() {
       {externalSshTunnelEditor ? (
         <ExternalSshTunnelEditorDialog
           host={externalSshSessions[externalSshTunnelEditor]?.host ?? ""}
+          hostServiceTargetHost={externalSshHostServiceTarget(externalSshSessions[externalSshTunnelEditor] ?? null)}
           initialOptions={externalSshOptionsById[externalSshTunnelEditor] ?? DEFAULT_EXTERNAL_SSH_OPTIONS}
           onCancel={() => setExternalSshTunnelEditor(null)}
           onSave={(options) => void saveExternalTunnelOptions(externalSshTunnelEditor, options)}
@@ -1969,11 +1980,13 @@ export function AppShell() {
 
 function ExternalSshTunnelEditorDialog({
   host,
+  hostServiceTargetHost,
   initialOptions,
   onCancel,
   onSave,
 }: {
   host: string;
+  hostServiceTargetHost: string;
   initialOptions: SshOptions;
   onCancel: () => void;
   onSave: (options: SshOptions) => void;
@@ -2000,7 +2013,7 @@ function ExternalSshTunnelEditorDialog({
             <SshTunnelsSection
               sshOptions={sshOptions}
               host={host}
-              hostServiceTargetHost={DEFAULT_EXTERNAL_HOST_SERVICE_TARGET}
+              hostServiceTargetHost={hostServiceTargetHost}
               hostServiceTargetEditable={true}
               newTunnelMode={newTunnelMode}
               onNewTunnelModeChange={setNewTunnelMode}
