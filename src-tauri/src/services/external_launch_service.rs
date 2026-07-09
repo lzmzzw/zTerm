@@ -13,7 +13,9 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    models::session::{AuthMode, SavedSession, SessionType, SshContainerOptions, SshOptions},
+    models::session::{
+        AuthMode, SavedSession, SessionType, SshContainerOptions, SshOptions, SshTunnelKind,
+    },
     services::{
         credential_service::CredentialService, ssh_command_service::SshCommandSecretResolver,
     },
@@ -34,6 +36,14 @@ pub struct ExternalSshLaunchRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalSshChannelPolicy {
+    Unknown,
+    MultiChannel,
+    SingleChannel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExternalSshLaunchEvent {
     pub id: String,
     pub name: String,
@@ -42,6 +52,7 @@ pub struct ExternalSshLaunchEvent {
     pub username: String,
     pub auto_open_sftp: bool,
     pub remote_path: String,
+    pub channel_policy: ExternalSshChannelPolicy,
 }
 
 #[derive(Clone, Default)]
@@ -135,6 +146,7 @@ impl ExternalLaunchService {
             name,
             host,
             port: request.port,
+            channel_policy: external_ssh_channel_policy_for_username(&username),
             username,
             auto_open_sftp: request.auto_open_sftp,
             remote_path,
@@ -224,6 +236,9 @@ impl ExternalLaunchService {
             .ssh_options
             .clone()
             .unwrap_or_else(default_external_ssh_options);
+        if entry.launch.channel_policy == ExternalSshChannelPolicy::SingleChannel {
+            validate_single_channel_ssh_options(&next_options)?;
+        }
         options.tunnels = next_options.tunnels;
         options.container = next_options
             .container
@@ -293,6 +308,45 @@ impl SshCommandSecretResolver for CompositeSshSecretResolver {
 
 pub fn is_external_session_id(value: &str) -> bool {
     value.starts_with(EXTERNAL_SESSION_PREFIX)
+}
+
+pub fn external_ssh_channel_policy_for_username(username: &str) -> ExternalSshChannelPolicy {
+    if valid_b64_gateway_username(username) {
+        ExternalSshChannelPolicy::SingleChannel
+    } else {
+        ExternalSshChannelPolicy::Unknown
+    }
+}
+
+fn validate_single_channel_ssh_options(options: &SshOptions) -> AppResult<()> {
+    if options.tunnels.len() > 1 {
+        return Err(AppError::validation("单通道临时 SSH 只支持一个隧道"));
+    }
+    if let Some(tunnel) = options.tunnels.first() {
+        if tunnel.kind != SshTunnelKind::Local {
+            return Err(AppError::validation(
+                "单通道临时 SSH 只支持访问主机服务本地隧道",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn valid_b64_gateway_username(username: &str) -> bool {
+    let Some(payload) = username.trim().trim_matches('"').strip_prefix("b64>>") else {
+        return false;
+    };
+    let mut normalized_payload = payload.trim().replace('-', "+").replace('_', "/");
+    let padding = (4 - (normalized_payload.len() % 4)) % 4;
+    normalized_payload.extend(std::iter::repeat('=').take(padding));
+    let Ok(decoded) = general_purpose::STANDARD.decode(normalized_payload) else {
+        return false;
+    };
+    let Ok(decoded) = String::from_utf8(decoded) else {
+        return false;
+    };
+    let normalized = decoded.trim().to_ascii_lowercase();
+    normalized.contains('@') && (normalized.ends_with(":ssh2") || normalized.ends_with(":ssh"))
 }
 
 pub fn parse_external_ssh_launch_args<I, S>(args: I) -> AppResult<Option<ExternalSshLaunchRequest>>
@@ -1011,7 +1065,7 @@ fn now_ms() -> i64 {
 mod tests {
     use super::{
         is_external_session_id, parse_external_ssh_launch_args,
-        parse_external_ssh_launch_args_inner, ExternalLaunchService,
+        parse_external_ssh_launch_args_inner, ExternalLaunchService, ExternalSshChannelPolicy,
     };
     use crate::models::session::{SshContainerOptions, SshOptions, SshTunnel, SshTunnelKind};
 
@@ -1146,6 +1200,27 @@ mod tests {
         assert_eq!(
             request.password.as_deref(),
             Some("en::6d49b3b3fb5721e430d82ae005431d2a")
+        );
+    }
+
+    #[test]
+    fn bhost_gateway_launch_is_marked_single_channel() {
+        let service = ExternalLaunchService::default();
+        let request = parse_external_ssh_launch_args([
+            "Xshell.exe",
+            "-url",
+            "ssh://\"b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=\":\"en::6d49b3b3fb5721e430d82ae005431d2a\"@172.21.195.223:222",
+        ])
+        .expect("args should parse")
+        .expect("request should exist");
+
+        let launch = service
+            .register_request(request)
+            .expect("transient launch should register");
+
+        assert_eq!(
+            launch.channel_policy,
+            ExternalSshChannelPolicy::SingleChannel
         );
     }
 
@@ -1453,6 +1528,66 @@ mod tests {
         );
         assert!(session_options.proxy_command.is_none());
         assert!(session_options.jump_hosts.is_empty());
+    }
+
+    #[test]
+    fn single_channel_transient_ssh_options_reject_multiple_tunnels() {
+        let service = ExternalLaunchService::default();
+        let request = parse_external_ssh_launch_args([
+            "Xshell.exe",
+            "-url",
+            "ssh://\"b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=\":\"en::6d49b3b3fb5721e430d82ae005431d2a\"@172.21.195.223:222",
+        ])
+        .expect("args should parse")
+        .expect("request should exist");
+        let launch = service
+            .register_request(request)
+            .expect("transient launch should register");
+
+        let error = service
+            .update_ssh_options(
+                &launch.id,
+                SshOptions {
+                    connect_timeout_ms: None,
+                    keepalive_interval_ms: None,
+                    proxy_command: None,
+                    identity_file: None,
+                    jump_hosts: Vec::new(),
+                    tunnels: vec![
+                        SshTunnel {
+                            mode: Some("host_service".to_string()),
+                            name: Some("管理后台".to_string()),
+                            kind: SshTunnelKind::Local,
+                            auto_open: true,
+                            bind_address: Some("127.0.0.1".to_string()),
+                            local_port: Some(18080),
+                            remote_host: Some("127.0.0.1".to_string()),
+                            remote_port: Some(8080),
+                        },
+                        SshTunnel {
+                            mode: Some("host_service".to_string()),
+                            name: Some("日志服务".to_string()),
+                            kind: SshTunnelKind::Local,
+                            auto_open: true,
+                            bind_address: Some("127.0.0.1".to_string()),
+                            local_port: Some(18081),
+                            remote_host: Some("127.0.0.1".to_string()),
+                            remote_port: Some(8081),
+                        },
+                    ],
+                    container: Some(SshContainerOptions {
+                        enabled: true,
+                        runtime: "docker".to_string(),
+                        container: String::new(),
+                        shell: Some("/bin/sh".to_string()),
+                        user: None,
+                        workdir: None,
+                    }),
+                },
+            )
+            .expect_err("single-channel launch should reject multiple tunnels");
+
+        assert!(error.to_string().contains("只支持一个隧道"));
     }
 
     #[test]

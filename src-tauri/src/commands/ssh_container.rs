@@ -7,9 +7,14 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, AppResult},
     models::{ssh_container::SshContainerInfo, terminal::RuntimeSessionKind},
-    services::ssh_container_service::{
-        build_container_exec_command, build_container_list_script, enabled_container_options,
-        parse_container_ps_output,
+    services::{
+        external_launch_service::{
+            external_ssh_channel_policy_for_username, ExternalSshChannelPolicy,
+        },
+        ssh_container_service::{
+            build_container_exec_command, build_container_list_script, enabled_container_options,
+            parse_container_ps_output,
+        },
     },
     state::AppState,
     storage::sessions::{get_session, list_sessions},
@@ -27,6 +32,12 @@ pub async fn ssh_container_list(
         Some(session) => session,
         None => get_session(storage.as_ref(), &saved_session_id)?,
     };
+    if crate::services::external_launch_service::is_external_session_id(&session.id)
+        && external_ssh_channel_policy_for_username(&session.username)
+            == ExternalSshChannelPolicy::SingleChannel
+    {
+        return Err(AppError::unsupported("单通道临时 SSH 不支持容器列表"));
+    }
     let container = enabled_container_options(&session)?;
     let script = build_container_list_script(&container.runtime)?;
     if crate::services::external_launch_service::is_external_session_id(&session.id) {
@@ -81,6 +92,11 @@ pub async fn ssh_container_enter_runtime(
     let session = external_launch_service
         .get_session(&saved_session_id)?
         .ok_or_else(|| AppError::validation("复用当前终端进入容器只支持临时 SSH 连接"))?;
+    if external_ssh_channel_policy_for_username(&session.username)
+        == ExternalSshChannelPolicy::SingleChannel
+    {
+        return Err(AppError::unsupported("单通道临时 SSH 不支持进入容器"));
+    }
     let container = enabled_container_options(&session)?;
     let manager = state.terminal_manager();
     let info = manager.runtime_info(&runtime_session_id)?;

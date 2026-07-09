@@ -40,6 +40,7 @@ import { useDomI18n } from "../features/settings/domI18n";
 import { useSettingsStore } from "../features/settings/settingsStore";
 import { listSshContainers, type SshContainerInfo } from "../features/terminal/sshContainerApi";
 import {
+  externalSshChannelPolicy,
   externalSshHostServiceTarget,
   getExternalSshOptions,
   isExternalSessionId,
@@ -522,6 +523,10 @@ export function AppShell() {
   const activeExternalSshOptions = activeExternalSshSession
     ? (externalSshOptionsById[activeExternalSshSession.id] ?? DEFAULT_EXTERNAL_SSH_OPTIONS)
     : null;
+  const activeExternalSshChannelPolicy = activeExternalSshSession
+    ? externalSshChannelPolicy(activeExternalSshSession)
+    : null;
+  const activeExternalSshSingleChannel = activeExternalSshChannelPolicy === "single_channel";
   const activeSshSessionId = activeSavedSession?.type === "ssh" ? activeSavedSession.id : activeExternalSshSession?.id ?? null;
   const activeSshTunnels =
     activeSavedSession?.type === "ssh"
@@ -530,7 +535,7 @@ export function AppShell() {
   const activeSshContainersEnabled =
     activeSavedSession?.type === "ssh"
       ? activeSavedSession.ssh_options?.container?.enabled === true
-      : activeExternalSshOptions?.container?.enabled === true;
+      : activeExternalSshOptions?.container?.enabled === true && !activeExternalSshSingleChannel;
   const activeRuntimeSessionId = activePaneTab?.runtime_session_id ?? null;
   const bindTerminalEvents = useTerminalStore((state) => state.bindTerminalEvents);
   const openTerminal = useTerminalStore((state) => state.openTerminal);
@@ -1795,6 +1800,7 @@ export function AppShell() {
           host={externalSshSessions[externalSshTunnelEditor]?.host ?? ""}
           hostServiceTargetHost={externalSshHostServiceTarget(externalSshSessions[externalSshTunnelEditor] ?? null)}
           initialOptions={externalSshOptionsById[externalSshTunnelEditor] ?? DEFAULT_EXTERNAL_SSH_OPTIONS}
+          singleChannel={externalSshChannelPolicy(externalSshSessions[externalSshTunnelEditor] ?? null) === "single_channel"}
           onCancel={() => setExternalSshTunnelEditor(null)}
           onSave={(options) => void saveExternalTunnelOptions(externalSshTunnelEditor, options)}
         />
@@ -1982,12 +1988,14 @@ function ExternalSshTunnelEditorDialog({
   host,
   hostServiceTargetHost,
   initialOptions,
+  singleChannel,
   onCancel,
   onSave,
 }: {
   host: string;
   hostServiceTargetHost: string;
   initialOptions: SshOptions;
+  singleChannel: boolean;
   onCancel: () => void;
   onSave: (options: SshOptions) => void;
 }) {
@@ -2015,6 +2023,9 @@ function ExternalSshTunnelEditorDialog({
               host={host}
               hostServiceTargetHost={hostServiceTargetHost}
               hostServiceTargetEditable={true}
+              maxTunnels={singleChannel ? 1 : undefined}
+              maxTunnelsMessage={singleChannel ? "单通道临时 SSH 只支持一个隧道" : undefined}
+              allowedModes={singleChannel ? ["host_service"] : undefined}
               newTunnelMode={newTunnelMode}
               onNewTunnelModeChange={setNewTunnelMode}
               onSshOptionsChange={setSshOptions}

@@ -10,6 +10,9 @@ interface SshTunnelsSectionProps {
   host: string;
   hostServiceTargetHost?: string;
   hostServiceTargetEditable?: boolean;
+  maxTunnels?: number;
+  maxTunnelsMessage?: string;
+  allowedModes?: SshTunnelMode[];
   newTunnelMode: SshTunnelMode;
   onNewTunnelModeChange: (mode: SshTunnelMode) => void;
   onSshOptionsChange: (options: SshOptions) => void;
@@ -20,6 +23,9 @@ export function SshTunnelsSection({
   host,
   hostServiceTargetHost,
   hostServiceTargetEditable = false,
+  maxTunnels,
+  maxTunnelsMessage,
+  allowedModes,
   newTunnelMode,
   onNewTunnelModeChange,
   onSshOptionsChange,
@@ -27,6 +33,10 @@ export function SshTunnelsSection({
   const tunnels = sshOptions.tunnels ?? [];
   const normalizedHost = host.trim();
   const normalizedHostServiceTargetHost = hostServiceTargetHost?.trim() || normalizedHost;
+  const visibleTunnelModes = allowedModes?.length
+    ? tunnelModes.filter((mode) => allowedModes.includes(mode.value))
+    : tunnelModes;
+  const tunnelLimitReached = maxTunnels !== undefined && tunnels.length >= maxTunnels;
 
   return (
     <div className="zt-session-form-wide zt-ssh-tunnel-editor" aria-label="隧道">
@@ -35,6 +45,8 @@ export function SshTunnelsSection({
         <button
           type="button"
           aria-label="添加隧道"
+          disabled={tunnelLimitReached}
+          title={tunnelLimitReached ? (maxTunnelsMessage ?? `最多只能配置 ${maxTunnels} 条隧道`) : undefined}
           onClick={() =>
             onSshOptionsChange({
               ...sshOptions,
@@ -47,7 +59,7 @@ export function SshTunnelsSection({
         </button>
       </div>
       <div className="zt-ssh-tunnel-mode-grid" role="group" aria-label="隧道用途">
-        {tunnelModes.map((mode) => (
+        {visibleTunnelModes.map((mode) => (
           <button
             key={mode.value}
             type="button"
@@ -62,6 +74,7 @@ export function SshTunnelsSection({
           </button>
         ))}
       </div>
+      {tunnelLimitReached && maxTunnelsMessage ? <div className="zt-empty-line">{maxTunnelsMessage}</div> : null}
       {tunnels.length === 0 ? <div className="zt-empty-line">暂无隧道</div> : null}
       {tunnels.map((tunnel, index) => (
         <SshTunnelCard

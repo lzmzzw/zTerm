@@ -1,7 +1,12 @@
 // Author: Liz
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { externalSshHostServiceTarget, getExternalSshOptions, updateExternalSshOptions } from "./externalLaunchApi";
+import {
+  externalSshChannelPolicy,
+  externalSshHostServiceTarget,
+  getExternalSshOptions,
+  updateExternalSshOptions,
+} from "./externalLaunchApi";
 import type { SshOptions } from "../sessions/types";
 
 const invokeMock = vi.hoisted(() => vi.fn());
@@ -87,6 +92,14 @@ describe("externalLaunchApi", () => {
     ).toBe("127.0.0.1");
   });
 
+  it("marks valid b64 gateway usernames as single-channel SSH sessions", () => {
+    expect(
+      externalSshChannelPolicy({
+        username: "b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=",
+      }),
+    ).toBe("single_channel");
+  });
+
   it("falls back to the external launch host when the b64 gateway username is invalid", () => {
     expect(
       externalSshHostServiceTarget({
@@ -94,5 +107,10 @@ describe("externalLaunchApi", () => {
         username: "b64>>not-valid-base64",
       }),
     ).toBe("172.21.195.223");
+  });
+
+  it("keeps normal or invalid external SSH sessions as unknown channel policy", () => {
+    expect(externalSshChannelPolicy({ username: "ops" })).toBe("unknown");
+    expect(externalSshChannelPolicy({ username: "b64>>not-valid-base64" })).toBe("unknown");
   });
 });

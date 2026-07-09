@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { SshOptions } from "../sessions/types";
 
+export type ExternalSshChannelPolicy = "unknown" | "multi_channel" | "single_channel";
+
 export interface ExternalSshLaunchEvent {
   id: string;
   name: string;
@@ -11,6 +13,7 @@ export interface ExternalSshLaunchEvent {
   username: string;
   auto_open_sftp: boolean;
   remote_path: string;
+  channel_policy?: ExternalSshChannelPolicy | null;
 }
 
 export async function takePendingExternalLaunches(): Promise<ExternalSshLaunchEvent[]> {
@@ -30,8 +33,21 @@ export function externalSshHostServiceTarget(launch: Pick<ExternalSshLaunchEvent
   return isB64GatewayUsername(launch?.username) ? "127.0.0.1" : host;
 }
 
+export function externalSshChannelPolicy(
+  launch: Pick<ExternalSshLaunchEvent, "channel_policy" | "username"> | null | undefined,
+): ExternalSshChannelPolicy {
+  if (isExternalSshChannelPolicy(launch?.channel_policy)) {
+    return launch.channel_policy;
+  }
+  return isB64GatewayUsername(launch?.username) ? "single_channel" : "unknown";
+}
+
 export function isExternalSessionId(value: string | null | undefined): value is string {
   return typeof value === "string" && value.startsWith("external:");
+}
+
+function isExternalSshChannelPolicy(value: unknown): value is ExternalSshChannelPolicy {
+  return value === "unknown" || value === "multi_channel" || value === "single_channel";
 }
 
 function targetHostFromB64Username(username: string | null | undefined): string | null {

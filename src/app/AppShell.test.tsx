@@ -210,6 +210,17 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 vi.mock("../features/terminal/externalLaunchApi", () => ({
+  externalSshChannelPolicy: (launch: { channel_policy?: string; username?: string } | null | undefined) => {
+    if (launch?.channel_policy === "single_channel") return "single_channel";
+    const username = launch?.username?.trim() ?? "";
+    if (!username.startsWith("b64>>")) return "unknown";
+    try {
+      const decoded = globalThis.atob(username.slice("b64>>".length));
+      return decoded.includes("@") && decoded.includes(":SSH2") ? "single_channel" : "unknown";
+    } catch {
+      return "unknown";
+    }
+  },
   externalSshHostServiceTarget: (launch: { host?: string; username?: string } | null | undefined) => {
     const username = launch?.username?.trim() ?? "";
     if (username.startsWith("b64>>")) {
@@ -1302,6 +1313,64 @@ describe("AppShell", () => {
     expect(storeMocks.listSshContainers).toHaveBeenLastCalledWith("external:launch-1", {
       runtimeSessionId: "runtime-external",
     });
+
+    view.unmount();
+  });
+
+  it("hides transient SSH containers and limits tunnels for single-channel external SSH", async () => {
+    storeMocks.pendingExternalLaunches = [
+      {
+        id: "external:launch-1",
+        name: "b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=@172.21.195.223:222",
+        host: "172.21.195.223",
+        port: 222,
+        username: "b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=",
+        auto_open_sftp: false,
+        remote_path: "/",
+      },
+    ];
+    storeMocks.workspaceState.tabs = [
+      {
+        id: "tab-1",
+        title: "bhost",
+        active_pane_id: "pane-1",
+        root: {
+          kind: "leaf",
+          id: "pane-1",
+          title: "bhost",
+          runtime_session_id: "runtime-external",
+          saved_session_id: "external:launch-1",
+          active_terminal_tab_id: "pane-1-tab-1",
+          terminal_tabs: [
+            {
+              id: "pane-1-tab-1",
+              title: "bhost",
+              runtime_session_id: "runtime-external",
+              saved_session_id: "external:launch-1",
+              connection_source: "external_ssh",
+            },
+          ],
+        },
+      },
+    ];
+
+    const view = render(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).toBe(null);
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).not.toBe(null);
+    expect(storeMocks.listSshContainers).not.toHaveBeenCalled();
+
+    await clickButton(view.container, "SSH 隧道");
+    await clickButton(view.container, "添加临时 SSH 隧道");
+    await clickButton(view.container, "添加隧道");
+
+    expect(view.container.textContent).toContain("单通道临时 SSH 只支持一个隧道");
+    expect((button(view.container, "添加隧道") as HTMLButtonElement).disabled).toBe(true);
 
     view.unmount();
   });
