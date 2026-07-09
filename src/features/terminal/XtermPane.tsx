@@ -69,8 +69,14 @@ const KERMINAL_LIGHT_TERMINAL_THEME = {
   brightWhite: "#ffffff",
 };
 const MAX_REPLAY_OUTPUT_CHARS = 16_000;
+const MAX_TERMINAL_WRITE_CHUNK_CHARS = 4_096;
 const TERMINAL_STATUS_QUERY_PATTERN = /\x1b\[[0-9?;]*n/g;
 const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*?(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]/g;
+
+interface QueuedTerminalWrite {
+  data: string;
+  suppressGeneratedInput: boolean;
+}
 
 export function XtermPane({
   data = "",
@@ -96,6 +102,10 @@ export function XtermPane({
   const ghostCandidateRef = useRef<CommandCompletionCandidate | null>(null);
   const lastResizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const replayingOutputRef = useRef(false);
+  const outputWriteQueueRef = useRef<QueuedTerminalWrite[]>([]);
+  const outputWriteInProgressRef = useRef(false);
+  const outputWriteGenerationRef = useRef(0);
+  const outputWriteTimerRef = useRef<number | null>(null);
   const lineInputRef = useRef("");
   const onInputRef = useRef(onInput);
   const onResizeRef = useRef(onResize);
@@ -103,6 +113,81 @@ export function XtermPane({
   const [ghostPosition, setGhostPosition] = useState<CSSProperties>({ bottom: 8, left: 10 });
   const [lineInput, setLineInput] = useState("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  const clearOutputWriteTimer = useCallback(() => {
+    if (outputWriteTimerRef.current !== null) {
+      window.clearTimeout(outputWriteTimerRef.current);
+      outputWriteTimerRef.current = null;
+    }
+  }, []);
+
+  const cancelQueuedOutputWrites = useCallback(() => {
+    outputWriteGenerationRef.current += 1;
+    outputWriteQueueRef.current = [];
+    outputWriteInProgressRef.current = false;
+    replayingOutputRef.current = false;
+    clearOutputWriteTimer();
+  }, [clearOutputWriteTimer]);
+
+  const drainQueuedOutputWrites = useCallback(() => {
+    const terminal = terminalRef.current;
+    if (!terminal || outputWriteInProgressRef.current) return;
+    const item = outputWriteQueueRef.current.shift();
+    if (!item) return;
+
+    const generation = outputWriteGenerationRef.current;
+    outputWriteInProgressRef.current = true;
+    replayingOutputRef.current = item.suppressGeneratedInput;
+    let offset = 0;
+
+    const finishItem = () => {
+      if (item.suppressGeneratedInput) {
+        replayingOutputRef.current = false;
+      }
+      outputWriteInProgressRef.current = false;
+      drainQueuedOutputWrites();
+    };
+
+    const writeNextChunk = () => {
+      if (generation !== outputWriteGenerationRef.current || terminalRef.current !== terminal) {
+        outputWriteInProgressRef.current = false;
+        replayingOutputRef.current = false;
+        return;
+      }
+      const chunk = item.data.slice(offset, offset + MAX_TERMINAL_WRITE_CHUNK_CHARS);
+      offset += chunk.length;
+      terminal.write(chunk, () => {
+        if (generation !== outputWriteGenerationRef.current || terminalRef.current !== terminal) {
+          outputWriteInProgressRef.current = false;
+          replayingOutputRef.current = false;
+          return;
+        }
+        if (offset < item.data.length) {
+          outputWriteTimerRef.current = window.setTimeout(writeNextChunk, 0);
+          return;
+        }
+        finishItem();
+      });
+    };
+
+    writeNextChunk();
+  }, []);
+
+  const enqueueTerminalOutput = useCallback(
+    (data: string, suppressGeneratedInput: boolean) => {
+      const output = suppressGeneratedInput ? prepareReplayOutput(data) : data;
+      if (!output) {
+        replayingOutputRef.current = false;
+        return;
+      }
+      outputWriteQueueRef.current.push({
+        data: output,
+        suppressGeneratedInput,
+      });
+      drainQueuedOutputWrites();
+    },
+    [drainQueuedOutputWrites],
+  );
 
   useEffect(() => {
     onInputRef.current = onInput;
@@ -212,6 +297,7 @@ export function XtermPane({
     window.addEventListener("resize", fit);
 
     return () => {
+      cancelQueuedOutputWrites();
       resizeObserver?.disconnect();
       window.removeEventListener("resize", fit);
       inputDisposable.dispose();
@@ -226,7 +312,7 @@ export function XtermPane({
       lastResizeRef.current = null;
       scheduleNextTask(() => terminal.dispose());
     };
-  }, [handleTerminalInput]);
+  }, [cancelQueuedOutputWrites, handleTerminalInput]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -250,9 +336,10 @@ export function XtermPane({
       }
       liveSerialRef.current = replayCoversLiveData ? (liveSerial ?? null) : null;
       writtenLengthRef.current = data.length;
+      cancelQueuedOutputWrites();
       terminal.clear();
       if (data) {
-        writeTerminalOutput(terminal, data, !isOnlyTerminalStatusQuery(data), replayingOutputRef);
+        enqueueTerminalOutput(data, !isOnlyTerminalStatusQuery(data));
       }
       return;
     }
@@ -261,9 +348,10 @@ export function XtermPane({
     if (streamChanged) {
       streamIdRef.current = streamId;
       writtenLengthRef.current = 0;
+      cancelQueuedOutputWrites();
       terminal.clear();
       if (data) {
-        writeTerminalOutput(terminal, data, !isOnlyTerminalStatusQuery(data), replayingOutputRef);
+        enqueueTerminalOutput(data, !isOnlyTerminalStatusQuery(data));
       }
       writtenLengthRef.current = data.length;
       return;
@@ -275,23 +363,24 @@ export function XtermPane({
       const nextChunk = data.slice(previousLength);
       if (nextChunk) {
         const suppressGeneratedInput = previousLength === 0 && !isOnlyTerminalStatusQuery(nextChunk);
-        writeTerminalOutput(terminal, nextChunk, suppressGeneratedInput, replayingOutputRef);
+        enqueueTerminalOutput(nextChunk, suppressGeneratedInput);
       }
     } else {
+      cancelQueuedOutputWrites();
       terminal.clear();
-      writeTerminalOutput(terminal, data, !isOnlyTerminalStatusQuery(data), replayingOutputRef);
+      enqueueTerminalOutput(data, !isOnlyTerminalStatusQuery(data));
     }
     writtenLengthRef.current = data.length;
-  }, [data, liveData, liveSerial, replayKey, streamId]);
+  }, [cancelQueuedOutputWrites, data, enqueueTerminalOutput, liveData, liveSerial, replayKey, streamId]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal || liveSerial === undefined || liveSerial === null || !liveData) return;
     if (liveSerialRef.current === liveSerial) return;
-    writeTerminalOutput(terminal, liveData, false, replayingOutputRef);
+    enqueueTerminalOutput(liveData, false);
     liveSerialRef.current = liveSerial;
     writtenLengthRef.current += liveData.length;
-  }, [liveData, liveSerial]);
+  }, [enqueueTerminalOutput, liveData, liveSerial]);
 
   return (
     <div
@@ -425,29 +514,6 @@ function applyTerminalInput(current: string, value: string) {
     }
   }
   return next;
-}
-
-function writeTerminalOutput(
-  terminal: Terminal,
-  data: string,
-  suppressGeneratedInput: boolean,
-  replayingOutputRef: { current: boolean },
-) {
-  if (!suppressGeneratedInput) {
-    replayingOutputRef.current = false;
-    terminal.write(data);
-    return;
-  }
-
-  const replayOutput = prepareReplayOutput(data);
-  if (!replayOutput) {
-    replayingOutputRef.current = false;
-    return;
-  }
-  replayingOutputRef.current = true;
-  terminal.write(replayOutput, () => {
-    replayingOutputRef.current = false;
-  });
 }
 
 function prepareReplayOutput(data: string) {

@@ -67,6 +67,7 @@ pub struct CommandCompletionService {
 struct CommandCompletionState {
     local_commands: Mutex<Option<CachedCommands>>,
     remote_commands: Mutex<HashMap<String, CachedCommands>>,
+    remote_refresh_inflight: Mutex<HashSet<String>>,
     runtimes: Mutex<HashMap<String, RuntimeCompletionContext>>,
 }
 
@@ -184,6 +185,9 @@ impl CommandCompletionService {
         if saved_session_id.trim().is_empty() || self.remote_cache_is_fresh(&saved_session_id) {
             return;
         }
+        if !self.try_mark_remote_refresh(&saved_session_id) {
+            return;
+        }
         let service = self.clone();
         tauri::async_runtime::spawn(async move {
             let result: AppResult<Vec<String>> = async {
@@ -217,7 +221,33 @@ impl CommandCompletionService {
             if let Ok(commands) = result {
                 service.store_remote_commands(&saved_session_id, commands);
             }
+            service.finish_remote_refresh(&saved_session_id);
         });
+    }
+
+    pub fn refresh_remote_commands_for_runtime(
+        &self,
+        store: Arc<SqliteStore>,
+        ssh_commands: SshCommandService,
+        credential_service: CredentialService,
+        runtime_session_id: &str,
+    ) {
+        let context = self
+            .inner
+            .runtimes
+            .lock()
+            .ok()
+            .and_then(|runtimes| runtimes.get(runtime_session_id).cloned());
+        let Some(context) = context else {
+            return;
+        };
+        if context.kind != RuntimeSessionKind::Ssh {
+            return;
+        }
+        let Some(saved_session_id) = context.saved_session_id else {
+            return;
+        };
+        self.refresh_remote_commands(store, ssh_commands, credential_service, saved_session_id);
     }
 
     fn runtime_context(&self, runtime_session_id: &str) -> AppResult<RuntimeCompletionContext> {
@@ -418,6 +448,23 @@ impl CommandCompletionService {
             .ok()
             .and_then(|cache| cache.get(saved_session_id).cloned())
             .is_some_and(|entry| entry.expires_at > Instant::now())
+    }
+
+    fn try_mark_remote_refresh(&self, saved_session_id: &str) -> bool {
+        let Ok(mut inflight) = self.inner.remote_refresh_inflight.lock() else {
+            return false;
+        };
+        if inflight.contains(saved_session_id) {
+            return false;
+        }
+        inflight.insert(saved_session_id.to_string());
+        true
+    }
+
+    fn finish_remote_refresh(&self, saved_session_id: &str) {
+        if let Ok(mut inflight) = self.inner.remote_refresh_inflight.lock() {
+            inflight.remove(saved_session_id);
+        }
     }
 
     fn store_remote_commands(&self, saved_session_id: &str, commands: Vec<String>) {
@@ -818,5 +865,18 @@ mod tests {
         );
 
         assert_eq!(commands, vec!["cargo", "git", "kubectl"]);
+    }
+
+    #[test]
+    fn command_completion_deduplicates_remote_refresh_inflight_by_session() {
+        let service = CommandCompletionService::new();
+
+        assert!(service.try_mark_remote_refresh("session-1"));
+        assert!(!service.try_mark_remote_refresh("session-1"));
+        assert!(service.try_mark_remote_refresh("session-2"));
+
+        service.finish_remote_refresh("session-1");
+
+        assert!(service.try_mark_remote_refresh("session-1"));
     }
 }

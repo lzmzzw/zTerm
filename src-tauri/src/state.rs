@@ -19,6 +19,7 @@ use crate::{
         sftp_service::SftpService,
         ssh_command_service::SshCommandService,
         terminal_manager::TerminalManager,
+        terminal_output_dispatcher::TerminalOutputDispatcher,
         transfer_queue::TransferQueue,
     },
     storage::sqlite::SqliteStore,
@@ -28,6 +29,7 @@ use crate::{
 pub struct AppState {
     storage: Arc<SqliteStore>,
     terminal_manager: Arc<TerminalManager>,
+    terminal_output_dispatcher: TerminalOutputDispatcher,
     command_completion_service: CommandCompletionService,
     command_history_service: Arc<CommandHistoryService>,
     credential_service: CredentialService,
@@ -56,6 +58,7 @@ impl AppState {
     fn new_inner(storage: SqliteStore, app_handle: Option<AppHandle>) -> Self {
         let storage = Arc::new(storage);
         let terminal_manager = Arc::new(TerminalManager::default());
+        let terminal_output_dispatcher = TerminalOutputDispatcher::new(app_handle.clone());
         let command_history_service = Arc::new(CommandHistoryService::new(Arc::clone(&storage)));
         let credential_service = CredentialService::new(Arc::clone(&storage));
         let external_launch_service = ExternalLaunchService::default();
@@ -98,6 +101,7 @@ impl AppState {
             transfer_queue,
             storage,
             terminal_manager,
+            terminal_output_dispatcher,
         }
     }
 
@@ -107,6 +111,10 @@ impl AppState {
 
     pub fn terminal_manager(&self) -> Arc<TerminalManager> {
         Arc::clone(&self.terminal_manager)
+    }
+
+    pub fn terminal_output_dispatcher(&self) -> TerminalOutputDispatcher {
+        self.terminal_output_dispatcher.clone()
     }
 
     pub fn command_history_service(&self) -> Arc<CommandHistoryService> {

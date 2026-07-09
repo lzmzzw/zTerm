@@ -544,6 +544,7 @@ export function AppShell() {
   const openDefaultLocalTerminal = useTerminalStore((state) => state.openDefaultLocalTerminal);
   const closeTerminal = useTerminalStore((state) => state.closeTerminal);
   const writeTerminal = useTerminalStore((state) => state.writeTerminal);
+  const getTerminalOutputTail = useTerminalStore((state) => state.getOutputTail);
   const activeRuntimeInfo = useTerminalStore((state) =>
     activeRuntimeSessionId ? (state.runtimes[activeRuntimeSessionId] ?? null) : null,
   );
@@ -551,11 +552,6 @@ export function AppShell() {
     activeTool === "history" && !workspaceVisualSwitchActive && activeRuntimeSessionId
       ? (state.inputSerialByRuntime[activeRuntimeSessionId] ?? 0)
       : 0,
-  );
-  const activeTerminalOutput = useTerminalStore((state) =>
-    activeTool === "agent" && !workspaceVisualSwitchActive && activeRuntimeSessionId
-      ? (state.output[activeRuntimeSessionId] ?? "")
-      : "",
   );
   const activeHistoryScope = resolveHistoryScope({
     runtimeScopeKind: activeRuntimeInfo?.history_scope_kind,
@@ -569,7 +565,10 @@ export function AppShell() {
   const activeHistoryScopeId = activeHistoryScope.scopeId;
   const language = appSettings?.language ?? "zhCN";
   const workspaceRestoreStrategy = appSettings?.workspace_restore_strategy ?? "visible_first";
-  const recentTerminalOutput = activeTerminalOutput.slice(-4000);
+  const recentTerminalOutput =
+    activeTool === "agent" && !workspaceVisualSwitchActive && activeRuntimeSessionId
+      ? getTerminalOutputTail(activeRuntimeSessionId).slice(-4000)
+      : "";
   const aiTerminalContext = useMemo(
     () => {
       if (!activeRuntimeSessionId) return null;
@@ -1052,7 +1051,7 @@ export function AppShell() {
     if (!leavingWorkspace) return;
     freezeWorkspaceRuntimeVisualSnapshots(
       leavingWorkspaceId,
-      useTerminalStore.getState().visualOutputTail,
+      useTerminalStore.getState().getVisualOutputTailSnapshot(),
       Date.now(),
     );
   }

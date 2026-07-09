@@ -1,7 +1,7 @@
 // Author: Liz
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useTerminalStore } from "./terminalStore";
+import { resetTerminalOutputCachesForTest, useTerminalStore } from "./terminalStore";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const eventMock = vi.hoisted(() => ({
@@ -37,11 +37,10 @@ describe("terminalStore", () => {
     eventMock.listeners = {};
     useTerminalStore.setState({
       runtimes: {},
-      output: {},
       outputChunks: {},
       inputSerialByRuntime: {},
-      visualOutputTail: {},
     });
+    resetTerminalOutputCachesForTest();
   });
 
   it("passes a local working directory override when opening the default local terminal", async () => {
@@ -178,7 +177,7 @@ describe("terminalStore", () => {
 
     useTerminalStore.getState().appendOutput("runtime-1", `prefix-${chunk}`);
 
-    const output = useTerminalStore.getState().output["runtime-1"];
+    const output = useTerminalStore.getState().getOutputTail("runtime-1");
     expect(output).toHaveLength(50_000);
     expect(output.startsWith("prefix-")).toBe(false);
     expect(output).toBe("a".repeat(50_000));
@@ -189,10 +188,34 @@ describe("terminalStore", () => {
 
     useTerminalStore.getState().appendOutput("runtime-1", `prefix-${chunk}`);
 
-    const visualTail = useTerminalStore.getState().visualOutputTail["runtime-1"];
+    const visualTail = useTerminalStore.getState().getVisualOutputTail("runtime-1");
     expect(visualTail).toHaveLength(8_000);
     expect(visualTail.startsWith("prefix-")).toBe(false);
     expect(visualTail).toBe("b".repeat(8_000));
+  });
+
+  it("keeps background output in cache without publishing live chunks", () => {
+    useTerminalStore.getState().appendOutput("runtime-1", "background");
+
+    expect(useTerminalStore.getState().getOutputTail("runtime-1")).toBe("background");
+    expect(useTerminalStore.getState().getVisualOutputTail("runtime-1")).toBe("background");
+    expect(useTerminalStore.getState().outputChunks["runtime-1"]).toBeUndefined();
+  });
+
+  it("publishes live chunks only while a runtime has a live output subscription", () => {
+    const stopLiveOutput = useTerminalStore.getState().beginLiveOutput("runtime-1");
+
+    useTerminalStore.getState().appendOutput("runtime-1", "hello");
+    expect(useTerminalStore.getState().outputChunks["runtime-1"]).toEqual({
+      serial: 1,
+      data: "hello",
+    });
+
+    stopLiveOutput();
+    useTerminalStore.getState().appendOutput("runtime-1", " background");
+
+    expect(useTerminalStore.getState().getOutputTail("runtime-1")).toBe("hello background");
+    expect(useTerminalStore.getState().outputChunks["runtime-1"]).toBeUndefined();
   });
 
   it("increments the input serial only after submitted terminal input is written", async () => {
@@ -225,11 +248,10 @@ describe("terminalStore", () => {
           rows: 32,
         },
       },
-      output: { "runtime-1": "hello" },
       outputChunks: { "runtime-1": { serial: 1, data: "hello" } },
       inputSerialByRuntime: { "runtime-1": 3 },
-      visualOutputTail: { "runtime-1": "hello" },
     });
+    useTerminalStore.getState().appendOutput("runtime-1", "hello");
 
     await useTerminalStore.getState().closeTerminal("runtime-1");
 
@@ -240,7 +262,8 @@ describe("terminalStore", () => {
     expect(zmodemTransferMock.releaseTerminalZmodemRuntime).toHaveBeenCalledWith("runtime-1");
     expect(useTerminalStore.getState().runtimes["runtime-1"]).toBeUndefined();
     expect(useTerminalStore.getState().inputSerialByRuntime["runtime-1"]).toBeUndefined();
-    expect(useTerminalStore.getState().visualOutputTail["runtime-1"]).toBeUndefined();
+    expect(useTerminalStore.getState().getVisualOutputTail("runtime-1")).toBe("");
+    expect(useTerminalStore.getState().getOutputTail("runtime-1")).toBe("");
   });
 
   it("does not expose a terminal cwd probe API", () => {

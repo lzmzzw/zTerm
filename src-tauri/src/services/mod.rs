@@ -19,5 +19,6 @@ pub mod ssh_command_service;
 pub mod ssh_container_service;
 pub mod ssh_terminal_service;
 pub mod terminal_manager;
+pub mod terminal_output_dispatcher;
 pub mod terminal_profile_service;
 pub mod transfer_queue;

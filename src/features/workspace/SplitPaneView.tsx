@@ -66,6 +66,8 @@ export function SplitPaneView({
       if (!container) return;
 
       event.currentTarget.setPointerCapture?.(event.pointerId);
+      let resizeFrame: number | null = null;
+      let pendingPosition: { clientX: number; clientY: number } | null = null;
 
       const updateRatio = (clientX: number, clientY: number) => {
         const rect = container.getBoundingClientRect();
@@ -76,12 +78,36 @@ export function SplitPaneView({
         onResizeSplit(split.id, offset / length);
       };
 
+      const flushPendingResize = () => {
+        resizeFrame = null;
+        const position = pendingPosition;
+        pendingPosition = null;
+        if (position) {
+          updateRatio(position.clientX, position.clientY);
+        }
+      };
+
+      const scheduleResize = (clientX: number, clientY: number) => {
+        pendingPosition = { clientX, clientY };
+        if (resizeFrame !== null) return;
+        if (typeof window.requestAnimationFrame === "function") {
+          resizeFrame = window.requestAnimationFrame(flushPendingResize);
+        } else {
+          flushPendingResize();
+        }
+      };
+
       const handlePointerMove = (moveEvent: PointerEvent) => {
         moveEvent.preventDefault();
-        updateRatio(moveEvent.clientX, moveEvent.clientY);
+        scheduleResize(moveEvent.clientX, moveEvent.clientY);
       };
 
       const handlePointerUp = () => {
+        if (resizeFrame !== null && typeof window.cancelAnimationFrame === "function") {
+          window.cancelAnimationFrame(resizeFrame);
+          resizeFrame = null;
+        }
+        flushPendingResize();
         window.removeEventListener("pointermove", handlePointerMove);
         window.removeEventListener("pointerup", handlePointerUp);
       };
@@ -208,12 +234,14 @@ function LeafPane({
       isInteractiveTerminalRuntime(runtime.kind),
   );
   const xtermLive = Boolean(workspaceActive && xtermMounted);
+  const beginLiveOutput = useTerminalStore((state) => state.beginLiveOutput);
   const outputChunk = useTerminalStore((state) =>
     xtermLive && activeRuntimeSessionId ? (state.outputChunks[activeRuntimeSessionId] ?? null) : null,
   );
-  const visualOutputTail = useTerminalStore((state) =>
-    workspaceActive && !xtermMounted && activeRuntimeSessionId ? (state.visualOutputTail[activeRuntimeSessionId] ?? "") : "",
-  );
+  const visualOutputTail =
+    workspaceActive && !xtermMounted && activeRuntimeSessionId
+      ? useTerminalStore.getState().getVisualOutputTail(activeRuntimeSessionId)
+      : "";
   const snapshotText = activeTerminalTab.visual_snapshot?.text ?? visualOutputTail;
   const hasSnapshotText = snapshotText.length > 0;
   const writeTerminal = useTerminalStore((state) => state.writeTerminal);
@@ -245,7 +273,7 @@ function LeafPane({
     const delayMs = active ? ACTIVE_XTERM_MOUNT_DELAY_MS : INACTIVE_XTERM_MOUNT_DELAY_MS;
     return scheduleAfterPaintDelay(() => {
       if (scheduledRuntimeSessionIdRef.current === activeRuntimeSessionId) {
-        const replayData = useTerminalStore.getState().output[activeRuntimeSessionId] ?? "";
+        const replayData = useTerminalStore.getState().getOutputTail(activeRuntimeSessionId);
         setXtermReplay((current) => ({
           data: replayData,
           key: current.runtimeSessionId === activeRuntimeSessionId ? current.key + 1 : 1,
@@ -259,13 +287,18 @@ function LeafPane({
   useEffect(() => {
     if (!xtermLive || !activeRuntimeSessionId) return;
     if (xtermReplay.runtimeSessionId === activeRuntimeSessionId) return;
-    const replayData = useTerminalStore.getState().output[activeRuntimeSessionId] ?? "";
+    const replayData = useTerminalStore.getState().getOutputTail(activeRuntimeSessionId);
     setXtermReplay((current) => ({
       data: replayData,
       key: current.runtimeSessionId === activeRuntimeSessionId ? current.key + 1 : 1,
       runtimeSessionId: activeRuntimeSessionId,
     }));
   }, [activeRuntimeSessionId, xtermLive, xtermReplay.runtimeSessionId]);
+
+  useEffect(() => {
+    if (!xtermLive || !activeRuntimeSessionId) return undefined;
+    return beginLiveOutput(activeRuntimeSessionId);
+  }, [activeRuntimeSessionId, beginLiveOutput, xtermLive]);
 
   const handleInput = useCallback(
     (data: string) => {

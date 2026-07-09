@@ -3,7 +3,7 @@ import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { useTerminalStore } from "../features/terminal/terminalStore";
+import { resetTerminalOutputCachesForTest, useTerminalStore } from "../features/terminal/terminalStore";
 import type { WorkspaceDefinition } from "../features/workspace/types";
 import { useWorkspaceVisualSwitch } from "./useWorkspaceVisualSwitch";
 
@@ -18,11 +18,8 @@ describe("useWorkspaceVisualSwitch", () => {
       return frameId;
     });
     vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
-    useTerminalStore.setState({
-      visualOutputTail: {
-        "runtime-1": "tail from runtime",
-      },
-    });
+    resetTerminalOutputCachesForTest();
+    useTerminalStore.getState().appendOutput("runtime-1", "tail from runtime");
   });
 
   afterEach(() => {
@@ -30,7 +27,7 @@ describe("useWorkspaceVisualSwitch", () => {
       cleanup();
     }
     vi.restoreAllMocks();
-    useTerminalStore.setState({ visualOutputTail: {} });
+    resetTerminalOutputCachesForTest();
   });
 
   it("moves through snapshot, committed, and live phases for a workspace switch", async () => {

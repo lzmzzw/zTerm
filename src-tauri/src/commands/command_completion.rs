@@ -12,7 +12,12 @@ pub fn command_completion_suggest(
     state: State<'_, AppState>,
     request: CommandCompletionRequest,
 ) -> AppResult<Vec<CommandCompletionCandidate>> {
-    state
-        .command_completion_service()
-        .suggest(state.storage().as_ref(), request)
+    let completion = state.command_completion_service();
+    completion.refresh_remote_commands_for_runtime(
+        state.storage(),
+        state.ssh_command_service(),
+        state.credential_service(),
+        &request.runtime_session_id,
+    );
+    completion.suggest(state.storage().as_ref(), request)
 }

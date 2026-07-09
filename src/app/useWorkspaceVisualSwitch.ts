@@ -70,7 +70,7 @@ export function useWorkspaceVisualSwitch() {
     cancelPendingWorkspaceVisualSwitch();
     const epoch = workspaceSwitchOverlayIdRef.current + 1;
     const capturedAt = performanceNow();
-    const visualOutputTail = useTerminalStore.getState().visualOutputTail;
+    const visualOutputTail = useTerminalStore.getState().getVisualOutputTailSnapshot();
     const overlay: WorkspaceSwitchOverlayState = {
       id: epoch,
       targetWorkspaceId: workspace.id,

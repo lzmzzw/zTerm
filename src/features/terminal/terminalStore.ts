@@ -65,10 +65,8 @@ const MAX_TERMINAL_VISUAL_TAIL_CHARS = 8_000;
 
 interface TerminalState {
   runtimes: Record<string, RuntimeSessionInfo>;
-  output: Record<string, string>;
   outputChunks: Record<string, TerminalOutputChunk>;
   inputSerialByRuntime: Record<string, number>;
-  visualOutputTail: Record<string, string>;
   bindTerminalEvents: () => Promise<UnlistenFn>;
   openTerminal: (savedSessionId: string, paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>;
   openSshContainerTerminal: (
@@ -89,17 +87,28 @@ interface TerminalState {
   resizeTerminal: (runtimeSessionId: string, cols: number, rows: number) => Promise<void>;
   closeTerminal: (runtimeSessionId: string, options?: { releaseExternalSession?: boolean }) => Promise<void>;
   appendOutput: (runtimeSessionId: string, data: string) => void;
+  getOutputTail: (runtimeSessionId: string) => string;
+  getVisualOutputTail: (runtimeSessionId: string) => string;
+  getVisualOutputTailSnapshot: () => Record<string, string>;
+  beginLiveOutput: (runtimeSessionId: string) => () => void;
 }
 
 let terminalEventBinding: Promise<UnlistenFn> | null = null;
 let terminalEventSubscribers = 0;
+const outputTailByRuntime: Record<string, string> = {};
+const visualOutputTailByRuntime: Record<string, string> = {};
+const liveOutputSubscriptions: Record<string, number> = {};
+
+export function resetTerminalOutputCachesForTest() {
+  clearRecord(outputTailByRuntime);
+  clearRecord(visualOutputTailByRuntime);
+  clearRecord(liveOutputSubscriptions);
+}
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   runtimes: {},
-  output: {},
   outputChunks: {},
   inputSerialByRuntime: {},
-  visualOutputTail: {},
   bindTerminalEvents() {
     terminalEventSubscribers += 1;
     if (!terminalEventBinding) {
@@ -231,19 +240,23 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     releaseTerminalZmodemRuntime(runtimeSessionId);
     set((state) => {
       const { [runtimeSessionId]: _runtime, ...runtimes } = state.runtimes;
-      const { [runtimeSessionId]: _output, ...output } = state.output;
       const { [runtimeSessionId]: _outputChunk, ...outputChunks } = state.outputChunks;
       const { [runtimeSessionId]: _inputSerial, ...inputSerialByRuntime } = state.inputSerialByRuntime;
-      const { [runtimeSessionId]: _visualOutputTail, ...visualOutputTail } = state.visualOutputTail;
-      return { runtimes, output, outputChunks, inputSerialByRuntime, visualOutputTail };
+      delete outputTailByRuntime[runtimeSessionId];
+      delete visualOutputTailByRuntime[runtimeSessionId];
+      delete liveOutputSubscriptions[runtimeSessionId];
+      return { runtimes, outputChunks, inputSerialByRuntime };
     });
   },
   appendOutput(runtimeSessionId, data) {
+    outputTailByRuntime[runtimeSessionId] = trimTerminalOutput(`${outputTailByRuntime[runtimeSessionId] ?? ""}${data}`);
+    visualOutputTailByRuntime[runtimeSessionId] = trimTerminalVisualTail(
+      `${visualOutputTailByRuntime[runtimeSessionId] ?? ""}${data}`,
+    );
+    if ((liveOutputSubscriptions[runtimeSessionId] ?? 0) <= 0) {
+      return;
+    }
     set((state) => ({
-      output: {
-        ...state.output,
-        [runtimeSessionId]: trimTerminalOutput(`${state.output[runtimeSessionId] ?? ""}${data}`),
-      },
       outputChunks: {
         ...state.outputChunks,
         [runtimeSessionId]: {
@@ -251,11 +264,31 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           data,
         },
       },
-      visualOutputTail: {
-        ...state.visualOutputTail,
-        [runtimeSessionId]: trimTerminalVisualTail(`${state.visualOutputTail[runtimeSessionId] ?? ""}${data}`),
-      },
     }));
+  },
+  getOutputTail(runtimeSessionId) {
+    return outputTailByRuntime[runtimeSessionId] ?? "";
+  },
+  getVisualOutputTail(runtimeSessionId) {
+    return visualOutputTailByRuntime[runtimeSessionId] ?? "";
+  },
+  getVisualOutputTailSnapshot() {
+    return { ...visualOutputTailByRuntime };
+  },
+  beginLiveOutput(runtimeSessionId) {
+    liveOutputSubscriptions[runtimeSessionId] = (liveOutputSubscriptions[runtimeSessionId] ?? 0) + 1;
+    return () => {
+      const nextCount = Math.max(0, (liveOutputSubscriptions[runtimeSessionId] ?? 0) - 1);
+      if (nextCount === 0) {
+        delete liveOutputSubscriptions[runtimeSessionId];
+        set((state) => {
+          const { [runtimeSessionId]: _outputChunk, ...outputChunks } = state.outputChunks;
+          return { outputChunks };
+        });
+      } else {
+        liveOutputSubscriptions[runtimeSessionId] = nextCount;
+      }
+    };
   },
 }));
 
@@ -275,4 +308,10 @@ function trimTerminalVisualTail(output: string) {
     return output;
   }
   return output.slice(-MAX_TERMINAL_VISUAL_TAIL_CHARS);
+}
+
+function clearRecord(record: Record<string, unknown>) {
+  for (const key of Object.keys(record)) {
+    delete record[key];
+  }
 }

@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SplitPaneView } from "./SplitPaneView";
-import { useTerminalStore } from "../terminal/terminalStore";
+import { resetTerminalOutputCachesForTest, useTerminalStore } from "../terminal/terminalStore";
 import type { PaneNode } from "./types";
 
 vi.mock("../terminal/XtermPane", () => ({
@@ -105,9 +105,18 @@ function installControlledPaintTimers() {
   };
 }
 
+function seedTerminalOutput(outputs: Record<string, string>) {
+  act(() => {
+    for (const [runtimeId, output] of Object.entries(outputs)) {
+      useTerminalStore.getState().appendOutput(runtimeId, output);
+    }
+  });
+}
+
 describe("SplitPaneView", () => {
   beforeEach(() => {
-    useTerminalStore.setState({ runtimes: {}, output: {}, outputChunks: {}, visualOutputTail: {} });
+    useTerminalStore.setState({ runtimes: {}, outputChunks: {}, inputSerialByRuntime: {} });
+    resetTerminalOutputCachesForTest();
   });
 
   it("hides empty unconnected pane tabs while keeping the add button", () => {
@@ -151,10 +160,8 @@ describe("SplitPaneView", () => {
           rows: 32,
         },
       },
-      output: {
-        "runtime-local": "$ ",
-      },
     });
+    seedTerminalOutput({ "runtime-local": "$ " });
     const root: PaneNode = {
       kind: "leaf",
       id: "pane-a",
@@ -185,7 +192,7 @@ describe("SplitPaneView", () => {
     );
 
     expect(view.container.querySelector(".zt-xterm-pane")).toBeNull();
-    expect(view.container.querySelector(".zt-terminal-placeholder")?.textContent).toContain("正在准备 aaa");
+    expect(view.container.querySelector(".zt-terminal-snapshot-pane")?.textContent).toContain("$ ");
     expect(view.container.querySelector('[role="tab"]')?.textContent).toBe("aaa");
 
     await flushDeferredXtermMount();
@@ -210,9 +217,7 @@ describe("SplitPaneView", () => {
           rows: 32,
         },
       },
-      output: {},
       outputChunks: {},
-      visualOutputTail: {},
     });
     const root: PaneNode = {
       kind: "leaf",
@@ -271,14 +276,8 @@ describe("SplitPaneView", () => {
           rows: 32,
         },
       },
-      output: {
-        "runtime-local": "\x1b[?25l\x1b[6n",
-      },
-      outputChunks: {},
-      visualOutputTail: {
-        "runtime-local": "\x1b[?25l\x1b[6n",
-      },
     });
+    seedTerminalOutput({ "runtime-local": "\x1b[?25l\x1b[6n" });
     const root: PaneNode = {
       kind: "leaf",
       id: "pane-a",
@@ -371,11 +370,11 @@ describe("SplitPaneView", () => {
           rows: 32,
         },
       },
-      output: {
-        "runtime-local": "$ ",
-        "runtime-ssh": "$ ",
-        "runtime-container": "# ",
-      },
+    });
+    seedTerminalOutput({
+      "runtime-local": "$ ",
+      "runtime-ssh": "$ ",
+      "runtime-container": "# ",
     });
 
     const props = {
@@ -421,10 +420,8 @@ describe("SplitPaneView", () => {
           rows: 32,
         },
       },
-      output: {
-        "runtime-local": "$ ",
-      },
     });
+    seedTerminalOutput({ "runtime-local": "$ " });
     const root: PaneNode = {
       kind: "leaf",
       id: "pane-a",
@@ -457,7 +454,7 @@ describe("SplitPaneView", () => {
     await flushVisualSwitchFrame();
 
     expect(view.container.querySelector(".zt-xterm-pane")).toBeNull();
-    expect(view.container.querySelector(".zt-terminal-placeholder")?.textContent).toContain("正在准备 aaa");
+    expect(view.container.querySelector(".zt-terminal-snapshot-pane")?.textContent).toContain("$ ");
     view.unmount();
   });
 
@@ -476,10 +473,8 @@ describe("SplitPaneView", () => {
           rows: 32,
         },
       },
-      output: {
-        "runtime-local": "live output should not be read",
-      },
     });
+    seedTerminalOutput({ "runtime-local": "live output should not be read" });
     const root: PaneNode = {
       kind: "leaf",
       id: "pane-a",
@@ -553,10 +548,10 @@ describe("SplitPaneView", () => {
           rows: 32,
         },
       },
-      output: {
-        "runtime-active": "active output",
-        "runtime-inactive": "inactive output",
-      },
+    });
+    seedTerminalOutput({
+      "runtime-active": "active output",
+      "runtime-inactive": "inactive output",
     });
     const root: PaneNode = {
       kind: "split",
@@ -915,10 +910,10 @@ describe("SplitPaneView", () => {
           rows: 32,
         },
       },
-      output: {
-        "runtime-active": "active output",
-        "runtime-background": "background output",
-      },
+    });
+    seedTerminalOutput({
+      "runtime-active": "active output",
+      "runtime-background": "background output",
     });
     const root: PaneNode = {
       kind: "leaf",
@@ -957,8 +952,8 @@ describe("SplitPaneView", () => {
     );
 
     expect(view.container.querySelectorAll(".zt-xterm-pane")).toHaveLength(0);
-    expect(view.container.querySelector(".zt-terminal-placeholder")?.textContent).toContain("正在准备 Active");
-    expect(view.container.textContent).not.toContain("active output");
+    expect(view.container.querySelector(".zt-terminal-snapshot-pane")?.textContent).toContain("active output");
+    expect(view.container.textContent).toContain("active output");
     expect(view.container.textContent).not.toContain("background output");
 
     await flushDeferredXtermMount();
@@ -1016,10 +1011,8 @@ describe("SplitPaneView", () => {
           rows: 32,
         },
       },
-      output: {
-        "runtime-local": "before hide",
-      },
     });
+    seedTerminalOutput({ "runtime-local": "before hide" });
     const view = render(<SplitPaneView {...props} />);
 
     await flushDeferredXtermMount();
@@ -1027,13 +1020,8 @@ describe("SplitPaneView", () => {
     expect(view.container.textContent).toContain("before hide");
 
     view.rerender(<SplitPaneView {...props} workspaceActive={false} />);
-    useTerminalStore.setState({
-      output: {
-        "runtime-local": "after hide",
-      },
-      visualOutputTail: {
-        "runtime-local": "after hide",
-      },
+    act(() => {
+      useTerminalStore.getState().appendOutput("runtime-local", "after hide");
     });
     await act(async () => {
       await Promise.resolve();

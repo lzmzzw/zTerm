@@ -8,7 +8,6 @@ use std::{
     time::{Duration, UNIX_EPOCH},
 };
 
-use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
@@ -17,14 +16,15 @@ use crate::{
     models::{
         session::{AuthMode, SavedSession, SessionType},
         terminal::{
-            RuntimeSessionInfo, TerminalAccepted, TerminalClosed, TerminalDataEvent,
-            TerminalExitEvent, TerminalResized,
+            RuntimeSessionInfo, TerminalAccepted, TerminalClosed, TerminalExitEvent,
+            TerminalResized,
         },
     },
     services::{
         command_completion_service::CommandCompletionService,
         command_history_service::CommandHistoryService, credential_service::read_system_secret,
         external_launch_service::is_external_session_id, terminal_manager::TerminalManager,
+        terminal_output_dispatcher::TerminalOutputDispatcher,
     },
     state::AppState,
     storage::{
@@ -95,6 +95,7 @@ pub fn terminal_open(
             spawn_terminal_reader(
                 app,
                 manager,
+                state.terminal_output_dispatcher(),
                 history,
                 completion,
                 opened.info.runtime_session_id.clone(),
@@ -143,17 +144,10 @@ pub fn terminal_open(
                 opened.info.history_scope_kind,
                 opened.info.history_scope_id.clone(),
             );
-            if !is_external {
-                completion.refresh_remote_commands(
-                    state.storage(),
-                    state.ssh_command_service(),
-                    state.credential_service(),
-                    session.id.clone(),
-                );
-            }
             spawn_terminal_reader(
                 app,
                 manager,
+                state.terminal_output_dispatcher(),
                 history,
                 completion,
                 opened.info.runtime_session_id.clone(),
@@ -227,6 +221,7 @@ pub fn terminal_open_ssh_container(
     spawn_terminal_reader(
         app,
         manager,
+        state.terminal_output_dispatcher(),
         history,
         completion,
         opened.info.runtime_session_id.clone(),
@@ -275,6 +270,7 @@ pub fn terminal_open_default_local(
     spawn_terminal_reader(
         app,
         manager,
+        state.terminal_output_dispatcher(),
         history,
         completion,
         opened.info.runtime_session_id.clone(),
@@ -442,6 +438,7 @@ pub fn terminal_zmodem_save_file(
 fn spawn_terminal_reader(
     app: AppHandle,
     manager: Arc<TerminalManager>,
+    output_dispatcher: TerminalOutputDispatcher,
     history: Arc<CommandHistoryService>,
     completion: CommandCompletionService,
     runtime_session_id: String,
@@ -474,22 +471,16 @@ fn spawn_terminal_reader(
                         .visible_output_after_suppression(&runtime_session_id, &data)
                         .unwrap_or_else(|_| data.clone());
                     if !visible_data.is_empty() {
-                        let data_base64 = if visible_data == data {
-                            general_purpose::STANDARD.encode(&buffer[..read])
+                        let raw_bytes = if visible_data == data {
+                            buffer[..read].to_vec()
                         } else {
-                            general_purpose::STANDARD.encode(visible_data.as_bytes())
+                            visible_data.as_bytes().to_vec()
                         };
-                        let _ = app.emit(
-                            "terminal:data",
-                            TerminalDataEvent {
-                                runtime_session_id: runtime_session_id.clone(),
-                                data: visible_data,
-                                data_base64,
-                            },
-                        );
+                        output_dispatcher.push(&runtime_session_id, visible_data, raw_bytes);
                     }
                 }
                 Err(error) => {
+                    output_dispatcher.flush_runtime(&runtime_session_id);
                     if manager.close(&runtime_session_id).is_ok() {
                         history.unregister_runtime(&runtime_session_id);
                         completion.unregister_runtime(&runtime_session_id);
@@ -507,6 +498,7 @@ fn spawn_terminal_reader(
             }
         }
 
+        output_dispatcher.flush_runtime(&runtime_session_id);
         if manager.close(&runtime_session_id).is_ok() {
             history.unregister_runtime(&runtime_session_id);
             completion.unregister_runtime(&runtime_session_id);

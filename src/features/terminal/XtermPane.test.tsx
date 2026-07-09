@@ -186,6 +186,23 @@ async function flushAfterNextPaint() {
   });
 }
 
+async function flushQueuedTerminalWrites(turns = 8) {
+  for (let index = 0; index < turns; index += 1) {
+    await act(async () => {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    });
+  }
+}
+
+function writtenTerminalText(terminal: (typeof terminalMock.instances)[number]) {
+  return terminal.write.mock.calls.map((call) => call[0] as string).join("");
+}
+
+function lastWrittenTerminalText(terminal: (typeof terminalMock.instances)[number]) {
+  const lastCall = terminal.write.mock.calls[terminal.write.mock.calls.length - 1];
+  return lastCall?.[0] as string | undefined;
+}
+
 describe("XtermPane", () => {
   beforeEach(() => {
     terminalMock.instances.length = 0;
@@ -412,7 +429,7 @@ describe("XtermPane", () => {
 
     expect(terminalMock.instances.length).toBeGreaterThanOrEqual(2);
     const remountedTerminal = terminalMock.instances[terminalMock.instances.length - 1];
-    expect(remountedTerminal?.write).toHaveBeenCalledWith("\x1b[6n");
+    expect(remountedTerminal?.write.mock.calls.some((call) => call[0] === "\x1b[6n")).toBe(true);
     view.unmount();
   });
 
@@ -495,12 +512,14 @@ describe("XtermPane", () => {
     view.unmount();
   });
 
-  it("limits replayed output and strips terminal status queries that would regenerate input", () => {
+  it("limits replayed output and strips terminal status queries that would regenerate input", async () => {
     const replay = `${"a".repeat(120_000)}\x1b[6nTAIL`;
     const view = render(<XtermPane data={replay} streamId="runtime-1" />);
     const terminal = terminalMock.instances[0];
 
-    const written = terminal.write.mock.calls[0][0] as string;
+    await flushQueuedTerminalWrites();
+
+    const written = writtenTerminalText(terminal);
     expect(written.length).toBeLessThan(replay.length);
     expect(written.length).toBeLessThanOrEqual(16_004);
     expect(written).not.toContain("\x1b[6n");
@@ -508,11 +527,11 @@ describe("XtermPane", () => {
 
     view.rerender(<XtermPane data={`${replay}x`} streamId="runtime-1" />);
 
-    expect(terminal.write).toHaveBeenLastCalledWith("x");
+    expect(lastWrittenTerminalText(terminal)).toBe("x");
     view.unmount();
   });
 
-  it("clears and replays the current runtime tail when switching terminal streams", () => {
+  it("clears and replays the current runtime tail when switching terminal streams", async () => {
     const view = render(<XtermPane data={"old output"} streamId="runtime-old" />);
     const terminal = terminalMock.instances[0];
     terminal.write.mockClear();
@@ -521,7 +540,9 @@ describe("XtermPane", () => {
     view.rerender(<XtermPane data={`${"n".repeat(20_000)}new output`} streamId="runtime-new" />);
 
     expect(terminal.clear).toHaveBeenCalledTimes(1);
-    const written = terminal.write.mock.calls[0][0] as string;
+    await flushQueuedTerminalWrites();
+
+    const written = writtenTerminalText(terminal);
     expect(written.length).toBeLessThanOrEqual(16_010);
     expect(written.endsWith("new output")).toBe(true);
     view.unmount();
@@ -564,7 +585,7 @@ describe("XtermPane", () => {
     const terminal = terminalMock.instances[0];
 
     expect(terminal.write).toHaveBeenCalledTimes(1);
-    expect(terminal.write).toHaveBeenCalledWith("PS C:\\workspace> ");
+    expect(terminal.write.mock.calls[0][0]).toBe("PS C:\\workspace> ");
 
     view.rerender(
       <XtermPane

@@ -190,9 +190,9 @@ const storeMocks = vi.hoisted(() => ({
   },
   terminalState: {
     runtimes: {} as Record<string, Record<string, unknown>>,
-    output: {} as Record<string, string>,
+    outputTails: {} as Record<string, string>,
     inputSerialByRuntime: {} as Record<string, number>,
-    visualOutputTail: {} as Record<string, string>,
+    visualTails: {} as Record<string, string>,
   },
 }));
 
@@ -597,16 +597,22 @@ vi.mock("../features/terminal/terminalStore", () => {
       resizeTerminal: vi.fn().mockResolvedValue(undefined),
       suggestCompletion: vi.fn().mockResolvedValue([]),
       runtimes: storeMocks.terminalState.runtimes,
+      outputChunks: {},
       inputSerialByRuntime: storeMocks.terminalState.inputSerialByRuntime,
-      visualOutputTail: storeMocks.terminalState.visualOutputTail,
+      getOutputTail: (runtimeSessionId: string) => {
+        if (trackOutputAccess) {
+          storeMocks.terminalOutputAccesses += 1;
+        }
+        return storeMocks.terminalState.outputTails[runtimeSessionId] ?? "";
+      },
+      getVisualOutputTail: (runtimeSessionId: string) => storeMocks.terminalState.visualTails[runtimeSessionId] ?? "",
+      getVisualOutputTailSnapshot: () => ({ ...storeMocks.terminalState.visualTails }),
+      beginLiveOutput: vi.fn(() => () => undefined),
     };
     Object.defineProperty(state, "output", {
       enumerable: true,
       get() {
-        if (trackOutputAccess) {
-          storeMocks.terminalOutputAccesses += 1;
-        }
-        return storeMocks.terminalState.output;
+        throw new Error("AppShell must not subscribe to the full terminal output map");
       },
     });
     return state;
@@ -1088,9 +1094,9 @@ describe("AppShell", () => {
     storeMocks.deleteTransfer.mockResolvedValue(undefined);
     storeMocks.sessionState.sessions = [];
     storeMocks.terminalState.runtimes = {};
-    storeMocks.terminalState.output = {};
+    storeMocks.terminalState.outputTails = {};
     storeMocks.terminalState.inputSerialByRuntime = {};
-    storeMocks.terminalState.visualOutputTail = {};
+    storeMocks.terminalState.visualTails = {};
     storeMocks.workspaceState.workspaces = [
       {
         id: "workspace-1",
@@ -2981,7 +2987,7 @@ describe("AppShell", () => {
       },
     ];
     storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
-    storeMocks.terminalState.output = { "runtime-1": "line\n".repeat(1200) };
+    storeMocks.terminalState.outputTails = { "runtime-1": "line\n".repeat(1200) };
     const view = render(<AppShell />);
 
     expect(storeMocks.terminalOutputAccesses).toBe(0);
@@ -3126,7 +3132,7 @@ describe("AppShell", () => {
     storeMocks.workspaceState.activeWorkspaceId = "workspace-1";
     storeMocks.workspaceState.tabs = workspaceA.tabs;
     storeMocks.workspaceState.activeTabId = workspaceA.activeTabId;
-    storeMocks.terminalState.visualOutputTail = {
+    storeMocks.terminalState.visualTails = {
       "runtime-1": "leaving tail",
       "runtime-2": "target tail",
     };
@@ -3137,7 +3143,7 @@ describe("AppShell", () => {
 
     expect(storeMocks.freezeWorkspaceRuntimeVisualSnapshots).toHaveBeenCalledWith(
       "workspace-1",
-      storeMocks.terminalState.visualOutputTail,
+      storeMocks.terminalState.visualTails,
       expect.any(Number),
     );
     expect(storeMocks.freezeWorkspaceRuntimeVisualSnapshots.mock.invocationCallOrder[0]).toBeLessThan(
@@ -3168,7 +3174,7 @@ describe("AppShell", () => {
     storeMocks.workspaceState.activeWorkspaceId = "workspace-active";
     storeMocks.workspaceState.tabs = activeWorkspace.tabs;
     storeMocks.workspaceState.activeTabId = activeWorkspace.activeTabId;
-    storeMocks.terminalState.visualOutputTail = {
+    storeMocks.terminalState.visualTails = {
       "runtime-active": "active tail before restore",
     };
     storeMocks.workspaceGet.mockResolvedValue({
@@ -3215,7 +3221,7 @@ describe("AppShell", () => {
 
     expect(storeMocks.freezeWorkspaceRuntimeVisualSnapshots).toHaveBeenCalledWith(
       "workspace-active",
-      storeMocks.terminalState.visualOutputTail,
+      storeMocks.terminalState.visualTails,
       expect.any(Number),
     );
     expect(storeMocks.freezeWorkspaceRuntimeVisualSnapshots.mock.invocationCallOrder[0]).toBeLessThan(

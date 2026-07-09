@@ -31,7 +31,7 @@ use crate::{
 
 #[derive(Default)]
 pub struct TerminalManager {
-    sessions: Mutex<HashMap<String, RuntimeSession>>,
+    sessions: Mutex<HashMap<String, Arc<RuntimeSession>>>,
     infos: Mutex<HashMap<String, RuntimeSessionInfo>>,
     output_buffers: Mutex<HashMap<String, OutputBuffer>>,
     output_suppressions: Mutex<HashMap<String, OutputSuppression>>,
@@ -95,7 +95,10 @@ impl TerminalManager {
         self.sessions
             .lock()
             .map_err(|_| AppError::terminal("terminal session lock was poisoned"))?
-            .insert(info.runtime_session_id.clone(), RuntimeSession::Placeholder);
+            .insert(
+                info.runtime_session_id.clone(),
+                Arc::new(RuntimeSession::Placeholder),
+            );
         self.record_runtime_info(&info)?;
         self.ensure_output_buffer(&info.runtime_session_id)?;
 
@@ -165,7 +168,7 @@ impl TerminalManager {
         self.sessions
             .lock()
             .map_err(|_| AppError::terminal("terminal session lock was poisoned"))?
-            .insert(info.runtime_session_id.clone(), runtime);
+            .insert(info.runtime_session_id.clone(), Arc::new(runtime));
         self.record_runtime_info(&info)?;
         self.ensure_output_buffer(&info.runtime_session_id)?;
 
@@ -255,7 +258,7 @@ impl TerminalManager {
         self.sessions
             .lock()
             .map_err(|_| AppError::terminal("terminal session lock was poisoned"))?
-            .insert(info.runtime_session_id.clone(), runtime);
+            .insert(info.runtime_session_id.clone(), Arc::new(runtime));
         self.record_runtime_info(&info)?;
         self.ensure_output_buffer(&info.runtime_session_id)?;
 
@@ -318,7 +321,7 @@ impl TerminalManager {
             .map_err(|_| AppError::terminal("terminal session lock was poisoned"))?
             .insert(
                 info.runtime_session_id.clone(),
-                RuntimeSession::Pty(runtime),
+                Arc::new(RuntimeSession::Pty(runtime)),
             );
         self.record_runtime_info(&info)?;
         self.ensure_output_buffer(&info.runtime_session_id)?;
@@ -339,15 +342,9 @@ impl TerminalManager {
         runtime_session_id: &str,
         data: &[u8],
     ) -> AppResult<TerminalAccepted> {
-        let mut sessions = self
-            .sessions
-            .lock()
-            .map_err(|_| AppError::terminal("terminal session lock was poisoned"))?;
-        let runtime = sessions.get_mut(runtime_session_id).ok_or_else(|| {
-            AppError::not_found(format!("runtime session not found: {runtime_session_id}"))
-        })?;
+        let runtime = self.runtime_session(runtime_session_id)?;
 
-        match runtime {
+        match runtime.as_ref() {
             RuntimeSession::Placeholder => Err(AppError::unsupported(
                 "RDP placeholder sessions do not accept terminal input",
             )),
@@ -386,15 +383,9 @@ impl TerminalManager {
         cols: u16,
         rows: u16,
     ) -> AppResult<TerminalResized> {
-        let sessions = self
-            .sessions
-            .lock()
-            .map_err(|_| AppError::terminal("terminal session lock was poisoned"))?;
-        let runtime = sessions.get(runtime_session_id).ok_or_else(|| {
-            AppError::not_found(format!("runtime session not found: {runtime_session_id}"))
-        })?;
+        let runtime = self.runtime_session(runtime_session_id)?;
 
-        match runtime {
+        match runtime.as_ref() {
             RuntimeSession::Placeholder => Ok(TerminalResized { resized: false }),
             RuntimeSession::NativeSsh(native) => {
                 native.control.resize(cols, rows);
@@ -417,15 +408,9 @@ impl TerminalManager {
     }
 
     pub fn try_wait_exit_code(&self, runtime_session_id: &str) -> AppResult<Option<i32>> {
-        let sessions = self
-            .sessions
-            .lock()
-            .map_err(|_| AppError::terminal("terminal session lock was poisoned"))?;
-        let runtime = sessions.get(runtime_session_id).ok_or_else(|| {
-            AppError::not_found(format!("runtime session not found: {runtime_session_id}"))
-        })?;
+        let runtime = self.runtime_session(runtime_session_id)?;
 
-        match runtime {
+        match runtime.as_ref() {
             RuntimeSession::Placeholder => Ok(None),
             RuntimeSession::NativeSsh(native) => {
                 let status = native
@@ -457,7 +442,7 @@ impl TerminalManager {
                 AppError::not_found(format!("runtime session not found: {runtime_session_id}"))
             })?;
 
-        match runtime {
+        match runtime.as_ref() {
             RuntimeSession::Pty(pty) => {
                 let _ = pty
                     .child
@@ -674,6 +659,17 @@ impl TerminalManager {
         Ok(())
     }
 
+    fn runtime_session(&self, runtime_session_id: &str) -> AppResult<Arc<RuntimeSession>> {
+        self.sessions
+            .lock()
+            .map_err(|_| AppError::terminal("terminal session lock was poisoned"))?
+            .get(runtime_session_id)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::not_found(format!("runtime session not found: {runtime_session_id}"))
+            })
+    }
+
     fn record_runtime_info(&self, info: &RuntimeSessionInfo) -> AppResult<()> {
         self.infos
             .lock()
@@ -708,9 +704,20 @@ fn byte_suffix(value: &str, cursor: usize) -> &str {
 }
 
 fn tail_chars(value: &str, max_chars: usize) -> String {
-    let chars = value.chars().collect::<Vec<_>>();
-    let start = chars.len().saturating_sub(max_chars);
-    chars[start..].iter().collect()
+    if max_chars == 0 {
+        return String::new();
+    }
+    let total_chars = value.chars().count();
+    if total_chars <= max_chars {
+        return value.to_string();
+    }
+    let skip = total_chars - max_chars;
+    let start = value
+        .char_indices()
+        .nth(skip)
+        .map(|(index, _)| index)
+        .unwrap_or(value.len());
+    value[start..].to_string()
 }
 
 fn suppression_tail_start(value: &str, end_prefix: &str) -> Option<usize> {
@@ -738,7 +745,7 @@ fn short_container_id(container_id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::TerminalManager;
+    use super::{tail_chars, TerminalManager};
 
     #[test]
     fn output_suppression_hides_probe_until_end_marker_and_returns_tail() {
@@ -772,5 +779,12 @@ mod tests {
                 .expect("suppression should be cleared"),
             "next"
         );
+    }
+
+    #[test]
+    fn tail_chars_preserves_unicode_boundaries_without_allocating_full_char_vec() {
+        assert_eq!(tail_chars("abc", 0), "");
+        assert_eq!(tail_chars("abc", 5), "abc");
+        assert_eq!(tail_chars("a中🚀b", 3), "中🚀b");
     }
 }
