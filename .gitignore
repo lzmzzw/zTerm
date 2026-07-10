@@ -32,6 +32,7 @@ pnpm-debug.log*
 .superpowers/
 AGENTS.md
 docs/
+runs/
 
 # Runtime data and local test state
 *.db
