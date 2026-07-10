@@ -1,5 +1,5 @@
 // Author: Liz
-import { Folder, Monitor, MoreHorizontal, Pencil, Server, Terminal, Trash2 } from "lucide-react";
+import { Folder, Monitor, MoreHorizontal, Server, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { fallbackOnlyErrorMessage } from "../../lib/unknownErrorMessage";
@@ -161,9 +161,7 @@ export function SessionTree({
             node={node}
             onOpenSession={onOpenSession}
             onDeleteGroup={onDeleteGroup ? handleDeleteGroup : undefined}
-            onDeleteSession={onDeleteSession ? setPendingDeleteSession : undefined}
             onEditGroup={handleEditGroup}
-            onEditSession={handleEditSession}
             onCreateSession={handleCreateSession}
             onOpenContextMenu={setContextMenu}
           />
@@ -181,8 +179,6 @@ export function SessionTree({
                   key={session.id}
                   session={session}
                   onOpenSession={onOpenSession}
-                  onEditSession={handleEditSession}
-                  onDeleteSession={onDeleteSession ? setPendingDeleteSession : undefined}
                   onOpenContextMenu={setContextMenu}
                 />
               ))}
@@ -251,18 +247,14 @@ function SessionGroupNode({
   node,
   onOpenSession,
   onDeleteGroup,
-  onDeleteSession,
   onEditGroup,
-  onEditSession,
   onCreateSession,
   onOpenContextMenu,
 }: {
   node: SessionGroupTreeNode;
   onOpenSession?: (session: SavedSession) => void;
   onDeleteGroup?: (group: SessionGroup) => Promise<void>;
-  onDeleteSession?: (session: SavedSession) => void;
   onEditGroup: (group: SessionGroup) => void;
-  onEditSession: (session: SavedSession) => void;
   onCreateSession: (groupId: string | null) => void;
   onOpenContextMenu: (menu: SessionTreeContextMenu) => void;
 }) {
@@ -296,8 +288,6 @@ function SessionGroupNode({
             key={session.id}
             session={session}
             onOpenSession={onOpenSession}
-            onEditSession={onEditSession}
-            onDeleteSession={onDeleteSession}
             onOpenContextMenu={onOpenContextMenu}
           />
         ))}
@@ -307,9 +297,7 @@ function SessionGroupNode({
               node={child}
               onOpenSession={onOpenSession}
               onDeleteGroup={onDeleteGroup}
-              onDeleteSession={onDeleteSession}
               onEditGroup={onEditGroup}
-              onEditSession={onEditSession}
               onCreateSession={onCreateSession}
               onOpenContextMenu={onOpenContextMenu}
             />
@@ -322,14 +310,10 @@ function SessionGroupNode({
 function SessionNode({
   session,
   onOpenSession,
-  onEditSession,
-  onDeleteSession,
   onOpenContextMenu,
 }: {
   session: SavedSession;
   onOpenSession?: (session: SavedSession) => void;
-  onEditSession: (session: SavedSession) => void;
-  onDeleteSession?: (session: SavedSession) => void;
   onOpenContextMenu: (menu: SessionTreeContextMenu) => void;
 }) {
   const Icon = session.type === "rdp" ? Monitor : session.type === "local" ? Terminal : Server;
@@ -351,20 +335,6 @@ function SessionNode({
         <Icon size={14} aria-hidden="true" />
         <span>{session.name}</span>
       </button>
-      <div className="zt-session-node-actions">
-        <button type="button" aria-label={`编辑会话 ${session.name}`} title={`编辑会话 ${session.name}`} onClick={() => onEditSession(session)}>
-          <Pencil size={14} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          aria-label={`删除会话 ${session.name}`}
-          title={`删除会话 ${session.name}`}
-          onClick={() => void onDeleteSession?.(session)}
-          disabled={!onDeleteSession}
-        >
-          <Trash2 size={14} aria-hidden="true" />
-        </button>
-      </div>
     </li>
   );
 }

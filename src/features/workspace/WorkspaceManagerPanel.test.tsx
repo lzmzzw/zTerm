@@ -182,4 +182,26 @@ describe("WorkspaceManagerPanel", () => {
     expect(view.container.querySelector('[aria-label="删除工作区 默认工作区"]')).toBeNull();
     view.unmount();
   });
+
+  it("keeps the error message and workspace list inside one content container", () => {
+    const view = render(
+      <WorkspaceManagerPanel
+        workspaces={workspaces}
+        activeWorkspaceId="workspace-1"
+        error="加载工作区缩略图失败"
+        onCreateWorkspace={vi.fn()}
+        onSelectWorkspace={vi.fn()}
+        onEditWorkspace={vi.fn()}
+        onRestoreWorkspace={vi.fn()}
+        onCloseWorkspace={vi.fn()}
+        onDeleteWorkspace={vi.fn()}
+      />,
+    );
+
+    const body = view.container.querySelector(".zt-workspace-panel-body");
+    expect(body?.querySelector(".zt-empty-line")?.textContent).toBe("加载工作区缩略图失败");
+    expect(body?.querySelector(".zt-workspace-list")).not.toBeNull();
+
+    view.unmount();
+  });
 });
