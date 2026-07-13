@@ -4402,6 +4402,11 @@ button {
   height: 26px;
 }
 
+.zt-file-transfer-dialog .zt-file-transfer-path .zt-file-transfer-root-select.zt-select-trigger {
+  width: 72px;
+  min-width: 72px;
+}
+
 .zt-file-transfer-dialog .zt-file-transfer-arrows button {
   width: 28px;
   height: 28px;
