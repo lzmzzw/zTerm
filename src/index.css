@@ -2690,6 +2690,9 @@ button {
   height: min(780px, calc(100vh - 96px));
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr);
+  background: var(--zt-bg-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .zt-file-transfer-dialog-body {
