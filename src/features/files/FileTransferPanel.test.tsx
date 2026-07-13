@@ -53,28 +53,25 @@ async function click(element: HTMLElement) {
   });
 }
 
-async function dragBetween(source: HTMLElement, destination: HTMLElement, endBeforeDrop = false) {
-  const dataTransfer = {
-    dropEffect: "copy",
-    effectAllowed: "copy",
-    getData: vi.fn((type: string) =>
-      type === "application/x-zterm-file-transfer"
-        ? JSON.stringify({ sourceSide: "left", paths: ["C:/Users/Ops/bundle.zip"] })
-        : "",
-    ),
-    setData: vi.fn(),
-  };
-  await act(async () => {
-    source.dispatchEvent(Object.assign(new Event("dragstart", { bubbles: true }), { dataTransfer }));
-    destination.dispatchEvent(Object.assign(new Event("dragenter", { bubbles: true, cancelable: true }), { dataTransfer }));
-    destination.dispatchEvent(Object.assign(new Event("dragover", { bubbles: true, cancelable: true }), { dataTransfer }));
-    if (endBeforeDrop) {
-      source.dispatchEvent(Object.assign(new Event("dragend", { bubbles: true }), { dataTransfer }));
-    }
-    destination.dispatchEvent(Object.assign(new Event("drop", { bubbles: true, cancelable: true }), { dataTransfer }));
-    await Promise.resolve();
+async function pointerDragBetween(source: HTMLElement, destination: HTMLElement) {
+  const originalElementFromPoint = document.elementFromPoint;
+  Object.defineProperty(document, "elementFromPoint", {
+    configurable: true,
+    value: vi.fn(() => destination),
   });
-  return dataTransfer;
+  try {
+    await act(async () => {
+      source.dispatchEvent(Object.assign(new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 10, clientY: 10 }), { pointerId: 1 }));
+      source.dispatchEvent(Object.assign(new MouseEvent("pointermove", { bubbles: true, buttons: 1, clientX: 30, clientY: 30 }), { pointerId: 1 }));
+      source.dispatchEvent(Object.assign(new MouseEvent("pointerup", { bubbles: true, button: 0, clientX: 30, clientY: 30 }), { pointerId: 1 }));
+      await Promise.resolve();
+    });
+  } finally {
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: originalElementFromPoint,
+    });
+  }
 }
 
 function button(container: HTMLElement, label: string) {
@@ -276,13 +273,10 @@ describe("FileTransferPanel", () => {
     const destinationPane = view.container.querySelector('[aria-label="右侧文件列表"]') as HTMLElement;
     expect(row).toBeTruthy();
     expect(destinationPane).toBeTruthy();
+    expect(row?.getAttribute("draggable")).toBeNull();
+    expect(row?.getAttribute("data-transfer-draggable")).toBe("true");
 
-    const dataTransfer = await dragBetween(row as HTMLElement, destinationPane, true);
-
-    expect(dataTransfer.setData).toHaveBeenCalledWith(
-      "application/x-zterm-file-transfer",
-      JSON.stringify({ sourceSide: "left", paths: ["C:/Users/Ops/bundle.zip"] }),
-    );
+    await pointerDragBetween(row as HTMLElement, destinationPane);
 
     expect(invokeMock).toHaveBeenCalledWith("file_transfer_check_conflicts", {
       items: [{ destination: { kind: "ssh", saved_session_id: "ssh-1", path: "/bundle.zip" }, kind: "file" }],

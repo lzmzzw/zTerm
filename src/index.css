@@ -2852,11 +2852,11 @@ button {
   font-size: var(--zt-font-size-ui);
 }
 
-.zt-file-transfer-list button[draggable="true"] {
+.zt-file-transfer-list button[data-transfer-draggable="true"] {
   cursor: grab;
 }
 
-.zt-file-transfer-list button[draggable="true"]:active {
+.zt-file-transfer-list button[data-transfer-draggable="true"]:active {
   cursor: grabbing;
 }
 
