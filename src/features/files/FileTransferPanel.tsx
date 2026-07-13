@@ -1,6 +1,6 @@
 // Author: Liz
 import { ArrowLeft, ArrowRight, Eye, EyeOff, FolderUp, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { ZtSelect } from "../../components/ZtSelect";
@@ -34,6 +34,9 @@ type TransferPlan = {
   destination: TransferEndpoint;
   kind: TransferKind;
 };
+
+const MIN_FILE_TRANSFER_PANES_HEIGHT = 200;
+const MIN_TRANSFER_DOCK_HEIGHT = 120;
 
 export function FileTransferPanel({ language: _language = "zhCN" }: FileTransferPanelProps) {
   const { sessions, loadSessions } = useSessionStore(
@@ -101,6 +104,8 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   const [showHidden, setShowHidden] = useState<Record<FileTransferSide, boolean>>({ left: false, right: false });
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [pendingOverwrite, setPendingOverwrite] = useState<{ count: number; plans: TransferPlan[] } | null>(null);
+  const [transferDockCollapsed, setTransferDockCollapsed] = useState(false);
+  const [transferDockHeight, setTransferDockHeight] = useState<number | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
 
   useEffect(() => {
@@ -205,8 +210,20 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     await transferPaths(currentDrag.sourceSide, currentDrag.paths);
   }
 
+  function resizeTransferDock(requestedHeight: number) {
+    const maxHeight = Math.max(MIN_TRANSFER_DOCK_HEIGHT, window.innerHeight - MIN_FILE_TRANSFER_PANES_HEIGHT);
+    setTransferDockHeight(Math.min(maxHeight, Math.max(MIN_TRANSFER_DOCK_HEIGHT, Math.round(requestedHeight))));
+  }
+
+  const panelClassName = transferDockCollapsed
+    ? "zt-file-transfer-panel zt-file-transfer-panel-transfer-collapsed"
+    : "zt-file-transfer-panel";
+  const panelStyle = transferDockCollapsed || transferDockHeight === null
+    ? undefined
+    : ({ "--zt-transfer-dock-height": `${transferDockHeight}px` } as CSSProperties);
+
   return (
-    <div className="zt-file-transfer-panel" aria-label="文件传输面板">
+    <div className={panelClassName} style={panelStyle} aria-label="文件传输面板">
       <div className="zt-file-transfer-controls">
         <label>
           <span>冲突策略</span>
@@ -318,6 +335,8 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
         onPauseAll={pauseTransfers}
         onResumeAll={resumeTransfers}
         onClearAll={clearTransfers}
+        onCollapsedChange={setTransferDockCollapsed}
+        onResize={resizeTransferDock}
       />
       {pendingOverwrite ? (
         <ZtConfirmDialog

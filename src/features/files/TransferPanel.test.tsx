@@ -38,6 +38,12 @@ async function click(element: HTMLElement) {
   });
 }
 
+async function mouseEvent(target: EventTarget, type: string, clientY: number) {
+  await act(async () => {
+    target.dispatchEvent(new MouseEvent(type, { bubbles: true, clientY }));
+  });
+}
+
 const tasks: TransferTask[] = [
   {
     id: "task-1",
@@ -206,7 +212,7 @@ describe("TransferPanel", () => {
     view.unmount();
   });
 
-  it("keeps the collapsible transfer dock collapsed by default and expands from its summary", async () => {
+  it("keeps the collapsible transfer dock expanded by default and collapses from its summary", async () => {
     const view = render(
       <TransferPanel
         collapsible
@@ -219,15 +225,14 @@ describe("TransferPanel", () => {
       />,
     );
 
-    expect(button(view.container, "展开传输任务")).toBeTruthy();
-    expect(view.container.querySelector(".zt-transfer-dock-summary")).toBeTruthy();
-    expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
-
-    await click(button(view.container, "展开传输任务"));
-
     expect(button(view.container, "折叠传输任务")).toBeTruthy();
+    expect(view.container.querySelector(".zt-transfer-dock-summary")).toBeTruthy();
     expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeTruthy();
-    expect(view.container.textContent).toContain("permission denied");
+
+    await click(button(view.container, "折叠传输任务"));
+
+    expect(button(view.container, "展开传输任务")).toBeTruthy();
+    expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
 
     view.unmount();
   });
@@ -250,9 +255,36 @@ describe("TransferPanel", () => {
     await click(button(view.container, "暂停全部传输任务"));
 
     expect(onPauseAll).toHaveBeenCalledWith(["task-1"]);
-    expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
-    expect(button(view.container, "展开传输任务")).toBeTruthy();
+    expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeTruthy();
+    expect(button(view.container, "折叠传输任务")).toBeTruthy();
 
+    view.unmount();
+  });
+
+  it("reports temporary dock resizing after the dock is expanded", async () => {
+    const onCollapsedChange = vi.fn();
+    const onResize = vi.fn();
+    const view = render(
+      <TransferPanel
+        collapsible
+        tasks={tasks}
+        onRetry={vi.fn()}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+        onCollapsedChange={onCollapsedChange}
+        onResize={onResize}
+      />,
+    );
+
+    const resizer = view.container.querySelector('[role="separator"][aria-label="调整传输任务高度"]');
+    expect(resizer).toBeTruthy();
+    await mouseEvent(resizer as HTMLElement, "mousedown", 300);
+    await mouseEvent(document, "mousemove", 260);
+    await mouseEvent(document, "mouseup", 260);
+
+    expect(onResize).toHaveBeenLastCalledWith(240);
     view.unmount();
   });
 
