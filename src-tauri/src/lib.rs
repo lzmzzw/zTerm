@@ -1,7 +1,10 @@
 // Author: Liz
-use std::env;
+use std::{env, sync::Mutex};
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+
+const EXTERNAL_SSH_LAUNCH_EVENT: &str = "zterm:external-ssh-launch";
+static EARLY_SECOND_INSTANCE_ARGS: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
 
 pub mod commands;
 pub mod error;
@@ -15,6 +18,7 @@ pub mod storage;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(handle_second_instance))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -115,6 +119,98 @@ pub fn run() {
         .expect("failed to run zTerm");
 }
 
+fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>, _cwd: String) {
+    let Ok(mut early_args) = EARLY_SECOND_INSTANCE_ARGS.lock() else {
+        eprintln!("external launch ignored: early launch lock was poisoned");
+        return;
+    };
+    let Some(state) = app.try_state::<state::AppState>() else {
+        early_args.push(args);
+        return;
+    };
+    drop(early_args);
+    register_second_instance_args(app, state.external_launch_service(), args);
+
+    focus_main_window(app);
+}
+
+fn register_second_instance_args(
+    app: &tauri::AppHandle,
+    service: services::external_launch_service::ExternalLaunchService,
+    args: Vec<String>,
+) {
+    let parent_command_line = forwarded_instance_parent_command_line(&args);
+    let registration = service.register_from_forwarded_args(args, parent_command_line);
+    match registration {
+        Ok(Some(_)) => {
+            if let Err(error) = app.emit(EXTERNAL_SSH_LAUNCH_EVENT, ()) {
+                eprintln!("failed to notify external launch: {error}");
+            }
+        }
+        Ok(None) => {}
+        Err(error) => eprintln!(
+            "external launch ignored: {}",
+            security::redaction::redact_sensitive(&error.to_string())
+        ),
+    }
+}
+
+#[cfg(all(windows, not(test)))]
+fn forwarded_instance_parent_command_line(args: &[String]) -> Option<String> {
+    use std::{os::windows::process::CommandExt, process::Command};
+
+    if !args
+        .iter()
+        .any(|arg| arg.trim().to_ascii_lowercase().ends_with(".moba"))
+    {
+        return None;
+    }
+    let executable_path = std::env::current_exe().ok()?;
+    let process_name = executable_path.file_name()?.to_str()?.to_string();
+    if !process_name
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-'))
+    {
+        return None;
+    }
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    let script = format!(
+        "$p=Get-CimInstance Win32_Process -Filter \"Name = '{process_name}'\" | \
+         Where-Object {{ $_.ProcessId -ne {} -and $_.ExecutablePath -eq $env:ZTERM_SECOND_INSTANCE_EXE }} | \
+         Sort-Object CreationDate -Descending | Select-Object -First 1; \
+         if ($p) {{ \
+           $pp=Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $p.ParentProcessId); \
+           if ($pp) {{ [Console]::Out.Write($pp.CommandLine) }} \
+         }}",
+        std::process::id()
+    );
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .env("ZTERM_SECOND_INSTANCE_EXE", executable_path)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+#[cfg(any(not(windows), test))]
+fn forwarded_instance_parent_command_line(_args: &[String]) -> Option<String> {
+    None
+}
+
+fn focus_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
 fn updater_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry, tauri_plugin_updater::Config> {
     let mut builder = tauri_plugin_updater::Builder::new();
     if let Ok(pubkey) = env::var("ZTERM_UPDATER_PUBKEY") {
@@ -127,6 +223,9 @@ fn updater_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry, tauri_plugin_updat
 }
 
 fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let mut early_args = EARLY_SECOND_INSTANCE_ARGS
+        .lock()
+        .map_err(|_| "early external launch lock was poisoned")?;
     let paths = paths::AppPaths::default_for_install()?;
     paths.ensure_dirs()?;
     let storage = storage::sqlite::SqliteStore::open(paths.db_path())?;
@@ -141,7 +240,20 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
             );
             error
         });
+    for args in early_args.drain(..) {
+        let _ = state
+            .external_launch_service()
+            .register_from_args(args)
+            .map_err(|error| {
+                eprintln!(
+                    "external launch ignored: {}",
+                    security::redaction::redact_sensitive(&error.to_string())
+                );
+                error
+            });
+    }
     app.manage(state);
+    drop(early_args);
     Ok(())
 }
 

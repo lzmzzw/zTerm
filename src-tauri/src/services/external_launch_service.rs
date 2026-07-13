@@ -187,6 +187,21 @@ impl ExternalLaunchService {
         }
     }
 
+    pub(crate) fn register_from_forwarded_args<I, S>(
+        &self,
+        args: I,
+        parent_command_line: Option<String>,
+    ) -> AppResult<Option<ExternalSshLaunchEvent>>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        match parse_external_ssh_launch_args_inner(args, parent_command_line)? {
+            Some(request) => self.register_request(request).map(Some),
+            None => Ok(None),
+        }
+    }
+
     pub fn get_session(&self, id: &str) -> AppResult<Option<SavedSession>> {
         if !is_external_session_id(id) {
             return Ok(None);
@@ -1064,8 +1079,8 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_external_session_id, parse_external_ssh_launch_args,
-        parse_external_ssh_launch_args_inner, ExternalLaunchService, ExternalSshChannelPolicy,
+        is_external_session_id, parse_external_ssh_launch_args, ExternalLaunchService,
+        ExternalSshChannelPolicy,
     };
     use crate::models::session::{SshContainerOptions, SshOptions, SshTunnel, SshTunnelKind};
 
@@ -1319,22 +1334,32 @@ mod tests {
         .expect("temp moba file should be written");
 
         let parent_command_line = "\"C:\\Users\\Public\\Documents\\BHost\\bhmultauth.exe\" 33 \"C:/Users/PKUWHAI/AppData/Local/zTerm/zterm.exe\" \"172.21.195.223\" \"222\" \"b64>>d2VuOjMwMTI1OTY5NDQ4OTVAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=\" \"en::6d49b3b3fb5721e430d82ae005431d2a\" \"root_10.11.0.75\"";
-        let request = parse_external_ssh_launch_args_inner(
-            ["zterm.exe".to_string(), path.to_string_lossy().into_owned()],
-            Some(parent_command_line.to_string()),
-        )
-        .expect("args should parse")
-        .expect("request should exist");
+        let service = ExternalLaunchService::default();
+        let launch = service
+            .register_from_forwarded_args(
+                ["zterm.exe".to_string(), path.to_string_lossy().into_owned()],
+                Some(parent_command_line.to_string()),
+            )
+            .expect("args should parse")
+            .expect("request should exist");
+        let session = service
+            .get_session(&launch.id)
+            .expect("session lookup should succeed")
+            .expect("transient session should exist");
 
         let _ = std::fs::remove_file(path);
-        assert_eq!(request.host, "172.21.195.223");
-        assert_eq!(request.port, 222);
+        assert_eq!(launch.host, "172.21.195.223");
+        assert_eq!(launch.port, 222);
         assert_eq!(
-            request.username,
+            launch.username,
             "b64>>d2VuOjMwMTI1OTY5NDQ4OTVAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI="
         );
         assert_eq!(
-            request.password.as_deref(),
+            session
+                .credential_ref
+                .as_deref()
+                .and_then(|credential_ref| service.secret_for_external_ref(credential_ref))
+                .as_deref(),
             Some("en::6d49b3b3fb5721e430d82ae005431d2a")
         );
     }

@@ -58,6 +58,7 @@ const storeMocks = vi.hoisted(() => ({
     },
   },
   getExternalSshOptions: vi.fn(),
+  takePendingExternalLaunches: vi.fn(),
   updateExternalSshOptions: vi.fn(),
   settingsState: {
     appSettings: {
@@ -228,7 +229,7 @@ vi.mock("../features/terminal/externalLaunchApi", () => ({
   },
   getExternalSshOptions: storeMocks.getExternalSshOptions,
   isExternalSessionId: (value: string | null | undefined) => typeof value === "string" && value.startsWith("external:"),
-  takePendingExternalLaunches: vi.fn(async () => storeMocks.pendingExternalLaunches),
+  takePendingExternalLaunches: storeMocks.takePendingExternalLaunches,
   updateExternalSshOptions: storeMocks.updateExternalSshOptions,
 }));
 
@@ -928,6 +929,9 @@ describe("AppShell", () => {
     storeMocks.aiAffectedDomainsHandler = null;
     storeMocks.tauriEventHandlers.clear();
     storeMocks.pendingExternalLaunches = [];
+    storeMocks.takePendingExternalLaunches.mockImplementation(async () =>
+      storeMocks.pendingExternalLaunches.splice(0),
+    );
     storeMocks.externalSshOptions = {
       connect_timeout_ms: null,
       keepalive_interval_ms: null,
@@ -1924,6 +1928,71 @@ describe("AppShell", () => {
     expect(view.container.querySelector('[aria-label="保存工作区"]')).not.toBeNull();
 
     promptSpy.mockRestore();
+    view.unmount();
+  });
+
+  it("opens a second-instance external SSH launch in a new pane tab", async () => {
+    storeMocks.workspaceState.tabs = [
+      {
+        id: "tab-1",
+        title: "Existing SSH",
+        active_pane_id: "pane-1",
+        root: {
+          kind: "leaf",
+          id: "pane-1",
+          title: "Existing SSH",
+          runtime_session_id: "runtime-existing",
+          saved_session_id: "session-existing",
+          active_terminal_tab_id: "pane-1-tab-1",
+          terminal_tabs: [
+            {
+              id: "pane-1-tab-1",
+              title: "Existing SSH",
+              runtime_session_id: "runtime-existing",
+              saved_session_id: "session-existing",
+            },
+          ],
+        },
+      },
+    ];
+    storeMocks.addPaneTab.mockReturnValue({ id: "pane-1-tab-2" });
+
+    const view = render(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    storeMocks.pendingExternalLaunches.push({
+      id: "external:launch-2",
+      name: "ops@second.example.test:22",
+      host: "second.example.test",
+      port: 22,
+      username: "ops",
+      auto_open_sftp: false,
+      remote_path: "/",
+    });
+    await act(async () => {
+      storeMocks.tauriEventHandlers.get("zterm:external-ssh-launch")?.({ payload: null });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.takePendingExternalLaunches).toHaveBeenCalledTimes(2);
+    expect(storeMocks.addPaneTab).toHaveBeenCalledWith("pane-1");
+    expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
+      "default-workspace",
+      "tab-1",
+      "pane-1",
+      "pane-1-tab-2",
+      expect.objectContaining({
+        saved_session_id: "external:launch-2",
+        connection_source: "external_ssh",
+      }),
+    );
+    expect(storeMocks.openTerminal).toHaveBeenCalledWith("external:launch-2", "pane-1");
+
     view.unmount();
   });
 

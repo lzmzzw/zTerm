@@ -806,33 +806,40 @@ export function AppShell() {
     [addPaneTab, bindRuntimeToPaneTab, listFiles, loadTransfers, openTerminal, setFilePath, updatePaneTerminalTab],
   );
 
+  const drainPendingExternalLaunches = useCallback(async () => {
+    const launches = await takePendingExternalLaunches();
+    for (const launch of launches) {
+      await handleExternalSshLaunch(launch);
+    }
+  }, [handleExternalSshLaunch]);
+
   useEffect(() => {
     let disposed = false;
     let cleanup: (() => void) | null = null;
-    void takePendingExternalLaunches()
-      .then((launches) => {
-        if (disposed) return;
-        for (const launch of launches) {
-          void handleExternalSshLaunch(launch);
-        }
-      })
-      .catch((error) => {
+    const drain = () =>
+      drainPendingExternalLaunches().catch((error) => {
         if (!disposed) setTerminalError(fallbackOnlyErrorMessage(error, "读取外部启动请求失败"));
       });
-    void listen<ExternalSshLaunchEvent>("zterm:external-ssh-launch", (event) => {
-      void handleExternalSshLaunch(event.payload);
-    }).then((unlisten) => {
-      if (disposed) {
-        unlisten();
-      } else {
+    void listen("zterm:external-ssh-launch", () => {
+      void drain();
+    })
+      .then((unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
         cleanup = unlisten;
-      }
-    });
+        void drain();
+      })
+      .catch((error) => {
+        void drain();
+        if (!disposed) setTerminalError(fallbackOnlyErrorMessage(error, "监听外部启动请求失败"));
+      });
     return () => {
       disposed = true;
       cleanup?.();
     };
-  }, [handleExternalSshLaunch]);
+  }, [drainPendingExternalLaunches]);
 
   useEffect(() => {
     let disposed = false;
