@@ -1,6 +1,7 @@
 // Author: Liz
 import { ArrowLeft, ArrowRight, Eye, EyeOff, FolderUp, RefreshCw } from "lucide-react";
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 
 import { ZtSelect } from "../../components/ZtSelect";
@@ -31,10 +32,17 @@ type DragState = {
 
 type PointerDragState = {
   sourceSide: FileTransferSide;
-  path: string;
+  entry: FileEntry;
   startX: number;
   startY: number;
   active: boolean;
+};
+
+type DragPreviewState = {
+  entry: FileEntry;
+  count: number;
+  clientX: number;
+  clientY: number;
 };
 
 type TransferPlan = {
@@ -116,6 +124,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   );
   const [showHidden, setShowHidden] = useState<Record<FileTransferSide, boolean>>({ left: false, right: false });
   const [dragState, setDragState] = useState<DragState | null>(null);
+  const [dragPreview, setDragPreview] = useState<DragPreviewState | null>(null);
   const [pendingOverwrite, setPendingOverwrite] = useState<{ count: number; plans: TransferPlan[] } | null>(null);
   const [transferDockCollapsed, setTransferDockCollapsed] = useState(false);
   const [transferDockHeight, setTransferDockHeight] = useState<number | null>(null);
@@ -203,6 +212,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     const nextDragState = { sourceSide, paths };
     dragStateRef.current = nextDragState;
     setDragState(nextDragState);
+    return nextDragState;
   }
 
   function canDropOn(targetSide: FileTransferSide) {
@@ -216,10 +226,11 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   function clearDrag() {
     dragStateRef.current = null;
     setDragState(null);
+    setDragPreview(null);
   }
 
-  function preparePointerDrag(sourceSide: FileTransferSide, path: string, clientX: number, clientY: number) {
-    pointerDragRef.current = { sourceSide, path, startX: clientX, startY: clientY, active: false };
+  function preparePointerDrag(sourceSide: FileTransferSide, entry: FileEntry, clientX: number, clientY: number) {
+    pointerDragRef.current = { sourceSide, entry, startX: clientX, startY: clientY, active: false };
   }
 
   function movePointerDrag(clientX: number, clientY: number) {
@@ -229,7 +240,10 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       const distance = Math.hypot(clientX - pointerDrag.startX, clientY - pointerDrag.startY);
       if (distance < POINTER_DRAG_THRESHOLD) return false;
       pointerDrag.active = true;
-      beginDrag(pointerDrag.sourceSide, pointerDrag.path);
+      const nextDragState = beginDrag(pointerDrag.sourceSide, pointerDrag.entry.path);
+      setDragPreview({ entry: pointerDrag.entry, count: nextDragState.paths.length, clientX, clientY });
+    } else {
+      setDragPreview((current) => (current ? { ...current, clientX, clientY } : current));
     }
     return true;
   }
@@ -321,7 +335,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
             setPath("left", path);
             void Promise.resolve().then(() => loadEndpoint("left"));
           }}
-          onPointerDragStart={(path, clientX, clientY) => preparePointerDrag("left", path, clientX, clientY)}
+          onPointerDragStart={(entry, clientX, clientY) => preparePointerDrag("left", entry, clientX, clientY)}
           onPointerDragMove={movePointerDrag}
           onPointerDragEnd={finishPointerDrag}
           onPointerDragCancel={cancelPointerDrag}
@@ -371,7 +385,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
             setPath("right", path);
             void Promise.resolve().then(() => loadEndpoint("right"));
           }}
-          onPointerDragStart={(path, clientX, clientY) => preparePointerDrag("right", path, clientX, clientY)}
+          onPointerDragStart={(entry, clientX, clientY) => preparePointerDrag("right", entry, clientX, clientY)}
           onPointerDragMove={movePointerDrag}
           onPointerDragEnd={finishPointerDrag}
           onPointerDragCancel={cancelPointerDrag}
@@ -397,6 +411,20 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
         onCollapsedChange={setTransferDockCollapsed}
         onResize={resizeTransferDock}
       />
+      {dragPreview
+        ? createPortal(
+            <div
+              className="zt-file-transfer-drag-preview"
+              style={{ left: dragPreview.clientX + 14, top: dragPreview.clientY + 14 }}
+              aria-hidden="true"
+            >
+              <span className="zt-file-transfer-drag-preview-icon">{resolveFileIcon(dragPreview.entry)}</span>
+              <strong>{dragPreview.entry.name}</strong>
+              {dragPreview.count > 1 ? <span className="zt-file-transfer-drag-preview-count">{dragPreview.count}</span> : null}
+            </div>,
+            document.body,
+          )
+        : null}
       {pendingOverwrite ? (
         <ZtConfirmDialog
           title="覆盖传输目标"
@@ -456,7 +484,7 @@ function EndpointPane({
   onParent: () => Promise<void> | void;
   onSelect: (path: string | null, event?: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => void;
   onOpenDirectory: (path: string) => Promise<void> | void;
-  onPointerDragStart: (path: string, clientX: number, clientY: number) => void;
+  onPointerDragStart: (entry: FileEntry, clientX: number, clientY: number) => void;
   onPointerDragMove: (clientX: number, clientY: number) => boolean;
   onPointerDragEnd: (clientX: number, clientY: number) => void;
   onPointerDragCancel: () => void;
@@ -552,7 +580,7 @@ function EndpointPane({
             onPointerDown={(event) => {
               if (event.button !== 0 || !transferKindFromFileKind(entry.kind)) return;
               event.currentTarget.setPointerCapture?.(event.pointerId);
-              onPointerDragStart(entry.path, event.clientX, event.clientY);
+              onPointerDragStart(entry, event.clientX, event.clientY);
             }}
             onPointerMove={(event) => {
               if (event.buttons !== 1) return;

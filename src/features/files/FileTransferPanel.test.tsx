@@ -63,9 +63,14 @@ async function pointerDragBetween(source: HTMLElement, destination: HTMLElement)
     await act(async () => {
       source.dispatchEvent(Object.assign(new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 10, clientY: 10 }), { pointerId: 1 }));
       source.dispatchEvent(Object.assign(new MouseEvent("pointermove", { bubbles: true, buttons: 1, clientX: 30, clientY: 30 }), { pointerId: 1 }));
+      await Promise.resolve();
+    });
+    const preview = document.body.querySelector(".zt-file-transfer-drag-preview") as HTMLElement | null;
+    await act(async () => {
       source.dispatchEvent(Object.assign(new MouseEvent("pointerup", { bubbles: true, button: 0, clientX: 30, clientY: 30 }), { pointerId: 1 }));
       await Promise.resolve();
     });
+    return preview;
   } finally {
     Object.defineProperty(document, "elementFromPoint", {
       configurable: true,
@@ -276,7 +281,11 @@ describe("FileTransferPanel", () => {
     expect(row?.getAttribute("draggable")).toBeNull();
     expect(row?.getAttribute("data-transfer-draggable")).toBe("true");
 
-    await pointerDragBetween(row as HTMLElement, destinationPane);
+    const preview = await pointerDragBetween(row as HTMLElement, destinationPane);
+
+    expect(preview?.textContent).toContain("bundle.zip");
+    expect(preview?.querySelector(".zt-file-transfer-drag-preview-icon svg")).toBeTruthy();
+    expect(document.body.querySelector(".zt-file-transfer-drag-preview")).toBeNull();
 
     expect(invokeMock).toHaveBeenCalledWith("file_transfer_check_conflicts", {
       items: [{ destination: { kind: "ssh", saved_session_id: "ssh-1", path: "/bundle.zip" }, kind: "file" }],

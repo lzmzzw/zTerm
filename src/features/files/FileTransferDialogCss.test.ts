@@ -44,6 +44,14 @@ describe("file transfer dialog styles", () => {
     expect(css).toContain("min-height: 28px");
   });
 
+  it("renders the pointer drag preview above the dialog without intercepting the pointer", () => {
+    const preview = ruleBody(".zt-file-transfer-drag-preview");
+
+    expect(preview).toContain("position: fixed");
+    expect(preview).toContain("pointer-events: none");
+    expect(css).toContain(".zt-file-transfer-drag-preview-icon");
+  });
+
   it("uses an explicit local-endpoint selector rule for the drive picker", () => {
     const selector = '.zt-file-transfer-pane[data-local="true"] .zt-file-transfer-path';
     const ruleStart = css.indexOf(selector);
