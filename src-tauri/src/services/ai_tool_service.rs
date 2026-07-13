@@ -57,9 +57,7 @@ use crate::{
         settings::get_app_settings,
         sqlite::SqliteStore,
         transfers::list_transfer_tasks,
-        workspace::{
-            close_workspace, get_workspace, list_workspaces, remove_workspace, save_workspace,
-        },
+        workspace::{get_workspace, list_workspaces, remove_workspace, save_workspace},
     },
 };
 
@@ -586,11 +584,6 @@ impl AiToolService {
                     format!("工作区已保存：{}。", workspace.name),
                     ["workspace"],
                 ))
-            }
-            "workspace.close" => {
-                let workspace_id = string_arg(arguments, "workspace_id")?;
-                close_workspace(store, &workspace_id)?;
-                self.emit_frontend_action(tool_id, arguments, vec!["workspace".to_string()])
             }
             "workspace.delete" => {
                 let workspace_id = string_arg(arguments, "workspace_id")?;
@@ -1385,13 +1378,6 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
             false,
         ),
         (
-            "workspace.close",
-            "关闭工作区",
-            "关闭运行态并标记工作区为关闭",
-            RiskLevel::High,
-            true,
-        ),
-        (
             "workspace.delete",
             "删除工作区",
             "物理删除非默认工作区定义",
@@ -1541,7 +1527,7 @@ fn validate_arguments(tool_id: &str, arguments: &Value) -> AppResult<()> {
             let _ = string_arg(arguments, "conversation_id")?;
             let _ = ai_approval_mode_arg(arguments)?;
         }
-        "workspace.get" | "workspace.close" | "workspace.delete" | "workspace.restore" => {
+        "workspace.get" | "workspace.delete" | "workspace.restore" => {
             let _ = string_arg(arguments, "workspace_id")?;
         }
         "workspace.save" => {
@@ -1702,7 +1688,6 @@ fn force_confirmation_tool(tool_id: &str) -> bool {
         || matches!(
             tool_id,
             "session_groups.delete"
-                | "workspace.close"
                 | "workspace.delete"
                 | "history.clear"
                 | "sftp.delete"

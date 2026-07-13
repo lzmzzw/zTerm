@@ -5,8 +5,8 @@ import type { SavedSession } from "../features/sessions/types";
 import { fallbackOnlyErrorMessage } from "../lib/unknownErrorMessage";
 
 interface TerminalActionDependencies {
-  activeWorkspaceId: string;
-  activeWorkspaceTabId: string | null;
+  workbenchId: string;
+  workbenchTabId: string | null;
   activePaneTab: PaneTerminalTab | null;
   activeTab: WorkspaceTab | null | undefined;
   setTerminalError: (message: string | null) => void;
@@ -38,8 +38,8 @@ interface TerminalActionDependencies {
 }
 
 export function createTerminalActions({
-  activeWorkspaceId,
-  activeWorkspaceTabId,
+  workbenchId,
+  workbenchTabId,
   activePaneTab,
   activeTab,
   setTerminalError,
@@ -54,25 +54,25 @@ export function createTerminalActions({
 }: TerminalActionDependencies) {
   async function openSession(session: SavedSession) {
     if (!activeTab || !activePaneTab) return;
-    const targetWorkspaceId = activeWorkspaceId;
+    const targetWorkbenchId = workbenchId;
     const targetWorkspaceTabId = activeTab.id;
     const targetPaneId = activeTab.active_pane_id;
     const targetPaneTab = activePaneTab.runtime_session_id ? addPaneTab(targetPaneId) : activePaneTab;
     setTerminalError(null);
     try {
       const runtime = await openTerminal(session.id, targetPaneId);
-      bindRuntimeToPaneTab(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, runtime);
+      bindRuntimeToPaneTab(targetWorkbenchId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, runtime);
     } catch (openError) {
       setTerminalError(fallbackOnlyErrorMessage(openError, "打开终端失败"));
     }
   }
 
   async function disconnectTerminal(paneId: string, paneTabId: string, runtimeSessionId: string) {
-    if (!activeWorkspaceTabId) return;
+    if (!workbenchTabId) return;
     setTerminalError(null);
     try {
       await closeTerminal(runtimeSessionId);
-      updatePaneTerminalTab(activeWorkspaceId, activeWorkspaceTabId, paneId, paneTabId, {
+      updatePaneTerminalTab(workbenchId, workbenchTabId, paneId, paneTabId, {
         runtime_session_id: null,
         restore_status: "failed",
         restore_error: "已断开连接",
@@ -88,11 +88,11 @@ export function createTerminalActions({
     savedSessionId: string,
     runtimeSessionId: string,
   ) {
-    if (!activeWorkspaceTabId) return;
+    if (!workbenchTabId) return;
     setTerminalError(null);
     try {
       await closeTerminal(runtimeSessionId, { releaseExternalSession: !isExternalSessionId(savedSessionId) });
-      updatePaneTerminalTab(activeWorkspaceId, activeWorkspaceTabId, paneId, paneTabId, {
+      updatePaneTerminalTab(workbenchId, workbenchTabId, paneId, paneTabId, {
         runtime_session_id: null,
         restore_status: "pending",
         restore_error: null,
@@ -106,7 +106,7 @@ export function createTerminalActions({
               activePaneTab.container_target.name ?? null,
             )
           : await openTerminal(savedSessionId, paneId);
-      updatePaneTerminalTab(activeWorkspaceId, activeWorkspaceTabId, paneId, paneTabId, {
+      updatePaneTerminalTab(workbenchId, workbenchTabId, paneId, paneTabId, {
         runtime_session_id: runtime.runtime_session_id,
         saved_session_id: runtime.saved_session_id,
         title: runtime.title,
@@ -115,7 +115,7 @@ export function createTerminalActions({
       });
     } catch (error) {
       const message = fallbackOnlyErrorMessage(error, "重新连接失败");
-      updatePaneTerminalTab(activeWorkspaceId, activeWorkspaceTabId, paneId, paneTabId, {
+      updatePaneTerminalTab(workbenchId, workbenchTabId, paneId, paneTabId, {
         restore_status: "failed",
         restore_error: message,
       });

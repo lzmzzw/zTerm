@@ -15,7 +15,7 @@ describe("terminalActions", () => {
 
     expect(deps.openTerminal).toHaveBeenCalledWith("session-1", "pane-1");
     expect(deps.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "live-workbench",
       "tab-1",
       "pane-1",
       "pane-tab-1",
@@ -34,7 +34,7 @@ describe("terminalActions", () => {
 
     expect(deps.addPaneTab).toHaveBeenCalledWith("pane-1");
     expect(deps.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "live-workbench",
       "tab-1",
       "pane-1",
       "pane-tab-2",
@@ -49,7 +49,7 @@ describe("terminalActions", () => {
     await actions.disconnectTerminal("pane-1", "pane-tab-1", "runtime-1");
 
     expect(deps.closeTerminal).toHaveBeenCalledWith("runtime-1");
-    expect(deps.updatePaneTerminalTab).toHaveBeenCalledWith("workspace-1", "tab-1", "pane-1", "pane-tab-1", {
+    expect(deps.updatePaneTerminalTab).toHaveBeenCalledWith("live-workbench", "tab-1", "pane-1", "pane-tab-1", {
       runtime_session_id: null,
       restore_status: "failed",
       restore_error: "已断开连接",
@@ -69,7 +69,7 @@ describe("terminalActions", () => {
     expect(deps.closeTerminal).toHaveBeenCalledWith("runtime-1", { releaseExternalSession: true });
     expect(deps.updatePaneTerminalTab).toHaveBeenNthCalledWith(
       1,
-      "workspace-1",
+      "live-workbench",
       "tab-1",
       "pane-1",
       "pane-tab-1",
@@ -81,7 +81,7 @@ describe("terminalActions", () => {
     );
     expect(deps.updatePaneTerminalTab).toHaveBeenNthCalledWith(
       2,
-      "workspace-1",
+      "live-workbench",
       "tab-1",
       "pane-1",
       "pane-tab-1",
@@ -108,7 +108,7 @@ describe("terminalActions", () => {
     expect(deps.closeTerminal).toHaveBeenCalledWith("runtime-1", { releaseExternalSession: true });
     expect(deps.openTerminal).not.toHaveBeenCalled();
     expect(deps.openSshContainerTerminal).toHaveBeenCalledWith("session-1", "pane-1", "abc123", "api");
-    expect(deps.updatePaneTerminalTab).toHaveBeenLastCalledWith("workspace-1", "tab-1", "pane-1", "pane-tab-1", {
+    expect(deps.updatePaneTerminalTab).toHaveBeenLastCalledWith("live-workbench", "tab-1", "pane-1", "pane-tab-1", {
       runtime_session_id: "runtime-1",
       saved_session_id: "session-1",
       title: "容器: api",
@@ -184,8 +184,8 @@ function dependencies({
   writeTerminal?: (runtimeSessionId: string, data: string) => Promise<void>;
 } = {}) {
   return {
-    activeWorkspaceId: "workspace-1",
-    activeWorkspaceTabId: "tab-1",
+    workbenchId: "live-workbench",
+    workbenchTabId: "tab-1",
     activePaneTab,
     activeTab: workspaceTab(),
     setTerminalError: vi.fn(),

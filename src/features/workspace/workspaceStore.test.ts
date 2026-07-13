@@ -97,6 +97,53 @@ function splitWithDuplicatePaneIds(): PaneNode {
 }
 
 describe("workspaceStore pane tabs", () => {
+  it("restores a saved definition into the independent live workbench without mutating the cache", () => {
+    const definition: WorkspaceDefinition = {
+      ...runtimeWorkspace("workspace-a", "runtime-from-snapshot"),
+      status: "closed",
+    };
+    const cachedDefinition = structuredClone(definition);
+    const currentWorkbench = runtimeWorkspace(DEFAULT_WORKSPACE_ID, "runtime-current");
+    useWorkspaceStore.setState({
+      workspaceDefinitions: { [definition.id]: cachedDefinition },
+      workspaces: [currentWorkbench],
+      activeWorkspaceId: DEFAULT_WORKSPACE_ID,
+      tabs: currentWorkbench.tabs,
+      activeTabId: currentWorkbench.activeTabId,
+    });
+
+    useWorkspaceStore.getState().restoreWorkbenchDefinition(definition);
+
+    const state = useWorkspaceStore.getState();
+    expect(state.activeWorkspaceId).toBe(DEFAULT_WORKSPACE_ID);
+    expect(state.workspaces).toHaveLength(1);
+    expect(state.workspaces[0]).toMatchObject({ id: DEFAULT_WORKSPACE_ID, name: "默认工作区", status: "running" });
+    expect(state.tabs[0].id).toBe("workspace-a-tab-1");
+    expect(state.workspaceDefinitions[definition.id]).toEqual(cachedDefinition);
+    expect(state.workspaceDefinitions[definition.id]).not.toBe(state.workspaces[0]);
+  });
+
+  it("clears only the successfully closed runtime binding from the live workbench", () => {
+    const workbench = runtimeWorkspace(DEFAULT_WORKSPACE_ID, "runtime-current");
+    useWorkspaceStore.setState({
+      workspaces: [workbench],
+      activeWorkspaceId: DEFAULT_WORKSPACE_ID,
+      tabs: workbench.tabs,
+      activeTabId: workbench.activeTabId,
+    });
+
+    useWorkspaceStore.getState().clearRuntimeSession("runtime-current");
+
+    const root = useWorkspaceStore.getState().tabs[0].root;
+    expect(root).toMatchObject({ kind: "leaf", runtime_session_id: null });
+    if (root.kind !== "leaf") return;
+    expect(root.terminal_tabs?.[0]).toMatchObject({
+      runtime_session_id: null,
+      saved_session_id: "session-1",
+      restore_status: null,
+    });
+  });
+
   it("caches workspace definitions and deduplicates in-flight loaders", async () => {
     const definition: WorkspaceDefinition = {
       id: "workspace-cached",
@@ -152,124 +199,6 @@ describe("workspaceStore pane tabs", () => {
     expect(state.activeWorkspaceId).toBe("workspace-a");
   });
 
-  it("switches active workspaces without clearing background runtime bindings", () => {
-    const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
-    const workspaceB = runtimeWorkspace("workspace-b", "runtime-b");
-    useWorkspaceStore.setState({
-      workspaces: [workspaceA, workspaceB],
-      activeWorkspaceId: workspaceA.id,
-      tabs: workspaceA.tabs,
-      activeTabId: workspaceA.activeTabId,
-    });
-
-    useWorkspaceStore.getState().selectWorkspace("workspace-b");
-
-    const state = useWorkspaceStore.getState();
-    expect(state.activeWorkspaceId).toBe("workspace-b");
-    expect(state.tabs[0].id).toBe("workspace-b-tab-1");
-    expect(state.workspaces.find((workspace) => workspace.id === "workspace-a")?.tabs[0].root).toMatchObject({
-      kind: "leaf",
-      runtime_session_id: "runtime-a",
-    });
-  });
-
-  it("keeps the hidden default workspace runtime in memory when switching away and back", () => {
-    const defaultWorkspace = runtimeWorkspace(DEFAULT_WORKSPACE_ID, "runtime-default");
-    const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
-    useWorkspaceStore.setState({
-      workspaces: [defaultWorkspace, workspaceA],
-      activeWorkspaceId: DEFAULT_WORKSPACE_ID,
-      tabs: defaultWorkspace.tabs,
-      activeTabId: defaultWorkspace.activeTabId,
-    });
-
-    useWorkspaceStore.getState().selectWorkspace("workspace-a");
-    useWorkspaceStore.getState().selectDefaultWorkspace();
-
-    const state = useWorkspaceStore.getState();
-    expect(state.activeWorkspaceId).toBe(DEFAULT_WORKSPACE_ID);
-    expect(state.tabs[0].root).toMatchObject({
-      kind: "leaf",
-      runtime_session_id: "runtime-default",
-    });
-    expect(state.workspaces.find((workspace) => workspace.id === "workspace-a")?.tabs[0].root).toMatchObject({
-      kind: "leaf",
-      runtime_session_id: "runtime-a",
-    });
-  });
-
-  it("migrates the active default workspace runtime to a saved workspace and resets default to an empty draft", () => {
-    const defaultWorkspace = runtimeWorkspace(DEFAULT_WORKSPACE_ID, "runtime-default");
-    const saved: WorkspaceDefinition = {
-      id: "workspace-new",
-      name: "发布窗口",
-      status: "closed",
-      active_tab_id: defaultWorkspace.activeTabId,
-      tabs: [],
-      sort_order: 3,
-      created_at_ms: 10,
-      updated_at_ms: 11,
-    };
-    useWorkspaceStore.setState({
-      workspaces: [defaultWorkspace],
-      activeWorkspaceId: DEFAULT_WORKSPACE_ID,
-      tabs: defaultWorkspace.tabs,
-      activeTabId: defaultWorkspace.activeTabId,
-    });
-
-    useWorkspaceStore.getState().migrateActiveWorkspaceToSavedWorkspace(saved);
-
-    const state = useWorkspaceStore.getState();
-    const migrated = state.workspaces.find((workspace) => workspace.id === "workspace-new");
-    const defaultAfterSave = state.workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID);
-    expect(state.activeWorkspaceId).toBe("workspace-new");
-    expect(migrated?.tabs[0].root).toMatchObject({
-      kind: "leaf",
-      runtime_session_id: "runtime-default",
-    });
-    expect(defaultAfterSave?.tabs[0].root).toMatchObject({
-      kind: "leaf",
-      title: "新建终端",
-      runtime_session_id: null,
-      saved_session_id: null,
-    });
-  });
-
-  it("moves an explicit active workspace runtime to a newly saved workspace id", () => {
-    const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
-    const defaultWorkspace = runtimeWorkspace(DEFAULT_WORKSPACE_ID, "runtime-default");
-    const saved: WorkspaceDefinition = {
-      id: "workspace-copy",
-      name: "运维巡检副本",
-      status: "closed",
-      active_tab_id: workspaceA.activeTabId,
-      tabs: [],
-      sort_order: 4,
-      created_at_ms: 20,
-      updated_at_ms: 21,
-    };
-    useWorkspaceStore.setState({
-      workspaces: [defaultWorkspace, workspaceA],
-      activeWorkspaceId: workspaceA.id,
-      tabs: workspaceA.tabs,
-      activeTabId: workspaceA.activeTabId,
-    });
-
-    useWorkspaceStore.getState().migrateActiveWorkspaceToSavedWorkspace(saved);
-
-    const state = useWorkspaceStore.getState();
-    expect(state.activeWorkspaceId).toBe("workspace-copy");
-    expect(state.workspaces.some((workspace) => workspace.id === "workspace-a")).toBe(false);
-    expect(state.workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID)?.tabs[0].root).toMatchObject({
-      kind: "leaf",
-      runtime_session_id: "runtime-default",
-    });
-    expect(state.workspaces.find((workspace) => workspace.id === "workspace-copy")?.tabs[0].root).toMatchObject({
-      kind: "leaf",
-      runtime_session_id: "runtime-a",
-    });
-  });
-
   it("normalizes duplicate pane ids when restoring a workspace definition into runtime", () => {
     const definition: WorkspaceDefinition = {
       id: "workspace-duplicated",
@@ -292,13 +221,11 @@ describe("workspaceStore pane tabs", () => {
       ],
     };
     useWorkspaceStore.setState({
-      workspaces: [],
-      activeWorkspaceId: definition.id,
-      tabs: [],
-      activeTabId: definition.active_tab_id,
+      workspaces: [runtimeWorkspace(DEFAULT_WORKSPACE_ID, "runtime-current")],
+      activeWorkspaceId: DEFAULT_WORKSPACE_ID,
     });
 
-    useWorkspaceStore.getState().upsertWorkspaceDefinition(definition);
+    useWorkspaceStore.getState().restoreWorkbenchDefinition(definition);
     useWorkspaceStore.getState().splitActivePane("vertical");
 
     const workspaceTab = useWorkspaceStore.getState().tabs[0];
@@ -306,121 +233,6 @@ describe("workspaceStore pane tabs", () => {
     expect(new Set(paneIds).size).toBe(paneIds.length);
     expect(paneIds.filter((paneId) => paneId === "pane-1")).toHaveLength(1);
     expect(paneIds).toHaveLength(3);
-  });
-
-  it("normalizes duplicate pane ids when migrating the hidden default workspace to a saved workspace", () => {
-    const defaultWorkspace: WorkspaceRuntime = {
-      id: DEFAULT_WORKSPACE_ID,
-      name: "默认工作区",
-      status: "running",
-      active_tab_id: "tab-1",
-      activeTabId: "tab-1",
-      sort_order: 0,
-      created_at_ms: 1,
-      updated_at_ms: 1,
-      tabs: [
-        {
-          id: "tab-1",
-          title: "主工作区",
-          active_pane_id: "pane-1",
-          root: splitWithDuplicatePaneIds(),
-          sort_order: 0,
-          created_at_ms: 1,
-          updated_at_ms: 1,
-        },
-      ],
-    };
-    const saved: WorkspaceDefinition = {
-      id: "workspace-from-default",
-      name: "默认保存",
-      status: "closed",
-      active_tab_id: defaultWorkspace.activeTabId,
-      tabs: [],
-      sort_order: 3,
-      created_at_ms: 10,
-      updated_at_ms: 11,
-    };
-    useWorkspaceStore.setState({
-      workspaces: [defaultWorkspace],
-      activeWorkspaceId: DEFAULT_WORKSPACE_ID,
-      tabs: defaultWorkspace.tabs,
-      activeTabId: defaultWorkspace.activeTabId,
-    });
-
-    useWorkspaceStore.getState().migrateActiveWorkspaceToSavedWorkspace(saved);
-
-    const workspaceTab = useWorkspaceStore.getState().tabs[0];
-    const paneIds = leafPaneIds(workspaceTab.root);
-    expect(new Set(paneIds).size).toBe(paneIds.length);
-    expect(paneIds.filter((paneId) => paneId === "pane-1")).toHaveLength(1);
-  });
-
-  it("freezes visual snapshots for one running workspace without touching other workspaces", () => {
-    const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
-    const workspaceB = runtimeWorkspace("workspace-b", "runtime-b");
-    useWorkspaceStore.setState({
-      workspaces: [workspaceA, workspaceB],
-      activeWorkspaceId: workspaceB.id,
-      tabs: workspaceB.tabs,
-      activeTabId: workspaceB.activeTabId,
-    });
-
-    useWorkspaceStore.getState().freezeWorkspaceRuntimeVisualSnapshots(
-      "workspace-a",
-      {
-        "runtime-a": "tail for A",
-        "runtime-b": "tail for B",
-      },
-      123,
-    );
-
-    const state = useWorkspaceStore.getState();
-    const frozenWorkspace = state.workspaces.find((workspace) => workspace.id === "workspace-a");
-    const untouchedWorkspace = state.workspaces.find((workspace) => workspace.id === "workspace-b");
-    expect(frozenWorkspace?.tabs[0].root.kind).toBe("leaf");
-    if (!frozenWorkspace || frozenWorkspace.tabs[0].root.kind !== "leaf") return;
-    expect(frozenWorkspace.tabs[0].root.terminal_tabs?.[0].visual_snapshot).toEqual({
-      kind: "terminal_tail",
-      text: "tail for A",
-      captured_at_ms: 123,
-      runtime_session_id: "runtime-a",
-    });
-    expect(untouchedWorkspace?.tabs[0].root.kind).toBe("leaf");
-    if (!untouchedWorkspace || untouchedWorkspace.tabs[0].root.kind !== "leaf") return;
-    expect(untouchedWorkspace.tabs[0].root.terminal_tabs?.[0]).not.toHaveProperty("visual_snapshot");
-    expect(state.activeWorkspaceId).toBe("workspace-b");
-    expect(state.tabs[0].id).toBe("workspace-b-tab-1");
-  });
-
-  it("closes a workspace runtime by returning unique runtime ids and keeping the definition", () => {
-    const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
-    if (workspaceA.tabs[0].root.kind === "leaf") {
-      workspaceA.tabs[0].root.terminal_tabs?.push({
-        id: "workspace-a-pane-1-tab-2",
-        title: "生产机 2",
-        runtime_session_id: "runtime-a",
-        saved_session_id: "session-1",
-      });
-    }
-    useWorkspaceStore.setState({
-      workspaces: [workspaceA],
-      activeWorkspaceId: workspaceA.id,
-      tabs: workspaceA.tabs,
-      activeTabId: workspaceA.activeTabId,
-    });
-
-    const runtimeIds = useWorkspaceStore.getState().closeWorkspaceRuntime("workspace-a");
-
-    const state = useWorkspaceStore.getState();
-    const closed = state.workspaces[0];
-    expect(runtimeIds).toEqual(["runtime-a"]);
-    expect(closed.status).toBe("closed");
-    expect(closed.tabs[0].root).toMatchObject({
-      kind: "leaf",
-      runtime_session_id: null,
-    });
-    if (closed.tabs[0].root.kind !== "leaf") return;
-    expect(closed.tabs[0].root.terminal_tabs?.map((tab) => tab.runtime_session_id)).toEqual([null, null]);
   });
 
   it("collects workspace runtime ids without clearing runtime bindings", () => {
@@ -489,31 +301,6 @@ describe("workspaceStore pane tabs", () => {
     expect(root.terminal_tabs?.[0]).not.toHaveProperty("visual_snapshot");
   });
 
-  it("clears runtime-only visual snapshots when closing a workspace runtime", () => {
-    const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
-    if (workspaceA.tabs[0].root.kind === "leaf") {
-      workspaceA.tabs[0].root.terminal_tabs![0].visual_snapshot = {
-        kind: "terminal_tail",
-        text: "runtime-only output",
-        captured_at_ms: 20,
-        runtime_session_id: "runtime-a",
-      };
-    }
-    useWorkspaceStore.setState({
-      workspaces: [workspaceA],
-      activeWorkspaceId: workspaceA.id,
-      tabs: workspaceA.tabs,
-      activeTabId: workspaceA.activeTabId,
-    });
-
-    useWorkspaceStore.getState().closeWorkspaceRuntime("workspace-a");
-
-    const closed = useWorkspaceStore.getState().workspaces[0];
-    expect(closed.tabs[0].root.kind).toBe("leaf");
-    if (closed.tabs[0].root.kind !== "leaf") return;
-    expect(closed.tabs[0].root.terminal_tabs?.[0]).not.toHaveProperty("visual_snapshot");
-  });
-
   it("removes a workspace runtime and cached definition while falling back from the active workspace", () => {
     const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
     const defaultWorkspace = runtimeWorkspace("default-workspace", "runtime-default");
@@ -547,32 +334,13 @@ describe("workspaceStore pane tabs", () => {
     expect(state.activeTabId).toBe(defaultWorkspace.activeTabId);
   });
 
-  it("keeps the current active workspace when removing a background workspace", () => {
+  it("updates one pane terminal tab restore state in the live workbench", () => {
     const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
-    const workspaceB = runtimeWorkspace("workspace-b", "runtime-b");
     useWorkspaceStore.setState({
-      workspaces: [workspaceA, workspaceB],
-      activeWorkspaceId: workspaceB.id,
-      tabs: workspaceB.tabs,
-      activeTabId: workspaceB.activeTabId,
-    });
-
-    (useWorkspaceStore.getState() as unknown as { removeWorkspace: (workspaceId: string) => void }).removeWorkspace("workspace-a");
-
-    const state = useWorkspaceStore.getState();
-    expect(state.workspaces.map((workspace) => workspace.id)).toEqual(["workspace-b"]);
-    expect(state.activeWorkspaceId).toBe("workspace-b");
-    expect(state.tabs).toBe(workspaceB.tabs);
-  });
-
-  it("updates one pane terminal tab restore state without touching background workspaces", () => {
-    const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
-    const workspaceB = runtimeWorkspace("workspace-b", "runtime-b");
-    useWorkspaceStore.setState({
-      workspaces: [workspaceA, workspaceB],
-      activeWorkspaceId: workspaceB.id,
-      tabs: workspaceB.tabs,
-      activeTabId: workspaceB.activeTabId,
+      workspaces: [workspaceA],
+      activeWorkspaceId: workspaceA.id,
+      tabs: workspaceA.tabs,
+      activeTabId: workspaceA.activeTabId,
     });
 
     useWorkspaceStore.getState().updatePaneTerminalTab(
@@ -587,8 +355,8 @@ describe("workspaceStore pane tabs", () => {
     );
 
     const state = useWorkspaceStore.getState();
-    expect(state.activeWorkspaceId).toBe("workspace-b");
-    expect(state.tabs[0].id).toBe("workspace-b-tab-1");
+    expect(state.activeWorkspaceId).toBe("workspace-a");
+    expect(state.tabs[0].id).toBe("workspace-a-tab-1");
     const updatedWorkspace = state.workspaces.find((workspace) => workspace.id === "workspace-a");
     expect(updatedWorkspace?.tabs[0].root.kind).toBe("leaf");
     if (!updatedWorkspace || updatedWorkspace.tabs[0].root.kind !== "leaf") return;
@@ -737,16 +505,15 @@ describe("workspaceStore pane tabs", () => {
         saved_session_id: null,
       });
     }
-    const workspaceB = runtimeWorkspace("workspace-b", "runtime-b");
     useWorkspaceStore.setState({
-      workspaces: [workspaceA, workspaceB],
+      workspaces: [workspaceA],
       activeWorkspaceId: workspaceA.id,
       tabs: workspaceA.tabs,
       activeTabId: workspaceA.activeTabId,
     });
 
     const created = useWorkspaceStore.getState().addPaneTab("workspace-a-pane-1");
-    useWorkspaceStore.getState().selectWorkspace("workspace-b");
+    useWorkspaceStore.getState().selectPaneTab("workspace-a-pane-1", "workspace-a-pane-1-tab-1");
     useWorkspaceStore.getState().bindRuntimeToPaneTab(
       "workspace-a",
       "workspace-a-tab-1",
@@ -766,7 +533,7 @@ describe("workspaceStore pane tabs", () => {
     );
 
     const state = useWorkspaceStore.getState();
-    expect(state.activeWorkspaceId).toBe("workspace-b");
+    expect(state.activeWorkspaceId).toBe("workspace-a");
     const updatedWorkspace = state.workspaces.find((workspace) => workspace.id === "workspace-a");
     expect(updatedWorkspace?.tabs[0].root.kind).toBe("leaf");
     if (!updatedWorkspace || updatedWorkspace.tabs[0].root.kind !== "leaf") return;

@@ -1357,7 +1357,7 @@ button {
 
 .zt-workspace-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px 6px;
   align-items: center;
   min-height: 44px;
@@ -1397,22 +1397,6 @@ button {
   font-size: var(--zt-font-size-ui);
   font-weight: 600;
   line-height: 1.3;
-}
-
-.zt-workspace-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--zt-text-muted);
-  flex-shrink: 0;
-}
-
-.zt-workspace-dot.running {
-  background: var(--zt-accent);
-}
-
-.zt-workspace-dot.dirty {
-  background: var(--zt-warning);
 }
 
 .zt-workspace-preview-col {
@@ -1570,30 +1554,6 @@ button {
   visibility: visible;
   opacity: 1;
   pointer-events: auto;
-}
-
-.zt-workspace-switch-overlay {
-  position: absolute;
-  inset: 0 0 6px 0;
-  z-index: 4;
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  background: var(--zt-bg-main);
-  isolation: isolate;
-  pointer-events: none;
-  transform: translateZ(0);
-  will-change: opacity;
-  animation: zt-workspace-switch-repaint 0.096s linear;
-}
-
-@keyframes zt-workspace-switch-repaint {
-  from {
-    opacity: 0.999;
-  }
-  to {
-    opacity: 1;
-  }
 }
 
 .zt-tabbar {

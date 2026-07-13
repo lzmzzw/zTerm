@@ -68,6 +68,22 @@ impl AiToolCommandWriter for FakeToolWriter {
 }
 
 #[test]
+fn tool_catalog_exposes_workspace_snapshots_without_workspace_close() {
+    let service = AiToolService::with_writer(Arc::new(FakeToolWriter::default()));
+    let tool_ids = service
+        .definitions()
+        .into_iter()
+        .map(|definition| definition.id)
+        .collect::<Vec<_>>();
+
+    assert!(!tool_ids.iter().any(|tool_id| tool_id == "workspace.close"));
+    assert!(tool_ids
+        .iter()
+        .any(|tool_id| tool_id == "workspace.restore"));
+    assert!(tool_ids.iter().any(|tool_id| tool_id == "workspace.delete"));
+}
+
+#[test]
 fn conversation_service_persists_conversation_and_messages() {
     let store = SqliteStore::open_in_memory().expect("store should open");
     let service = AiConversationService::default();

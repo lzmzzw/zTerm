@@ -24,7 +24,6 @@ import type {
   WorkspaceTab,
 } from "./types";
 import { DEFAULT_WORKSPACE_ID } from "./workspaceConstants";
-import { materializePaneVisualSnapshots } from "./workspaceShellModel";
 
 type LeafPane = Extract<PaneNode, { kind: "leaf" }>;
 
@@ -34,17 +33,6 @@ interface WorkspaceStore {
   activeWorkspaceId: string;
   tabs: WorkspaceTab[];
   activeTabId: string;
-  selectWorkspace: (workspaceId: string) => void;
-  selectDefaultWorkspace: () => void;
-  resetDefaultWorkspace: () => void;
-  migrateActiveWorkspaceToSavedWorkspace: (workspace: WorkspaceDefinition) => void;
-  upsertWorkspaceDefinition: (workspace: WorkspaceDefinition) => void;
-  updateWorkspaceRuntimeMetadata: (workspace: WorkspaceDefinition) => void;
-  freezeWorkspaceRuntimeVisualSnapshots: (
-    workspaceId: string,
-    visualOutputTail: Record<string, string>,
-    capturedAtMs: number,
-  ) => void;
   cacheWorkspaceDefinition: (workspace: WorkspaceDefinition) => void;
   loadWorkspaceDefinition: (
     workspaceId: string,
@@ -55,8 +43,9 @@ interface WorkspaceStore {
     loader: (workspaceId: string) => Promise<WorkspaceDefinition>,
   ) => Promise<void>;
   buildActiveWorkspaceDraft: () => WorkspaceDefinitionDraft | null;
+  restoreWorkbenchDefinition: (workspace: WorkspaceDefinition) => void;
+  clearRuntimeSession: (runtimeSessionId: string) => void;
   getWorkspaceRuntimeSessionIds: (workspaceId: string) => string[];
-  closeWorkspaceRuntime: (workspaceId: string) => string[];
   removeWorkspace: (workspaceId: string) => void;
   updatePaneTerminalTab: (
     workspaceId: string,
@@ -99,123 +88,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   activeWorkspaceId: initialWorkspace.id,
   tabs: initialWorkspace.tabs,
   activeTabId: initialWorkspace.activeTabId,
-  selectWorkspace: (workspaceId) =>
-    set((state) => {
-      const workspace = state.workspaces.find((item) => item.id === workspaceId);
-      if (!workspace) return state;
-      const selected = normalizeWorkspaceRuntime({
-        ...workspace,
-        updated_at_ms: Date.now(),
-      });
-      const workspaces = upsertWorkspace(state.workspaces, selected);
-      return {
-        workspaces,
-        ...mirrorWorkspace(selected),
-      };
-    }),
-  selectDefaultWorkspace: () =>
-    set((state) => {
-      const existingDefault = state.workspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID);
-      const defaultWorkspace = normalizeWorkspaceRuntime(existingDefault ?? createDefaultWorkspace());
-      const workspaces = upsertWorkspace(state.workspaces, defaultWorkspace);
-      return {
-        workspaces,
-        ...mirrorWorkspace(defaultWorkspace),
-      };
-    }),
-  resetDefaultWorkspace: () =>
-    set((state) => {
-      const defaultWorkspace = createDefaultWorkspace();
-      const workspaces = upsertWorkspace(state.workspaces, defaultWorkspace);
-      return {
-        workspaces,
-        ...(state.activeWorkspaceId === DEFAULT_WORKSPACE_ID ? mirrorWorkspace(defaultWorkspace) : {}),
-      };
-    }),
-  migrateActiveWorkspaceToSavedWorkspace: (workspace) =>
-    set((state) => {
-      const sourceWorkspace = normalizeWorkspaceRuntime(activeWorkspaceFromState(state) ?? createDefaultWorkspace());
-      const defaultWorkspace =
-        sourceWorkspace.id === DEFAULT_WORKSPACE_ID
-          ? createDefaultWorkspace()
-          : normalizeWorkspaceRuntime(
-              state.workspaces.find((item) => item.id === DEFAULT_WORKSPACE_ID) ?? createDefaultWorkspace(),
-            );
-      const migratedWorkspace: WorkspaceRuntime = {
-        ...workspace,
-        status: "running",
-        active_tab_id: sourceWorkspace.activeTabId,
-        activeTabId: sourceWorkspace.activeTabId,
-        tabs: sourceWorkspace.tabs,
-      };
-      const workspaces = upsertWorkspace(
-        upsertWorkspace(
-          state.workspaces.filter(
-            (item) => item.id !== sourceWorkspace.id && item.id !== workspace.id && item.id !== DEFAULT_WORKSPACE_ID,
-          ),
-          defaultWorkspace,
-        ),
-        migratedWorkspace,
-      );
-      const { [DEFAULT_WORKSPACE_ID]: _defaultDefinition, ...workspaceDefinitions } = state.workspaceDefinitions;
-      return {
-        workspaces,
-        workspaceDefinitions,
-        ...mirrorWorkspace(migratedWorkspace),
-      };
-    }),
-  upsertWorkspaceDefinition: (workspace) =>
-    set((state) => {
-      const runtime = runtimeFromDefinition(workspace);
-      const workspaces = upsertWorkspace(state.workspaces, runtime);
-      if (state.activeWorkspaceId !== runtime.id) {
-        return { workspaces };
-      }
-      return { workspaces, ...mirrorWorkspace(runtime) };
-    }),
-  updateWorkspaceRuntimeMetadata: (workspace) =>
-    set((state) => {
-      let changed = false;
-      const workspaces = state.workspaces.map((current) => {
-        if (current.id !== workspace.id || current.status !== "running") return current;
-        changed = true;
-        return {
-          ...current,
-          name: workspace.name,
-          sort_order: workspace.sort_order,
-          updated_at_ms: workspace.updated_at_ms,
-        };
-      });
-      if (!changed) return state;
-      const active = workspaces.find((current) => current.id === state.activeWorkspaceId);
-      return {
-        workspaces,
-        ...(active ? mirrorWorkspace(active) : {}),
-      };
-    }),
-  freezeWorkspaceRuntimeVisualSnapshots: (workspaceId, visualOutputTail, capturedAtMs) =>
-    set((state) => {
-      let changed = false;
-      const workspaces = state.workspaces.map((workspace) => {
-        if (workspace.id !== workspaceId || workspace.status !== "running") return workspace;
-        changed = true;
-        return {
-          ...workspace,
-          tabs: workspace.tabs.map((tab) => ({
-            ...tab,
-            root: materializePaneVisualSnapshots(tab.root, visualOutputTail, capturedAtMs),
-            updated_at_ms: Date.now(),
-          })),
-          updated_at_ms: Date.now(),
-        };
-      });
-      if (!changed) return state;
-      const active = workspaces.find((workspace) => workspace.id === state.activeWorkspaceId);
-      return {
-        workspaces,
-        ...(active ? mirrorWorkspace(active) : {}),
-      };
-    }),
   cacheWorkspaceDefinition: (workspace) =>
     set((state) => ({
       workspaceDefinitions: {
@@ -254,34 +126,39 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     if (!workspace) return null;
     return workspaceDraftFromRuntime(workspace);
   },
+  restoreWorkbenchDefinition: (workspace) =>
+    set((state) => {
+      const current = activeWorkspaceFromState(state) ?? createDefaultWorkspace();
+      const restored = normalizeWorkspaceRuntime({
+        ...current,
+        id: DEFAULT_WORKSPACE_ID,
+        name: "默认工作区",
+        status: "running",
+        active_tab_id: workspace.active_tab_id,
+        activeTabId: workspace.active_tab_id,
+        tabs: workspace.tabs,
+        updated_at_ms: Date.now(),
+      });
+      return {
+        workspaces: [restored],
+        ...mirrorWorkspace(restored),
+      };
+    }),
+  clearRuntimeSession: (runtimeSessionId) =>
+    set((state) =>
+      updateActiveWorkspace(state, (workspace) => ({
+        ...workspace,
+        tabs: workspace.tabs.map((tab) => ({
+          ...tab,
+          root: clearRuntimeSessionFromRoot(tab.root, runtimeSessionId),
+          updated_at_ms: Date.now(),
+        })),
+        updated_at_ms: Date.now(),
+      })),
+    ),
   getWorkspaceRuntimeSessionIds: (workspaceId) => {
     const workspace = get().workspaces.find((item) => item.id === workspaceId);
     return workspace ? collectRuntimeSessionIds(workspace.tabs) : [];
-  },
-  closeWorkspaceRuntime: (workspaceId) => {
-    let runtimeIds: string[] = [];
-    set((state) => {
-      const workspaces = state.workspaces.map((workspace) => {
-        if (workspace.id !== workspaceId) return workspace;
-        runtimeIds = collectRuntimeSessionIds(workspace.tabs);
-        return {
-          ...workspace,
-          status: "closed" as const,
-          tabs: workspace.tabs.map((tab) => ({
-            ...tab,
-            root: clearRuntimeState(tab.root),
-            updated_at_ms: Date.now(),
-          })),
-          updated_at_ms: Date.now(),
-        };
-      });
-      const active = workspaces.find((workspace) => workspace.id === state.activeWorkspaceId);
-      return {
-        workspaces,
-        ...(active ? mirrorWorkspace(active) : {}),
-      };
-    });
-    return runtimeIds;
   },
   removeWorkspace: (workspaceId) =>
     set((state) => {
@@ -614,13 +491,6 @@ function createDefaultWorkspace(timestamp = Date.now()): WorkspaceRuntime {
   };
 }
 
-function runtimeFromDefinition(workspace: WorkspaceDefinition): WorkspaceRuntime {
-  return normalizeWorkspaceRuntime({
-    ...workspace,
-    activeTabId: workspace.active_tab_id,
-  });
-}
-
 function normalizeWorkspaceRuntime(workspace: WorkspaceRuntime): WorkspaceRuntime {
   const activeTabId = workspace.activeTabId ?? workspace.active_tab_id;
   return {
@@ -676,26 +546,31 @@ function stripRuntimeState(root: PaneNode): PaneNode {
   };
 }
 
-function clearRuntimeState(root: PaneNode): PaneNode {
+function clearRuntimeSessionFromRoot(root: PaneNode, runtimeSessionId: string): PaneNode {
   if (root.kind === "split") {
     return {
       ...root,
-      first: clearRuntimeState(root.first),
-      second: clearRuntimeState(root.second),
+      first: clearRuntimeSessionFromRoot(root.first, runtimeSessionId),
+      second: clearRuntimeSessionFromRoot(root.second, runtimeSessionId),
     };
   }
 
-  const terminalTabs = getLeafTerminalTabs(root).map((tab) => ({
-    ...stripTerminalVisualSnapshot(tab),
-    runtime_session_id: null,
-    restore_status: null,
-  }));
+  const terminalTabs = getLeafTerminalTabs(root).map((tab) =>
+    tab.runtime_session_id === runtimeSessionId
+      ? {
+          ...stripTerminalVisualSnapshot(tab),
+          runtime_session_id: null,
+          restore_status: null,
+          restore_error: null,
+        }
+      : tab,
+  );
   const activeTerminalTab = terminalTabs.find((tab) => tab.id === root.active_terminal_tab_id) ?? terminalTabs[0];
   return {
     ...root,
-    runtime_session_id: null,
+    runtime_session_id: activeTerminalTab?.runtime_session_id ?? null,
     saved_session_id: activeTerminalTab?.saved_session_id ?? root.saved_session_id,
-    active_terminal_tab_id: activeTerminalTab?.id ?? root.active_terminal_tab_id,
+    title: activeTerminalTab?.title ?? root.title,
     terminal_tabs: terminalTabs,
   };
 }

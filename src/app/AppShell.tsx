@@ -19,7 +19,6 @@ import { createTerminalActions } from "./terminalActions";
 import type { RightTool } from "./rightTools";
 import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
-import { useWorkspaceVisualSwitch } from "./useWorkspaceVisualSwitch";
 import { ZtConfirmDialog } from "../components/ZtUi";
 import { setAiAffectedDomainsHandler, useAiStore } from "../features/ai/aiStore";
 import { buildAiTerminalContext } from "../features/ai/aiTerminalContextModel";
@@ -49,17 +48,14 @@ import {
   type ExternalSshLaunchEvent,
 } from "../features/terminal/externalLaunchApi";
 import { useTerminalStore } from "../features/terminal/terminalStore";
-import { SplitPaneView } from "../features/workspace/SplitPaneView";
 import { WorkspaceManagerPanel } from "../features/workspace/WorkspaceManagerPanel";
 import { WorkspacePreviewDialog } from "../features/workspace/WorkspacePreviewDialog";
 import { definitionFromDraft } from "../features/workspace/workspacePreviewModel";
-import { workspaceDelete, workspaceGet, workspaceList, workspaceRemove, workspaceSave } from "../features/workspace/workspacePersistence";
+import { workspaceGet, workspaceList, workspaceRemove, workspaceSave } from "../features/workspace/workspacePersistence";
 import { findPane, getActiveTerminalTab } from "../features/workspace/workspaceLayout";
 import { markWorkspaceRestoreQueued, runWorkspaceRestoreQueue } from "../features/workspace/workspaceRestoreScheduler";
 import { DEFAULT_WORKSPACE_ID } from "../features/workspace/workspaceConstants";
 import {
-  definitionFromRuntime,
-  hasRuntimeTabs,
   isReusableConnectionTab,
   mergeWorkspaceSidebarItems,
   nextWorkspaceSortOrder,
@@ -69,10 +65,9 @@ import { useWorkspaceStore } from "../features/workspace/workspaceStore";
 import type {
   WorkspaceDefinition,
   WorkspaceDefinitionDraft,
-  WorkspaceRuntime,
   WorkspaceSummary,
 } from "../features/workspace/types";
-import { scheduleAfterPaintDelay, scheduleIdleTask } from "../lib/renderScheduling";
+import { scheduleIdleTask } from "../lib/renderScheduling";
 import { fallbackOnlyErrorMessage, unknownErrorMessage } from "../lib/unknownErrorMessage";
 
 type LeftTool = "workspace" | "sessions" | "models";
@@ -98,8 +93,6 @@ type ZtermToolActionEvent = {
   arguments?: Record<string, unknown> | null;
   affected_domains?: string[];
 };
-
-const DEFAULT_MAX_RUNNING_WORKSPACES = 5;
 
 const EMPTY_AI_PANEL_STATE = {
   aiConversations: [],
@@ -158,7 +151,6 @@ const EMPTY_HISTORY_PANEL_STATE = {
 };
 
 const EMPTY_WORKSPACE_SIDEBAR_STATE = {
-  workspaceRuntimes: [] as WorkspaceRuntime[],
   workspaceDefinitions: {} as Record<string, WorkspaceDefinition>,
 };
 
@@ -177,14 +169,6 @@ function rightToolFromValue(value: string | null | undefined): RightTool | null 
 }
 
 export function AppShell() {
-  const {
-    workspaceSwitchOverlay,
-    workspaceVisualSwitchActive,
-    beginWorkspaceVisualSwitch,
-    isWorkspaceSwitchEpochCurrent,
-    markWorkspaceSwitchMetric,
-    startWorkspaceSwitchMetrics,
-  } = useWorkspaceVisualSwitch();
   const {
     groups,
     sessions,
@@ -262,8 +246,10 @@ export function AppShell() {
   const [activeTool, setActiveTool] = useState<RightTool | null>(null);
   const [containerPanelState, setContainerPanelState] = useState(EMPTY_CONTAINER_PANEL_STATE);
   const [workspaceSummaries, setWorkspaceSummaries] = useState<WorkspaceSummary[]>([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
   const [workspaceEditor, setWorkspaceEditor] = useState<WorkspaceEditorState | null>(null);
+  const [pendingRestoreWorkspace, setPendingRestoreWorkspace] = useState<WorkspaceSidebarItem | null>(null);
   const [pendingDeleteWorkspace, setPendingDeleteWorkspace] = useState<WorkspaceSidebarItem | null>(null);
   const [externalSshSessions, setExternalSshSessions] = useState<Record<string, ExternalSshLaunchEvent>>({});
   const { textInputDialog, requestTextInput, resolveTextInputDialog } = useAppTextInputDialog();
@@ -275,7 +261,7 @@ export function AppShell() {
   const [externalSshTunnelEditor, setExternalSshTunnelEditor] = useState<string | null>(null);
   const [externalSshTunnelNeedsReconnect, setExternalSshTunnelNeedsReconnect] = useState<Record<string, boolean>>({});
   const restoringWorkspaceIdsRef = useRef<Set<string>>(new Set());
-  const autoClosingWorkspaceIdsRef = useRef<Set<string>>(new Set());
+  const workspaceRestoreEpochRef = useRef(0);
   const processedExternalLaunchIdsRef = useRef<Set<string>>(new Set());
   const workspaceSummaryIdsRef = useRef<Set<string>>(new Set());
   const activeContextTokenRef = useRef(0);
@@ -446,33 +432,23 @@ export function AppShell() {
       activeTabId: state.activeTabId,
     })),
   );
-  const {
-    workspaceRuntimes,
-    workspaceDefinitions,
-  } = useWorkspaceStore(
+  const { workspaceDefinitions } = useWorkspaceStore(
     useShallow((state) =>
       activeLeftTool === "workspace"
         ? {
-            workspaceRuntimes: state.workspaces,
             workspaceDefinitions: state.workspaceDefinitions,
           }
         : EMPTY_WORKSPACE_SIDEBAR_STATE,
     ),
   );
-  const runningWorkspaceCapWorkspaces = useWorkspaceStore((state) => state.workspaces);
   const {
-    selectWorkspace,
-    selectDefaultWorkspace,
-    migrateActiveWorkspaceToSavedWorkspace,
-    upsertWorkspaceDefinition,
-    updateWorkspaceRuntimeMetadata,
-    freezeWorkspaceRuntimeVisualSnapshots,
     cacheWorkspaceDefinition,
     loadCachedWorkspaceDefinition,
     prefetchWorkspaceDefinitions,
     buildActiveWorkspaceDraft,
+    restoreWorkbenchDefinition,
+    clearRuntimeSession,
     getWorkspaceRuntimeSessionIds,
-    closeWorkspaceRuntime,
     removeWorkspace,
     updatePaneTerminalTab,
     selectTab,
@@ -487,18 +463,13 @@ export function AppShell() {
     closeActivePane,
   } = useWorkspaceStore(
     useShallow((state) => ({
-      selectWorkspace: state.selectWorkspace,
-      selectDefaultWorkspace: state.selectDefaultWorkspace,
-      migrateActiveWorkspaceToSavedWorkspace: state.migrateActiveWorkspaceToSavedWorkspace,
-      upsertWorkspaceDefinition: state.upsertWorkspaceDefinition,
-      updateWorkspaceRuntimeMetadata: state.updateWorkspaceRuntimeMetadata,
-      freezeWorkspaceRuntimeVisualSnapshots: state.freezeWorkspaceRuntimeVisualSnapshots,
       cacheWorkspaceDefinition: state.cacheWorkspaceDefinition,
       loadCachedWorkspaceDefinition: state.loadWorkspaceDefinition,
       prefetchWorkspaceDefinitions: state.prefetchWorkspaceDefinitions,
       buildActiveWorkspaceDraft: state.buildActiveWorkspaceDraft,
+      restoreWorkbenchDefinition: state.restoreWorkbenchDefinition,
+      clearRuntimeSession: state.clearRuntimeSession,
       getWorkspaceRuntimeSessionIds: state.getWorkspaceRuntimeSessionIds,
-      closeWorkspaceRuntime: state.closeWorkspaceRuntime,
       removeWorkspace: state.removeWorkspace,
       updatePaneTerminalTab: state.updatePaneTerminalTab,
       selectTab: state.selectTab,
@@ -550,7 +521,7 @@ export function AppShell() {
     activeRuntimeSessionId ? (state.runtimes[activeRuntimeSessionId] ?? null) : null,
   );
   const activeRuntimeInputSerial = useTerminalStore((state) =>
-    activeTool === "history" && !workspaceVisualSwitchActive && activeRuntimeSessionId
+    activeTool === "history" && activeRuntimeSessionId
       ? (state.inputSerialByRuntime[activeRuntimeSessionId] ?? 0)
       : 0,
   );
@@ -567,7 +538,7 @@ export function AppShell() {
   const language = appSettings?.language ?? "zhCN";
   const workspaceRestoreStrategy = appSettings?.workspace_restore_strategy ?? "visible_first";
   const recentTerminalOutput =
-    activeTool === "agent" && !workspaceVisualSwitchActive && activeRuntimeSessionId
+    activeTool === "agent" && activeRuntimeSessionId
       ? getTerminalOutputTail(activeRuntimeSessionId).slice(-4000)
       : "";
   const aiTerminalContext = useMemo(
@@ -643,7 +614,6 @@ export function AppShell() {
   }, [bindTransferEvents]);
 
   useEffect(() => {
-    if (workspaceVisualSwitchActive) return;
     if (activeTool === "files" && activeSshSessionId) {
       void listFiles(activeSshSessionId, filePath);
       return;
@@ -651,7 +621,7 @@ export function AppShell() {
     if (activeTool === "files") {
       clearFiles();
     }
-  }, [activeSshSessionId, activeTool, clearFiles, filePath, listFiles, workspaceVisualSwitchActive]);
+  }, [activeSshSessionId, activeTool, clearFiles, filePath, listFiles]);
 
   useEffect(() => {
     if (!activeExternalSshSession) return undefined;
@@ -684,7 +654,7 @@ export function AppShell() {
   }, [activeSshContainersEnabled, activeTool]);
 
   useEffect(() => {
-    if (workspaceVisualSwitchActive || activeTool !== "containers") return undefined;
+    if (activeTool !== "containers") return undefined;
     if (!activeSshContainersEnabled || !activeSshSessionId) {
       setContainerPanelState(EMPTY_CONTAINER_PANEL_STATE);
       return undefined;
@@ -699,12 +669,9 @@ export function AppShell() {
     return () => {
       cancelled = true;
     };
-  }, [activeRuntimeSessionId, activeSshContainersEnabled, activeSshSessionId, activeTool, workspaceVisualSwitchActive]);
+  }, [activeRuntimeSessionId, activeSshContainersEnabled, activeSshSessionId, activeTool]);
 
   useEffect(() => {
-    if (workspaceVisualSwitchActive) {
-      return;
-    }
     if (activeTool !== "history") {
       return;
     }
@@ -727,18 +694,16 @@ export function AppShell() {
     historyView,
     loadCommandGroups,
     searchHistory,
-    workspaceVisualSwitchActive,
   ]);
 
   useEffect(() => {
-    if (workspaceVisualSwitchActive) return;
     if (activeTool === "files") {
       void loadTransfers(activeSshSessionId);
     }
-  }, [activeSshSessionId, activeTool, loadTransfers, workspaceVisualSwitchActive]);
+  }, [activeSshSessionId, activeTool, loadTransfers]);
 
   useEffect(() => {
-    if (workspaceVisualSwitchActive || activeTool !== "agent") {
+    if (activeTool !== "agent") {
       activeContextTokenRef.current += 1;
       return undefined;
     }
@@ -765,7 +730,6 @@ export function AppShell() {
     aiTerminalContext,
     activeTool,
     captureContext,
-    workspaceVisualSwitchActive,
   ]);
 
   useAppShortcutKeys(
@@ -957,11 +921,6 @@ export function AppShell() {
         if (workspaceId) await handleRestoreWorkspace(workspaceId);
         break;
       }
-      case "workspace.close": {
-        const workspaceId = readString(args, "workspace_id");
-        if (workspaceId) await handleCloseWorkspace(workspaceId);
-        break;
-      }
       case "sftp.list":
       case "sftp.mkdir":
       case "sftp.upload":
@@ -989,27 +948,6 @@ export function AppShell() {
     }
   }
 
-  async function closeWorkspaceRuntimeForCap(workspaceId: string) {
-    if (autoClosingWorkspaceIdsRef.current.has(workspaceId)) return;
-    autoClosingWorkspaceIdsRef.current.add(workspaceId);
-    try {
-      const runtimeSessionIds = getWorkspaceRuntimeSessionIds(workspaceId);
-      const closeResults = await Promise.allSettled(
-        runtimeSessionIds.map((runtimeSessionId) => closeTerminal(runtimeSessionId)),
-      );
-      const failedClose = closeResults.find(
-        (result): result is PromiseRejectedResult => result.status === "rejected",
-      );
-      if (failedClose) {
-        setWorkspaceActionError(fallbackOnlyErrorMessage(failedClose.reason, "自动关闭后台工作区失败"));
-        return;
-      }
-      closeWorkspaceRuntime(workspaceId);
-    } finally {
-      autoClosingWorkspaceIdsRef.current.delete(workspaceId);
-    }
-  }
-
   function handleCreateWorkspace() {
     const initialDraft = buildActiveWorkspaceDraft();
     if (!initialDraft) {
@@ -1023,9 +961,30 @@ export function AppShell() {
       workspace: definitionFromDraft({
         ...initialDraft,
         id: null,
-        name: initialDraft.id === DEFAULT_WORKSPACE_ID ? "新建工作区" : `${initialDraft.name} 副本`,
+        name: "新建工作区",
         status: "closed",
         sort_order: nextWorkspaceSortOrder(workspaceSidebarItems),
+      }),
+    });
+  }
+
+  function handleSaveWorkspace(workspaceId: string) {
+    const target = workspaceSidebarItems.find((workspace) => workspace.id === workspaceId);
+    const currentDraft = buildActiveWorkspaceDraft();
+    if (!target || !currentDraft) {
+      setWorkspaceActionError("当前工作台或目标工作区不存在");
+      return;
+    }
+
+    setWorkspaceActionError(null);
+    setWorkspaceEditor({
+      mode: "edit",
+      workspace: definitionFromDraft({
+        ...currentDraft,
+        id: target.id,
+        name: target.name,
+        status: "closed",
+        sort_order: target.sort_order,
       }),
     });
   }
@@ -1043,46 +1002,6 @@ export function AppShell() {
     }
   }
 
-  function freezeActiveWorkspaceBeforeSwitch(nextWorkspaceId: string) {
-    const state = useWorkspaceStore.getState();
-    const leavingWorkspaceId = state.activeWorkspaceId;
-    if (!leavingWorkspaceId || leavingWorkspaceId === nextWorkspaceId) return;
-    const leavingWorkspace = state.workspaces.find(
-      (workspace) => workspace.id === leavingWorkspaceId && workspace.status === "running",
-    );
-    if (!leavingWorkspace) return;
-    freezeWorkspaceRuntimeVisualSnapshots(
-      leavingWorkspaceId,
-      useTerminalStore.getState().getVisualOutputTailSnapshot(),
-      Date.now(),
-    );
-  }
-
-  async function handleSelectWorkspace(workspaceId: string) {
-    if (workspaceId === activeWorkspaceId) {
-      freezeActiveWorkspaceBeforeSwitch(DEFAULT_WORKSPACE_ID);
-      selectDefaultWorkspace();
-      return;
-    }
-    const runtime = workspaceRuntimes.find((workspace) => workspace.id === workspaceId);
-    if (runtime?.status === "running") {
-      startWorkspaceSwitchMetrics(workspaceId);
-      freezeActiveWorkspaceBeforeSwitch(workspaceId);
-      selectWorkspace(workspaceId);
-      markWorkspaceSwitchMetric(workspaceId, "store_committed");
-      scheduleAfterPaintDelay(() => {
-        markWorkspaceSwitchMetric(workspaceId, "snapshot_visible");
-        markWorkspaceSwitchMetric(workspaceId, "layout_visible");
-        markWorkspaceSwitchMetric(workspaceId, "active_xterm_live");
-        markWorkspaceSwitchMetric(workspaceId, "first_visible_connected");
-        markWorkspaceSwitchMetric(workspaceId, "all_visible_connected");
-        markWorkspaceSwitchMetric(workspaceId, "all_scheduled_done");
-      }, 0);
-      return;
-    }
-    await handleRestoreWorkspace(workspaceId);
-  }
-
   async function handleWorkspaceEditorSave(draft: WorkspaceDefinitionDraft) {
     setWorkspaceActionError(null);
     try {
@@ -1090,44 +1009,12 @@ export function AppShell() {
       const saved = await workspaceSave(mode === "create" ? { ...draft, id: null } : draft);
       cacheWorkspaceDefinition(saved);
       if (mode === "create") {
-        migrateActiveWorkspaceToSavedWorkspace(saved);
-      } else {
-        updateWorkspaceRuntimeMetadata(saved);
+        setSelectedWorkspaceId(saved.id);
       }
       setWorkspaceEditor(null);
       await refreshWorkspaceSummaries();
     } catch (error) {
       setWorkspaceActionError(fallbackOnlyErrorMessage(error, "保存工作区失败"));
-    }
-  }
-
-  async function closeWorkspaceRuntimeSafely(workspaceId: string, fallbackMessage: string): Promise<boolean> {
-    const runtimeSessionIds = getWorkspaceRuntimeSessionIds(workspaceId);
-    const closeResults = await Promise.allSettled(
-      runtimeSessionIds.map((runtimeSessionId) => closeTerminal(runtimeSessionId)),
-    );
-    const failedClose = closeResults.find(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    );
-    if (failedClose) {
-      const reason = failedClose.reason;
-      setWorkspaceActionError(fallbackOnlyErrorMessage(reason, fallbackMessage));
-      return false;
-    }
-
-    closeWorkspaceRuntime(workspaceId);
-    return true;
-  }
-
-  async function handleCloseWorkspace(workspaceId: string) {
-    setWorkspaceActionError(null);
-    const closed = await closeWorkspaceRuntimeSafely(workspaceId, "关闭工作区运行时失败");
-    if (!closed) return;
-    try {
-      await workspaceDelete(workspaceId);
-      await refreshWorkspaceSummaries();
-    } catch (error) {
-      setWorkspaceActionError(fallbackOnlyErrorMessage(error, "关闭工作区失败"));
     }
   }
 
@@ -1155,9 +1042,6 @@ export function AppShell() {
       return;
     }
 
-    const closed = await closeWorkspaceRuntimeSafely(workspace.id, "删除工作区运行时失败");
-    if (!closed) return;
-
     try {
       await workspaceRemove(workspace.id);
       setWorkspaceSummaries((summaries) => {
@@ -1166,6 +1050,7 @@ export function AppShell() {
         return nextSummaries;
       });
       removeWorkspace(workspace.id);
+      if (selectedWorkspaceId === workspace.id) setSelectedWorkspaceId(null);
       setPendingDeleteWorkspace(null);
       await refreshWorkspaceSummaries();
     } catch (error) {
@@ -1174,66 +1059,77 @@ export function AppShell() {
   }
 
   async function handleRestoreWorkspace(workspaceId: string) {
-    startWorkspaceSwitchMetrics(workspaceId);
     setWorkspaceActionError(null);
-    if (restoringWorkspaceIdsRef.current.has(workspaceId)) {
-      const runtime = workspaceRuntimes.find((workspace) => workspace.id === workspaceId);
-      if (runtime) {
-        beginWorkspaceVisualSwitch(runtime, {
-          commit: () => selectWorkspace(workspaceId),
-          completeMetricsOnCommit: true,
-        });
+    setSelectedWorkspaceId(workspaceId);
+    if (restoringWorkspaceIdsRef.current.has(workspaceId)) return;
+    const runtimeSessionIds = getWorkspaceRuntimeSessionIds(DEFAULT_WORKSPACE_ID);
+    if (runtimeSessionIds.length > 0) {
+      const workspace = workspaceSidebarItems.find((item) => item.id === workspaceId);
+      if (!workspace) {
+        setWorkspaceActionError("工作区不存在或已删除");
+        return;
       }
+      setPendingRestoreWorkspace(workspace);
       return;
     }
+    await executeWorkspaceRestore(workspaceId);
+  }
+
+  async function confirmRestoreWorkspace() {
+    const workspaceId = pendingRestoreWorkspace?.id;
+    if (!workspaceId) return;
+    setPendingRestoreWorkspace(null);
+    await executeWorkspaceRestore(workspaceId);
+  }
+
+  async function closeCurrentWorkbenchRuntimes(): Promise<boolean> {
+    const runtimeSessionIds = getWorkspaceRuntimeSessionIds(DEFAULT_WORKSPACE_ID);
+    const closeResults = await Promise.allSettled(
+      runtimeSessionIds.map((runtimeSessionId) => closeTerminal(runtimeSessionId)),
+    );
+    let failedReason: unknown = null;
+    closeResults.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        clearRuntimeSession(runtimeSessionIds[index]);
+      } else if (failedReason === null) {
+        failedReason = result.reason;
+      }
+    });
+    if (failedReason !== null) {
+      setWorkspaceActionError(fallbackOnlyErrorMessage(failedReason, "关闭当前工作台终端失败"));
+      return false;
+    }
+    return true;
+  }
+
+  async function executeWorkspaceRestore(workspaceId: string) {
+    if (restoringWorkspaceIdsRef.current.has(workspaceId)) return;
+    const epoch = workspaceRestoreEpochRef.current + 1;
+    workspaceRestoreEpochRef.current = epoch;
     restoringWorkspaceIdsRef.current.add(workspaceId);
     try {
+      if (!(await closeCurrentWorkbenchRuntimes())) return;
       const definition = await resolveWorkspaceDefinition(workspaceId);
-      const runningDefinition = markWorkspaceRestoreQueued({ ...definition, status: "running" as const });
-      const epoch = beginWorkspaceVisualSwitch(runningDefinition, {
-        commit: () => {
-          freezeActiveWorkspaceBeforeSwitch(workspaceId);
-          upsertWorkspaceDefinition(runningDefinition);
-          selectWorkspace(runningDefinition.id);
-          selectTab(runningDefinition.active_tab_id);
-        },
-        onLive: () => {
-          markWorkspaceSwitchMetric(workspaceId, "restore_queue_started");
-          void (async () => {
-            try {
-              await restoreWorkspaceTerminals(runningDefinition, epoch ?? undefined);
-              await refreshWorkspaceSummaries();
-            } catch (error) {
-              setWorkspaceActionError(fallbackOnlyErrorMessage(error, "恢复工作区失败"));
-            } finally {
-              restoringWorkspaceIdsRef.current.delete(workspaceId);
-            }
-          })();
-        },
-        onCancel: () => {
-          restoringWorkspaceIdsRef.current.delete(workspaceId);
-        },
-      });
-      if (epoch === null) {
-        restoringWorkspaceIdsRef.current.delete(workspaceId);
-      }
+      if (workspaceRestoreEpochRef.current !== epoch) return;
+      const queuedDefinition = markWorkspaceRestoreQueued({ ...definition, status: "running" as const });
+      const workbenchDefinition: WorkspaceDefinition = {
+        ...queuedDefinition,
+        id: DEFAULT_WORKSPACE_ID,
+        name: "默认工作区",
+      };
+      restoreWorkbenchDefinition(workbenchDefinition);
+      await restoreWorkspaceTerminals(workbenchDefinition, epoch);
+      if (workspaceRestoreEpochRef.current === epoch) await refreshWorkspaceSummaries();
     } catch (error) {
-      setWorkspaceActionError(fallbackOnlyErrorMessage(error, "恢复工作区失败"));
+      if (workspaceRestoreEpochRef.current === epoch) {
+        setWorkspaceActionError(fallbackOnlyErrorMessage(error, "恢复工作区失败"));
+      }
+    } finally {
       restoringWorkspaceIdsRef.current.delete(workspaceId);
     }
   }
 
   async function resolveWorkspaceDefinition(workspaceId: string): Promise<WorkspaceDefinition> {
-    const runtime = workspaceRuntimes.find((workspace) => workspace.id === workspaceId);
-    if (workspaceId === activeWorkspaceId) {
-      const draft = buildActiveWorkspaceDraft();
-      if (draft?.id === workspaceId) {
-        return definitionFromDraft(draft, runtime);
-      }
-    }
-    if (runtime && hasRuntimeTabs(runtime)) {
-      return definitionFromRuntime(runtime);
-    }
     return loadCachedWorkspaceDefinition(workspaceId, workspaceGet);
   }
 
@@ -1242,21 +1138,13 @@ export function AppShell() {
       workspace,
       sessions,
       strategy: workspaceRestoreStrategy,
-      isCancelled: () => switchEpoch !== undefined && !isWorkspaceSwitchEpochCurrent(switchEpoch),
+      isCancelled: () => switchEpoch !== undefined && workspaceRestoreEpochRef.current !== switchEpoch,
       openTerminal,
       openDefaultLocalTerminal,
       openSshContainerTerminal,
       writeTerminal,
       closeTerminal,
       updatePaneTerminalTab,
-      metrics: {
-        onFirstVisibleConnected: () =>
-          markWorkspaceSwitchMetric(workspace.id, "first_visible_connected"),
-        onAllVisibleConnected: () =>
-          markWorkspaceSwitchMetric(workspace.id, "all_visible_connected"),
-        onAllScheduledDone: () =>
-          markWorkspaceSwitchMetric(workspace.id, "all_scheduled_done"),
-      },
     });
   }
 
@@ -1479,8 +1367,8 @@ export function AppShell() {
   }
 
   const terminalActions = createTerminalActions({
-    activeWorkspaceId,
-    activeWorkspaceTabId: activeTabId,
+    workbenchId: activeWorkspaceId,
+    workbenchTabId: activeTabId,
     activePaneTab,
     activeTab,
     setTerminalError,
@@ -1526,15 +1414,14 @@ export function AppShell() {
   });
 
   const workspaceSidebarItems = useMemo(
-    () => mergeWorkspaceSidebarItems(workspaceSummaries, workspaceRuntimes, workspaceDefinitions),
-    [workspaceDefinitions, workspaceRuntimes, workspaceSummaries],
+    () => mergeWorkspaceSidebarItems(workspaceSummaries, workspaceDefinitions),
+    [workspaceDefinitions, workspaceSummaries],
   );
 
   useEffect(() => {
     if (activeLeftTool !== "workspace") return;
 
     for (const workspace of workspaceSidebarItems) {
-      if (workspace.status !== "closed") continue;
       if (workspace.preview_root) continue;
       void loadCachedWorkspaceDefinition(workspace.id, workspaceGet)
         .catch((error) => {
@@ -1560,35 +1447,6 @@ export function AppShell() {
       void prefetchWorkspaceDefinitions(recentClosedWorkspaceIds, workspaceGet);
     });
   }, [prefetchWorkspaceDefinitions, workspaceDefinitions, workspaceSummaries]);
-
-  useEffect(() => {
-    const runningWorkspaces = runningWorkspaceCapWorkspaces.filter(
-      (workspace) =>
-        workspace.id !== DEFAULT_WORKSPACE_ID &&
-        workspace.status === "running" &&
-        Array.isArray(workspace.tabs) &&
-        workspace.tabs.length > 0,
-    );
-    if (runningWorkspaces.length <= DEFAULT_MAX_RUNNING_WORKSPACES) return;
-
-    const overflow = runningWorkspaces.length - DEFAULT_MAX_RUNNING_WORKSPACES;
-    const candidates = runningWorkspaces
-      .filter(
-        (workspace) =>
-          workspace.id !== activeWorkspaceId && !autoClosingWorkspaceIdsRef.current.has(workspace.id),
-      )
-      .sort(
-        (left, right) =>
-          left.updated_at_ms - right.updated_at_ms ||
-          left.sort_order - right.sort_order ||
-          left.name.localeCompare(right.name),
-      )
-      .slice(0, overflow);
-
-    for (const workspace of candidates) {
-      void closeWorkspaceRuntimeForCap(workspace.id);
-    }
-  }, [activeWorkspaceId, runningWorkspaceCapWorkspaces]);
 
   if (viewMode === "settings") {
     return (
@@ -1673,13 +1531,14 @@ export function AppShell() {
               <WorkspaceManagerPanel
                 workspaces={workspaceSidebarItems}
                 sessions={sessions}
-                activeWorkspaceId={activeWorkspaceId}
+                selectedWorkspaceId={selectedWorkspaceId}
                 error={workspaceActionError}
                 onCreateWorkspace={handleCreateWorkspace}
-                onSelectWorkspace={(workspaceId) => void handleSelectWorkspace(workspaceId)}
+                onSaveWorkspace={handleSaveWorkspace}
+                onSelectWorkspace={setSelectedWorkspaceId}
+                onClearWorkspaceSelection={() => setSelectedWorkspaceId(null)}
                 onEditWorkspace={(workspaceId) => void handleEditWorkspace(workspaceId)}
                 onRestoreWorkspace={(workspaceId) => void handleRestoreWorkspace(workspaceId)}
-                onCloseWorkspace={(workspaceId) => void handleCloseWorkspace(workspaceId)}
                 onDeleteWorkspace={handleDeleteWorkspace}
               />
             ) : null}
@@ -1767,6 +1626,16 @@ export function AppShell() {
         />
       ) : null}
 
+      {pendingRestoreWorkspace ? (
+        <ZtConfirmDialog
+          title="恢复工作区"
+          message={`恢复工作区“${pendingRestoreWorkspace.name}”将关闭当前工作台中的全部终端，是否继续？`}
+          confirmLabel="确认恢复"
+          onCancel={() => setPendingRestoreWorkspace(null)}
+          onConfirm={() => void confirmRestoreWorkspace()}
+        />
+      ) : null}
+
       {textInputDialog ? (
         <AppTextInputDialog
           key={textInputDialog.id}
@@ -1816,7 +1685,6 @@ export function AppShell() {
       <main className="zt-main">
         {terminalError ? <div className="zt-terminal-error">{terminalError}</div> : null}
         <WorkspaceStage
-          activeWorkspaceId={activeWorkspaceId}
           onActivatePane={setActivePane}
           onAddPaneTab={handleRequestPaneConnection}
           onSelectPaneTab={selectPaneTab}
@@ -1831,23 +1699,6 @@ export function AppShell() {
             void terminalActions.reconnectTerminal(paneId, paneTabId, savedSessionId, runtimeSessionId)
           }
         />
-        {workspaceSwitchOverlay ? (
-          <div className="zt-workspace-switch-overlay" aria-hidden="true">
-            <SplitPaneView
-              key={`overlay-${workspaceSwitchOverlay.id}`}
-              root={workspaceSwitchOverlay.root}
-              activePaneId={workspaceSwitchOverlay.activePaneId}
-              onActivatePane={() => undefined}
-              onAddPaneTab={() => undefined}
-              onSelectPaneTab={() => undefined}
-              onClosePaneTab={() => undefined}
-              onSplitPane={() => undefined}
-              onResizeSplit={() => undefined}
-              onClosePane={() => undefined}
-              visualMode="snapshot"
-            />
-          </div>
-        ) : null}
       </main>
 
       <RightToolsPanel

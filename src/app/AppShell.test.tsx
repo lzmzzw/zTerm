@@ -16,16 +16,10 @@ const storeMocks = vi.hoisted(() => ({
   selectPaneTab: vi.fn(),
   bindRuntimeToPane: vi.fn(),
   bindRuntimeToPaneTab: vi.fn(),
-  selectWorkspace: vi.fn(),
-  selectDefaultWorkspace: vi.fn(),
-  resetDefaultWorkspace: vi.fn(),
-  migrateActiveWorkspaceToSavedWorkspace: vi.fn(),
   buildActiveWorkspaceDraft: vi.fn(),
+  restoreWorkbenchDefinition: vi.fn(),
+  clearRuntimeSession: vi.fn(),
   getWorkspaceRuntimeSessionIds: vi.fn((_workspaceId?: string) => ["runtime-1"]),
-  closeWorkspaceRuntime: vi.fn(() => ["runtime-1"]),
-  upsertWorkspaceDefinition: vi.fn(),
-  updateWorkspaceRuntimeMetadata: vi.fn(),
-  freezeWorkspaceRuntimeVisualSnapshots: vi.fn(),
   splitActivePane: vi.fn(),
   closeTerminal: vi.fn().mockResolvedValue(undefined),
   updatePaneTerminalTab: vi.fn(),
@@ -36,7 +30,6 @@ const storeMocks = vi.hoisted(() => ({
   workspaceList: vi.fn().mockResolvedValue([]),
   workspaceGet: vi.fn(),
   workspaceSave: vi.fn(),
-  workspaceDelete: vi.fn().mockResolvedValue(undefined),
   workspaceRemove: vi.fn().mockResolvedValue(undefined),
   cacheWorkspaceDefinition: vi.fn(),
   loadWorkspaceDefinition: vi.fn(),
@@ -629,7 +622,6 @@ vi.mock("../features/workspace/workspacePersistence", () => ({
   workspaceList: storeMocks.workspaceList,
   workspaceGet: storeMocks.workspaceGet,
   workspaceSave: storeMocks.workspaceSave,
-  workspaceDelete: storeMocks.workspaceDelete,
   workspaceRemove: storeMocks.workspaceRemove,
 }));
 
@@ -640,19 +632,13 @@ vi.mock("../features/workspace/workspaceStore", () => {
     activeWorkspaceId: storeMocks.workspaceState.activeWorkspaceId,
     tabs: storeMocks.workspaceState.tabs,
     activeTabId: storeMocks.workspaceState.activeTabId,
-    selectWorkspace: storeMocks.selectWorkspace,
-    selectDefaultWorkspace: storeMocks.selectDefaultWorkspace,
-    resetDefaultWorkspace: storeMocks.resetDefaultWorkspace,
-    migrateActiveWorkspaceToSavedWorkspace: storeMocks.migrateActiveWorkspaceToSavedWorkspace,
-    upsertWorkspaceDefinition: storeMocks.upsertWorkspaceDefinition,
-    updateWorkspaceRuntimeMetadata: storeMocks.updateWorkspaceRuntimeMetadata,
-    freezeWorkspaceRuntimeVisualSnapshots: storeMocks.freezeWorkspaceRuntimeVisualSnapshots,
     cacheWorkspaceDefinition: storeMocks.cacheWorkspaceDefinition,
     loadWorkspaceDefinition: storeMocks.loadWorkspaceDefinition,
     prefetchWorkspaceDefinitions: storeMocks.prefetchWorkspaceDefinitions,
     buildActiveWorkspaceDraft: storeMocks.buildActiveWorkspaceDraft,
+    restoreWorkbenchDefinition: storeMocks.restoreWorkbenchDefinition,
+    clearRuntimeSession: storeMocks.clearRuntimeSession,
     getWorkspaceRuntimeSessionIds: storeMocks.getWorkspaceRuntimeSessionIds,
-    closeWorkspaceRuntime: storeMocks.closeWorkspaceRuntime,
     removeWorkspace: storeMocks.removeWorkspace,
     updatePaneTerminalTab: storeMocks.updatePaneTerminalTab,
     selectTab: storeMocks.selectTab,
@@ -676,19 +662,14 @@ vi.mock("../features/workspace/workspaceStore", () => {
   useWorkspaceStore.getState = () => ({
     ...workspaceState(),
     buildActiveWorkspaceDraft: storeMocks.buildActiveWorkspaceDraft,
+    restoreWorkbenchDefinition: storeMocks.restoreWorkbenchDefinition,
+    clearRuntimeSession: storeMocks.clearRuntimeSession,
     getWorkspaceRuntimeSessionIds: storeMocks.getWorkspaceRuntimeSessionIds,
-    closeWorkspaceRuntime: storeMocks.closeWorkspaceRuntime,
     removeWorkspace: storeMocks.removeWorkspace,
     updatePaneTerminalTab: storeMocks.updatePaneTerminalTab,
     cacheWorkspaceDefinition: storeMocks.cacheWorkspaceDefinition,
     loadWorkspaceDefinition: storeMocks.loadWorkspaceDefinition,
     prefetchWorkspaceDefinitions: storeMocks.prefetchWorkspaceDefinitions,
-    selectWorkspace: storeMocks.selectWorkspace,
-    selectDefaultWorkspace: storeMocks.selectDefaultWorkspace,
-    resetDefaultWorkspace: storeMocks.resetDefaultWorkspace,
-    migrateActiveWorkspaceToSavedWorkspace: storeMocks.migrateActiveWorkspaceToSavedWorkspace,
-    updateWorkspaceRuntimeMetadata: storeMocks.updateWorkspaceRuntimeMetadata,
-    freezeWorkspaceRuntimeVisualSnapshots: storeMocks.freezeWorkspaceRuntimeVisualSnapshots,
     selectTab: storeMocks.selectTab,
     setActivePane: storeMocks.setActivePane,
     selectPaneTab: storeMocks.selectPaneTab,
@@ -1032,24 +1013,45 @@ describe("AppShell", () => {
         running: false,
       },
     ]);
-    storeMocks.closeWorkspaceRuntime.mockReturnValue(["runtime-1"]);
     storeMocks.closeTerminal.mockResolvedValue(undefined);
-    storeMocks.selectWorkspace.mockReset();
-    storeMocks.selectDefaultWorkspace.mockReset();
-    storeMocks.resetDefaultWorkspace.mockReset();
-    storeMocks.migrateActiveWorkspaceToSavedWorkspace.mockReset();
     storeMocks.updatePaneTerminalTab.mockReset();
     storeMocks.selectTab.mockReset();
     storeMocks.setActivePane.mockReset();
     storeMocks.splitActivePane.mockReset();
     storeMocks.writeTerminal.mockResolvedValue(undefined);
-    storeMocks.workspaceList.mockResolvedValue([]);
+    storeMocks.workspaceList.mockResolvedValue([
+      {
+        id: "workspace-1",
+        name: "运维巡检",
+        status: "closed",
+        active_tab_id: "tab-1",
+        tab_count: 1,
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+      },
+    ]);
     storeMocks.workspaceGet.mockReset();
+    storeMocks.workspaceGet.mockImplementation(async (workspaceId: string) => {
+      const draft = storeMocks.buildActiveWorkspaceDraft();
+      if (!draft) throw new Error(`workspace not found: ${workspaceId}`);
+      return {
+        ...draft,
+        id: workspaceId,
+        name: workspaceId === "workspace-1" ? "运维巡检" : draft.name,
+        status: "closed",
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        tabs: draft.tabs.map((tab: Record<string, unknown>) => ({
+          ...tab,
+          created_at_ms: 1,
+          updated_at_ms: 1,
+        })),
+      };
+    });
     storeMocks.workspaceSave.mockReset();
-    storeMocks.workspaceDelete.mockResolvedValue(undefined);
     storeMocks.workspaceRemove.mockResolvedValue(undefined);
     storeMocks.removeWorkspace.mockReset();
-    storeMocks.updateWorkspaceRuntimeMetadata.mockReset();
     storeMocks.workspaceDefinitionState.definitions = {};
     storeMocks.terminalOutputAccesses = 0;
     storeMocks.cacheWorkspaceDefinition.mockImplementation((definition: Record<string, unknown>) => {
@@ -1082,7 +1084,7 @@ describe("AppShell", () => {
       workspace_restore_strategy: "visible_first",
       shortcuts: [],
     };
-    storeMocks.getWorkspaceRuntimeSessionIds.mockReturnValue(["runtime-1"]);
+    storeMocks.getWorkspaceRuntimeSessionIds.mockReturnValue([]);
     storeMocks.historyPanelProps = null;
     storeMocks.monitorPanelProps = null;
     storeMocks.transferPanelProps = null;
@@ -1099,8 +1101,8 @@ describe("AppShell", () => {
     storeMocks.terminalState.visualTails = {};
     storeMocks.workspaceState.workspaces = [
       {
-        id: "workspace-1",
-        name: "运维巡检",
+        id: "default-workspace",
+        name: "默认工作区",
         status: "running",
         active_tab_id: "tab-1",
         activeTabId: "tab-1",
@@ -1110,7 +1112,7 @@ describe("AppShell", () => {
         updated_at_ms: 1,
       },
     ];
-    storeMocks.workspaceState.activeWorkspaceId = "workspace-1";
+    storeMocks.workspaceState.activeWorkspaceId = "default-workspace";
     storeMocks.workspaceState.tabs = [
       {
         id: "tab-1",
@@ -1137,8 +1139,8 @@ describe("AppShell", () => {
     storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
     storeMocks.workspaceState.activeTabId = "tab-1";
     storeMocks.buildActiveWorkspaceDraft.mockReturnValue({
-      id: "workspace-1",
-      name: "运维巡检",
+      id: "default-workspace",
+      name: "默认工作区",
       status: "closed",
       active_tab_id: "tab-1",
       sort_order: 0,
@@ -1203,7 +1205,7 @@ describe("AppShell", () => {
     });
 
     expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "default-workspace",
       "tab-1",
       "pane-1",
       "pane-1-tab-1",
@@ -1216,7 +1218,7 @@ describe("AppShell", () => {
     );
     expect(storeMocks.openTerminal).toHaveBeenCalledWith("external:launch-1", "pane-1");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "default-workspace",
       "tab-1",
       "pane-1",
       "pane-1-tab-1",
@@ -1659,8 +1661,8 @@ describe("AppShell", () => {
     expect(workspacePanel?.querySelector(".zt-panel-header")?.textContent).toContain("Workspace");
     expect(workspacePanel?.querySelector(".zt-panel-header > svg")).toBe(null);
     expect(workspacePanel?.textContent).toContain("运维巡检");
-    expect(workspacePanel?.querySelector(".zt-workspace-dot.running")?.getAttribute("title")).toBe("运行中");
-    expect(workspacePanel?.querySelector(".zt-workspace-dot.dirty")).toBe(null);
+    expect(workspacePanel?.querySelector(".zt-workspace-dot")).toBe(null);
+    expect(workspacePanel?.querySelector('[aria-label="新建工作区"]')).not.toBeNull();
 
     view.unmount();
   });
@@ -1710,9 +1712,7 @@ describe("AppShell", () => {
 
     expect(storeMocks.workspaceGet).toHaveBeenCalledTimes(1);
     expect(storeMocks.workspaceGet).toHaveBeenCalledWith("workspace-closed");
-    const dots = view.container.querySelectorAll('.zt-workspace-dot');
-    const closedDot = Array.from(dots).find((d) => d.getAttribute("title") === "已关闭");
-    expect(closedDot).not.toBe(undefined);
+    expect(view.container.querySelector('.zt-workspace-thumbnail.placeholder')).not.toBeNull();
 
     await clickButton(view.container, "会话");
     await clickButton(view.container, "工作区");
@@ -1903,7 +1903,7 @@ describe("AppShell", () => {
     expect(dialog?.textContent).not.toContain("127.0.0.1");
     expect(dialog?.textContent).not.toContain("localhost");
     expect(promptSpy).not.toHaveBeenCalled();
-    expect(input(dialog!, "编辑工作区名称")).toHaveProperty("value", "运维巡检 副本");
+    expect(input(dialog!, "编辑工作区名称")).toHaveProperty("value", "新建工作区");
 
     change(input(dialog!, "编辑工作区名称"), "发布窗口");
 
@@ -1921,14 +1921,44 @@ describe("AppShell", () => {
         sort_order: 1,
       }),
     );
-    expect(storeMocks.migrateActiveWorkspaceToSavedWorkspace).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "workspace-new", name: "发布窗口" }),
-    );
-    expect(storeMocks.updateWorkspaceRuntimeMetadata).not.toHaveBeenCalledWith(
-      expect.objectContaining({ id: "workspace-new" }),
-    );
+    expect(view.container.querySelector('[aria-label="保存工作区"]')).not.toBeNull();
 
     promptSpy.mockRestore();
+    view.unmount();
+  });
+
+  it("opens manual save from the live workbench snapshot for the selected workspace", async () => {
+    storeMocks.workspaceSave.mockResolvedValue({
+      id: "workspace-1",
+      name: "运维巡检",
+      status: "closed",
+      active_tab_id: "tab-1",
+      sort_order: 0,
+      created_at_ms: 1,
+      updated_at_ms: 2,
+      tabs: [],
+    });
+    const view = render(<AppShell />);
+
+    await clickButton(view.container, "工作区");
+    await clickButton(view.container, "选择工作区 运维巡检");
+    await clickButton(view.container, "保存工作区");
+
+    const dialog = view.container.querySelector('.zt-workspace-preview-dialog[aria-label="编辑工作区 运维巡检"]');
+    expect(dialog).not.toBeNull();
+    expect(input(dialog!, "编辑工作区名称")).toHaveProperty("value", "运维巡检");
+    expect(dialog?.textContent).toContain("生产机");
+
+    await act(async () => {
+      button(dialog as HTMLElement, "保存工作区").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.workspaceSave).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "workspace-1", name: "运维巡检", active_tab_id: "tab-1" }),
+    );
+    expect(storeMocks.restoreWorkbenchDefinition).not.toHaveBeenCalled();
     view.unmount();
   });
 
@@ -2076,164 +2106,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("closes a running workspace without asking for unsaved-change confirmation", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm");
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      openWorkspaceContextMenu(view.container, "运维巡检");
-      await Promise.resolve();
-      button(view.container, "关闭工作区 运维巡检").click();
-      await Promise.resolve();
-    });
-
-    const dialog = view.container.querySelector('[role="dialog"][aria-label="关闭工作区"]');
-    expect(dialog).toBe(null);
-    expect(confirmSpy).not.toHaveBeenCalled();
-    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-1");
-    expect(storeMocks.closeWorkspaceRuntime).toHaveBeenCalledWith("workspace-1");
-    expect(storeMocks.workspaceDelete).toHaveBeenCalledWith("workspace-1");
-
-    confirmSpy.mockRestore();
-    view.unmount();
-  });
-
-  it("closes a workspace by closing each unique runtime without deleting its definition", async () => {
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "running",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.getWorkspaceRuntimeSessionIds.mockReturnValue(["runtime-1", "runtime-2"]);
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      openWorkspaceContextMenu(view.container, "运维巡检");
-      await Promise.resolve();
-      button(view.container, "关闭工作区 运维巡检").click();
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.getWorkspaceRuntimeSessionIds).toHaveBeenCalledWith("workspace-1");
-    expect(storeMocks.closeWorkspaceRuntime).toHaveBeenCalledWith("workspace-1");
-    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-1");
-    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-2");
-    expect(storeMocks.workspaceDelete).toHaveBeenCalledWith("workspace-1");
-
-    view.unmount();
-  });
-
-  it("automatically closes the oldest inactive running workspace when the running cap is exceeded", async () => {
-    storeMocks.workspaceState.workspaces = [
-      runningWorkspace("workspace-active", 0, 60, "runtime-active"),
-      runningWorkspace("workspace-1", 1, 10, "runtime-1"),
-      runningWorkspace("workspace-2", 2, 20, "runtime-2"),
-      runningWorkspace("workspace-3", 3, 30, "runtime-3"),
-      runningWorkspace("workspace-4", 4, 40, "runtime-4"),
-      runningWorkspace("workspace-5", 5, 50, "runtime-5"),
-    ];
-    storeMocks.workspaceState.activeWorkspaceId = "workspace-active";
-    storeMocks.workspaceState.tabs = storeMocks.workspaceState.workspaces[0].tabs as Array<Record<string, unknown>>;
-    storeMocks.workspaceState.activeTabId = "workspace-active-tab-1";
-    storeMocks.getWorkspaceRuntimeSessionIds.mockImplementation((workspaceId?: string) => {
-      const id = workspaceId ?? "workspace-unknown";
-      return [`runtime-${id.replace("workspace-", "")}`];
-    });
-    const view = render(<AppShell />);
-
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.getWorkspaceRuntimeSessionIds).toHaveBeenCalledWith("workspace-1");
-    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-1");
-    expect(storeMocks.closeWorkspaceRuntime).toHaveBeenCalledWith("workspace-1");
-    expect(storeMocks.closeWorkspaceRuntime).not.toHaveBeenCalledWith("workspace-active");
-
-    view.unmount();
-  });
-
-  it("does not clear workspace runtime state when closing a runtime fails", async () => {
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "running",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.getWorkspaceRuntimeSessionIds.mockReturnValue(["runtime-1"]);
-    storeMocks.closeTerminal.mockRejectedValueOnce(new Error("PTY close failed"));
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      openWorkspaceContextMenu(view.container, "运维巡检");
-      await Promise.resolve();
-      button(view.container, "关闭工作区 运维巡检").click();
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-1");
-    expect(storeMocks.closeWorkspaceRuntime).not.toHaveBeenCalled();
-    expect(storeMocks.workspaceDelete).not.toHaveBeenCalled();
-    expect(view.container.textContent).toContain("PTY close failed");
-
-    view.unmount();
-  });
-
-  it("keeps fixed fallback text when closing a workspace runtime fails with a non-Error value", async () => {
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "running",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.getWorkspaceRuntimeSessionIds.mockReturnValue(["runtime-1"]);
-    storeMocks.closeTerminal.mockRejectedValueOnce("raw runtime close failure");
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      openWorkspaceContextMenu(view.container, "运维巡检");
-      await Promise.resolve();
-      button(view.container, "关闭工作区 运维巡检").click();
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-1");
-    expect(storeMocks.closeWorkspaceRuntime).not.toHaveBeenCalled();
-    expect(storeMocks.workspaceDelete).not.toHaveBeenCalled();
-    expect(view.container.textContent).toContain("关闭工作区运行时失败");
-    expect(view.container.textContent).not.toContain("raw runtime close failure");
-
-    view.unmount();
-  });
-
-  it("deletes a workspace only after confirmation and successful runtime close", async () => {
+  it("deletes a saved workspace without touching the live workbench runtime", async () => {
     const view = render(<AppShell />);
 
     await clickButton(view.container, "工作区");
@@ -2248,11 +2121,42 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-1");
-    expect(storeMocks.closeWorkspaceRuntime).toHaveBeenCalledWith("workspace-1");
+    expect(storeMocks.closeTerminal).not.toHaveBeenCalled();
     expect(storeMocks.workspaceRemove).toHaveBeenCalledWith("workspace-1");
     expect(storeMocks.removeWorkspace).toHaveBeenCalledWith("workspace-1");
+    expect(view.container.querySelector('[aria-label="新建工作区"]')).not.toBeNull();
 
+    view.unmount();
+  });
+
+  it("confirms before restore and aborts after partially failing to close live runtimes", async () => {
+    storeMocks.getWorkspaceRuntimeSessionIds.mockReturnValue(["runtime-ok", "runtime-failed"]);
+    storeMocks.closeTerminal.mockImplementation(async (runtimeSessionId: string) => {
+      if (runtimeSessionId === "runtime-failed") throw new Error("close failed");
+    });
+    const view = render(<AppShell />);
+
+    await clickButton(view.container, "工作区");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    storeMocks.workspaceGet.mockClear();
+    await clickWorkspaceContextAction(view.container, "运维巡检", "恢复工作区 运维巡检");
+
+    const dialog = view.container.querySelector('[role="dialog"][aria-label="恢复工作区"]');
+    expect(dialog?.textContent).toContain("将关闭当前工作台中的全部终端");
+    expect(storeMocks.workspaceGet).not.toHaveBeenCalled();
+
+    await act(async () => {
+      (dialog?.querySelector('button[type="submit"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.clearRuntimeSession).toHaveBeenCalledWith("runtime-ok");
+    expect(storeMocks.clearRuntimeSession).not.toHaveBeenCalledWith("runtime-failed");
+    expect(storeMocks.restoreWorkbenchDefinition).not.toHaveBeenCalled();
+    expect(view.container.textContent).toContain("close failed");
     view.unmount();
   });
 
@@ -2342,28 +2246,6 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("does not delete a workspace when runtime close fails", async () => {
-    storeMocks.closeTerminal.mockRejectedValueOnce(new Error("PTY close failed"));
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await clickWorkspaceContextAction(view.container, "运维巡检", "删除工作区 运维巡检");
-    const dialog = view.container.querySelector('[role="dialog"][aria-label="删除工作区"]');
-
-    await act(async () => {
-      (dialog?.querySelector('button[type="submit"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-1");
-    expect(storeMocks.workspaceRemove).not.toHaveBeenCalled();
-    expect(storeMocks.removeWorkspace).not.toHaveBeenCalled();
-    expect(view.container.textContent).toContain("PTY close failed");
-
-    view.unmount();
-  });
-
   it("hides the default workspace from workspace management", async () => {
     storeMocks.workspaceState.workspaces = [
       {
@@ -2387,51 +2269,6 @@ describe("AppShell", () => {
     expect(view.container.querySelector('[aria-label="切换工作区 默认工作区"]')).toBeNull();
     expect(view.container.querySelector('[role="dialog"][aria-label="删除工作区"]')).toBe(null);
     expect(storeMocks.workspaceRemove).not.toHaveBeenCalled();
-
-    view.unmount();
-  });
-
-  it("deselects the active workspace and restores the hidden default workspace", async () => {
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await clickButton(view.container, "切换工作区 运维巡检");
-
-    expect(storeMocks.selectDefaultWorkspace).toHaveBeenCalledTimes(1);
-    expect(storeMocks.selectWorkspace).not.toHaveBeenCalledWith("workspace-1");
-    expect(storeMocks.closeTerminal).not.toHaveBeenCalled();
-
-    view.unmount();
-  });
-
-  it("switches away from the hidden default workspace without closing its in-memory runtime", async () => {
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "default-workspace",
-        name: "默认工作区",
-        status: "running",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tabs: storeMocks.workspaceState.tabs,
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 0,
-        updated_at_ms: 0,
-      },
-      runningWorkspace("workspace-1", 1, 1, "runtime-explicit"),
-    ];
-    storeMocks.workspaceState.workspaces[1].name = "运维巡检";
-    storeMocks.workspaceState.activeWorkspaceId = "default-workspace";
-    storeMocks.workspaceState.tabs = storeMocks.workspaceState.workspaces[0].tabs as Array<Record<string, unknown>>;
-    storeMocks.workspaceState.activeTabId = "tab-1";
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await clickButton(view.container, "切换工作区 运维巡检");
-
-    expect(storeMocks.selectWorkspace).toHaveBeenCalledWith("workspace-1");
-    expect(storeMocks.closeTerminal).not.toHaveBeenCalledWith("runtime-1");
-    expect(storeMocks.closeWorkspaceRuntime).not.toHaveBeenCalledWith("default-workspace");
 
     view.unmount();
   });
@@ -2567,11 +2404,13 @@ describe("AppShell", () => {
     await flushWorkspacePostLayoutWork();
 
     expect(storeMocks.workspaceGet).toHaveBeenCalledWith("workspace-1");
-    expect(storeMocks.upsertWorkspaceDefinition).toHaveBeenCalledWith(expect.objectContaining({ status: "running" }));
+    expect(storeMocks.restoreWorkbenchDefinition).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "default-workspace", status: "running" }),
+    );
     expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1", "/srv/app");
     expect(storeMocks.writeTerminal).toHaveBeenCalledWith("runtime-ssh", "source ./env.sh\r");
     expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "default-workspace",
       "tab-1",
       "pane-1",
       "pane-1-tab-1",
@@ -2671,16 +2510,9 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    expect(view.container.querySelector('[aria-label="工作区切换快照布局"]')?.textContent).toContain("生产机");
-    expect(storeMocks.upsertWorkspaceDefinition).not.toHaveBeenCalled();
-    expect(storeMocks.selectWorkspace).not.toHaveBeenCalled();
-    expect(storeMocks.selectTab).not.toHaveBeenCalled();
-    expect(storeMocks.openTerminal).not.toHaveBeenCalled();
-
-    await flushWorkspacePostLayoutWork();
-
-    expect(storeMocks.upsertWorkspaceDefinition).toHaveBeenCalledWith(
+    expect(storeMocks.restoreWorkbenchDefinition).toHaveBeenCalledWith(
       expect.objectContaining({
+        id: "default-workspace",
         status: "running",
         tabs: [
           expect.objectContaining({
@@ -2691,11 +2523,8 @@ describe("AppShell", () => {
         ],
       }),
     );
-    expect(storeMocks.selectWorkspace).toHaveBeenCalledWith("workspace-1");
-    expect(storeMocks.selectTab).toHaveBeenCalledWith("tab-1");
-    expect(storeMocks.selectTab.mock.invocationCallOrder[0]).toBeLessThan(
-      storeMocks.openTerminal.mock.invocationCallOrder[0],
-    );
+    expect(view.container.querySelector('[aria-label="保存工作区"]')).not.toBeNull();
+    expect(storeMocks.openTerminal).toHaveBeenCalledTimes(1);
     expect(storeMocks.updatePaneTerminalTab).not.toHaveBeenCalledWith(
       "workspace-1",
       "tab-1",
@@ -2790,8 +2619,9 @@ describe("AppShell", () => {
     });
     await flushWorkspacePostLayoutWork();
 
-    expect(storeMocks.upsertWorkspaceDefinition).toHaveBeenCalledWith(
+    expect(storeMocks.restoreWorkbenchDefinition).toHaveBeenCalledWith(
       expect.objectContaining({
+        id: "default-workspace",
         status: "running",
         tabs: [
           expect.objectContaining({
@@ -2802,8 +2632,6 @@ describe("AppShell", () => {
         ],
       }),
     );
-    expect(storeMocks.selectWorkspace).toHaveBeenCalledWith("workspace-1");
-    expect(storeMocks.selectTab).toHaveBeenCalledWith("tab-1");
     expect(storeMocks.openTerminal).not.toHaveBeenCalled();
     expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
     expect(storeMocks.updatePaneTerminalTab).not.toHaveBeenCalled();
@@ -2895,7 +2723,7 @@ describe("AppShell", () => {
     expect(storeMocks.writeTerminal).not.toHaveBeenCalled();
     expect(storeMocks.closeTerminal).not.toHaveBeenCalled();
     expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "default-workspace",
       "tab-1",
       "pane-1",
       "pane-1-tab-1",
@@ -3002,7 +2830,7 @@ describe("AppShell", () => {
     expect(storeMocks.writeTerminal).toHaveBeenCalledWith("runtime-ssh", "source ./env.sh\r");
     expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-ssh");
     expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "default-workspace",
       "tab-1",
       "pane-1",
       "pane-1-tab-1",
@@ -3114,283 +2942,6 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("keeps repeated running workspace switches free of restore and side-tool requests", async () => {
-    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    let now = 0;
-    const performanceNowSpy = vi.spyOn(performance, "now").mockImplementation(() => now);
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "running",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tabs: storeMocks.workspaceState.tabs,
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-      {
-        id: "workspace-2",
-        name: "构建窗口",
-        status: "running",
-        active_tab_id: "tab-2",
-        activeTabId: "tab-2",
-        tabs: [
-          {
-            id: "tab-2",
-            title: "构建",
-            active_pane_id: "pane-2",
-            sort_order: 0,
-            created_at_ms: 1,
-            updated_at_ms: 1,
-            root: {
-              kind: "leaf",
-              id: "pane-2",
-              title: "PowerShell 7",
-              runtime_session_id: "runtime-2",
-              saved_session_id: null,
-              active_terminal_tab_id: "pane-2-tab-1",
-              terminal_tabs: [
-                {
-                  id: "pane-2-tab-1",
-                  title: "PowerShell 7",
-                  runtime_session_id: "runtime-2",
-                  saved_session_id: null,
-                },
-              ],
-            },
-          },
-        ],
-        tab_count: 1,
-        sort_order: 1,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    const view = render(<AppShell />);
-
-    try {
-      await clickButton(view.container, "工作区");
-      for (let index = 0; index < 3; index += 1) {
-        now += 10;
-        await clickButton(view.container, "切换工作区 构建窗口");
-        now += 10;
-        await clickButton(view.container, "切换工作区 运维巡检");
-      }
-      now += 40;
-      await flushWorkspacePostLayoutWork();
-
-      expect(storeMocks.selectWorkspace).toHaveBeenCalledTimes(3);
-      expect(storeMocks.selectDefaultWorkspace).toHaveBeenCalledTimes(3);
-      expect(storeMocks.selectWorkspace).toHaveBeenCalledWith("workspace-2");
-      expect(storeMocks.openTerminal).not.toHaveBeenCalled();
-      expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
-      expect(storeMocks.workspaceGet).not.toHaveBeenCalled();
-      expect(storeMocks.prefetchWorkspaceDefinitions).not.toHaveBeenCalled();
-      expect(storeMocks.listFiles).not.toHaveBeenCalled();
-      expect(storeMocks.searchHistory).not.toHaveBeenCalled();
-      expect(storeMocks.loadTransfers).not.toHaveBeenCalled();
-      expect(storeMocks.captureContext).not.toHaveBeenCalled();
-
-      const summaries = infoSpy.mock.calls
-        .filter(([label]) => label === "[workspace-switch]")
-        .map(([, summary]) => summary as Record<string, number | string | null>);
-      expect(summaries).toHaveLength(1);
-      for (const summary of summaries) {
-        expect(summary.click_to_layout_visible).toBeLessThanOrEqual(100);
-        expect(summary.layout_to_all_scheduled_done).toBeLessThanOrEqual(100);
-      }
-    } finally {
-      view.unmount();
-      infoSpy.mockRestore();
-      performanceNowSpy.mockRestore();
-    }
-  });
-
-  it("freezes the leaving running workspace before selecting another running workspace", async () => {
-    const workspaceA = runningWorkspace("workspace-1", 0, 1, "runtime-1");
-    const workspaceB = runningWorkspace("workspace-2", 1, 2, "runtime-2");
-    workspaceA.name = "运维巡检";
-    workspaceB.name = "构建窗口";
-    storeMocks.workspaceState.workspaces = [workspaceA, workspaceB];
-    storeMocks.workspaceState.activeWorkspaceId = "workspace-1";
-    storeMocks.workspaceState.tabs = workspaceA.tabs;
-    storeMocks.workspaceState.activeTabId = workspaceA.activeTabId;
-    storeMocks.terminalState.visualTails = {
-      "runtime-1": "leaving tail",
-      "runtime-2": "target tail",
-    };
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await clickButton(view.container, "切换工作区 构建窗口");
-
-    expect(storeMocks.freezeWorkspaceRuntimeVisualSnapshots).toHaveBeenCalledWith(
-      "workspace-1",
-      storeMocks.terminalState.visualTails,
-      expect.any(Number),
-    );
-    expect(storeMocks.freezeWorkspaceRuntimeVisualSnapshots.mock.invocationCallOrder[0]).toBeLessThan(
-      storeMocks.selectWorkspace.mock.invocationCallOrder[0],
-    );
-    expect(storeMocks.selectWorkspace).toHaveBeenCalledWith("workspace-2");
-
-    view.unmount();
-  });
-
-  it("freezes the active running workspace before restoring a closed workspace", async () => {
-    const activeWorkspace = runningWorkspace("workspace-active", 0, 1, "runtime-active");
-    activeWorkspace.name = "运维巡检";
-    storeMocks.workspaceState.workspaces = [
-      activeWorkspace,
-      {
-        id: "workspace-closed",
-        name: "发布窗口",
-        status: "closed",
-        active_tab_id: "closed-tab-1",
-        activeTabId: "closed-tab-1",
-        tab_count: 1,
-        sort_order: 1,
-        created_at_ms: 1,
-        updated_at_ms: 2,
-      },
-    ];
-    storeMocks.workspaceState.activeWorkspaceId = "workspace-active";
-    storeMocks.workspaceState.tabs = activeWorkspace.tabs;
-    storeMocks.workspaceState.activeTabId = activeWorkspace.activeTabId;
-    storeMocks.terminalState.visualTails = {
-      "runtime-active": "active tail before restore",
-    };
-    storeMocks.workspaceGet.mockResolvedValue({
-      id: "workspace-closed",
-      name: "发布窗口",
-      status: "closed",
-      active_tab_id: "closed-tab-1",
-      sort_order: 1,
-      created_at_ms: 1,
-      updated_at_ms: 2,
-      tabs: [
-        {
-          id: "closed-tab-1",
-          title: "主工作台",
-          active_pane_id: "closed-pane-1",
-          sort_order: 0,
-          created_at_ms: 1,
-          updated_at_ms: 2,
-          root: {
-            kind: "leaf",
-            id: "closed-pane-1",
-            title: "PowerShell 7",
-            runtime_session_id: null,
-            saved_session_id: null,
-            active_terminal_tab_id: "closed-pane-1-tab-1",
-            terminal_tabs: [
-              {
-                id: "closed-pane-1-tab-1",
-                title: "PowerShell 7",
-                runtime_session_id: null,
-                saved_session_id: null,
-                connection_source: "default_local",
-              },
-            ],
-          },
-        },
-      ],
-    });
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await clickWorkspaceContextAction(view.container, "发布窗口", "恢复工作区 发布窗口");
-    await flushWorkspacePostLayoutWork();
-
-    expect(storeMocks.freezeWorkspaceRuntimeVisualSnapshots).toHaveBeenCalledWith(
-      "workspace-active",
-      storeMocks.terminalState.visualTails,
-      expect.any(Number),
-    );
-    expect(storeMocks.freezeWorkspaceRuntimeVisualSnapshots.mock.invocationCallOrder[0]).toBeLessThan(
-      storeMocks.upsertWorkspaceDefinition.mock.invocationCallOrder[0],
-    );
-    expect(storeMocks.selectWorkspace).toHaveBeenCalledWith("workspace-closed");
-
-    view.unmount();
-  });
-
-  it("keeps running workspace layers mounted and switches by visibility", async () => {
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "running",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tabs: storeMocks.workspaceState.tabs,
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-      {
-        id: "workspace-2",
-        name: "构建窗口",
-        status: "running",
-        active_tab_id: "tab-2",
-        activeTabId: "tab-2",
-        tabs: [
-          {
-            id: "tab-2",
-            title: "构建",
-            active_pane_id: "pane-2",
-            sort_order: 0,
-            created_at_ms: 1,
-            updated_at_ms: 1,
-            root: {
-              kind: "leaf",
-              id: "pane-2",
-              title: "PowerShell 7",
-              runtime_session_id: "runtime-2",
-              saved_session_id: null,
-              active_terminal_tab_id: "pane-2-tab-1",
-              terminal_tabs: [
-                {
-                  id: "pane-2-tab-1",
-                  title: "PowerShell 7",
-                  runtime_session_id: "runtime-2",
-                  saved_session_id: null,
-                },
-              ],
-            },
-          },
-        ],
-        tab_count: 1,
-        sort_order: 1,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    const view = render(<AppShell />);
-
-    expect(view.container.querySelector('[aria-label="工作区视图 运维巡检"]')).not.toBeNull();
-    expect(view.container.querySelector('[aria-label="工作区视图 构建窗口"]')).not.toBeNull();
-    expect(view.container.querySelector('[aria-label="工作区视图 运维巡检"]')?.getAttribute("data-active")).toBe("true");
-    expect(view.container.querySelector('[aria-label="工作区视图 构建窗口"]')?.getAttribute("data-active")).toBe("false");
-    expect(view.container.textContent).toContain("PowerShell 7");
-
-    await clickButton(view.container, "工作区");
-    await clickButton(view.container, "切换工作区 构建窗口");
-
-    expect(view.container.querySelector('[aria-label="工作区切换快照布局"]')).toBeNull();
-    expect(storeMocks.selectWorkspace).toHaveBeenCalledWith("workspace-2");
-    expect(storeMocks.openTerminal).not.toHaveBeenCalled();
-    expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
-    expect(storeMocks.searchHistory).not.toHaveBeenCalled();
-    expect(storeMocks.captureContext).not.toHaveBeenCalled();
-
-    view.unmount();
-  });
-
   it("leaves the startup pane empty instead of opening the default local terminal", async () => {
     const view = render(<AppShell />);
 
@@ -3447,7 +2998,7 @@ describe("AppShell", () => {
 
     expect(storeMocks.openDefaultLocalTerminal).toHaveBeenCalledWith("pane-1");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "default-workspace",
       "tab-1",
       "pane-1",
       "pane-1-tab-1",
@@ -3510,7 +3061,7 @@ describe("AppShell", () => {
     expect(storeMocks.addPaneTab).toHaveBeenCalledWith("pane-1");
     expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "default-workspace",
       "tab-1",
       "pane-1",
       "pane-1-tab-created",
@@ -3618,7 +3169,7 @@ describe("AppShell", () => {
     expect(storeMocks.addPaneTab).not.toHaveBeenCalled();
     expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "default-workspace",
       "tab-1",
       "pane-1",
       "pane-1-tab-1",
@@ -4407,7 +3958,7 @@ describe("AppShell", () => {
     expect(storeMocks.addPaneTabAfter).toHaveBeenCalledTimes(1);
     expect(storeMocks.addPaneTabAfter).toHaveBeenCalledWith("pane-1", "pane-1-tab-1");
     expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "default-workspace",
       "tab-1",
       "pane-1",
       "pane-1-tab-created",
@@ -4422,7 +3973,7 @@ describe("AppShell", () => {
     expect(storeMocks.openSshContainerTerminal).toHaveBeenCalledTimes(1);
     expect(storeMocks.openSshContainerTerminal).toHaveBeenCalledWith("session-1", "pane-1", "abc123", "api");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "default-workspace",
       "tab-1",
       "pane-1",
       "pane-1-tab-created",
@@ -4601,7 +4152,7 @@ describe("AppShell", () => {
 
     expect(storeMocks.addPaneTab).toHaveBeenCalledWith("pane-1");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "workspace-1",
+      "default-workspace",
       "tab-1",
       "pane-1",
       "pane-1-tab-2",
