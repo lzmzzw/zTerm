@@ -21,4 +21,10 @@ describe("file transfer dialog styles", () => {
     expect(css).toContain(".zt-file-transfer-dialog .zt-file-transfer-controls > button");
     expect(css).not.toContain(".zt-file-transfer-dialog .zt-file-transfer-controls button,");
   });
+
+  it("reserves one third of the panel for expanded transfer tasks and separates their header", () => {
+    expect(css).toContain("grid-template-rows: auto minmax(0, 2fr) auto minmax(0, 1fr)");
+    expect(css).toContain(".zt-file-transfer-panel:has(.zt-transfer-dock-collapsed)");
+    expect(ruleBody(".zt-transfer-dock-header")).toContain("background: var(--zt-bg-elevated)");
+  });
 });
