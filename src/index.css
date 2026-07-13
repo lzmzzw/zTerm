@@ -3324,7 +3324,7 @@ button {
 
 .zt-session-group-row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
+  grid-template-columns: 26px 16px minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
   min-height: 28px;
@@ -3351,6 +3351,11 @@ button {
   background: transparent;
   color: var(--zt-text-secondary);
   font-size: var(--zt-font-size-ui);
+}
+
+.zt-session-group-row .zt-session-group-toggle {
+  width: 26px;
+  padding: 0;
 }
 
 .zt-session-group-row button:hover {

@@ -1,5 +1,5 @@
 // Author: Liz
-import { Folder, Monitor, MoreHorizontal, Pencil, Server, Terminal, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, Monitor, MoreHorizontal, Pencil, Server, Terminal, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { fallbackOnlyErrorMessage } from "../../lib/unknownErrorMessage";
@@ -106,6 +106,23 @@ export function SessionTree({
     }
   }
 
+  async function handleToggleGroup(group: SessionGroup) {
+    if (!onSaveGroup) return;
+    setActionError(null);
+    try {
+      await onSaveGroup({
+        id: group.id,
+        parent_id: group.parent_id,
+        name: group.name,
+        expanded: group.expanded,
+        sort_order: group.sort_order,
+      });
+    } catch (error) {
+      setActionError(fallbackOnlyErrorMessage(error, "更新分组状态失败"));
+      throw error;
+    }
+  }
+
   async function handleDeleteSession(session: SavedSession) {
     if (!onDeleteSession) return;
     setActionError(null);
@@ -165,6 +182,7 @@ export function SessionTree({
             onEditGroup={handleEditGroup}
             onEditSession={handleEditSession}
             onCreateSession={handleCreateSession}
+            onToggleGroup={onSaveGroup ? handleToggleGroup : undefined}
             onOpenContextMenu={setContextMenu}
           />
         ))}
@@ -255,6 +273,7 @@ function SessionGroupNode({
   onEditGroup,
   onEditSession,
   onCreateSession,
+  onToggleGroup,
   onOpenContextMenu,
 }: {
   node: SessionGroupTreeNode;
@@ -264,9 +283,15 @@ function SessionGroupNode({
   onEditGroup: (group: SessionGroup) => void;
   onEditSession: (session: SavedSession) => void;
   onCreateSession: (groupId: string | null) => void;
+  onToggleGroup?: (group: SessionGroup) => Promise<void>;
   onOpenContextMenu: (menu: SessionTreeContextMenu) => void;
 }) {
   const { group, groups: childGroups, sessions: groupSessions } = node;
+  const [expanded, setExpanded] = useState(group.expanded);
+
+  useEffect(() => {
+    setExpanded(group.expanded);
+  }, [group.expanded]);
 
   function openGroupMenu(event: React.MouseEvent<HTMLElement>) {
     event.preventDefault();
@@ -281,41 +306,65 @@ function SessionGroupNode({
     onOpenContextMenu({ kind: "group", group, x: rect.right, y: rect.bottom });
   }
 
+  async function toggleGroup() {
+    const nextExpanded = !expanded;
+    setExpanded(nextExpanded);
+    try {
+      await onToggleGroup?.({ ...group, expanded: nextExpanded });
+    } catch {
+      setExpanded(group.expanded);
+    }
+  }
+
   return (
     <section className="zt-session-group" aria-label={`分组 ${group.name}`}>
       <div className="zt-session-group-row" onContextMenu={openGroupMenu}>
+        <button
+          type="button"
+          className="zt-session-group-toggle"
+          aria-expanded={expanded}
+          aria-label={`${expanded ? "折叠" : "展开"}分组 ${group.name}`}
+          title={`${expanded ? "折叠" : "展开"}分组 ${group.name}`}
+          onClick={() => void toggleGroup()}
+          disabled={!onToggleGroup}
+        >
+          {expanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
+        </button>
         <Folder size={14} aria-hidden="true" />
         <span>{group.name}</span>
         <button type="button" aria-label={`分组操作 ${group.name}`} title={`分组操作 ${group.name}`} onClick={openGroupButtonMenu}>
           <MoreHorizontal size={14} aria-hidden="true" />
         </button>
       </div>
-      <ul>
-        {groupSessions.map((session) => (
-          <SessionNode
-            key={session.id}
-            session={session}
-            onOpenSession={onOpenSession}
-            onEditSession={onEditSession}
-            onDeleteSession={onDeleteSession}
-            onOpenContextMenu={onOpenContextMenu}
-          />
-        ))}
-        {childGroups.map((child) => (
-          <li key={child.group.id}>
-            <SessionGroupNode
-              node={child}
+      {expanded ? (
+        <ul>
+          {groupSessions.map((session) => (
+            <SessionNode
+              key={session.id}
+              session={session}
               onOpenSession={onOpenSession}
-              onDeleteGroup={onDeleteGroup}
-              onDeleteSession={onDeleteSession}
-              onEditGroup={onEditGroup}
               onEditSession={onEditSession}
-              onCreateSession={onCreateSession}
+              onDeleteSession={onDeleteSession}
               onOpenContextMenu={onOpenContextMenu}
             />
-          </li>
-        ))}
-      </ul>
+          ))}
+          {childGroups.map((child) => (
+            <li key={child.group.id}>
+              <SessionGroupNode
+                node={child}
+                onOpenSession={onOpenSession}
+                onDeleteGroup={onDeleteGroup}
+                onDeleteSession={onDeleteSession}
+                onEditGroup={onEditGroup}
+                onEditSession={onEditSession}
+                onCreateSession={onCreateSession}
+                onToggleGroup={onToggleGroup}
+                onOpenContextMenu={onOpenContextMenu}
+              />
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </section>
   );
 }

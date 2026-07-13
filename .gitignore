@@ -33,6 +33,7 @@ pnpm-debug.log*
 AGENTS.md
 docs/
 runs/
+planning/
 
 # Runtime data and local test state
 *.db

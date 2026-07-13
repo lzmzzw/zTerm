@@ -250,6 +250,29 @@ describe("SessionTree", () => {
     view.unmount();
   });
 
+  it("persists group collapse state and hides sessions in collapsed groups", async () => {
+    const onSaveGroup = vi.fn();
+    const expandedView = render(<SessionTree groups={groups} sessions={sessions} onSaveGroup={onSaveGroup} />);
+
+    expect(expandedView.container.textContent).toContain("生产跳板机");
+    await click(button(expandedView.container, "折叠分组 生产环境"));
+    expect(expandedView.container.textContent).not.toContain("生产跳板机");
+    expect(onSaveGroup).toHaveBeenCalledWith({
+      id: "group-prod",
+      parent_id: null,
+      name: "生产环境",
+      expanded: false,
+      sort_order: 0,
+    });
+    expandedView.unmount();
+
+    const collapsedView = render(<SessionTree groups={[{ ...groups[0], expanded: false }]} sessions={sessions} />);
+
+    expect(button(collapsedView.container, "展开分组 生产环境").getAttribute("aria-expanded")).toBe("false");
+    expect(collapsedView.container.textContent).not.toContain("生产跳板机");
+    collapsedView.unmount();
+  });
+
   it("creates a folder from the session panel context menu", async () => {
     const onSaveGroup = vi.fn();
     const promptSpy = vi.spyOn(window, "prompt");
