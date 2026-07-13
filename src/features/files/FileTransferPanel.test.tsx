@@ -179,6 +179,24 @@ describe("FileTransferPanel", () => {
     });
   });
 
+  it("does not render a manual transfer task refresh button", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list" || command === "file_transfer_list_endpoint") return Promise.resolve([]);
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+
+    expect(view.container.querySelector('[aria-label="刷新文件传输任务"]')).toBeNull();
+
+    view.unmount();
+  });
+
   it("selects an SSH endpoint and enqueues the selected local file to the remote side", async () => {
     const localFile = fileEntry("C:/Users/Ops/bundle.zip");
     invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {

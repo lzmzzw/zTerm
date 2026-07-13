@@ -2706,7 +2706,7 @@ button {
 
 .zt-file-transfer-controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: end;
   gap: 6px;
   padding: 6px 8px;

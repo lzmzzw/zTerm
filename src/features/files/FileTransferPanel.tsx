@@ -306,9 +306,6 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
             onChange={(value) => setConflictPolicy(value as TransferConflictPolicy)}
           />
         </label>
-        <button type="button" aria-label="刷新文件传输任务" title="刷新任务" onClick={() => void loadTransfers()}>
-          <RefreshCw size={14} aria-hidden="true" />
-        </button>
       </div>
       <div className="zt-file-transfer-panes">
         <EndpointPane
