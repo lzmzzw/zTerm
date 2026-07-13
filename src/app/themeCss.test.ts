@@ -144,6 +144,15 @@ describe("global dark theme colors", () => {
     );
   });
 
+  it("keeps floating surfaces opaque so background text cannot show through dialogs", () => {
+    expect(rootVariable("--zt-surface-floating")).toBe("#1c1c1e");
+    expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-surface-floating")).toBe("#ffffff");
+
+    for (const selector of [".zt-dialog", ".zt-session-dialog", ".zt-settings-dialog"]) {
+      expect(ruleBodiesForSelector(selector)).toContain("background: var(--zt-surface-floating)");
+    }
+  });
+
   it("keeps the session editor header, body, and footer heights stable across sections", () => {
     expect(ruleBodiesForSelector(".zt-session-editor-dialog form")).toContain(
       "grid-template-rows: 52px 88px minmax(0, 1fr) auto 68px",
