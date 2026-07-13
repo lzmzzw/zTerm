@@ -53,17 +53,24 @@ async function click(element: HTMLElement) {
   });
 }
 
-async function dragBetween(source: HTMLElement, destination: HTMLElement) {
+async function dragBetween(source: HTMLElement, destination: HTMLElement, endBeforeDrop = false) {
   const dataTransfer = {
     dropEffect: "copy",
     effectAllowed: "copy",
-    getData: vi.fn(() => ""),
+    getData: vi.fn((type: string) =>
+      type === "application/x-zterm-file-transfer"
+        ? JSON.stringify({ sourceSide: "left", paths: ["C:/Users/Ops/bundle.zip"] })
+        : "",
+    ),
     setData: vi.fn(),
   };
   await act(async () => {
     source.dispatchEvent(Object.assign(new Event("dragstart", { bubbles: true }), { dataTransfer }));
     destination.dispatchEvent(Object.assign(new Event("dragenter", { bubbles: true, cancelable: true }), { dataTransfer }));
     destination.dispatchEvent(Object.assign(new Event("dragover", { bubbles: true, cancelable: true }), { dataTransfer }));
+    if (endBeforeDrop) {
+      source.dispatchEvent(Object.assign(new Event("dragend", { bubbles: true }), { dataTransfer }));
+    }
     destination.dispatchEvent(Object.assign(new Event("drop", { bubbles: true, cancelable: true }), { dataTransfer }));
     await Promise.resolve();
   });
@@ -270,9 +277,12 @@ describe("FileTransferPanel", () => {
     expect(row).toBeTruthy();
     expect(destinationPane).toBeTruthy();
 
-    const dataTransfer = await dragBetween(row as HTMLElement, destinationPane);
+    const dataTransfer = await dragBetween(row as HTMLElement, destinationPane, true);
 
-    expect(dataTransfer.setData).toHaveBeenCalledWith("application/x-zterm-file-transfer", "C:/Users/Ops/bundle.zip");
+    expect(dataTransfer.setData).toHaveBeenCalledWith(
+      "application/x-zterm-file-transfer",
+      JSON.stringify({ sourceSide: "left", paths: ["C:/Users/Ops/bundle.zip"] }),
+    );
 
     expect(invokeMock).toHaveBeenCalledWith("file_transfer_check_conflicts", {
       items: [{ destination: { kind: "ssh", saved_session_id: "ssh-1", path: "/bundle.zip" }, kind: "file" }],

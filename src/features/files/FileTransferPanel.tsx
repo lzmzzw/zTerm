@@ -111,6 +111,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   const [transferDockCollapsed, setTransferDockCollapsed] = useState(false);
   const [transferDockHeight, setTransferDockHeight] = useState<number | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
+  const dragEndClearTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     void loadSessions();
@@ -188,15 +189,20 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   }
 
   function beginDrag(sourceSide: FileTransferSide, path: string) {
+    if (dragEndClearTimerRef.current !== null) {
+      window.clearTimeout(dragEndClearTimerRef.current);
+      dragEndClearTimerRef.current = null;
+    }
     const sourcePane = sourceSide === "left" ? left : right;
     const paths = sourcePane.selectedPaths.includes(path) ? sourcePane.selectedPaths : [path];
     const nextDragState = { sourceSide, paths };
     dragStateRef.current = nextDragState;
     setDragState(nextDragState);
+    return nextDragState;
   }
 
-  function canDropOn(targetSide: FileTransferSide) {
-    const currentDrag = dragStateRef.current;
+  function canDropOn(targetSide: FileTransferSide, fallbackDrag?: DragState | null) {
+    const currentDrag = dragStateRef.current ?? fallbackDrag;
     if (!currentDrag || currentDrag.sourceSide === targetSide) return false;
     const sourcePane = currentDrag.sourceSide === "left" ? left : right;
     const destinationPane = targetSide === "left" ? left : right;
@@ -204,13 +210,26 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   }
 
   function clearDrag() {
+    if (dragEndClearTimerRef.current !== null) {
+      window.clearTimeout(dragEndClearTimerRef.current);
+      dragEndClearTimerRef.current = null;
+    }
     dragStateRef.current = null;
     setDragState(null);
   }
 
-  async function dropOn(targetSide: FileTransferSide) {
-    const currentDrag = dragStateRef.current;
-    if (!currentDrag || !canDropOn(targetSide)) {
+  function clearDragAfterDrop() {
+    if (dragEndClearTimerRef.current !== null) window.clearTimeout(dragEndClearTimerRef.current);
+    dragEndClearTimerRef.current = window.setTimeout(() => {
+      dragEndClearTimerRef.current = null;
+      dragStateRef.current = null;
+      setDragState(null);
+    }, 0);
+  }
+
+  async function dropOn(targetSide: FileTransferSide, fallbackDrag?: DragState | null) {
+    const currentDrag = dragStateRef.current ?? fallbackDrag;
+    if (!currentDrag || !canDropOn(targetSide, currentDrag)) {
       clearDrag();
       return;
     }
@@ -276,9 +295,9 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
             void Promise.resolve().then(() => loadEndpoint("left"));
           }}
           onDragStart={(path) => beginDrag("left", path)}
-          onDragEnd={clearDrag}
-          onDrop={() => dropOn("left")}
-          canAcceptDrop={() => canDropOn("left")}
+          onDragEnd={clearDragAfterDrop}
+          onDrop={(drag) => dropOn("left", drag)}
+          canAcceptDrop={(drag) => canDropOn("left", drag)}
           dropActive={Boolean(dragState) && canDropOn("left")}
         />
         <div className="zt-file-transfer-arrows" aria-label="文件传输方向">
@@ -326,9 +345,9 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
             void Promise.resolve().then(() => loadEndpoint("right"));
           }}
           onDragStart={(path) => beginDrag("right", path)}
-          onDragEnd={clearDrag}
-          onDrop={() => dropOn("right")}
-          canAcceptDrop={() => canDropOn("right")}
+          onDragEnd={clearDragAfterDrop}
+          onDrop={(drag) => dropOn("right", drag)}
+          canAcceptDrop={(drag) => canDropOn("right", drag)}
           dropActive={Boolean(dragState) && canDropOn("right")}
         />
       </div>
@@ -410,10 +429,10 @@ function EndpointPane({
   onParent: () => Promise<void> | void;
   onSelect: (path: string | null, event?: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => void;
   onOpenDirectory: (path: string) => Promise<void> | void;
-  onDragStart: (path: string) => void;
+  onDragStart: (path: string) => DragState;
   onDragEnd: () => void;
-  onDrop: () => Promise<void> | void;
-  canAcceptDrop: () => boolean;
+  onDrop: (drag: DragState | null) => Promise<void> | void;
+  canAcceptDrop: (drag?: DragState | null) => boolean;
   dropActive: boolean;
 }) {
   const endpointValue = pane.endpoint.kind === "local" ? "local" : `ssh:${pane.endpoint.saved_session_id ?? ""}`;
@@ -429,16 +448,17 @@ function EndpointPane({
     label: root,
   }));
   function allowDrop(event: React.DragEvent<HTMLElement>) {
-    if (!canAcceptDrop()) return false;
+    if (!canAcceptDrop(dragStateFromDataTransfer(event.dataTransfer))) return false;
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
     return true;
   }
 
   function handleDrop(event: React.DragEvent<HTMLElement>) {
+    const drag = dragStateFromDataTransfer(event.dataTransfer);
     if (!allowDrop(event)) return;
     event.stopPropagation();
-    void onDrop();
+    void onDrop(drag);
   }
 
   return (
@@ -532,9 +552,8 @@ function EndpointPane({
                 return;
               }
               event.dataTransfer.effectAllowed = "copy";
-              event.dataTransfer.setData("application/x-zterm-file-transfer", entry.path);
+              event.dataTransfer.setData("application/x-zterm-file-transfer", JSON.stringify(onDragStart(entry.path)));
               event.dataTransfer.setData("text/plain", entry.path);
-              onDragStart(entry.path);
             }}
             onDragEnd={onDragEnd}
             onClick={(event) =>
@@ -560,6 +579,24 @@ function EndpointPane({
 function rootPathFor(path: string) {
   const match = path.trim().match(/^[a-z]:[\\/]/i);
   return match ? `${match[0][0].toUpperCase()}:\\` : path.trim() === "/" ? "/" : "";
+}
+
+function dragStateFromDataTransfer(dataTransfer: DataTransfer): DragState | null {
+  try {
+    const value: unknown = JSON.parse(dataTransfer.getData("application/x-zterm-file-transfer"));
+    if (
+      !value ||
+      typeof value !== "object" ||
+      !["left", "right"].includes((value as DragState).sourceSide) ||
+      !Array.isArray((value as DragState).paths) ||
+      !(value as DragState).paths.every((path) => typeof path === "string" && path.length > 0)
+    ) {
+      return null;
+    }
+    return value as DragState;
+  } catch {
+    return null;
+  }
 }
 
 function canTransfer(
