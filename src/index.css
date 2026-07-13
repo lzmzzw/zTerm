@@ -2739,9 +2739,14 @@ button {
   min-height: 0;
 }
 
+.zt-file-transfer-operation-status,
+.zt-file-transfer-pane-status {
+  min-height: 0;
+}
+
 .zt-file-transfer-pane {
   display: grid;
-  grid-template-rows: 34px 34px auto auto auto minmax(0, 1fr);
+  grid-template-rows: 34px 34px auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--zt-border-subtle);

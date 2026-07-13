@@ -29,4 +29,10 @@ describe("file transfer dialog styles", () => {
     expect(ruleBody(".zt-transfer-dock-resizer")).toContain("cursor: ns-resize");
     expect(ruleBody(".zt-transfer-dock-header")).toContain("background: var(--zt-bg-elevated)");
   });
+
+  it("keeps file lists and the transfer dock in their flexible grid rows when status messages are absent", () => {
+    expect(css).toContain(".zt-file-transfer-operation-status");
+    expect(css).toContain(".zt-file-transfer-pane-status");
+    expect(ruleBody(".zt-file-transfer-pane")).toContain("grid-template-rows: 34px 34px auto minmax(0, 1fr)");
+  });
 });

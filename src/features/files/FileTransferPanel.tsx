@@ -322,8 +322,10 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           dropActive={Boolean(dragState) && canDropOn("right")}
         />
       </div>
-      {transferError ? <div className="zt-terminal-error">{transferError}</div> : null}
-      {transferLoading ? <div className="zt-empty-line">传输任务加载中</div> : null}
+      <div className="zt-file-transfer-operation-status">
+        {transferError ? <div className="zt-terminal-error">{transferError}</div> : null}
+        {transferLoading ? <div className="zt-empty-line">传输任务加载中</div> : null}
+      </div>
       <TransferPanel
         collapsible
         tasks={transfers}
@@ -465,10 +467,12 @@ function EndpointPane({
           {showHidden ? <EyeOff size={14} aria-hidden="true" /> : <Eye size={14} aria-hidden="true" />}
         </button>
       </div>
-      {!endpointReady ? <div className="zt-empty-line">请选择 SSH 主机或本机端点</div> : null}
-      {pane.error ? <div className="zt-terminal-error">{pane.error}</div> : null}
-      {pane.loading ? <div className="zt-empty-line">加载中</div> : null}
-      {endpointReady && !pane.loading && visibleEntries.length === 0 ? <div className="zt-empty-line">暂无文件</div> : null}
+      <div className="zt-file-transfer-pane-status">
+        {!endpointReady ? <div className="zt-empty-line">请选择 SSH 主机或本机端点</div> : null}
+        {pane.error ? <div className="zt-terminal-error">{pane.error}</div> : null}
+        {pane.loading ? <div className="zt-empty-line">加载中</div> : null}
+        {endpointReady && !pane.loading && visibleEntries.length === 0 ? <div className="zt-empty-line">暂无文件</div> : null}
+      </div>
       <div className="zt-file-transfer-list" role="list" aria-label={`${title}文件列表`}>
         {visibleEntries.map((entry) => (
           <button
