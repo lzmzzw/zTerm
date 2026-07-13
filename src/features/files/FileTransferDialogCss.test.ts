@@ -37,8 +37,15 @@ describe("file transfer dialog styles", () => {
   });
 
   it("uses an explicit local-endpoint selector rule for the drive picker", () => {
-    expect(css).toContain('.zt-file-transfer-pane[data-local="true"] .zt-file-transfer-path');
+    const selector = '.zt-file-transfer-pane[data-local="true"] .zt-file-transfer-path';
+    const ruleStart = css.indexOf(selector);
+    const localPathRule = css.slice(ruleStart, css.indexOf("}", ruleStart));
+
+    expect(ruleStart).toBeGreaterThanOrEqual(0);
     expect(css).toContain(".zt-file-transfer-root-select.zt-select-trigger");
+    expect(localPathRule).toContain(
+      "grid-template-columns: 72px minmax(0, 1fr) repeat(3, 26px)",
+    );
     expect(css).not.toContain(".zt-file-transfer-path:has(.zt-file-transfer-root-select)");
   });
 });

@@ -338,6 +338,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       </div>
       <TransferPanel
         collapsible
+        defaultCollapsed
         tasks={transfers}
         onCancel={cancelTransfer}
         onDelete={deleteTransfer}
@@ -461,15 +462,6 @@ function EndpointPane({
         />
       </div>
       <div className="zt-file-transfer-path">
-        <input
-          aria-label={`${title}路径`}
-          value={endpointDisplayPath(pane.endpoint, defaultLocalPath)}
-          disabled={!endpointReady}
-          onChange={(event) => onPathChange(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") void onRefresh();
-          }}
-        />
         {pane.endpoint.kind === "local" && rootOptions.length > 0 ? (
           <ZtSelect
             ariaLabel={`${title}本地磁盘`}
@@ -482,6 +474,15 @@ function EndpointPane({
             }}
           />
         ) : null}
+        <input
+          aria-label={`${title}路径`}
+          value={endpointDisplayPath(pane.endpoint, defaultLocalPath)}
+          disabled={!endpointReady}
+          onChange={(event) => onPathChange(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") void onRefresh();
+          }}
+        />
         <button type="button" aria-label={`${title}返回上级`} title="返回上级" disabled={!endpointReady} onClick={() => void onParent()}>
           <FolderUp size={14} aria-hidden="true" />
         </button>

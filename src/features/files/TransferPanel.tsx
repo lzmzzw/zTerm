@@ -8,6 +8,7 @@ import { legacyTransferDestinationPath, legacyTransferSourcePath } from "./fileT
 
 interface TransferPanelProps {
   collapsible?: boolean;
+  defaultCollapsed?: boolean;
   tasks: TransferTask[];
   onCancel: (taskId: string) => Promise<void> | void;
   onDelete: (taskId: string) => Promise<void> | void;
@@ -26,6 +27,7 @@ const pausableTransferStatuses = new Set<TransferStatus>(["queued", "running"]);
 
 export function TransferPanel({
   collapsible = false,
+  defaultCollapsed = false,
   tasks,
   onCancel,
   onDelete,
@@ -42,7 +44,7 @@ export function TransferPanel({
   const pausableTaskIds = tasks.filter((task) => pausableTransferStatuses.has(task.status)).map((task) => task.id);
   const resumableTaskIds = tasks.filter((task) => task.status === "paused").map((task) => task.id);
   const allTaskIds = tasks.map((task) => task.id);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const dockRef = useRef<HTMLElement | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<{
     title: string;

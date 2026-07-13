@@ -307,6 +307,10 @@ describe("FileTransferPanel", () => {
     await flushEffects();
     await flushEffects();
 
+    const leftPathBar = view.container.querySelector('[aria-label="左侧文件端点"] .zt-file-transfer-path') as HTMLElement;
+    expect(leftPathBar.firstElementChild?.getAttribute("aria-label")).toBe("左侧本地磁盘");
+    expect(leftPathBar.children[1]?.getAttribute("aria-label")).toBe("左侧路径");
+
     await click(button(view.container, "左侧本地磁盘"));
     const driveOption = Array.from(document.querySelectorAll('[role="option"]')).find(
       (option) => option.getAttribute("data-value") === "D:\\",
@@ -318,6 +322,27 @@ describe("FileTransferPanel", () => {
     expect(invokeMock).toHaveBeenCalledWith("file_transfer_list_endpoint", {
       endpoint: { kind: "local", saved_session_id: null, path: "D:\\" },
     });
+
+    view.unmount();
+  });
+
+  it("starts with the transfer task dock collapsed", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list" || command === "file_transfer_list_endpoint" || command === "file_transfer_list_tasks") {
+        return Promise.resolve([]);
+      }
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+
+    expect(button(view.container, "展开传输任务")).toBeTruthy();
+    expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
 
     view.unmount();
   });
