@@ -15,4 +15,10 @@ describe("file transfer dialog styles", () => {
     expect(styles).toContain("backdrop-filter: none");
     expect(styles).toContain("-webkit-backdrop-filter: none");
   });
+
+  it("does not apply icon-button sizing to the conflict-policy select trigger", () => {
+    expect(css).toContain(".zt-file-transfer-controls > button");
+    expect(css).toContain(".zt-file-transfer-dialog .zt-file-transfer-controls > button");
+    expect(css).not.toContain(".zt-file-transfer-dialog .zt-file-transfer-controls button,");
+  });
 });

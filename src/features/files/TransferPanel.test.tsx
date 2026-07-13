@@ -206,7 +206,7 @@ describe("TransferPanel", () => {
     view.unmount();
   });
 
-  it("keeps the collapsible transfer dock collapsed by default and expands with the original toggle", async () => {
+  it("keeps the collapsible transfer dock collapsed by default and expands from its summary", async () => {
     const view = render(
       <TransferPanel
         collapsible
@@ -220,6 +220,7 @@ describe("TransferPanel", () => {
     );
 
     expect(button(view.container, "展开传输任务")).toBeTruthy();
+    expect(view.container.querySelector(".zt-transfer-dock-summary")).toBeTruthy();
     expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
 
     await click(button(view.container, "展开传输任务"));
@@ -227,6 +228,30 @@ describe("TransferPanel", () => {
     expect(button(view.container, "折叠传输任务")).toBeTruthy();
     expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeTruthy();
     expect(view.container.textContent).toContain("permission denied");
+
+    view.unmount();
+  });
+
+  it("does not toggle the transfer dock when using a bulk action", async () => {
+    const onPauseAll = vi.fn();
+    const view = render(
+      <TransferPanel
+        collapsible
+        tasks={tasks}
+        onRetry={vi.fn()}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+        onPauseAll={onPauseAll}
+      />,
+    );
+
+    await click(button(view.container, "暂停全部传输任务"));
+
+    expect(onPauseAll).toHaveBeenCalledWith(["task-1"]);
+    expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
+    expect(button(view.container, "展开传输任务")).toBeTruthy();
 
     view.unmount();
   });

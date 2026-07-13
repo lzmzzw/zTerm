@@ -2773,7 +2773,7 @@ button {
   border-bottom: 1px solid var(--zt-border-subtle);
 }
 
-.zt-file-transfer-controls button,
+.zt-file-transfer-controls > button,
 .zt-file-transfer-path button,
 .zt-file-transfer-arrows button {
   display: inline-flex;
@@ -2786,14 +2786,14 @@ button {
   color: var(--zt-text-secondary);
 }
 
-.zt-file-transfer-controls button:hover,
+.zt-file-transfer-controls > button:hover,
 .zt-file-transfer-path button:hover,
 .zt-file-transfer-arrows button:hover {
   background: var(--zt-bg-hover);
   color: var(--zt-text-primary);
 }
 
-.zt-file-transfer-controls button:disabled,
+.zt-file-transfer-controls > button:disabled,
 .zt-file-transfer-path button:disabled,
 .zt-file-transfer-arrows button:disabled {
   cursor: not-allowed;
@@ -3053,7 +3053,7 @@ button {
 
 .zt-transfer-dock-header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   min-height: 32px;
@@ -3067,14 +3067,41 @@ button {
   border-bottom: 0;
 }
 
-.zt-transfer-dock-header strong,
-.zt-transfer-dock-header span {
+.zt-transfer-dock-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 18px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--zt-radius-control);
+  background: transparent;
+  color: var(--zt-text-primary);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.zt-transfer-dock-summary:hover,
+.zt-transfer-dock-summary:focus-visible {
+  background: var(--zt-bg-hover);
+}
+
+.zt-transfer-dock-summary:focus-visible {
+  outline: 1px solid var(--zt-accent);
+  outline-offset: -1px;
+}
+
+.zt-transfer-dock-summary strong,
+.zt-transfer-dock-summary span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.zt-transfer-dock-header span {
+.zt-transfer-dock-summary span {
   color: var(--zt-text-muted);
 }
 
@@ -3084,7 +3111,7 @@ button {
   gap: 2px;
 }
 
-.zt-transfer-dock-header button {
+.zt-transfer-dock-actions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3096,7 +3123,7 @@ button {
   color: var(--zt-text-secondary);
 }
 
-.zt-transfer-dock-header button:hover {
+.zt-transfer-dock-actions button:hover {
   background: var(--zt-bg-hover);
   color: var(--zt-text-primary);
 }
@@ -4288,10 +4315,10 @@ button {
   stroke: currentColor;
 }
 
-.zt-file-transfer-dialog .zt-file-transfer-controls button,
+.zt-file-transfer-dialog .zt-file-transfer-controls > button,
 .zt-file-transfer-dialog .zt-file-transfer-path button,
 .zt-file-transfer-dialog .zt-file-transfer-arrows button,
-.zt-file-transfer-dialog .zt-transfer-dock-header button,
+.zt-file-transfer-dialog .zt-transfer-dock-actions button,
 .zt-file-transfer-dialog .zt-transfer-row button {
   display: inline-flex;
   align-items: center;
@@ -4302,7 +4329,7 @@ button {
   color: var(--zt-text-secondary);
 }
 
-.zt-file-transfer-dialog .zt-file-transfer-controls button,
+.zt-file-transfer-dialog .zt-file-transfer-controls > button,
 .zt-file-transfer-dialog .zt-file-transfer-path button {
   width: 26px;
   height: 26px;
@@ -4313,26 +4340,26 @@ button {
   height: 28px;
 }
 
-.zt-file-transfer-dialog .zt-transfer-dock-header button,
+.zt-file-transfer-dialog .zt-transfer-dock-actions button,
 .zt-file-transfer-dialog .zt-transfer-row button {
   width: 24px;
   height: 24px;
 }
 
-.zt-file-transfer-dialog .zt-file-transfer-controls button:hover:not(:disabled),
+.zt-file-transfer-dialog .zt-file-transfer-controls > button:hover:not(:disabled),
 .zt-file-transfer-dialog .zt-file-transfer-path button:hover:not(:disabled),
 .zt-file-transfer-dialog .zt-file-transfer-arrows button:hover:not(:disabled),
-.zt-file-transfer-dialog .zt-transfer-dock-header button:hover:not(:disabled),
+.zt-file-transfer-dialog .zt-transfer-dock-actions button:hover:not(:disabled),
 .zt-file-transfer-dialog .zt-transfer-row button:hover:not(:disabled) {
   border-color: var(--zt-border);
   background: var(--zt-bg-hover);
   color: var(--zt-text-primary);
 }
 
-.zt-file-transfer-dialog .zt-file-transfer-controls button:disabled,
+.zt-file-transfer-dialog .zt-file-transfer-controls > button:disabled,
 .zt-file-transfer-dialog .zt-file-transfer-path button:disabled,
 .zt-file-transfer-dialog .zt-file-transfer-arrows button:disabled,
-.zt-file-transfer-dialog .zt-transfer-dock-header button:disabled,
+.zt-file-transfer-dialog .zt-transfer-dock-actions button:disabled,
 .zt-file-transfer-dialog .zt-transfer-row button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
