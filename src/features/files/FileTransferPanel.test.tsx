@@ -1,5 +1,5 @@
 // Author: Liz
-import { act, type ReactElement } from "react";
+import { act, StrictMode, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -343,6 +343,32 @@ describe("FileTransferPanel", () => {
 
     expect(button(view.container, "展开传输任务")).toBeTruthy();
     expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
+
+    view.unmount();
+  });
+
+  it("loads the initial SSH endpoint only once in StrictMode", async () => {
+    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list") return Promise.resolve([]);
+      if (command === "file_transfer_list_endpoint") return Promise.resolve([]);
+      throw new Error(`unexpected invoke: ${command} (${JSON.stringify(args)})`);
+    });
+
+    const view = render(
+      <StrictMode>
+        <FileTransferPanel />
+      </StrictMode>,
+    );
+    await flushEffects();
+    await flushEffects();
+
+    const initialSshLoads = invokeMock.mock.calls.filter(
+      ([command, args]) => command === "file_transfer_list_endpoint" && (args as { endpoint: { kind: string } }).endpoint.kind === "ssh",
+    );
+    expect(initialSshLoads).toHaveLength(1);
 
     view.unmount();
   });

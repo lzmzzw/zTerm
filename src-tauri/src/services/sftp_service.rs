@@ -42,6 +42,8 @@ const TRANSFER_BUFFER_SIZE: usize = 64 * 1024;
 const SFTP_CACHE_IDLE_TTL: Duration = Duration::from_secs(90);
 const SFTP_CACHE_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
 const SFTP_CACHE_MAX_ENTRIES: usize = 8;
+const SFTP_LIST_MAX_ATTEMPTS: usize = 2;
+const SFTP_LIST_RETRY_DELAY: Duration = Duration::from_millis(150);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransferProgressUpdate {
@@ -99,12 +101,34 @@ impl SftpService {
         path: &str,
     ) -> AppResult<Vec<FileEntry>> {
         let path = required_remote_path(path)?;
+        for attempt in 0..SFTP_LIST_MAX_ATTEMPTS {
+            match self.list_once(session, all_sessions, secrets, &path).await {
+                Ok(entries) => return Ok(entries),
+                Err(error)
+                    if attempt + 1 < SFTP_LIST_MAX_ATTEMPTS
+                        && should_retry_sftp_list_error(&error) =>
+                {
+                    tokio::time::sleep(SFTP_LIST_RETRY_DELAY).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("SFTP directory listing must return from the retry loop")
+    }
+
+    async fn list_once(
+        &self,
+        session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
+        path: &str,
+    ) -> AppResult<Vec<FileEntry>> {
         let lease = self
             .cached_sftp_session(session, all_sessions, secrets)
             .await?;
         let sftp = lease.entry.sftp.lock().await;
         let mut entries = sftp
-            .read_dir(path.clone())
+            .read_dir(path)
             .await
             .map_err(|error| {
                 self.cache.remove_key_if_entry(&lease.key, &lease.entry);
@@ -779,6 +803,10 @@ fn prune_sftp_entries(entries: &mut HashMap<SftpCacheKey, Arc<CachedSftpSession>
     }
 }
 
+fn should_retry_sftp_list_error(error: &AppError) -> bool {
+    matches!(error, AppError::Ssh(_) | AppError::Sftp(_))
+}
+
 pub fn validate_delete_request(path: &str, is_directory: bool, recursive: bool) -> AppResult<()> {
     let _ = validate_destructive_remote_path(path)?;
     if is_directory && !recursive {
@@ -957,6 +985,28 @@ impl ConnectedSftpSession {
     async fn close(self, message: &str) {
         let _ = self.sftp.close().await;
         self.connection.disconnect(message).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_retry_sftp_list_error;
+    use crate::error::AppError;
+
+    #[test]
+    fn retries_only_transient_ssh_and_sftp_directory_errors() {
+        assert!(should_retry_sftp_list_error(&AppError::ssh(
+            "connection reset"
+        )));
+        assert!(should_retry_sftp_list_error(&AppError::sftp(
+            "channel closed"
+        )));
+        assert!(!should_retry_sftp_list_error(&AppError::credential(
+            "invalid password"
+        )));
+        assert!(!should_retry_sftp_list_error(&AppError::validation(
+            "invalid path"
+        )));
     }
 }
 
