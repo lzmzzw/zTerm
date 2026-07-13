@@ -64,9 +64,9 @@ export function WorkspaceManagerPanel({
         </div>
       </div>
 
-      {error ? <div className="zt-empty-line">{error}</div> : null}
-
-      <ul className="zt-workspace-list">
+      <div className="zt-workspace-panel-body">
+        <div className="zt-workspace-panel-error">{error ? <div className="zt-empty-line">{error}</div> : null}</div>
+        <ul className="zt-workspace-list">
         {visibleWorkspaces.map((workspace) => {
           const active = workspace.id === activeWorkspaceId;
           const dotClass = workspace.status;
@@ -115,9 +115,10 @@ export function WorkspaceManagerPanel({
             </li>
           );
         })}
-      </ul>
+        {visibleWorkspaces.length === 0 ? <li className="zt-empty-line">暂无工作区</li> : null}
+        </ul>
 
-      {visibleWorkspaces.length === 0 ? <div className="zt-empty-line">暂无工作区</div> : null}
+      </div>
 
       {contextMenu ? (
         <ZtFloatingSurface className="zt-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>

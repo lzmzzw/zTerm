@@ -1338,6 +1338,13 @@ button {
   overflow: hidden;
 }
 
+.zt-workspace-panel-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
 .zt-workspace-list {
   display: grid;
   align-content: start;

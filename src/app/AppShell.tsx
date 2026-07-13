@@ -277,6 +277,7 @@ export function AppShell() {
   const restoringWorkspaceIdsRef = useRef<Set<string>>(new Set());
   const autoClosingWorkspaceIdsRef = useRef<Set<string>>(new Set());
   const processedExternalLaunchIdsRef = useRef<Set<string>>(new Set());
+  const workspaceSummaryIdsRef = useRef<Set<string>>(new Set());
   const activeContextTokenRef = useRef(0);
   const [historyView, setHistoryView] = useState<CommandHistoryView>("history");
   const [deduplicateHistory, setDeduplicateHistory] = useState(false);
@@ -890,6 +891,7 @@ export function AppShell() {
   async function refreshWorkspaceSummaries() {
     try {
       const summaries = await workspaceList();
+      workspaceSummaryIdsRef.current = new Set(summaries.map((workspace) => workspace.id));
       setWorkspaceSummaries(summaries);
     } catch (error) {
       setWorkspaceActionError(fallbackOnlyErrorMessage(error, "加载工作区失败"));
@@ -1158,6 +1160,11 @@ export function AppShell() {
 
     try {
       await workspaceRemove(workspace.id);
+      setWorkspaceSummaries((summaries) => {
+        const nextSummaries = summaries.filter((summary) => summary.id !== workspace.id);
+        workspaceSummaryIdsRef.current = new Set(nextSummaries.map((summary) => summary.id));
+        return nextSummaries;
+      });
       removeWorkspace(workspace.id);
       setPendingDeleteWorkspace(null);
       await refreshWorkspaceSummaries();
@@ -1531,6 +1538,7 @@ export function AppShell() {
       if (workspace.preview_root) continue;
       void loadCachedWorkspaceDefinition(workspace.id, workspaceGet)
         .catch((error) => {
+          if (!workspaceSummaryIdsRef.current.has(workspace.id)) return;
           setWorkspaceActionError(fallbackOnlyErrorMessage(error, "加载工作区缩略图失败"));
         });
     }

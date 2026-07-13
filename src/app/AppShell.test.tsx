@@ -2256,6 +2256,92 @@ describe("AppShell", () => {
     view.unmount();
   });
 
+  it("does not show a thumbnail error when a deleted workspace's in-flight preview request fails", async () => {
+    const deletedPreview = deferred<Record<string, unknown>>();
+    const deletedWorkspace = {
+      id: "workspace-deleted",
+      name: "待删除工作区",
+      status: "closed" as const,
+      active_tab_id: "deleted-tab",
+      tab_count: 1,
+      sort_order: 0,
+      created_at_ms: 1,
+      updated_at_ms: 1,
+    };
+    const remainingWorkspace = {
+      id: "workspace-remaining",
+      name: "保留工作区",
+      status: "closed" as const,
+      active_tab_id: "remaining-tab",
+      tab_count: 1,
+      sort_order: 1,
+      created_at_ms: 1,
+      updated_at_ms: 2,
+    };
+    const refreshedSummaries = deferred<(typeof remainingWorkspace)[]>();
+    storeMocks.workspaceState.workspaces = [];
+    storeMocks.workspaceState.activeWorkspaceId = "default-workspace";
+    storeMocks.workspaceList
+      .mockResolvedValueOnce([deletedWorkspace, remainingWorkspace])
+      .mockImplementationOnce(() => refreshedSummaries.promise);
+    storeMocks.prefetchWorkspaceDefinitions.mockResolvedValue(undefined);
+    storeMocks.workspaceGet.mockImplementation((workspaceId: string) => {
+      if (workspaceId === deletedWorkspace.id) return deletedPreview.promise;
+      return Promise.resolve({
+        ...remainingWorkspace,
+        tabs: [
+          {
+            id: "remaining-tab",
+            title: "保留",
+            active_pane_id: "pane-1",
+            sort_order: 0,
+            created_at_ms: 1,
+            updated_at_ms: 2,
+            root: workspaceSplitRoot(),
+          },
+        ],
+      });
+    });
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await clickButton(view.container, "工作区");
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(storeMocks.workspaceGet).toHaveBeenCalledWith("workspace-deleted");
+
+    await clickWorkspaceContextAction(view.container, "待删除工作区", "删除工作区 待删除工作区");
+    const dialog = view.container.querySelector('[role="dialog"][aria-label="删除工作区"]');
+    await act(async () => {
+      (dialog?.querySelector('button[type="submit"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      deletedPreview.reject(new Error("workspace has been deleted"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(view.container.textContent).not.toContain("加载工作区缩略图失败");
+    expect(view.container.querySelector('[aria-label="工作区 待删除工作区"]')).toBeNull();
+
+    await act(async () => {
+      refreshedSummaries.resolve([remainingWorkspace]);
+      await Promise.resolve();
+    });
+    expect(view.container.querySelector('[aria-label="工作区 保留工作区"]')).not.toBeNull();
+
+    view.unmount();
+  });
+
   it("does not delete a workspace when runtime close fails", async () => {
     storeMocks.closeTerminal.mockRejectedValueOnce(new Error("PTY close failed"));
     const view = render(<AppShell />);
