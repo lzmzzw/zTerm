@@ -326,6 +326,28 @@ describe("FileTransferPanel", () => {
     view.unmount();
   });
 
+  it("uses the full endpoint header for the connection selector without visible side labels", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list" || command === "file_transfer_list_endpoint") return Promise.resolve([]);
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+
+    const headers = view.container.querySelectorAll(".zt-file-transfer-pane-header");
+    expect(headers).toHaveLength(2);
+    headers.forEach((header) => expect(header.querySelector("strong")).toBeNull());
+    expect((headers[0].firstElementChild as HTMLElement).getAttribute("aria-label")).toBe("左侧端点");
+    expect((headers[1].firstElementChild as HTMLElement).getAttribute("aria-label")).toBe("右侧端点");
+
+    view.unmount();
+  });
+
   it("starts with the transfer task dock collapsed", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);

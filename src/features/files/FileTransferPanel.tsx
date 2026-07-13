@@ -446,7 +446,6 @@ function EndpointPane({
       }}
     >
       <div className="zt-file-transfer-pane-header">
-        <strong>{title}</strong>
         <ZtSelect
           ariaLabel={`${title}端点`}
           value={endpointValue}

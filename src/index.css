@@ -2746,7 +2746,7 @@ button {
 
 .zt-file-transfer-pane {
   display: grid;
-  grid-template-rows: 34px 34px auto minmax(0, 1fr);
+  grid-template-rows: 36px 34px auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--zt-border-subtle);
@@ -2763,14 +2763,19 @@ button {
 }
 
 .zt-file-transfer-pane-header {
-  display: grid;
-  grid-template-columns: minmax(48px, auto) minmax(0, 1fr);
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--zt-border-subtle);
   color: var(--zt-text-primary);
   font-size: var(--zt-font-size-ui);
+}
+
+.zt-file-transfer-pane-header .zt-select-trigger {
+  box-sizing: border-box;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 28px 0 10px;
 }
 
 .zt-file-transfer-path {

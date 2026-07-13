@@ -33,7 +33,15 @@ describe("file transfer dialog styles", () => {
   it("keeps file lists and the transfer dock in their flexible grid rows when status messages are absent", () => {
     expect(css).toContain(".zt-file-transfer-operation-status");
     expect(css).toContain(".zt-file-transfer-pane-status");
-    expect(ruleBody(".zt-file-transfer-pane")).toContain("grid-template-rows: 34px 34px auto minmax(0, 1fr)");
+    expect(ruleBody(".zt-file-transfer-pane")).toContain("grid-template-rows: 36px 34px auto minmax(0, 1fr)");
+  });
+
+  it("centers a compact endpoint selector across the header without a visible side label", () => {
+    expect(ruleBody(".zt-file-transfer-pane-header")).toContain("display: flex");
+    expect(ruleBody(".zt-file-transfer-pane-header")).toContain("align-items: center");
+    expect(css).toContain(".zt-file-transfer-pane-header .zt-select-trigger");
+    expect(css).toContain("box-sizing: border-box");
+    expect(css).toContain("min-height: 28px");
   });
 
   it("uses an explicit local-endpoint selector rule for the drive picker", () => {
