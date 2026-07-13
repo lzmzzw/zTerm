@@ -195,7 +195,7 @@ describe("split pane css direction mapping", () => {
     expectBorderlessIconButton(".zt-tool-rail button");
     expectBorderlessIconButton(".zt-panel-header-action button");
     expectBorderlessIconButton(".zt-session-group-row button");
-    expectBorderlessIconButton(".zt-session-node-actions button");
+    expect(ruleBodiesForSelector(".zt-session-node-actions button")).toBe("");
     expectBorderlessIconButton(".zt-file-toolbar button");
     expectBorderlessIconButton(".zt-history-toolbar button[aria-label]");
     expectBorderlessIconButton(".zt-history-entry button");

@@ -109,6 +109,15 @@ async function contextMenu(element: HTMLElement) {
   });
 }
 
+async function sessionMenuAction(container: HTMLElement, sessionName: string, action: "编辑" | "删除") {
+  const sessionButton = Array.from(container.querySelectorAll(".zt-session-node-main")).find((item) => item.textContent?.includes(sessionName));
+  if (!sessionButton) {
+    throw new Error(`Session button not found: ${sessionName}`);
+  }
+  await contextMenu(sessionButton as HTMLElement);
+  await click(button(container, action));
+}
+
 function change(element: HTMLInputElement, value: string) {
   act(() => {
     const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
@@ -377,7 +386,7 @@ describe("SessionTree", () => {
   it("locks the connection type tabs when editing an existing SSH session", async () => {
     const view = render(<SessionTree groups={groups} sessions={sessions} />);
 
-    await click(button(view.container, "编辑会话 生产跳板机"));
+    await sessionMenuAction(view.container, "生产跳板机", "编辑");
 
     expect(button(view.container, "SSH").disabled).toBe(false);
     expect(button(view.container, "Local").disabled).toBe(true);
@@ -415,7 +424,7 @@ describe("SessionTree", () => {
   it("configures SSH container entry without a default container target", async () => {
     const view = render(<SessionTree groups={groups} sessions={sessions} />);
 
-    await click(button(view.container, "编辑会话 生产跳板机"));
+    await sessionMenuAction(view.container, "生产跳板机", "编辑");
     await click(button(view.container, "容器"));
 
     const runtimeOptions = await openSelectOptions(view.container, "容器运行时");
@@ -444,7 +453,7 @@ describe("SessionTree", () => {
     const onSaveSession = vi.fn().mockResolvedValue(undefined);
     const view = render(<SessionTree groups={groups} sessions={sessions} onSaveSession={onSaveSession} />);
 
-    await click(button(view.container, "编辑会话 生产跳板机"));
+    await sessionMenuAction(view.container, "生产跳板机", "编辑");
     await click(button(view.container, "跳板机"));
 
     const hostOptions = await openSelectOptions(view.container, "已有 SSH 主机");
@@ -486,7 +495,7 @@ describe("SessionTree", () => {
     const onSaveSession = vi.fn().mockResolvedValue(undefined);
     const view = render(<SessionTree groups={groups} sessions={sessions} onSaveSession={onSaveSession} />);
 
-    await click(button(view.container, "编辑会话 生产跳板机"));
+    await sessionMenuAction(view.container, "生产跳板机", "编辑");
     await click(button(view.container, "隧道"));
 
     expect(editorFields(view.container).textContent).toContain("访问主机服务");
@@ -552,7 +561,7 @@ describe("SessionTree", () => {
   it("shows local environment variables without proxy or jump-host sections", async () => {
     const view = render(<SessionTree groups={groups} sessions={sessions} />);
 
-    await click(button(view.container, "编辑会话 本机 PowerShell"));
+    await sessionMenuAction(view.container, "本机 PowerShell", "编辑");
 
     expect(button(view.container, "SSH").disabled).toBe(true);
     expect(button(view.container, "Local").disabled).toBe(false);
@@ -574,7 +583,7 @@ describe("SessionTree", () => {
   it("shows RDP password, connection properties, and display properties only", async () => {
     const view = render(<SessionTree groups={groups} sessions={sessions} />);
 
-    await click(button(view.container, "编辑会话 办公 RDP"));
+    await sessionMenuAction(view.container, "办公 RDP", "编辑");
 
     expect(button(view.container, "SSH").disabled).toBe(true);
     expect(button(view.container, "Local").disabled).toBe(true);
@@ -627,7 +636,7 @@ describe("SessionTree", () => {
       />,
     );
 
-    await click(button(view.container, "编辑会话 办公 RDP"));
+    await sessionMenuAction(view.container, "办公 RDP", "编辑");
 
     expect(input(view.container, "密码").value).toBe("");
     expect(input(view.container, "密码").type).toBe("password");
@@ -669,7 +678,7 @@ describe("SessionTree", () => {
       />,
     );
 
-    await click(button(view.container, "编辑会话 办公 RDP"));
+    await sessionMenuAction(view.container, "办公 RDP", "编辑");
     expect(dialog(view.container).textContent).not.toContain("凭据引用");
     await click(button(view.container, "显示密码"));
     change(input(view.container, "密码"), secret);
@@ -729,7 +738,7 @@ describe("SessionTree", () => {
     view.unmount();
   });
 
-  it("edits a session from the row icon and deletes a session after confirmation", async () => {
+  it("edits and deletes a session from its context menu", async () => {
     const onSaveSession = vi.fn().mockResolvedValue(undefined);
     const onDeleteSession = vi.fn().mockResolvedValue(undefined);
     const confirmSpy = vi.spyOn(window, "confirm");
@@ -742,7 +751,9 @@ describe("SessionTree", () => {
       />,
     );
 
-    await click(button(view.container, "编辑会话 日志节点"));
+    expect(() => button(view.container, "编辑会话 日志节点")).toThrow();
+    expect(() => button(view.container, "删除会话 日志节点")).toThrow();
+    await sessionMenuAction(view.container, "日志节点", "编辑");
     expect(input(view.container, "会话名称").value).toBe("日志节点");
     expect(input(view.container, "主机").value).toBe("logs.example.test");
     await chooseSelect(view.container, "认证方式", "key");
@@ -750,7 +761,7 @@ describe("SessionTree", () => {
     await click(button(view.container, "保存会话"));
     expect(onSaveSession).toHaveBeenCalledWith(expect.objectContaining({ id: "ssh-log", host: "logs.internal.test", auth_mode: "key" }));
 
-    await click(button(view.container, "删除会话 日志节点"));
+    await sessionMenuAction(view.container, "日志节点", "删除");
     expect(view.container.querySelector('[role="dialog"]')?.getAttribute("aria-label")).toBe("删除会话");
     expect(view.container.textContent).toContain("确认删除会话“日志节点”？");
     await click(button(view.container, "确认删除"));
@@ -765,7 +776,7 @@ describe("SessionTree", () => {
     const onSaveSession = vi.fn().mockRejectedValue("raw session save failure");
     const view = render(<SessionTree groups={groups} sessions={sessions} onSaveSession={onSaveSession} />);
 
-    await click(button(view.container, "编辑会话 本机 PowerShell"));
+    await sessionMenuAction(view.container, "本机 PowerShell", "编辑");
     await click(button(view.container, "保存会话"));
 
     expect(onSaveSession).toHaveBeenCalled();
@@ -779,7 +790,7 @@ describe("SessionTree", () => {
     const onTestSession = vi.fn().mockRejectedValue("raw test failure");
     const view = render(<SessionTree groups={groups} sessions={sessions} onTestSession={onTestSession} />);
 
-    await click(button(view.container, "编辑会话 日志节点"));
+    await sessionMenuAction(view.container, "日志节点", "编辑");
     await click(button(view.container, "测试连接"));
 
     expect(onTestSession).toHaveBeenCalled();
@@ -802,7 +813,7 @@ describe("SessionTree", () => {
       />,
     );
 
-    await click(button(view.container, "编辑会话 生产跳板机"));
+    await sessionMenuAction(view.container, "生产跳板机", "编辑");
     await chooseSelect(view.container, "认证方式", "password");
     await click(button(view.container, "显示密码"));
     change(input(view.container, "密码"), secret);
@@ -828,7 +839,7 @@ describe("SessionTree", () => {
     const onDeleteSession = vi.fn().mockRejectedValue("raw session delete failure");
     const view = render(<SessionTree groups={groups} sessions={sessions} onDeleteSession={onDeleteSession} />);
 
-    await click(button(view.container, "删除会话 日志节点"));
+    await sessionMenuAction(view.container, "日志节点", "删除");
     await click(button(view.container, "确认删除"));
 
     expect(onDeleteSession).toHaveBeenCalledWith("ssh-log");
@@ -859,7 +870,7 @@ describe("SessionTree", () => {
       />,
     );
 
-    await click(button(view.container, "编辑会话 生产跳板机"));
+    await sessionMenuAction(view.container, "生产跳板机", "编辑");
     await chooseSelect(view.container, "认证方式", "password");
     expect(dialog(view.container).textContent).not.toContain("凭据引用");
     expect(input(view.container, "密码").type).toBe("password");
@@ -921,7 +932,7 @@ describe("SessionTree", () => {
       />,
     );
 
-    await click(button(view.container, "编辑会话 密码节点"));
+    await sessionMenuAction(view.container, "密码节点", "编辑");
 
     expect(input(view.container, "密码").value).toBe("");
     expect(input(view.container, "密码").type).toBe("password");
@@ -971,7 +982,7 @@ describe("SessionTree", () => {
       />,
     );
 
-    await click(button(view.container, "编辑会话 密码节点"));
+    await sessionMenuAction(view.container, "密码节点", "编辑");
     await click(button(view.container, "显示密码"));
 
     expect(onReadCredential).toHaveBeenCalledWith("credential:ssh-password");
@@ -993,7 +1004,7 @@ describe("SessionTree", () => {
       />,
     );
 
-    await click(button(view.container, "编辑会话 生产跳板机"));
+    await sessionMenuAction(view.container, "生产跳板机", "编辑");
 
     expect(input(view.container, "密钥密码").value).toBe("");
     expect(input(view.container, "密钥密码").type).toBe("password");
@@ -1034,7 +1045,7 @@ describe("SessionTree", () => {
       />,
     );
 
-    await click(button(view.container, "编辑会话 生产跳板机"));
+    await sessionMenuAction(view.container, "生产跳板机", "编辑");
     await chooseSelect(view.container, "认证方式", "key");
     await click(button(view.container, "选择身份文件"));
 
@@ -1079,7 +1090,7 @@ describe("SessionTree", () => {
       />,
     );
 
-    await click(button(view.container, "编辑会话 生产跳板机"));
+    await sessionMenuAction(view.container, "生产跳板机", "编辑");
     await chooseSelect(view.container, "认证方式", "key");
     await click(button(view.container, "选择身份文件"));
 
