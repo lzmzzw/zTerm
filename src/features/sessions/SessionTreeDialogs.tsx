@@ -1,7 +1,7 @@
 // Author: Liz
 import { useState } from "react";
 
-import { ZtButton, ZtConfirmDialog, ZtDialog, ZtFloatingSurface, ZtInput } from "../../components/ZtUi";
+import { ZtButton, ZtConfirmDialog, ZtContextMenu, ZtDialog, ZtInput } from "../../components/ZtUi";
 import type { SavedSession, SessionGroup } from "./types";
 
 export type SessionTreeContextMenu =
@@ -29,7 +29,7 @@ export function SessionContextMenu({
   onOpenSession?: (session: SavedSession) => void;
 }) {
   return (
-    <ZtFloatingSurface className="zt-session-context-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
+    <ZtContextMenu className="zt-session-context-menu" role="menu" x={menu.x} y={menu.y}>
       {menu.kind === "root" ? (
         <>
           <button type="button" role="menuitem" onClick={() => onCreateSession(null)}>
@@ -68,7 +68,7 @@ export function SessionContextMenu({
           </button>
         </>
       ) : null}
-    </ZtFloatingSurface>
+    </ZtContextMenu>
   );
 }
 

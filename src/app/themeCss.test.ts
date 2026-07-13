@@ -153,6 +153,13 @@ describe("global dark theme colors", () => {
     }
   });
 
+  it("keeps context menus within the viewport and scrollable when their content is taller", () => {
+    expect(ruleBodiesForSelector(".zt-floating-surface")).toContain("max-width: calc(100vw - 16px)");
+    expect(ruleBodiesForSelector(".zt-floating-surface")).toContain("max-height: calc(100vh - 16px)");
+    expect(ruleBodiesForSelector(".zt-floating-surface")).toContain("overflow-y: auto");
+    expect(ruleBodiesForSelector(".zt-floating-surface")).toContain("overflow-x: hidden");
+  });
+
   it("keeps the session editor header, body, and footer heights stable across sections", () => {
     expect(ruleBodiesForSelector(".zt-session-editor-dialog form")).toContain(
       "grid-template-rows: 52px 88px minmax(0, 1fr) auto 68px",

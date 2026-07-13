@@ -2,7 +2,7 @@
 import { CopyPlus, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { ZtFloatingSurface } from "../../components/ZtUi";
+import { ZtContextMenu } from "../../components/ZtUi";
 import { WorkspaceLayoutPreview, type WorkspaceLayoutPreviewSession } from "./WorkspaceLayoutPreview";
 import { DEFAULT_WORKSPACE_ID } from "./workspaceConstants";
 import type { WorkspaceSidebarItem } from "./workspaceShellModel";
@@ -159,7 +159,7 @@ export function WorkspaceManagerPanel({
       </div>
 
       {contextMenu ? (
-        <ZtFloatingSurface className="zt-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+        <ZtContextMenu className="zt-context-menu" role="menu" x={contextMenu.x} y={contextMenu.y}>
           <WorkspaceContextMenuItems
             workspace={contextMenu.workspace}
             onEditWorkspace={onEditWorkspace}
@@ -167,7 +167,7 @@ export function WorkspaceManagerPanel({
             onDeleteWorkspace={onDeleteWorkspace}
             onCloseMenu={() => setContextMenu(null)}
           />
-        </ZtFloatingSurface>
+        </ZtContextMenu>
       ) : null}
     </section>
   );

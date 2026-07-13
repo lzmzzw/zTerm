@@ -8,7 +8,7 @@ import {
   ZtButton,
   ZtConfirmDialog,
   ZtDialog,
-  ZtFloatingSurface,
+  ZtContextMenu,
   ZtInput,
   ZtSwitch,
   ZtTextarea,
@@ -600,11 +600,11 @@ export function ModelManagerPanel({
       ) : null}
 
       {contextMenu ? (
-        <ZtFloatingSurface className="zt-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+        <ZtContextMenu className="zt-context-menu" role="menu" x={contextMenu.x} y={contextMenu.y}>
           <button type="button" role="menuitem" onClick={openCreateEditor}>
             新建模型
           </button>
-        </ZtFloatingSurface>
+        </ZtContextMenu>
       ) : null}
     </section>
   );

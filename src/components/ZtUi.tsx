@@ -9,7 +9,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { forwardRef, useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { forwardRef, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import type {
   ButtonHTMLAttributes,
   CSSProperties,
@@ -18,6 +18,7 @@ import type {
   ReactNode,
   TextareaHTMLAttributes,
 } from "react";
+import { resolveContextMenuPosition } from "./contextMenuPosition";
 
 type ZtDensity = "dense" | "default" | "large";
 type ZtControlSize = "dense" | "default" | "form";
@@ -328,6 +329,41 @@ export const ZtFloatingSurface = forwardRef<
     </div>
   );
 });
+
+export function ZtContextMenu({
+  x,
+  y,
+  style,
+  ...props
+}: Omit<HTMLAttributes<HTMLDivElement>, "style"> & {
+  x: number;
+  y: number;
+  style?: CSSProperties;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState({ left: x, top: y });
+
+  useLayoutEffect(() => {
+    const updatePosition = () => {
+      const rect = menuRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const nextPosition = resolveContextMenuPosition({
+        anchor: { x, y },
+        menu: { width: rect.width, height: rect.height },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      });
+      setPosition((current) =>
+        current.left === nextPosition.left && current.top === nextPosition.top ? current : nextPosition,
+      );
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    return () => window.removeEventListener("resize", updatePosition);
+  }, [x, y]);
+
+  return <ZtFloatingSurface {...props} ref={menuRef} style={{ ...style, ...position }} />;
+}
 
 export function ZtSwitch({
   label,

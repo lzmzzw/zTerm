@@ -7,7 +7,7 @@ import type { FileEntry } from "./fileStore";
 import type { FileSelectionEvent } from "./fileSelectionModel";
 import { resolveFileDragDropEvent } from "./fileDragDropModel";
 import { formatFileModifiedTime, resolveFileIcon } from "./fileExplorerPresentation";
-import { ZtFloatingSurface } from "../../components/ZtUi";
+import { ZtContextMenu } from "../../components/ZtUi";
 import { formatBytes } from "../../lib/byteFormatters";
 
 interface FileExplorerPanelProps {
@@ -208,7 +208,7 @@ export function FileExplorerPanel({
         </div>
       ) : null}
       {contextMenu ? (
-        <ZtFloatingSurface className="zt-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+        <ZtContextMenu className="zt-context-menu" role="menu" x={contextMenu.x} y={contextMenu.y}>
           <button type="button" role="menuitem" disabled={disabled || loading} onClick={() => void onUpload()}>
             上传
           </button>
@@ -221,7 +221,7 @@ export function FileExplorerPanel({
           <button type="button" role="menuitem" onClick={() => setShowHiddenFiles((current) => !current)}>
             {showHiddenFiles ? "不显示隐藏文件" : "显示隐藏文件"}
           </button>
-        </ZtFloatingSurface>
+        </ZtContextMenu>
       ) : null}
     </div>
   );

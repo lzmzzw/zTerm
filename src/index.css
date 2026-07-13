@@ -152,7 +152,7 @@ body {
   min-width: 1180px;
   min-height: 720px;
   margin: 0;
-  overflow: hidden;
+  overflow-x: hidden;
 }
 
 button,
@@ -479,8 +479,11 @@ button {
   z-index: 5000;
   display: grid;
   min-width: 128px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   padding: 6px;
-  overflow: hidden;
+  overflow-x: hidden;
   border: 1px solid var(--zt-dialog-border);
   border-radius: var(--zt-radius-window);
   background: var(--zt-surface-floating);
