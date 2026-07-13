@@ -62,10 +62,12 @@ async function dragBetween(source: HTMLElement, destination: HTMLElement) {
   };
   await act(async () => {
     source.dispatchEvent(Object.assign(new Event("dragstart", { bubbles: true }), { dataTransfer }));
+    destination.dispatchEvent(Object.assign(new Event("dragenter", { bubbles: true, cancelable: true }), { dataTransfer }));
     destination.dispatchEvent(Object.assign(new Event("dragover", { bubbles: true, cancelable: true }), { dataTransfer }));
     destination.dispatchEvent(Object.assign(new Event("drop", { bubbles: true, cancelable: true }), { dataTransfer }));
     await Promise.resolve();
   });
+  return dataTransfer;
 }
 
 function button(container: HTMLElement, label: string) {
@@ -264,11 +266,13 @@ describe("FileTransferPanel", () => {
     const row = Array.from(view.container.querySelectorAll('button[role="listitem"]')).find((item) =>
       item.textContent?.includes("bundle.zip"),
     );
-    const destinationPane = view.container.querySelector('[aria-label="右侧文件端点"]') as HTMLElement;
+    const destinationPane = view.container.querySelector('[aria-label="右侧文件列表"]') as HTMLElement;
     expect(row).toBeTruthy();
     expect(destinationPane).toBeTruthy();
 
-    await dragBetween(row as HTMLElement, destinationPane);
+    const dataTransfer = await dragBetween(row as HTMLElement, destinationPane);
+
+    expect(dataTransfer.setData).toHaveBeenCalledWith("application/x-zterm-file-transfer", "C:/Users/Ops/bundle.zip");
 
     expect(invokeMock).toHaveBeenCalledWith("file_transfer_check_conflicts", {
       items: [{ destination: { kind: "ssh", saved_session_id: "ssh-1", path: "/bundle.zip" }, kind: "file" }],

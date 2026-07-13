@@ -428,22 +428,28 @@ function EndpointPane({
     value: root,
     label: root,
   }));
+  function allowDrop(event: React.DragEvent<HTMLElement>) {
+    if (!canAcceptDrop()) return false;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    return true;
+  }
+
+  function handleDrop(event: React.DragEvent<HTMLElement>) {
+    if (!allowDrop(event)) return;
+    event.stopPropagation();
+    void onDrop();
+  }
+
   return (
     <section
       className={dropActive ? "zt-file-transfer-pane zt-file-transfer-pane-drop" : "zt-file-transfer-pane"}
       aria-label={`${title}文件端点`}
       data-side={side}
       data-local={pane.endpoint.kind === "local" ? "true" : "false"}
-      onDragOver={(event) => {
-        if (!canAcceptDrop()) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "copy";
-      }}
-      onDrop={(event) => {
-        if (!canAcceptDrop()) return;
-        event.preventDefault();
-        void onDrop();
-      }}
+      onDragEnter={allowDrop}
+      onDragOver={allowDrop}
+      onDrop={handleDrop}
     >
       <div className="zt-file-transfer-pane-header">
         <ZtSelect
@@ -503,7 +509,14 @@ function EndpointPane({
         {pane.loading ? <div className="zt-empty-line">加载中</div> : null}
         {endpointReady && !pane.loading && visibleEntries.length === 0 ? <div className="zt-empty-line">暂无文件</div> : null}
       </div>
-      <div className="zt-file-transfer-list" role="list" aria-label={`${title}文件列表`}>
+      <div
+        className="zt-file-transfer-list"
+        role="list"
+        aria-label={`${title}文件列表`}
+        onDragEnter={allowDrop}
+        onDragOver={allowDrop}
+        onDrop={handleDrop}
+      >
         {visibleEntries.map((entry) => (
           <button
             key={entry.path}
@@ -519,6 +532,7 @@ function EndpointPane({
                 return;
               }
               event.dataTransfer.effectAllowed = "copy";
+              event.dataTransfer.setData("application/x-zterm-file-transfer", entry.path);
               event.dataTransfer.setData("text/plain", entry.path);
               onDragStart(entry.path);
             }}
