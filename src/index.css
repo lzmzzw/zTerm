@@ -3056,6 +3056,24 @@ button {
   overflow: hidden;
 }
 
+.zt-file-transfer-pane[data-local="true"] .zt-file-transfer-path {
+  grid-template-columns: minmax(0, 1fr) 72px repeat(3, 26px);
+}
+
+.zt-file-transfer-root-select.zt-select-trigger {
+  min-height: 26px;
+  height: 26px;
+  padding: 0 22px 0 7px;
+  font-family: var(--zt-font-mono);
+  font-size: var(--zt-font-size-ui);
+}
+
+.zt-file-transfer-root-select .zt-select-chevron {
+  right: 8px;
+  width: 7px;
+  height: 7px;
+}
+
 .zt-transfer-dock-collapsed {
   grid-template-rows: 32px;
 }

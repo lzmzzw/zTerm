@@ -164,12 +164,16 @@ describe("FileTransferPanel", () => {
       transferError: null,
       conflictPolicy: "overwrite",
       defaultLocalPath: "",
+      localRoots: [],
     });
   });
 
   it("selects an SSH endpoint and enqueues the selected local file to the remote side", async () => {
     const localFile = fileEntry("C:/Users/Ops/bundle.zip");
     invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "file_transfer_local_roots") {
+        return Promise.resolve(["C:\\", "D:\\"]);
+      }
       if (command === "sessions_list") {
         return Promise.resolve({ groups: [], sessions: [sshSession()] });
       }
@@ -225,6 +229,9 @@ describe("FileTransferPanel", () => {
   it("enqueues a transfer when a file is dragged from the left endpoint to the right endpoint", async () => {
     const localFile = fileEntry("C:/Users/Ops/bundle.zip");
     invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "file_transfer_local_roots") {
+        return Promise.resolve(["C:\\", "D:\\"]);
+      }
       if (command === "sessions_list") {
         return Promise.resolve({ groups: [], sessions: [sshSession()] });
       }
@@ -271,6 +278,45 @@ describe("FileTransferPanel", () => {
       destination: { kind: "ssh", saved_session_id: "ssh-1", path: "/bundle.zip" },
       kind: "file",
       conflictPolicy: "overwrite",
+    });
+
+    view.unmount();
+  });
+
+  it("switches a local endpoint to a selected Windows drive root", async () => {
+    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "file_transfer_local_roots") {
+        return Promise.resolve(["C:\\", "D:\\"]);
+      }
+      if (command === "sessions_list") {
+        return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      }
+      if (command === "file_transfer_default_local_path") {
+        return Promise.resolve("C:/Users/Ops");
+      }
+      if (command === "file_transfer_list") {
+        return Promise.resolve([]);
+      }
+      if (command === "file_transfer_list_endpoint") {
+        return Promise.resolve([]);
+      }
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+
+    await click(button(view.container, "左侧本地磁盘"));
+    const driveOption = Array.from(document.querySelectorAll('[role="option"]')).find(
+      (option) => option.getAttribute("data-value") === "D:\\",
+    ) as HTMLElement | undefined;
+    expect(driveOption).toBeTruthy();
+    await click(driveOption as HTMLElement);
+    await flushEffects();
+
+    expect(invokeMock).toHaveBeenCalledWith("file_transfer_list_endpoint", {
+      endpoint: { kind: "local", saved_session_id: null, path: "D:\\" },
     });
 
     view.unmount();

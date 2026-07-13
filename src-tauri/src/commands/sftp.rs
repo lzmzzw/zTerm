@@ -12,8 +12,8 @@ use crate::{
     services::{
         external_launch_service::CompositeSshSecretResolver,
         sftp_service::{
-            default_local_directory, list_local_directory, local_path_total_bytes, SftpService,
-            TransferProgressUpdate,
+            default_local_directory, list_local_directory, local_path_total_bytes,
+            local_root_directories, SftpService, TransferProgressUpdate,
         },
         transfer_queue::TransferQueue,
     },
@@ -188,6 +188,11 @@ pub async fn sftp_check_transfer_conflicts(
 #[tauri::command]
 pub fn file_transfer_default_local_path() -> AppResult<String> {
     default_local_directory()
+}
+
+#[tauri::command]
+pub fn file_transfer_local_roots() -> AppResult<Vec<String>> {
+    local_root_directories()
 }
 
 #[tauri::command]

@@ -35,4 +35,10 @@ describe("file transfer dialog styles", () => {
     expect(css).toContain(".zt-file-transfer-pane-status");
     expect(ruleBody(".zt-file-transfer-pane")).toContain("grid-template-rows: 34px 34px auto minmax(0, 1fr)");
   });
+
+  it("uses an explicit local-endpoint selector rule for the drive picker", () => {
+    expect(css).toContain('.zt-file-transfer-pane[data-local="true"] .zt-file-transfer-path');
+    expect(css).toContain(".zt-file-transfer-root-select.zt-select-trigger");
+    expect(css).not.toContain(".zt-file-transfer-path:has(.zt-file-transfer-root-select)");
+  });
 });

@@ -77,6 +77,7 @@ describe("fileTransferStore", () => {
       transferError: null,
       conflictPolicy: "overwrite",
       defaultLocalPath: "",
+      localRoots: [],
     });
   });
 
@@ -95,6 +96,15 @@ describe("fileTransferStore", () => {
       loading: false,
       error: null,
     });
+  });
+
+  it("loads available local roots for the Windows drive selector", async () => {
+    invokeMock.mockResolvedValueOnce(["C:\\", "D:\\"]);
+
+    await expect(useFileTransferStore.getState().loadLocalRoots()).resolves.toEqual(["C:\\", "D:\\"]);
+
+    expect(invokeMock).toHaveBeenCalledWith("file_transfer_local_roots");
+    expect(useFileTransferStore.getState().localRoots).toEqual(["C:\\", "D:\\"]);
   });
 
   it("checks endpoint conflicts and enqueues a remote-to-remote file transfer with endpoint snapshots", async () => {

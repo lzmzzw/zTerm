@@ -41,7 +41,9 @@ interface FileTransferState {
   transferError: string | null;
   conflictPolicy: TransferConflictPolicy;
   defaultLocalPath: string;
+  localRoots: string[];
   loadDefaultLocalPath: () => Promise<string>;
+  loadLocalRoots: () => Promise<string[]>;
   setConflictPolicy: (policy: TransferConflictPolicy) => void;
   setEndpoint: (side: FileTransferSide, endpoint: TransferEndpoint) => void;
   setPath: (side: FileTransferSide, path: string) => void;
@@ -97,6 +99,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   transferError: null,
   conflictPolicy: "overwrite",
   defaultLocalPath: "",
+  localRoots: [],
   async loadDefaultLocalPath() {
     if (!localPathRequest) {
       localPathRequest = invoke<string>("file_transfer_default_local_path");
@@ -109,6 +112,16 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       localPathRequest = null;
       set({ transferError: fileTransferErrorMessage(error) });
       return "";
+    }
+  },
+  async loadLocalRoots() {
+    try {
+      const roots = await invoke<string[]>("file_transfer_local_roots");
+      set({ localRoots: roots });
+      return roots;
+    } catch (error) {
+      set({ transferError: fileTransferErrorMessage(error) });
+      return [];
     }
   },
   setConflictPolicy: (policy) => set({ conflictPolicy: policy }),

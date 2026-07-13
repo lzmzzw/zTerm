@@ -2,8 +2,9 @@
 use zterm_lib::{
     models::session::{AuthMode, SavedSession, SessionType, SshOptions},
     services::sftp_service::{
-        build_sftp_auth_material, build_sftp_cache_key, numbered_conflict_candidate_name,
-        sftp_uses_cached_session_for, SftpAuthMaterial, SftpOperationKind,
+        build_sftp_auth_material, build_sftp_cache_key, local_root_directories,
+        numbered_conflict_candidate_name, sftp_uses_cached_session_for, SftpAuthMaterial,
+        SftpOperationKind,
     },
 };
 
@@ -141,6 +142,25 @@ fn conflict_candidate_names_preserve_file_extensions() {
     );
     assert_eq!(numbered_conflict_candidate_name("logs", 2), "logs (2)");
     assert_eq!(numbered_conflict_candidate_name(".env", 3), ".env (3)");
+}
+
+#[test]
+fn local_root_directories_only_returns_accessible_platform_roots() {
+    let roots = local_root_directories().expect("local roots should resolve");
+
+    #[cfg(windows)]
+    {
+        assert!(!roots.is_empty());
+        assert!(roots.iter().all(|root| {
+            root.len() == 3
+                && root.ends_with("\\")
+                && root.as_bytes()[0].is_ascii_alphabetic()
+                && std::path::Path::new(root).is_dir()
+        }));
+    }
+
+    #[cfg(not(windows))]
+    assert_eq!(roots, vec!["/"]);
 }
 
 fn ssh_session(id: &str, host: &str, username: &str) -> SavedSession {

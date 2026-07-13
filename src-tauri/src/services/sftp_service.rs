@@ -852,6 +852,23 @@ pub fn default_local_directory() -> AppResult<String> {
         .ok_or_else(|| AppError::validation("无法解析默认本地目录"))
 }
 
+pub fn local_root_directories() -> AppResult<Vec<String>> {
+    #[cfg(windows)]
+    {
+        let roots = (b'A'..=b'Z')
+            .map(char::from)
+            .map(|letter| format!("{letter}:\\"))
+            .filter(|root| Path::new(root).is_dir())
+            .collect();
+        Ok(roots)
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(vec!["/".to_string()])
+    }
+}
+
 pub async fn list_local_directory(path: &str) -> AppResult<Vec<FileEntry>> {
     let path = if path.trim().is_empty() {
         default_local_directory()?

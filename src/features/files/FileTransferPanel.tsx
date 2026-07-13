@@ -55,6 +55,8 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     conflictPolicy,
     defaultLocalPath,
     loadDefaultLocalPath,
+    localRoots,
+    loadLocalRoots,
     setConflictPolicy,
     setEndpoint,
     setPath,
@@ -82,6 +84,8 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       conflictPolicy: state.conflictPolicy,
       defaultLocalPath: state.defaultLocalPath,
       loadDefaultLocalPath: state.loadDefaultLocalPath,
+      localRoots: state.localRoots,
+      loadLocalRoots: state.loadLocalRoots,
       setConflictPolicy: state.setConflictPolicy,
       setEndpoint: state.setEndpoint,
       setPath: state.setPath,
@@ -111,6 +115,10 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
+
+  useEffect(() => {
+    void loadLocalRoots();
+  }, [loadLocalRoots]);
 
   useEffect(() => {
     let mounted = true;
@@ -249,6 +257,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           pane={left}
           sshSessions={sshSessions}
           defaultLocalPath={defaultLocalPath}
+          localRoots={localRoots}
           showHidden={showHidden.left}
           onShowHiddenChange={(value) => setShowHidden((current) => ({ ...current, left: value }))}
           onEndpointChange={(endpoint) => {
@@ -298,6 +307,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           pane={right}
           sshSessions={sshSessions}
           defaultLocalPath={defaultLocalPath}
+          localRoots={localRoots}
           showHidden={showHidden.right}
           onShowHiddenChange={(value) => setShowHidden((current) => ({ ...current, right: value }))}
           onEndpointChange={(endpoint) => {
@@ -364,6 +374,7 @@ function EndpointPane({
   pane,
   sshSessions,
   defaultLocalPath,
+  localRoots,
   showHidden,
   onShowHiddenChange,
   onEndpointChange,
@@ -389,6 +400,7 @@ function EndpointPane({
   };
   sshSessions: SavedSession[];
   defaultLocalPath: string;
+  localRoots: string[];
   showHidden: boolean;
   onShowHiddenChange: (value: boolean) => void;
   onEndpointChange: (endpoint: TransferEndpoint) => void;
@@ -410,11 +422,17 @@ function EndpointPane({
   ];
   const visibleEntries = showHidden ? pane.entries : pane.entries.filter((entry) => !entry.name.startsWith("."));
   const endpointReady = pane.endpoint.kind === "local" || Boolean(pane.endpoint.saved_session_id);
+  const localRoot = rootPathFor(pane.endpoint.path);
+  const rootOptions = Array.from(new Set([...localRoots, ...(localRoot ? [localRoot] : [])])).map((root) => ({
+    value: root,
+    label: root,
+  }));
   return (
     <section
       className={dropActive ? "zt-file-transfer-pane zt-file-transfer-pane-drop" : "zt-file-transfer-pane"}
       aria-label={`${title}文件端点`}
       data-side={side}
+      data-local={pane.endpoint.kind === "local" ? "true" : "false"}
       onDragOver={(event) => {
         if (!canAcceptDrop()) return;
         event.preventDefault();
@@ -452,6 +470,18 @@ function EndpointPane({
             if (event.key === "Enter") void onRefresh();
           }}
         />
+        {pane.endpoint.kind === "local" && rootOptions.length > 0 ? (
+          <ZtSelect
+            ariaLabel={`${title}本地磁盘`}
+            className="zt-file-transfer-root-select"
+            value={localRoot}
+            options={rootOptions}
+            onChange={(path) => {
+              onPathChange(path);
+              void Promise.resolve().then(() => onRefresh());
+            }}
+          />
+        ) : null}
         <button type="button" aria-label={`${title}返回上级`} title="返回上级" disabled={!endpointReady} onClick={() => void onParent()}>
           <FolderUp size={14} aria-hidden="true" />
         </button>
@@ -511,6 +541,11 @@ function EndpointPane({
       </div>
     </section>
   );
+}
+
+function rootPathFor(path: string) {
+  const match = path.trim().match(/^[a-z]:[\\/]/i);
+  return match ? `${match[0][0].toUpperCase()}:\\` : path.trim() === "/" ? "/" : "";
 }
 
 function canTransfer(
