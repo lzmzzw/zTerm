@@ -22,6 +22,7 @@ export function parentEndpointPath(endpoint: TransferEndpoint) {
   const normalized = endpoint.path.replace(/[\\/]+$/, "");
   const index = Math.max(normalized.lastIndexOf("\\"), normalized.lastIndexOf("/"));
   if (index <= 0) return endpoint.path;
+  if (index === 2 && /^[a-z]:/i.test(normalized)) return normalized.slice(0, index + 1);
   return normalized.slice(0, index);
 }
 

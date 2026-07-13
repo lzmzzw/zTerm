@@ -361,6 +361,33 @@ describe("FileTransferPanel", () => {
     view.unmount();
   });
 
+  it("keeps the Windows drive selected when navigating to its root", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\", "D:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list" || command === "file_transfer_list_endpoint") return Promise.resolve([]);
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+
+    act(() => useFileTransferStore.getState().setPath("left", "D:\\bundle"));
+
+    expect(button(view.container, "左侧本地磁盘").textContent).toContain("D:\\");
+    await click(button(view.container, "左侧返回上级"));
+    await flushEffects();
+
+    expect(button(view.container, "左侧本地磁盘").textContent).toContain("D:\\");
+    expect(invokeMock).toHaveBeenCalledWith("file_transfer_list_endpoint", {
+      endpoint: { kind: "local", saved_session_id: null, path: "D:\\" },
+    });
+
+    view.unmount();
+  });
+
   it("uses the full endpoint header for the connection selector without visible side labels", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
