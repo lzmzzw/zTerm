@@ -1,6 +1,8 @@
 // Author: Liz
 import type { SavedSession, SessionGroup, SessionGroupDraft } from "./types";
 
+const nameCollator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
+
 export interface SessionGroupTreeNode {
   group: SessionGroup;
   groups: SessionGroupTreeNode[];
@@ -43,6 +45,13 @@ export function buildSessionTreeModel({
     }
   }
 
+  for (const siblingGroups of groupsByParentId.values()) {
+    siblingGroups.sort(compareNamedItems);
+  }
+  for (const groupSessions of sessionsByGroupId.values()) {
+    groupSessions.sort(compareNamedItems);
+  }
+
   function buildGroupNodes(parentId: string | null, ancestors: Set<string>): SessionGroupTreeNode[] {
     return (groupsByParentId.get(parentId) ?? [])
       .filter((group) => !ancestors.has(group.id))
@@ -62,6 +71,10 @@ export function buildSessionTreeModel({
     rootSessions: sessionsByGroupId.get(null) ?? [],
     isEmpty: groups.length === 0 && sessions.length === 0,
   };
+}
+
+function compareNamedItems(left: { id: string; name: string }, right: { id: string; name: string }) {
+  return nameCollator.compare(left.name, right.name) || nameCollator.compare(left.id, right.id);
 }
 
 export function buildSessionGroupDraft({

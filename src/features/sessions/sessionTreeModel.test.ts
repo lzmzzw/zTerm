@@ -42,28 +42,30 @@ function session(overrides: Partial<SavedSession>): SavedSession {
 }
 
 describe("sessionTreeModel", () => {
-  it("builds a nested tree while preserving the incoming order", () => {
+  it("sorts group and session names naturally at every tree level", () => {
     const model = buildSessionTreeModel({
       groups: [
-        group({ id: "root-a", name: "A" }),
+        group({ id: "root-a", name: "生产环境" }),
         group({ id: "child-a", parent_id: "root-a", name: "A child" }),
-        group({ id: "root-b", name: "B" }),
+        group({ id: "root-b", name: "开发环境" }),
         group({ id: "orphan", parent_id: "missing", name: "Missing parent" }),
       ],
       sessions: [
-        session({ id: "root-session", group_id: null }),
-        session({ id: "session-a", group_id: "root-a" }),
+        session({ id: "root-191", name: "172.16.41.191", group_id: null }),
+        session({ id: "root-2", name: "172.16.41.2", group_id: null }),
+        session({ id: "session-a", name: "172.16.41.191", group_id: "root-a" }),
+        session({ id: "session-b", name: "172.16.41.2", group_id: "root-a" }),
         session({ id: "session-child", group_id: "child-a" }),
         session({ id: "orphan-session", group_id: "missing" }),
       ],
     });
 
     expect(model.isEmpty).toBe(false);
-    expect(model.rootSessions.map((item) => item.id)).toEqual(["root-session"]);
-    expect(model.groups.map((item) => item.group.id)).toEqual(["root-a", "root-b"]);
-    expect(model.groups[0].sessions.map((item) => item.id)).toEqual(["session-a"]);
-    expect(model.groups[0].groups.map((item) => item.group.id)).toEqual(["child-a"]);
-    expect(model.groups[0].groups[0].sessions.map((item) => item.id)).toEqual(["session-child"]);
+    expect(model.rootSessions.map((item) => item.id)).toEqual(["root-2", "root-191"]);
+    expect(model.groups.map((item) => item.group.id)).toEqual(["root-b", "root-a"]);
+    expect(model.groups[1].sessions.map((item) => item.id)).toEqual(["session-b", "session-a"]);
+    expect(model.groups[1].groups.map((item) => item.group.id)).toEqual(["child-a"]);
+    expect(model.groups[1].groups[0].sessions.map((item) => item.id)).toEqual(["session-child"]);
     expect(JSON.stringify(model)).not.toContain("orphan");
   });
 
