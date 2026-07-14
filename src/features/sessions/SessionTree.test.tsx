@@ -775,8 +775,8 @@ describe("SessionTree", () => {
       Array.from(view.container.querySelectorAll(".zt-session-node-main")).find((item) => item.textContent?.includes("日志节点")) as HTMLElement,
     );
     expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
+      "连接",
       "编辑",
-      "建立新连接",
       "删除",
     ]);
 
@@ -810,7 +810,7 @@ describe("SessionTree", () => {
 
     await doubleClick(sessionButton);
     await contextMenu(sessionButton);
-    await click(button(view.container, "建立新连接"));
+    await click(button(view.container, "连接"));
 
     expect(onOpenSession).toHaveBeenCalledTimes(2);
     expect(onOpenSession).toHaveBeenLastCalledWith(expect.objectContaining({ id: "ssh-log" }));

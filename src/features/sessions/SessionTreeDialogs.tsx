@@ -57,11 +57,11 @@ export function SessionContextMenu({
 
       {menu.kind === "session" ? (
         <>
+          <button type="button" role="menuitem" onClick={() => onOpenSession?.(menu.session)}>
+            连接
+          </button>
           <button type="button" role="menuitem" onClick={() => onEditSession(menu.session)}>
             编辑
-          </button>
-          <button type="button" role="menuitem" onClick={() => onOpenSession?.(menu.session)}>
-            建立新连接
           </button>
           <button type="button" className="zt-delete-button" role="menuitem" onClick={() => void onDeleteSession(menu.session)}>
             删除
