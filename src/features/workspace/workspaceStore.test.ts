@@ -281,6 +281,92 @@ describe("workspaceStore pane tabs", () => {
     expect(paneIds).toHaveLength(3);
   });
 
+  it("normalizes duplicate pane terminal tab ids before restored runtimes are bound", () => {
+    const definition = runtimeWorkspace("workspace-duplicated-tabs", "runtime-snapshot");
+    const root = definition.tabs[0].root;
+    if (root.kind !== "leaf") return;
+    root.active_terminal_tab_id = "pane-tab-2";
+    root.terminal_tabs = [
+      {
+        id: "pane-tab-2",
+        title: "生产机",
+        runtime_session_id: null,
+        saved_session_id: "session-1",
+      },
+      {
+        id: "pane-tab-3",
+        title: "Git Bash",
+        runtime_session_id: null,
+        saved_session_id: null,
+      },
+      {
+        id: "pane-tab-2",
+        title: "生产机",
+        runtime_session_id: null,
+        saved_session_id: "session-1",
+      },
+    ];
+    useWorkspaceStore.setState({
+      workspaces: [runtimeWorkspace(DEFAULT_WORKSPACE_ID, "runtime-current")],
+      activeWorkspaceId: DEFAULT_WORKSPACE_ID,
+    });
+
+    useWorkspaceStore.getState().restoreWorkbenchDefinition(definition);
+
+    const restoredRoot = useWorkspaceStore.getState().tabs[0].root;
+    expect(restoredRoot.kind).toBe("leaf");
+    if (restoredRoot.kind !== "leaf") return;
+    const restoredIds = restoredRoot.terminal_tabs?.map((tab) => tab.id) ?? [];
+    expect(new Set(restoredIds).size).toBe(restoredIds.length);
+    expect(restoredRoot.active_terminal_tab_id).toBe(restoredIds[0]);
+
+    useWorkspaceStore.getState().updatePaneTerminalTab(
+      DEFAULT_WORKSPACE_ID,
+      definition.tabs[0].id,
+      restoredRoot.id,
+      restoredIds[0],
+      { runtime_session_id: "runtime-restored" },
+    );
+
+    const updatedRoot = useWorkspaceStore.getState().tabs[0].root;
+    expect(updatedRoot.kind).toBe("leaf");
+    if (updatedRoot.kind !== "leaf") return;
+    expect(updatedRoot.terminal_tabs?.map((tab) => tab.runtime_session_id)).toEqual([
+      "runtime-restored",
+      null,
+      null,
+    ]);
+  });
+
+  it("allocates a new pane terminal tab id outside the restored layout ids", () => {
+    const definition = runtimeWorkspace("workspace-restored-tabs", "runtime-snapshot");
+    const root = definition.tabs[0].root;
+    if (root.kind !== "leaf") return;
+    root.active_terminal_tab_id = "pane-tab-1";
+    root.terminal_tabs = Array.from({ length: 32 }, (_, index) => ({
+      id: `pane-tab-${index + 1}`,
+      title: `终端 ${index + 1}`,
+      runtime_session_id: null,
+      saved_session_id: null,
+    }));
+    useWorkspaceStore.setState({
+      workspaces: [runtimeWorkspace(DEFAULT_WORKSPACE_ID, "runtime-current")],
+      activeWorkspaceId: DEFAULT_WORKSPACE_ID,
+    });
+    useWorkspaceStore.getState().restoreWorkbenchDefinition(definition);
+
+    const existingIds = new Set(root.terminal_tabs.map((tab) => tab.id));
+    const created = useWorkspaceStore.getState().addPaneTab(root.id);
+
+    expect(existingIds.has(created.id)).toBe(false);
+    const restoredRoot = useWorkspaceStore.getState().tabs[0].root;
+    expect(restoredRoot.kind).toBe("leaf");
+    if (restoredRoot.kind !== "leaf") return;
+    const ids = restoredRoot.terminal_tabs?.map((tab) => tab.id) ?? [];
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toContain(created.id);
+  });
+
   it("collects workspace runtime ids without clearing runtime bindings", () => {
     const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
     if (workspaceA.tabs[0].root.kind === "leaf") {

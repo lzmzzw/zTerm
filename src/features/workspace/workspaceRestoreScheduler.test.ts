@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   collectWorkspaceRestoreTargets,
+  markWorkspaceRestoreQueued,
   runWorkspaceRestoreQueue,
   sortWorkspaceRestoreTargets,
 } from "./workspaceRestoreScheduler";
@@ -171,6 +172,27 @@ describe("workspaceRestoreScheduler", () => {
     expect(targets.filter((target) => target.paneId === "pane-a")).toHaveLength(2);
     expect(localTarget?.paneId).not.toBe("pane-a");
     expect(localTarget?.paneId).toMatch(/^pane-/);
+  });
+
+  it("normalizes duplicate pane terminal tab ids before queuing restored connections", () => {
+    const duplicated = workspace();
+    const activeRoot = duplicated.tabs[0].root;
+    if (activeRoot.kind !== "split" || activeRoot.first.kind !== "leaf") {
+      throw new Error("test workspace shape changed");
+    }
+    activeRoot.first.terminal_tabs?.push({
+      id: "pane-a-tab-2",
+      title: "Duplicate SSH",
+      runtime_session_id: null,
+      saved_session_id: "ssh-a",
+      connection_source: "saved_session",
+    });
+
+    const queued = markWorkspaceRestoreQueued(duplicated);
+    const targets = collectWorkspaceRestoreTargets(queued).filter((target) => target.paneId === "pane-a");
+
+    expect(new Set(targets.map((target) => target.paneTabId)).size).toBe(targets.length);
+    expect(targets.every((target) => target.terminalTab.restore_status === "queued")).toBe(true);
   });
 
   it("enforces total, SSH, local, and same-pane concurrency while continuing after failures", async () => {

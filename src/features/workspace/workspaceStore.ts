@@ -222,7 +222,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       return { ...workspace, tabs: [...workspace.tabs, tab], activeTabId: tab.id, active_tab_id: tab.id };
     })),
   addPaneTab: (paneId) => {
-    const paneTab = createPaneTab();
+    const paneTab = createAvailablePaneTab(activeWorkspaceFromState(get())?.tabs ?? get().tabs);
     set((state) => updateActiveWorkspace(state, (workspace) => ({
       ...workspace,
       tabs: workspace.tabs.map((tab) => {
@@ -239,7 +239,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     return paneTab;
   },
   addPaneTabAfter: (paneId, afterPaneTabId) => {
-    const paneTab = createPaneTab();
+    const paneTab = createAvailablePaneTab(activeWorkspaceFromState(get())?.tabs ?? get().tabs);
     set((state) => updateActiveWorkspace(state, (workspace) => ({
       ...workspace,
       tabs: workspace.tabs.map((tab) => {
@@ -653,6 +653,27 @@ function createPaneTab(id = `pane-tab-${nextPaneTabCounter++}`): PaneTerminalTab
     runtime_session_id: null,
     saved_session_id: null,
   };
+}
+
+function createAvailablePaneTab(tabs: WorkspaceTab[]): PaneTerminalTab {
+  const reservedIds = new Set<string>();
+  tabs.forEach((tab) => collectPaneTerminalTabIds(tab.root, reservedIds));
+  let counter = 1;
+  let id = `pane-tab-${counter}`;
+  while (reservedIds.has(id)) {
+    counter += 1;
+    id = `pane-tab-${counter}`;
+  }
+  return createPaneTab(id);
+}
+
+function collectPaneTerminalTabIds(root: PaneNode, terminalTabIds: Set<string>) {
+  if (root.kind === "leaf") {
+    getLeafTerminalTabs(root).forEach((terminalTab) => terminalTabIds.add(terminalTab.id));
+    return;
+  }
+  collectPaneTerminalTabIds(root.first, terminalTabIds);
+  collectPaneTerminalTabIds(root.second, terminalTabIds);
 }
 
 function stripTerminalVisualSnapshot(tab: PaneTerminalTab): PaneTerminalTab {

@@ -58,7 +58,7 @@ function normalizePaneIds(root: PaneNode, seenPaneIds: Set<string>, reservedPane
   const originalId = root.id;
   if (!seenPaneIds.has(originalId)) {
     seenPaneIds.add(originalId);
-    return root;
+    return normalizeLeafTerminalTabIds(root);
   }
 
   const id = nextAvailablePaneId(reservedPaneIds);
@@ -68,12 +68,41 @@ function normalizePaneIds(root: PaneNode, seenPaneIds: Set<string>, reservedPane
   );
   const activeTerminalTabId = renamePaneTerminalTabIdValue(root.active_terminal_tab_id, originalId, id);
 
-  return {
+  return normalizeLeafTerminalTabIds({
     ...root,
     id,
     active_terminal_tab_id: activeTerminalTabId,
     terminal_tabs: terminalTabs,
-  };
+  });
+}
+
+function normalizeLeafTerminalTabIds(root: LeafPane): LeafPane {
+  const terminalTabs = getLeafTerminalTabs(root);
+  const reservedIds = new Set(terminalTabs.map((terminalTab) => terminalTab.id));
+  const seenIds = new Set<string>();
+  let changed = false;
+  const normalizedTabs = terminalTabs.map((terminalTab) => {
+    if (!seenIds.has(terminalTab.id)) {
+      seenIds.add(terminalTab.id);
+      return terminalTab;
+    }
+    changed = true;
+    const id = nextAvailableTerminalTabId(root.id, reservedIds);
+    seenIds.add(id);
+    return { ...terminalTab, id };
+  });
+  return changed ? { ...root, terminal_tabs: normalizedTabs } : root;
+}
+
+function nextAvailableTerminalTabId(paneId: string, reservedIds: Set<string>): string {
+  let counter = 1;
+  let id = `${paneId}-tab-${counter}`;
+  while (reservedIds.has(id)) {
+    counter += 1;
+    id = `${paneId}-tab-${counter}`;
+  }
+  reservedIds.add(id);
+  return id;
 }
 
 function collectPaneIds(root: PaneNode, paneIds: Set<string>) {
