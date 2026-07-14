@@ -48,7 +48,7 @@ export function FileToolbar({
       <button type="button" aria-label="重命名" disabled={disabled || !canRename} onClick={() => void onRename()}>
         <Edit3 size={14} aria-hidden="true" />
       </button>
-      <button type="button" aria-label="删除" disabled={disabled || !hasSelection} onClick={() => void onDelete()}>
+      <button type="button" className="zt-delete-button" aria-label="删除" disabled={disabled || !hasSelection} onClick={() => void onDelete()}>
         <Trash2 size={14} aria-hidden="true" />
       </button>
     </div>

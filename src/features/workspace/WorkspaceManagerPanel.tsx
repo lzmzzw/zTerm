@@ -208,6 +208,7 @@ function WorkspaceContextMenuItems({
       </button>
       <button
         type="button"
+        className="zt-delete-button"
         role="menuitem"
         aria-label={`删除工作区 ${workspace.name}`}
         disabled={deleteDisabled}

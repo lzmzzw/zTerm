@@ -94,6 +94,7 @@ export function LocalSessionForm({ section, options, terminalProfiles, onOptions
               />
               <button
                 type="button"
+                className="zt-delete-button"
                 aria-label="删除环境变量"
                 onClick={() =>
                   onOptionsChange({

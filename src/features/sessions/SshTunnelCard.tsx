@@ -92,7 +92,7 @@ export function SshTunnelCard({
             checked={tunnel.auto_open ?? true}
             onChange={(checked) => onChange({ ...tunnel, auto_open: checked })}
           />
-          <button type="button" aria-label="删除隧道" title="删除隧道" onClick={onDelete}>
+          <button type="button" className="zt-delete-button" aria-label="删除隧道" title="删除隧道" onClick={onDelete}>
             <Trash2 size={14} aria-hidden="true" />
           </button>
         </div>

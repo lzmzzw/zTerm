@@ -49,7 +49,7 @@ export function SessionContextMenu({
           <button type="button" role="menuitem" onClick={() => onEditGroup(menu.group)}>
             编辑
           </button>
-          <button type="button" role="menuitem" onClick={() => void onDeleteGroup(menu.group)}>
+          <button type="button" className="zt-delete-button" role="menuitem" onClick={() => void onDeleteGroup(menu.group)}>
             删除
           </button>
         </>
@@ -60,7 +60,7 @@ export function SessionContextMenu({
           <button type="button" role="menuitem" onClick={() => onEditSession(menu.session)}>
             编辑
           </button>
-          <button type="button" role="menuitem" onClick={() => void onDeleteSession(menu.session)}>
+          <button type="button" className="zt-delete-button" role="menuitem" onClick={() => void onDeleteSession(menu.session)}>
             删除
           </button>
           <button type="button" role="menuitem" onClick={() => onOpenSession?.(menu.session)}>

@@ -255,6 +255,16 @@ button {
   color: var(--zt-danger);
 }
 
+.zt-delete-button {
+  color: var(--zt-danger);
+}
+
+.zt-delete-button:hover:not(:disabled) {
+  border-color: var(--zt-danger-border);
+  background: var(--zt-danger-bg);
+  color: var(--zt-danger);
+}
+
 .zt-button-ghost {
   border-color: transparent;
   background: transparent;
@@ -5415,7 +5425,7 @@ button {
 .zt-model-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 28px 28px;
+  grid-template-columns: 28px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   border: 1px solid var(--zt-border);

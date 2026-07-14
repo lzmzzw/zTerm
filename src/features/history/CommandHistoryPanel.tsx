@@ -368,7 +368,7 @@ function CommandGroupView({
                   <button type="button" aria-label={`${t(language, "editPrefix")} ${group.name}`} onClick={() => onEditGroup(group)}>
                      <Edit3 size={14} aria-hidden="true" />
                   </button>
-                  <button type="button" aria-label={`${t(language, "deletePrefix")} ${group.name}`} onClick={() => void onDeleteCommandGroup(group.id)}>
+                  <button type="button" className="zt-delete-button" aria-label={`${t(language, "deletePrefix")} ${group.name}`} onClick={() => void onDeleteCommandGroup(group.id)}>
               <Trash2 size={14} aria-hidden="true" />
                   </button>
                 </header>

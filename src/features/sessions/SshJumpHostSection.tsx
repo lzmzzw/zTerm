@@ -106,6 +106,7 @@ export function SshJumpHostSection({
                   </button>
                   <button
                     type="button"
+                    className="zt-delete-button"
                     aria-label={`删除跳板机 ${jumpHost}`}
                     title="删除"
                     onClick={() => removeJumpHost(index)}

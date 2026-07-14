@@ -194,6 +194,7 @@ export function FileExplorerPanel({
           <span>确认删除选中的 {confirmDeletePaths.length} 个项目</span>
           <button
             type="button"
+            className="zt-delete-button"
             onClick={() => {
               const pathsToDelete = confirmDeletePaths;
               setConfirmDeletePaths(null);

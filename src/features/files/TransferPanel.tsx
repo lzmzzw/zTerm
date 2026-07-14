@@ -256,6 +256,7 @@ function renderTransferList(
               ) : null}
               <button
                 type="button"
+                className="zt-delete-button"
                 aria-label={`删除 ${task.id}`}
                 title="删除"
                 onClick={() => onDelete(task)}
