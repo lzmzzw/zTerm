@@ -377,11 +377,14 @@ describe("SessionTree", () => {
     view.unmount();
   });
 
-  it("creates a new SSH connection in a group from the group action menu", async () => {
+  it("creates a new SSH connection in a group from the group context menu without an action button", async () => {
     const onSaveSession = vi.fn();
     const view = render(<SessionTree groups={groups} sessions={sessions} onSaveSession={onSaveSession} />);
 
-    await click(button(view.container, "分组操作 生产环境"));
+    const groupRow = view.container.querySelector<HTMLElement>('[aria-label="分组 生产环境"] .zt-session-group-row');
+    expect(groupRow).not.toBeNull();
+    expect(view.container.querySelector('[aria-label="分组操作 生产环境"]')).toBeNull();
+    await contextMenu(groupRow as HTMLElement);
     await click(button(view.container, "新建连接"));
 
     expect(view.container.querySelector('[role="dialog"]')?.getAttribute("aria-label")).toBe("新建 SSH 会话");
@@ -661,7 +664,7 @@ describe("SessionTree", () => {
     const onDeleteGroup = vi.fn().mockRejectedValue(new Error("分组下仍有会话，不能删除"));
     const view = render(<SessionTree groups={groups} sessions={sessions} onDeleteGroup={onDeleteGroup} />);
 
-    await click(button(view.container, "分组操作 生产环境"));
+    await contextMenu(view.container.querySelector('[aria-label="分组 生产环境"] .zt-session-group-row') as HTMLElement);
     await click(button(view.container, "删除"));
 
     expect(onDeleteGroup).toHaveBeenCalledWith("group-prod");
@@ -757,7 +760,7 @@ describe("SessionTree", () => {
     const onDeleteGroup = vi.fn().mockRejectedValue("raw group delete failure");
     const view = render(<SessionTree groups={groups} sessions={sessions} onDeleteGroup={onDeleteGroup} />);
 
-    await click(button(view.container, "分组操作 生产环境"));
+    await contextMenu(view.container.querySelector('[aria-label="分组 生产环境"] .zt-session-group-row') as HTMLElement);
     await click(button(view.container, "删除"));
 
     expect(onDeleteGroup).toHaveBeenCalledWith("group-prod");

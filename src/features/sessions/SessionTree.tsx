@@ -1,5 +1,5 @@
 // Author: Liz
-import { ChevronDown, ChevronRight, Folder, Monitor, MoreHorizontal, Server, Terminal } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, Monitor, Server, Terminal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
@@ -445,13 +445,6 @@ function SessionGroupNode({
     onOpenContextMenu({ kind: "group", group, x: event.clientX, y: event.clientY });
   }
 
-  function openGroupButtonMenu(event: React.MouseEvent<HTMLButtonElement>) {
-    event.preventDefault();
-    event.stopPropagation();
-    const rect = event.currentTarget.getBoundingClientRect();
-    onOpenContextMenu({ kind: "group", group, x: rect.right, y: rect.bottom });
-  }
-
   async function toggleGroup() {
     const nextExpanded = !expanded;
     setExpanded(nextExpanded);
@@ -482,9 +475,6 @@ function SessionGroupNode({
         </button>
         <Folder size={14} aria-hidden="true" />
         <span>{group.name}</span>
-        <button type="button" aria-label={`分组操作 ${group.name}`} title={`分组操作 ${group.name}`} onClick={openGroupButtonMenu}>
-          <MoreHorizontal size={14} aria-hidden="true" />
-        </button>
       </div>
       {expanded ? (
         <ul ref={sessionListRef}>
