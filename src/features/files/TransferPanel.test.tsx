@@ -237,6 +237,28 @@ describe("TransferPanel", () => {
     view.unmount();
   });
 
+  it("keeps the collapsed transfer dock summary across the full title bar", () => {
+    const view = render(
+      <TransferPanel
+        collapsible
+        defaultCollapsed
+        tasks={tasks}
+        onRetry={vi.fn()}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+        onPauseAll={vi.fn()}
+      />,
+    );
+
+    expect(button(view.container, "展开传输任务")).toBeTruthy();
+    expect(view.container.querySelector(".zt-transfer-dock-collapsed .zt-transfer-dock-actions")).toBeTruthy();
+    expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
+
+    view.unmount();
+  });
+
   it("does not toggle the transfer dock when using a bulk action", async () => {
     const onPauseAll = vi.fn();
     const view = render(

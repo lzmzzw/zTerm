@@ -3153,6 +3153,10 @@ button {
   border-bottom: 0;
 }
 
+.zt-transfer-dock-collapsed .zt-transfer-dock-actions {
+  display: none;
+}
+
 .zt-transfer-dock-summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto 18px;
