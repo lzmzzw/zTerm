@@ -3136,7 +3136,7 @@ button {
 }
 
 .zt-transfer-dock-header {
-  display: block;
+  display: flex;
   align-items: center;
   min-height: 32px;
   padding: 0 8px;
@@ -3154,7 +3154,7 @@ button {
 }
 
 .zt-transfer-dock-collapsed .zt-transfer-dock-header {
-  display: block;
+  display: flex;
   border-bottom: 0;
 }
 
