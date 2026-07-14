@@ -4393,10 +4393,11 @@ button {
   overflow: visible;
 }
 
+.zt-file-transfer-dialog .zt-dialog-header {
+  position: relative;
+}
+
 .zt-file-transfer-dialog-title {
-  display: flex;
-  align-items: center;
-  gap: 18px;
   min-width: 0;
 }
 
@@ -4407,12 +4408,17 @@ button {
 }
 
 .zt-file-transfer-dialog-title label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--zt-text-muted);
   font-size: var(--zt-font-size-caption);
   font-weight: 400;
+  transform: translate(-50%, -50%);
 }
 
 .zt-file-transfer-dialog-title .zt-select-trigger {

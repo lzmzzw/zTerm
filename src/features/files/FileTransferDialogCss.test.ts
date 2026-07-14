@@ -16,12 +16,16 @@ describe("file transfer dialog styles", () => {
     expect(styles).toContain("-webkit-backdrop-filter: none");
   });
 
-  it("keeps the conflict-policy selector compact in the dialog title bar", () => {
-    const title = ruleBody(".zt-file-transfer-dialog-title");
+  it("keeps the conflict-policy selector compact and centered in the dialog title bar", () => {
+    const header = ruleBody(".zt-file-transfer-dialog .zt-dialog-header");
+    const label = ruleBody(".zt-file-transfer-dialog-title label");
     const selector = ruleBody(".zt-file-transfer-dialog-title .zt-select-trigger");
 
-    expect(title).toContain("display: flex");
-    expect(title).toContain("align-items: center");
+    expect(header).toContain("position: relative");
+    expect(label).toContain("position: absolute");
+    expect(label).toContain("top: 50%");
+    expect(label).toContain("left: 50%");
+    expect(label).toContain("transform: translate(-50%, -50%)");
     expect(selector).toContain("width: 116px");
     expect(css).not.toContain(".zt-file-transfer-controls");
   });
