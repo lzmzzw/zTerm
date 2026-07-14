@@ -210,6 +210,11 @@ describe("ModelManagerPanel", () => {
       />,
     );
 
+    await act(async () => {
+      view.container.querySelector(".zt-model-row")?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 24 }),
+      );
+    });
     await click(button(view.container, "编辑模型 OpenAI Compatible"));
     const dialog = view.container.querySelector('[aria-label="模型配置"]') as HTMLElement | null;
     expect(dialog).not.toBe(null);
@@ -299,6 +304,11 @@ describe("ModelManagerPanel", () => {
       />,
     );
 
+    await act(async () => {
+      view.container.querySelector(".zt-model-row")?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 24 }),
+      );
+    });
     await click(button(view.container, "编辑模型 OpenAI Compatible"));
     const dialog = view.container.querySelector('[aria-label="模型配置"]') as HTMLElement | null;
     if (!dialog) throw new Error("Dialog should render");
@@ -373,6 +383,11 @@ describe("ModelManagerPanel", () => {
       />,
     );
 
+    await act(async () => {
+      view.container.querySelector(".zt-model-row")?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 24 }),
+      );
+    });
     await click(button(view.container, "删除模型 OpenAI Compatible"));
     expect(onDeleteProvider).not.toHaveBeenCalled();
     expect(view.container.textContent).toContain("确认删除模型“OpenAI Compatible”？");
@@ -383,7 +398,7 @@ describe("ModelManagerPanel", () => {
     view.unmount();
   });
 
-  it("shows only the new model action from the expanded model context menu", async () => {
+  it("moves model edit and delete actions from row icons into the model context menu", async () => {
     const view = render(
       <ModelManagerPanel
         providers={providers}
@@ -396,14 +411,29 @@ describe("ModelManagerPanel", () => {
       />,
     );
 
+    expect(view.container.querySelector('[aria-label="编辑模型 OpenAI Compatible"]')).toBe(null);
+    expect(view.container.querySelector('[aria-label="删除模型 OpenAI Compatible"]')).toBe(null);
+
+    await act(async () => {
+      view.container.querySelector(".zt-model-row")?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 24 }),
+      );
+    });
+
+    const menuItems = Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim());
+    expect(menuItems).toEqual(["编辑", "删除"]);
+
+    await click(button(view.container, "编辑模型 OpenAI Compatible"));
+    expect(view.container.querySelector('[aria-label="模型配置"]')).not.toBe(null);
+    await click(button(view.container, "关闭模型配置"));
+
     await act(async () => {
       view.container.querySelector(".zt-model-panel")?.dispatchEvent(
         new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 24 }),
       );
     });
 
-    const menuItems = Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim());
-    expect(menuItems).toEqual(["新建模型"]);
+    expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual(["新建模型"]);
 
     await click(button(view.container, "新建模型"));
     expect(view.container.querySelector('[aria-label="模型配置"]')).not.toBe(null);
@@ -425,6 +455,11 @@ describe("ModelManagerPanel", () => {
       />,
     );
 
+    await act(async () => {
+      view.container.querySelector(".zt-model-row")?.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 24 }),
+      );
+    });
     await click(button(view.container, "编辑模型 OpenAI Compatible"));
     const dialog = view.container.querySelector('[aria-label="模型配置"]') as HTMLElement | null;
     if (!dialog) throw new Error("Dialog should render");

@@ -1,5 +1,5 @@
 // Author: Liz
-import { ArrowUp, Pencil, Plus, Save, Square, Star, Trash2 } from "lucide-react";
+import { ArrowUp, Plus, Save, Square, Star } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
@@ -74,6 +74,12 @@ interface FormState {
   testInput: string;
 }
 
+type ModelContextMenu = {
+  provider: AiProviderProfile | null;
+  x: number;
+  y: number;
+};
+
 const emptyForm: FormState = {
   id: null,
   apiKeyRef: null,
@@ -120,7 +126,7 @@ export function ModelManagerPanel({
   const pendingTestEventsRef = useRef<PendingProviderTestEvent[]>([]);
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AiProviderProfile | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<ModelContextMenu | null>(null);
   const editorFormId = useId();
 
   const editingProvider = providers.find((provider) => provider.id === form.id) ?? null;
@@ -395,7 +401,7 @@ export function ModelManagerPanel({
       aria-label="模型管理"
       onContextMenu={(event) => {
         event.preventDefault();
-        setContextMenu({ x: event.clientX, y: event.clientY });
+        setContextMenu({ provider: null, x: event.clientX, y: event.clientY });
       }}
     >
       <div className="zt-panel-header">
@@ -415,7 +421,15 @@ export function ModelManagerPanel({
         <div className="zt-model-list" aria-label="已添加模型列表">
           {providers.length === 0 ? <div className="zt-empty-line">暂无模型</div> : null}
           {providers.map((provider) => (
-            <div className={provider.is_default ? "zt-model-row default" : "zt-model-row"} key={provider.id}>
+            <div
+              className={provider.is_default ? "zt-model-row default" : "zt-model-row"}
+              key={provider.id}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setContextMenu({ provider, x: event.clientX, y: event.clientY });
+              }}
+            >
               <button
                 type="button"
                 className="zt-model-default-button"
@@ -428,17 +442,6 @@ export function ModelManagerPanel({
               </button>
               <button type="button" className="zt-model-main" title={provider.name} onClick={() => openEditEditor(provider)}>
                 <strong>{provider.name}</strong>
-              </button>
-              <button type="button" aria-label={`编辑模型 ${provider.name}`} title="编辑" onClick={() => openEditEditor(provider)}>
-                <Pencil size={14} aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                aria-label={`删除模型 ${provider.name}`}
-                title="删除"
-                onClick={() => setPendingDelete(provider)}
-              >
-                <Trash2 size={14} aria-hidden="true" />
               </button>
             </div>
           ))}
@@ -601,9 +604,44 @@ export function ModelManagerPanel({
 
       {contextMenu ? (
         <ZtContextMenu className="zt-context-menu" role="menu" x={contextMenu.x} y={contextMenu.y}>
-          <button type="button" role="menuitem" onClick={openCreateEditor}>
-            新建模型
-          </button>
+          {contextMenu.provider ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                aria-label={`编辑模型 ${contextMenu.provider.name}`}
+                onClick={() => {
+                  openEditEditor(contextMenu.provider!);
+                  setContextMenu(null);
+                }}
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                className="zt-delete-button"
+                role="menuitem"
+                aria-label={`删除模型 ${contextMenu.provider.name}`}
+                onClick={() => {
+                  setPendingDelete(contextMenu.provider!);
+                  setContextMenu(null);
+                }}
+              >
+                删除
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                openCreateEditor();
+                setContextMenu(null);
+              }}
+            >
+              新建模型
+            </button>
+          )}
         </ZtContextMenu>
       ) : null}
     </section>
