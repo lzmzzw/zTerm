@@ -468,7 +468,7 @@ export function AppShell() {
     bindRuntimeToPaneTab,
     splitActivePane,
     resizeSplitPane,
-    closeActivePane,
+    closePane,
   } = useWorkspaceStore(
     useShallow((state) => ({
       cacheWorkspaceDefinition: state.cacheWorkspaceDefinition,
@@ -490,7 +490,7 @@ export function AppShell() {
       bindRuntimeToPaneTab: state.bindRuntimeToPaneTab,
       splitActivePane: state.splitActivePane,
       resizeSplitPane: state.resizeSplitPane,
-      closeActivePane: state.closeActivePane,
+      closePane: state.closePane,
     })),
   );
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
@@ -1259,8 +1259,8 @@ export function AppShell() {
     }
   }
 
-  async function handleCloseActivePane() {
-    closeActivePane();
+  async function handleClosePane(paneId: string) {
+    closePane(paneId);
   }
 
   function handleSplitPane(direction: "horizontal" | "vertical") {
@@ -1756,7 +1756,7 @@ export function AppShell() {
           onMovePaneTab={movePaneTab}
           onSplitPane={handleSplitPane}
           onResizeSplit={resizeSplitPane}
-          onClosePane={() => void handleCloseActivePane()}
+          onClosePane={(paneId) => void handleClosePane(paneId)}
           onDisconnectTerminal={(paneId, paneTabId, runtimeSessionId) =>
             void terminalActions.disconnectTerminal(paneId, paneTabId, runtimeSessionId)
           }

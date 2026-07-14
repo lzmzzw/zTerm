@@ -1190,6 +1190,38 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
+  it("closes the pane that owns the clicked toolbar instead of the active pane", () => {
+    const onClosePane = vi.fn();
+    const root: PaneNode = {
+      kind: "split",
+      id: "split-root",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: leaf("pane-a", "PowerShell 7"),
+      second: leaf("pane-b", "WSL"),
+    };
+    const view = render(
+      <SplitPaneView
+        root={root}
+        activePaneId="pane-a"
+        onActivatePane={vi.fn()}
+        onAddPaneTab={vi.fn()}
+        onSelectPaneTab={vi.fn()}
+        onClosePaneTab={vi.fn()}
+        onSplitPane={vi.fn()}
+        onClosePane={onClosePane}
+      />,
+    );
+    const closeButtons = view.container.querySelectorAll('[aria-label="关闭分栏"]');
+
+    act(() => {
+      (closeButtons[1] as HTMLButtonElement).click();
+    });
+
+    expect(onClosePane).toHaveBeenCalledWith("pane-b");
+    view.unmount();
+  });
+
   it("renders split dividers without visible icons", () => {
     const root: PaneNode = {
       kind: "split",

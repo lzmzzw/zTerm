@@ -12,7 +12,7 @@ const storeMocks = vi.hoisted(() => ({
   addPaneTab: vi.fn(),
   addPaneTabAfter: vi.fn(),
   closePaneTab: vi.fn(),
-  closeActivePane: vi.fn(),
+  closePane: vi.fn(),
   selectPaneTab: vi.fn(),
   bindRuntimeToPane: vi.fn(),
   bindRuntimeToPaneTab: vi.fn(),
@@ -362,7 +362,7 @@ vi.mock("../features/workspace/SplitPaneView", () => ({
     activePaneId: string;
     onAddPaneTab: (paneId: string) => void;
     onClosePaneTab: (paneId: string, paneTabId: string) => void;
-    onClosePane: () => void;
+    onClosePane: (paneId: string) => void;
     onSplitPane: (direction: "horizontal" | "vertical") => void;
     workspaceActive?: boolean;
     visualMode?: "normal" | "placeholder" | "snapshot";
@@ -389,7 +389,7 @@ vi.mock("../features/workspace/SplitPaneView", () => ({
       <button type="button" aria-label="关闭当前标签" onClick={() => onClosePaneTab("pane-1", "pane-1-tab-1")}>
         关闭当前标签
       </button>
-      <button type="button" aria-label="关闭当前分栏" onClick={onClosePane}>
+      <button type="button" aria-label="关闭当前分栏" onClick={() => onClosePane("pane-1")}>
         关闭当前分栏
       </button>
       </section>
@@ -655,7 +655,7 @@ vi.mock("../features/workspace/workspaceStore", () => {
     bindRuntimeToPaneTab: storeMocks.bindRuntimeToPaneTab,
     splitActivePane: storeMocks.splitActivePane,
     resizeSplitPane: storeMocks.noop,
-    closeActivePane: storeMocks.closeActivePane,
+    closePane: storeMocks.closePane,
   });
   const useWorkspaceStore = (selector?: (state: Record<string, unknown>) => unknown) => {
     const state = workspaceState();
@@ -3320,7 +3320,7 @@ describe("AppShell", () => {
       (view.container.querySelector('[aria-label="关闭当前分栏"]') as HTMLButtonElement).click();
     });
 
-    expect(storeMocks.closeActivePane).toHaveBeenCalledTimes(1);
+    expect(storeMocks.closePane).toHaveBeenCalledWith("pane-1");
     expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
     expect(storeMocks.bindRuntimeToPaneTab).not.toHaveBeenCalled();
     view.unmount();

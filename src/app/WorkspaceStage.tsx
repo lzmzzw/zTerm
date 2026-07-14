@@ -13,7 +13,7 @@ interface WorkspaceStageProps {
   onMovePaneTab: (sourcePaneId: string, paneTabId: string, targetPaneId: string, beforePaneTabId: string | null) => void;
   onSplitPane: (direction: PaneSplitDirection) => void;
   onResizeSplit?: (splitId: string, ratio: number) => void;
-  onClosePane: () => void;
+  onClosePane: (paneId: string) => void;
   onDisconnectTerminal?: (paneId: string, paneTabId: string, runtimeSessionId: string) => void;
   onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string) => void;
 }

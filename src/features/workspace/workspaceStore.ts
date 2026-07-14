@@ -72,7 +72,7 @@ interface WorkspaceStore {
   ) => void;
   splitActivePane: (direction: PaneSplitDirection) => void;
   resizeSplitPane: (splitId: string, ratio: number) => void;
-  closeActivePane: () => void;
+  closePane: (paneId: string) => void;
 }
 
 let nextPaneCounter = 2;
@@ -387,7 +387,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       ),
       updated_at_ms: Date.now(),
     }))),
-  closeActivePane: () =>
+  closePane: (paneId) =>
     set((state) => {
       const workspace = activeWorkspaceFromState(state);
       const sourceTabs = workspace?.tabs ?? state.tabs;
@@ -395,11 +395,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const tabs = sourceTabs
         .map((tab) => {
           if (tab.id !== sourceActiveTabId) return tab;
-          const root = removePane(tab.root, tab.active_pane_id);
+          const root = removePane(tab.root, paneId);
           if (!root) return null;
           return {
             ...tab,
-            active_pane_id: firstLeafPaneId(root) ?? tab.active_pane_id,
+            active_pane_id: findLeafPane(root, tab.active_pane_id)
+              ? tab.active_pane_id
+              : (firstLeafPaneId(root) ?? tab.active_pane_id),
             root,
             updated_at_ms: Date.now(),
           };

@@ -941,6 +941,48 @@ describe("workspaceStore pane tabs", () => {
     });
   });
 
+  it("closes the targeted inactive pane and preserves the active pane", () => {
+    useWorkspaceStore.setState({
+      tabs: [
+        {
+          id: "tab-1",
+          title: "主工作区",
+          active_pane_id: "pane-a",
+          root: {
+            kind: "split",
+            id: "split-root",
+            direction: "horizontal",
+            ratio: 0.5,
+            first: {
+              kind: "leaf",
+              id: "pane-a",
+              title: "PowerShell 7",
+              runtime_session_id: null,
+              saved_session_id: null,
+            },
+            second: {
+              kind: "leaf",
+              id: "pane-b",
+              title: "WSL",
+              runtime_session_id: null,
+              saved_session_id: null,
+            },
+          },
+          sort_order: 0,
+          created_at_ms: 1,
+          updated_at_ms: 1,
+        },
+      ],
+      activeTabId: "tab-1",
+    });
+
+    useWorkspaceStore.getState().closePane("pane-b");
+
+    const workspaceTab = useWorkspaceStore.getState().tabs[0];
+    expect(workspaceTab.active_pane_id).toBe("pane-a");
+    expect(workspaceTab.root).toMatchObject({ kind: "leaf", id: "pane-a" });
+  });
+
   it("resizes the targeted split pane ratio in the active workspace tab", () => {
     useWorkspaceStore.setState({
       tabs: [

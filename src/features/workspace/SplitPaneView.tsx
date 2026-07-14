@@ -37,7 +37,7 @@ interface SplitPaneViewProps {
   onMovePaneTab?: (sourcePaneId: string, paneTabId: string, targetPaneId: string, beforePaneTabId: string | null) => void;
   onSplitPane: (direction: PaneSplitDirection) => void;
   onResizeSplit?: (splitId: string, ratio: number) => void;
-  onClosePane: () => void;
+  onClosePane: (paneId: string) => void;
   onDisconnectTerminal?: (paneId: string, paneTabId: string, runtimeSessionId: string) => void;
   onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string) => void;
   workspaceActive?: boolean;
@@ -265,7 +265,7 @@ function LeafPane({
   onClosePaneTab: (paneId: string, paneTabId: string) => void;
   onMovePaneTab: (sourcePaneId: string, paneTabId: string, targetPaneId: string, beforePaneTabId: string | null) => void;
   onSplitPane: (direction: PaneSplitDirection) => void;
-  onClosePane: () => void;
+  onClosePane: (paneId: string) => void;
   onDisconnectTerminal?: (paneId: string, paneTabId: string, runtimeSessionId: string) => void;
   onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string) => void;
   workspaceActive: boolean;
@@ -393,11 +393,11 @@ function LeafPane({
     if (activeTerminalTab.runtime_session_id) {
       void closeTerminal(activeTerminalTab.runtime_session_id)
         .catch(() => undefined)
-        .finally(onClosePane);
+        .finally(() => onClosePane(root.id));
       return;
     }
-    onClosePane();
-  }, [activeTerminalTab.runtime_session_id, closeTerminal, onClosePane]);
+    onClosePane(root.id);
+  }, [activeTerminalTab.runtime_session_id, closeTerminal, onClosePane, root.id]);
 
   const handleSplitPane = useCallback(
     (direction: PaneSplitDirection) => {
