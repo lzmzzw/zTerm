@@ -10,6 +10,7 @@ const terminalMock = vi.hoisted(() => {
 
   interface MockMarker {
     dispose: ReturnType<typeof vi.fn>;
+    isDisposed: boolean;
     line: number;
     onDispose: ReturnType<typeof vi.fn>;
   }
@@ -18,7 +19,18 @@ const terminalMock = vi.hoisted(() => {
     buffer: {
       active: {
         baseY: number;
+        cursorX: number;
         cursorY: number;
+        getLine: (line: number) =>
+          | {
+              getCell: (column: number) =>
+                | { getChars: () => string; getWidth: () => number; isFgDefault: () => boolean }
+                | undefined;
+              isWrapped: boolean;
+              length: number;
+              translateToString: () => string;
+            }
+          | undefined;
         length: number;
         type: "normal" | "alternate";
         viewportY: number;
@@ -39,10 +51,12 @@ const terminalMock = vi.hoisted(() => {
     onWriteParsed: ReturnType<typeof vi.fn>;
     open: ReturnType<typeof vi.fn>;
     options: unknown;
+    registerDecoration: ReturnType<typeof vi.fn>;
     registerMarker: ReturnType<typeof vi.fn>;
     renderListener?: () => void;
     resizeListener?: (size: { cols: number; rows: number }) => void;
     rows: number;
+    bufferLines: Map<number, string>;
     scrollListener?: () => void;
     write: ReturnType<typeof vi.fn>;
     writeParsedListener?: () => void;
@@ -56,12 +70,33 @@ const terminalMock = vi.hoisted(() => {
       buffer: {
         active: {
           baseY: 0,
+          cursorX: 0,
           cursorY: 5,
+          getLine: (line: number) => {
+            const text = instance.bufferLines.get(line);
+            if (text === undefined) return undefined;
+            const characters = Array.from(text);
+            return {
+              getCell: (column: number) => {
+                const character = characters[column];
+                if (character === undefined) return undefined;
+                return {
+                  getChars: () => character,
+                  getWidth: () => 1,
+                  isFgDefault: () => true,
+                };
+              },
+              isWrapped: false,
+              length: characters.length,
+              translateToString: () => text,
+            };
+          },
           length: 10,
           type: "normal",
           viewportY: 0,
         },
       },
+      bufferLines: new Map(),
       clear: vi.fn(),
       cols: 80,
       dispose: vi.fn(),
@@ -104,10 +139,17 @@ const terminalMock = vi.hoisted(() => {
         container.appendChild(terminal);
       }),
       options,
-      registerMarker: vi.fn(() => {
+      registerDecoration: vi.fn((decorationOptions: { marker: MockMarker }) => ({
+        dispose: vi.fn(),
+        marker: decorationOptions.marker,
+      })),
+      registerMarker: vi.fn((offset = 0) => {
         const marker: MockMarker = {
-          dispose: vi.fn(),
-          line: instance.buffer.active.baseY + instance.buffer.active.cursorY,
+          dispose: vi.fn(() => {
+            marker.isDisposed = true;
+          }),
+          isDisposed: false,
+          line: instance.buffer.active.baseY + instance.buffer.active.cursorY + offset,
           onDispose: vi.fn(() => disposable()),
         };
         return marker;
@@ -269,6 +311,49 @@ describe("XtermPane", () => {
       brightCyan: "#78ffff",
       brightWhite: "#708090",
     });
+
+    view.unmount();
+    delete document.documentElement.dataset.ztTheme;
+  });
+
+  it("adds WindTerm-style semantic colors to default-colored terminal output", () => {
+    const view = render(<XtermPane data="" />);
+    const terminal = terminalMock.instances[0];
+    terminal.bufferLines.set(0, "drwx------  5 root root  4096 Jun 30 10:25");
+    terminal.buffer.active.cursorY = 0;
+    terminal.buffer.active.length = 1;
+
+    act(() => terminal.writeParsedListener?.());
+
+    expect(terminal.registerDecoration).toHaveBeenCalledWith(
+      expect.objectContaining({ x: 0, width: 1, foregroundColor: "#b267e6", layer: "bottom" }),
+    );
+    expect(terminal.registerDecoration).toHaveBeenCalledWith(
+      expect.objectContaining({ x: 4, width: 6, foregroundColor: "#A6E22E", layer: "bottom" }),
+    );
+    expect(terminal.registerDecoration).toHaveBeenCalledWith(
+      expect.objectContaining({ x: 12, width: 1, foregroundColor: "#AE81FF", layer: "bottom" }),
+    );
+
+    view.unmount();
+  });
+
+  it("uses dige-white semantic colors for local CMD and PowerShell output in the light theme", () => {
+    document.documentElement.dataset.ztTheme = "light";
+    const view = render(<XtermPane data="" />);
+    const terminal = terminalMock.instances[0];
+    terminal.bufferLines.set(0, "C:\\work\\zTerm>dir /a");
+    terminal.buffer.active.cursorY = 0;
+    terminal.buffer.active.length = 1;
+
+    act(() => terminal.writeParsedListener?.());
+
+    expect(terminal.registerDecoration).toHaveBeenCalledWith(
+      expect.objectContaining({ x: 0, width: 13, foregroundColor: "#FF8C00", layer: "bottom" }),
+    );
+    expect(terminal.registerDecoration).toHaveBeenCalledWith(
+      expect.objectContaining({ x: 14, width: 3, foregroundColor: "#1E90FF", layer: "bottom" }),
+    );
 
     view.unmount();
     delete document.documentElement.dataset.ztTheme;

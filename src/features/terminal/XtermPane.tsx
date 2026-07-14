@@ -8,6 +8,12 @@ import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, us
 
 import { ZtContextMenu } from "../../components/ZtUi";
 import { scheduleNextTask } from "../../lib/renderScheduling";
+import {
+  createTerminalSemanticHighlighter,
+  DIGE_BLACK_SEMANTIC_PALETTE,
+  DIGE_WHITE_SEMANTIC_PALETTE,
+  type TerminalSemanticHighlighter,
+} from "./terminalSemanticHighlight";
 import type { CommandCompletionCandidate } from "./terminalStore";
 
 interface XtermPaneProps {
@@ -94,6 +100,7 @@ export function XtermPane({
 }: XtermPaneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  const semanticHighlighterRef = useRef<TerminalSemanticHighlighter | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const writtenLengthRef = useRef(0);
   const streamIdRef = useRef<string | null>(streamId);
@@ -280,7 +287,9 @@ export function XtermPane({
     terminal.loadAddon(new WebLinksAddon());
     terminal.open(containerRef.current);
     fitAddon.fit();
+    const semanticHighlighter = createTerminalSemanticHighlighter(terminal, resolveTerminalSemanticPalette());
     terminalRef.current = terminal;
+    semanticHighlighterRef.current = semanticHighlighter;
     searchAddonRef.current = searchAddon;
 
     const inputDisposable = terminal.onData(handleTerminalInput);
@@ -303,7 +312,9 @@ export function XtermPane({
       window.removeEventListener("resize", fit);
       inputDisposable.dispose();
       resizeDisposable.dispose();
+      semanticHighlighter.dispose();
       terminalRef.current = null;
+      semanticHighlighterRef.current = null;
       searchAddonRef.current = null;
       writtenLengthRef.current = 0;
       streamIdRef.current = null;
@@ -338,6 +349,7 @@ export function XtermPane({
       liveSerialRef.current = replayCoversLiveData ? (liveSerial ?? null) : null;
       writtenLengthRef.current = data.length;
       cancelQueuedOutputWrites();
+      semanticHighlighterRef.current?.clear();
       terminal.clear();
       if (data) {
         enqueueTerminalOutput(data, !isOnlyTerminalStatusQuery(data));
@@ -350,6 +362,7 @@ export function XtermPane({
       streamIdRef.current = streamId;
       writtenLengthRef.current = 0;
       cancelQueuedOutputWrites();
+      semanticHighlighterRef.current?.clear();
       terminal.clear();
       if (data) {
         enqueueTerminalOutput(data, !isOnlyTerminalStatusQuery(data));
@@ -368,6 +381,7 @@ export function XtermPane({
       }
     } else {
       cancelQueuedOutputWrites();
+      semanticHighlighterRef.current?.clear();
       terminal.clear();
       enqueueTerminalOutput(data, !isOnlyTerminalStatusQuery(data));
     }
@@ -394,7 +408,10 @@ export function XtermPane({
     >
       <TerminalContextMenu
         menu={contextMenu}
-        onClear={() => terminalRef.current?.clear()}
+        onClear={() => {
+          semanticHighlighterRef.current?.clear();
+          terminalRef.current?.clear();
+        }}
         onCopy={() => {
           const selection = terminalRef.current?.getSelection();
           if (selection) void navigator.clipboard?.writeText(selection);
@@ -496,6 +513,12 @@ function resolveTerminalTheme() {
   return document.documentElement.dataset.ztTheme === "light"
     ? DIGE_WHITE_TERMINAL_THEME
     : DIGE_BLACK_TERMINAL_THEME;
+}
+
+function resolveTerminalSemanticPalette() {
+  return document.documentElement.dataset.ztTheme === "light"
+    ? DIGE_WHITE_SEMANTIC_PALETTE
+    : DIGE_BLACK_SEMANTIC_PALETTE;
 }
 
 function applyTerminalInput(current: string, value: string) {
