@@ -3150,11 +3150,16 @@ button {
 }
 
 .zt-transfer-dock-collapsed .zt-transfer-dock-header {
+  display: block;
   border-bottom: 0;
 }
 
 .zt-transfer-dock-collapsed .zt-transfer-dock-actions {
   display: none;
+}
+
+.zt-transfer-dock-collapsed .zt-transfer-dock-summary {
+  width: 100%;
 }
 
 .zt-transfer-dock-summary {
