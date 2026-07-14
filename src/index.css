@@ -2248,7 +2248,6 @@ button {
 
 .zt-history-entry.is-selected {
   background: var(--zt-bg-active);
-  box-shadow: inset 2px 0 0 var(--zt-accent);
 }
 
 .zt-history-entry:focus-visible {

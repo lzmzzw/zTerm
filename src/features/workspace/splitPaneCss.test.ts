@@ -226,6 +226,12 @@ describe("split pane css direction mapping", () => {
     expect(historyEntryStyles).toContain("-webkit-user-select: none");
   });
 
+  it("highlights selected history rows without a left accent", () => {
+    const selectedStyles = ruleBodiesForSelector(".zt-history-entry.is-selected");
+    expect(selectedStyles).toContain("background: var(--zt-bg-active)");
+    expect(selectedStyles).not.toContain("box-shadow");
+  });
+
   it("keeps xterm internal padding and viewport on the terminal background", () => {
     const terminalRootStyles = ruleBodiesForSelector(".zt-xterm-host .terminal");
     const viewportStyles = ruleBodiesForSelector(".zt-xterm-host .xterm-viewport");
