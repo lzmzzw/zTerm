@@ -16,14 +16,18 @@ describe("file transfer dialog styles", () => {
     expect(styles).toContain("-webkit-backdrop-filter: none");
   });
 
-  it("does not apply icon-button sizing to the conflict-policy select trigger", () => {
-    expect(css).toContain(".zt-file-transfer-controls > button");
-    expect(css).toContain(".zt-file-transfer-dialog .zt-file-transfer-controls > button");
-    expect(css).not.toContain(".zt-file-transfer-dialog .zt-file-transfer-controls button,");
+  it("keeps the conflict-policy selector compact in the dialog title bar", () => {
+    const title = ruleBody(".zt-file-transfer-dialog-title");
+    const selector = ruleBody(".zt-file-transfer-dialog-title .zt-select-trigger");
+
+    expect(title).toContain("display: flex");
+    expect(title).toContain("align-items: center");
+    expect(selector).toContain("width: 116px");
+    expect(css).not.toContain(".zt-file-transfer-controls");
   });
 
   it("reserves one third of the panel for expanded transfer tasks and separates their header", () => {
-    expect(css).toContain("grid-template-rows: auto minmax(0, 2fr) auto var(--zt-transfer-dock-height, minmax(120px, 1fr))");
+    expect(css).toContain("grid-template-rows: minmax(0, 2fr) auto var(--zt-transfer-dock-height, minmax(120px, 1fr))");
     expect(css).toContain(".zt-file-transfer-panel-transfer-collapsed");
     expect(css).not.toContain(".zt-file-transfer-panel:has(.zt-transfer-dock-collapsed)");
     expect(ruleBody(".zt-transfer-dock-resizer")).toContain("cursor: ns-resize");

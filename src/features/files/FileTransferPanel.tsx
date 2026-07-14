@@ -11,7 +11,7 @@ import type { AppLanguage } from "../settings/settingsStore";
 import { useSessionStore } from "../sessions/sessionStore";
 import type { SavedSession } from "../sessions/types";
 import { TransferPanel } from "./TransferPanel";
-import type { FileEntry, TransferConflictPolicy, TransferEndpoint, TransferKind } from "./fileStore";
+import type { FileEntry, TransferEndpoint, TransferKind } from "./fileStore";
 import {
   endpointDisplayPath,
   endpointTargetPath,
@@ -74,7 +74,6 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     loadDefaultLocalPath,
     localRoots,
     loadLocalRoots,
-    setConflictPolicy,
     setEndpoint,
     setPath,
     selectPath,
@@ -103,7 +102,6 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       loadDefaultLocalPath: state.loadDefaultLocalPath,
       localRoots: state.localRoots,
       loadLocalRoots: state.loadLocalRoots,
-      setConflictPolicy: state.setConflictPolicy,
       setEndpoint: state.setEndpoint,
       setPath: state.setPath,
       selectPath: state.selectPath,
@@ -292,21 +290,6 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
 
   return (
     <div className={panelClassName} style={panelStyle} aria-label="文件传输面板">
-      <div className="zt-file-transfer-controls">
-        <label>
-          <span>冲突策略</span>
-          <ZtSelect
-            ariaLabel="文件传输冲突策略"
-            value={conflictPolicy}
-            options={[
-              { value: "overwrite", label: "覆盖" },
-              { value: "skip", label: "跳过" },
-              { value: "rename", label: "自动重命名" },
-            ]}
-            onChange={(value) => setConflictPolicy(value as TransferConflictPolicy)}
-          />
-        </label>
-      </div>
       <div className="zt-file-transfer-panes">
         <EndpointPane
           side="left"
