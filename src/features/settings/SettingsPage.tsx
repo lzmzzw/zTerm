@@ -22,6 +22,7 @@ import {
 } from "./settingsPageModel";
 import { ZtNumberInput } from "../../components/ZtNumberInput";
 import { ZtSelect } from "../../components/ZtSelect";
+import { ZtSurfaceFrame } from "../../components/ZtUi";
 import type {
   AppLanguage,
   AppSettings,
@@ -94,7 +95,7 @@ export function SettingsPage({
   }
 
   return (
-    <div className="zt-settings-page">
+    <ZtSurfaceFrame className="zt-settings-page">
       <header className="zt-settings-page-header">
         <strong>{t(language, "settings")}</strong>
         {error ? <span className="zt-settings-page-error">{error}</span> : null}
@@ -157,7 +158,7 @@ export function SettingsPage({
           ) : null}
         </main>
       </div>
-    </div>
+    </ZtSurfaceFrame>
   );
 }
 

@@ -118,26 +118,19 @@ describe("global dark theme colors", () => {
     expect(ruleBodiesForSelector(".zt-settings-page")).toContain(
       "width: min(var(--zt-dialog-width-large), calc(100vw - 96px))",
     );
-    expect(ruleBodiesForSelector(".zt-settings-page")).toContain("border: 1px solid var(--zt-dialog-border)");
-    expect(ruleBodiesForSelector(".zt-settings-page")).toContain("border-radius: var(--zt-radius-window)");
-    expect(ruleBodiesForSelector(".zt-settings-page")).toContain("box-shadow: var(--zt-dialog-shadow)");
+    expect(ruleBodiesForSelector(".zt-surface-frame")).toContain("border: 1px solid var(--zt-dialog-border)");
+    expect(ruleBodiesForSelector(".zt-surface-frame")).toContain("border-radius: var(--zt-radius-window)");
+    expect(ruleBodiesForSelector(".zt-surface-frame")).toContain("box-shadow: var(--zt-dialog-shadow)");
     expect(ruleBodiesForSelector(".zt-session-modal-backdrop")).toContain("place-items: center");
-    expect(ruleBodiesForSelector(".zt-session-dialog")).toContain("border: 1px solid var(--zt-dialog-border)");
-    expect(ruleBodiesForSelector(".zt-session-dialog")).toContain("border-radius: var(--zt-radius-window)");
-    expect(ruleBodiesForSelector(".zt-session-dialog")).toContain("box-shadow: var(--zt-dialog-shadow)");
   });
 
   it("uses a shared hairline dialog border and shadow", () => {
     expect(rootVariable("--zt-dialog-border")).toBe("var(--zt-line-regular)");
     expect(rootVariable("--zt-dialog-shadow")).toContain("0 26px 72px");
-    expect(ruleBodiesForSelector(".zt-settings-dialog")).toContain("border: 1px solid var(--zt-dialog-border)");
-    expect(ruleBodiesForSelector(".zt-settings-dialog")).toContain("background: var(--zt-surface-floating)");
-    expect(ruleBodiesForSelector(".zt-settings-dialog")).toContain("backdrop-filter: blur(28px) saturate(160%)");
-    expect(ruleBodiesForSelector(".zt-settings-dialog")).toContain("box-shadow: var(--zt-dialog-shadow)");
-    expect(ruleBodiesForSelector(".zt-session-dialog")).toContain("border: 1px solid var(--zt-dialog-border)");
-    expect(ruleBodiesForSelector(".zt-session-dialog")).toContain("background: var(--zt-surface-floating)");
-    expect(ruleBodiesForSelector(".zt-session-dialog")).toContain("backdrop-filter: blur(28px) saturate(160%)");
-    expect(ruleBodiesForSelector(".zt-session-dialog")).toContain("box-shadow: var(--zt-dialog-shadow)");
+    expect(ruleBodiesForSelector(".zt-surface-frame")).toContain("border: 1px solid var(--zt-dialog-border)");
+    expect(ruleBodiesForSelector(".zt-surface-frame")).toContain("background: var(--zt-surface-floating)");
+    expect(ruleBodiesForSelector(".zt-surface-frame")).toContain("backdrop-filter: blur(28px) saturate(160%)");
+    expect(ruleBodiesForSelector(".zt-surface-frame")).toContain("box-shadow: var(--zt-dialog-shadow)");
     expect(ruleBodiesForSelector(".zt-session-context-menu")).toContain("background: var(--zt-surface-floating)");
     expect(ruleBodiesForSelector(".zt-session-context-menu")).toContain(
       "backdrop-filter: blur(28px) saturate(160%)",
@@ -148,7 +141,7 @@ describe("global dark theme colors", () => {
     expect(rootVariable("--zt-surface-floating")).toBe("#1c1c1e");
     expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-surface-floating")).toBe("#ffffff");
 
-    for (const selector of [".zt-dialog", ".zt-session-dialog", ".zt-settings-dialog"]) {
+    for (const selector of [".zt-surface-frame", ".zt-settings-dialog"]) {
       expect(ruleBodiesForSelector(selector)).toContain("background: var(--zt-surface-floating)");
     }
   });

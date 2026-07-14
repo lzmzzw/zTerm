@@ -19,7 +19,7 @@ import { createTerminalActions } from "./terminalActions";
 import type { RightTool } from "./rightTools";
 import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
-import { ZtAttentionRegion, ZtConfirmDialog, ZtModalBackdrop } from "../components/ZtUi";
+import { ZtCenteredPageLayout, ZtConfirmDialog, ZtModalOverlay, ZtSurfaceFrame } from "../components/ZtUi";
 import { setAiAffectedDomainsHandler, useAiStore } from "../features/ai/aiStore";
 import { buildAiTerminalContext } from "../features/ai/aiTerminalContextModel";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
@@ -1457,7 +1457,7 @@ export function AppShell() {
 
   if (viewMode === "settings") {
     return (
-      <ZtAttentionRegion
+      <ZtCenteredPageLayout
         className="zt-workbench zt-workbench-settings"
         onContextMenu={(event) => event.preventDefault()}
       >
@@ -1477,7 +1477,7 @@ export function AppShell() {
           onSetMcpEnabled={setMcpEnabled}
           onRotateMcpToken={rotateMcpToken}
         />
-      </ZtAttentionRegion>
+      </ZtCenteredPageLayout>
     );
   }
 
@@ -1871,8 +1871,8 @@ function ExternalSshTunnelEditorDialog({
   const [newTunnelMode, setNewTunnelMode] = useState<SshTunnelMode>("host_service");
 
   return (
-    <ZtModalBackdrop className="zt-session-modal-backdrop">
-      <div
+    <ZtModalOverlay className="zt-session-modal-backdrop">
+      <ZtSurfaceFrame
         className="zt-session-dialog zt-session-editor-dialog zt-transient-tunnel-dialog"
         role="dialog"
         aria-modal="true"
@@ -1911,7 +1911,7 @@ function ExternalSshTunnelEditorDialog({
             保存临时隧道
           </button>
         </footer>
-      </div>
-    </ZtModalBackdrop>
+      </ZtSurfaceFrame>
+    </ZtModalOverlay>
   );
 }

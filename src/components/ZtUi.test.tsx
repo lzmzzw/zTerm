@@ -12,7 +12,9 @@ import {
   ZtIcon,
   ZtIconButton,
   ZtInput,
+  ZtModalOverlay,
   ZtModalBackdrop,
+  ZtSurfaceFrame,
   ZtSegmentedControl,
   ZtSlider,
   ZtSwitch,
@@ -56,6 +58,20 @@ afterEach(() => {
 });
 
 describe("ZtUi primitives", () => {
+  it("composes modal overlays and surfaces from shared frame primitives", () => {
+    const view = render(
+      <ZtModalOverlay>
+        <ZtSurfaceFrame className="custom-surface" role="dialog" aria-label="统一外壳">
+          弹窗内容
+        </ZtSurfaceFrame>
+      </ZtModalOverlay>,
+    );
+
+    expect(view.container.querySelector(".zt-modal-overlay")).not.toBeNull();
+    expect(view.container.querySelector(".zt-dialog-backdrop")).not.toBeNull();
+    expect(view.container.querySelector(".zt-surface-frame.custom-surface")).not.toBeNull();
+  });
+
   it("marks a configured empty region for attention without reacting to its content", () => {
     const requestAnimationFrameSpy = vi
       .spyOn(window, "requestAnimationFrame")

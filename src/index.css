@@ -376,9 +376,7 @@ button {
   -webkit-backdrop-filter: blur(12px) saturate(130%);
 }
 
-.zt-dialog {
-  display: grid;
-  grid-template-rows: 52px minmax(0, 1fr) auto;
+.zt-surface-frame {
   overflow: hidden;
   border: 1px solid var(--zt-dialog-border);
   border-radius: var(--zt-radius-window);
@@ -387,6 +385,11 @@ button {
   box-shadow: var(--zt-dialog-shadow);
   backdrop-filter: blur(28px) saturate(160%);
   -webkit-backdrop-filter: blur(28px) saturate(160%);
+}
+
+.zt-dialog {
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr) auto;
 }
 
 .zt-dialog-backdrop.is-attention > [role="dialog"] {
@@ -4319,14 +4322,6 @@ button {
 .zt-session-dialog {
   width: min(var(--zt-dialog-width-large), calc(100vw - 96px));
   height: min(var(--zt-dialog-height-large), calc(100vh - 96px));
-  overflow: hidden;
-  border: 1px solid var(--zt-dialog-border);
-  border-radius: var(--zt-radius-window);
-  background: var(--zt-surface-floating);
-  background-clip: padding-box;
-  box-shadow: var(--zt-dialog-shadow);
-  backdrop-filter: blur(28px) saturate(160%);
-  -webkit-backdrop-filter: blur(28px) saturate(160%);
 }
 
 .zt-session-group-dialog,
@@ -5653,14 +5648,6 @@ button {
   min-height: 0;
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr);
-  overflow: hidden;
-  border: 1px solid var(--zt-dialog-border);
-  border-radius: var(--zt-radius-window);
-  background: var(--zt-surface-floating);
-  background-clip: padding-box;
-  box-shadow: var(--zt-dialog-shadow);
-  backdrop-filter: blur(28px) saturate(160%);
-  -webkit-backdrop-filter: blur(28px) saturate(160%);
 }
 
 .zt-settings-page-header {

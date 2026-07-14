@@ -186,6 +186,18 @@ export function ZtModalBackdrop({ className, ...props }: HTMLAttributes<HTMLDivE
   return <ZtAttentionRegion {...props} className={classNames("zt-dialog-backdrop", className)} />;
 }
 
+export function ZtModalOverlay({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+  return <ZtModalBackdrop {...props} className={classNames("zt-modal-overlay", className)} />;
+}
+
+export function ZtCenteredPageLayout({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+  return <ZtAttentionRegion {...props} className={classNames("zt-centered-page-layout", className)} />;
+}
+
+export function ZtSurfaceFrame({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+  return <div {...props} className={classNames("zt-surface-frame", className)} />;
+}
+
 export function ZtDialog({
   title,
   ariaLabel,
@@ -211,8 +223,8 @@ export function ZtDialog({
 }) {
   const titleText = typeof title === "string" ? title : ariaLabel;
   return (
-    <ZtModalBackdrop>
-      <section
+    <ZtModalOverlay>
+      <ZtSurfaceFrame
         className={classNames("zt-dialog", `zt-dialog-${size}`, className)}
         role="dialog"
         aria-modal="true"
@@ -234,8 +246,8 @@ export function ZtDialog({
         </header>
         <div className={classNames("zt-dialog-body", bodyClassName)}>{children}</div>
         {footer ? <footer className="zt-dialog-footer">{footer}</footer> : null}
-      </section>
-    </ZtModalBackdrop>
+      </ZtSurfaceFrame>
+    </ZtModalOverlay>
   );
 }
 

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { ZtNumberInput } from "../../components/ZtNumberInput";
 import { ZtSelect } from "../../components/ZtSelect";
-import { ZtInput, ZtModalBackdrop } from "../../components/ZtUi";
+import { ZtInput, ZtModalOverlay, ZtSurfaceFrame } from "../../components/ZtUi";
 import { fallbackOnlyErrorMessage } from "../../lib/unknownErrorMessage";
 import { LocalSessionForm } from "./LocalSessionForm";
 import { RdpSessionForm } from "./RdpSessionForm";
@@ -339,8 +339,8 @@ export function SessionEditorDialog({
   ] satisfies Array<{ icon: typeof Server; label: string; type: SessionType }>;
 
   return (
-    <ZtModalBackdrop className="zt-session-modal-backdrop">
-      <div
+    <ZtModalOverlay className="zt-session-modal-backdrop">
+      <ZtSurfaceFrame
         className="zt-session-dialog zt-session-editor-dialog"
         role="dialog"
         aria-modal="true"
@@ -488,8 +488,8 @@ export function SessionEditorDialog({
           </button>
         </footer>
         </form>
-      </div>
-    </ZtModalBackdrop>
+      </ZtSurfaceFrame>
+    </ZtModalOverlay>
   );
 }
 
