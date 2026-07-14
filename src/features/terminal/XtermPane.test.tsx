@@ -163,14 +163,22 @@ const terminalMock = vi.hoisted(() => {
   return { instances, Terminal };
 });
 
+const fitAddonMock = vi.hoisted(() => {
+  const instances: Array<{ fit: ReturnType<typeof vi.fn> }> = [];
+  const FitAddon = vi.fn(function () {
+    const instance = { fit: vi.fn() };
+    instances.push(instance);
+    return instance;
+  });
+  return { FitAddon, instances };
+});
+
 vi.mock("@xterm/xterm", () => ({
   Terminal: terminalMock.Terminal,
 }));
 
 vi.mock("@xterm/addon-fit", () => ({
-  FitAddon: vi.fn(function () {
-    return { fit: vi.fn() };
-  }),
+  FitAddon: fitAddonMock.FitAddon,
 }));
 
 vi.mock("@xterm/addon-search", () => ({
@@ -250,6 +258,8 @@ describe("XtermPane", () => {
   beforeEach(() => {
     terminalMock.instances.length = 0;
     terminalMock.Terminal.mockClear();
+    fitAddonMock.instances.length = 0;
+    fitAddonMock.FitAddon.mockClear();
     delete document.documentElement.dataset.ztTheme;
   });
 
@@ -724,9 +734,10 @@ describe("XtermPane", () => {
       await Promise.resolve();
     });
 
-    expect(onResize).toHaveBeenCalledTimes(2);
-    expect(onResize).toHaveBeenNthCalledWith(1, 120, 32);
-    expect(onResize).toHaveBeenNthCalledWith(2, 121, 32);
+    expect(onResize).toHaveBeenCalledTimes(3);
+    expect(onResize).toHaveBeenNthCalledWith(1, terminal.cols, terminal.rows);
+    expect(onResize).toHaveBeenNthCalledWith(2, 120, 32);
+    expect(onResize).toHaveBeenNthCalledWith(3, 121, 32);
 
     view.unmount();
   });
@@ -847,6 +858,23 @@ describe("XtermPane", () => {
 
     expect(onReconnect).toHaveBeenCalledTimes(1);
     expect(onDisconnect).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("subscribes to xterm resize events before the initial fit so the PTY receives the measured size", () => {
+    const onResize = vi.fn();
+    const view = render(<XtermPane data="" onResize={onResize} />);
+    const terminal = terminalMock.instances[0];
+    const fitAddon = fitAddonMock.instances[0];
+
+    expect(terminal.onResize).toHaveBeenCalledTimes(1);
+    expect(fitAddon.fit).toHaveBeenCalledTimes(1);
+    expect(terminal.onResize.mock.invocationCallOrder[0]).toBeLessThan(
+      fitAddon.fit.mock.invocationCallOrder[0],
+    );
+    expect(onResize).toHaveBeenCalledTimes(1);
+    expect(onResize).toHaveBeenCalledWith(terminal.cols, terminal.rows);
+
     view.unmount();
   });
 

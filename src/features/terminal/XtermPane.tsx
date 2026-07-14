@@ -287,21 +287,23 @@ export function XtermPane({
     terminal.loadAddon(searchAddon);
     terminal.loadAddon(new WebLinksAddon());
     terminal.open(containerRef.current);
-    fitAddon.fit();
     const semanticHighlighter = createTerminalSemanticHighlighter(terminal, resolveTerminalSemanticPalette());
     terminalRef.current = terminal;
     semanticHighlighterRef.current = semanticHighlighter;
     searchAddonRef.current = searchAddon;
 
     const inputDisposable = terminal.onData(handleTerminalInput);
-    const resizeDisposable = terminal.onResize((size) => {
+    const reportTerminalSize = (size: { cols: number; rows: number }) => {
       const previousSize = lastResizeRef.current;
       if (previousSize?.cols === size.cols && previousSize.rows === size.rows) {
         return;
       }
       lastResizeRef.current = { cols: size.cols, rows: size.rows };
       onResizeRef.current?.(size.cols, size.rows);
-    });
+    };
+    const resizeDisposable = terminal.onResize(reportTerminalSize);
+    fitAddon.fit();
+    reportTerminalSize({ cols: terminal.cols, rows: terminal.rows });
     const fit = () => fitAddon.fit();
     const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fit);
     resizeObserver?.observe(containerRef.current);
