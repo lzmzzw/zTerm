@@ -764,7 +764,7 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
-  it("moves a tab after a pointer drag crosses panes and reaches an insertion target", () => {
+  it("moves a tab after a pointer drag crosses panes and reaches an insertion target", async () => {
     const onMovePaneTab = vi.fn();
     const root: PaneNode = {
       kind: "split", id: "split-root", direction: "horizontal", ratio: 0.5,
@@ -787,7 +787,7 @@ describe("SplitPaneView", () => {
     const [sourceTab, targetTab] = Array.from(view.container.querySelectorAll<HTMLElement>(".zt-pane-tab"));
     Object.defineProperty(document, "elementFromPoint", {
       configurable: true,
-      value: vi.fn(() => targetTab),
+      value: vi.fn(() => view.container.querySelector(".zt-pane-tab-placeholder") ?? targetTab),
     });
     vi.spyOn(targetTab, "getBoundingClientRect").mockReturnValue({
       x: 100,
@@ -804,7 +804,16 @@ describe("SplitPaneView", () => {
     act(() => {
       sourceTab.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: 0, clientY: 10 }));
       window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, cancelable: true, clientX: 110, clientY: 10 }));
+    });
+
+    const dragOverlay = document.querySelector(".zt-drag-overlay");
+    expect(dragOverlay).not.toBeNull();
+    expect(dragOverlay?.textContent).toContain("A");
+    expect(view.container.querySelector('[data-pane-id="pane-b"] .zt-pane-tab-placeholder')).not.toBeNull();
+
+    await act(async () => {
       window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, clientX: 110, clientY: 10 }));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 160));
     });
 
     expect(onMovePaneTab).toHaveBeenCalledWith("pane-a", "pane-a-tab-1", "pane-b", "pane-b-tab-1");

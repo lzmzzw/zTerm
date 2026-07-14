@@ -27,6 +27,8 @@ import type {
   SessionType,
 } from "./types";
 import type { CredentialDraft, CredentialRecord, TerminalProfile } from "../settings/settingsStore";
+import { DragOverlay, type DragOverlayHandle } from "../../components/drag/DragOverlay";
+import { useFlipLayout } from "../../components/drag/useFlipLayout";
 
 const SESSION_DRAG_THRESHOLD = 6;
 
@@ -35,6 +37,17 @@ interface SessionPointerDragState {
   startX: number;
   startY: number;
   active: boolean;
+  sourceRect: DOMRect;
+  pointerOffsetX: number;
+  pointerOffsetY: number;
+}
+
+interface SessionDragVisual {
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 interface SessionTreeProps {
@@ -78,6 +91,8 @@ export function SessionTree({
   const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
   const pointerDragRef = useRef<SessionPointerDragState | null>(null);
   const pointerDragCleanupRef = useRef<(() => void) | null>(null);
+  const dragOverlayRef = useRef<DragOverlayHandle>(null);
+  const [dragVisual, setDragVisual] = useState<SessionDragVisual | null>(null);
 
   function handleCreateGroup(parentId: string | null = null) {
     setContextMenu(null);
@@ -186,6 +201,7 @@ export function SessionTree({
     pointerDragRef.current = null;
     setDraggedSessionId(null);
     setDropTargetGroupId(null);
+    setDragVisual(null);
   }, []);
 
   useEffect(() => () => pointerDragCleanupRef.current?.(), []);
@@ -194,11 +210,15 @@ export function SessionTree({
     (event: ReactPointerEvent<HTMLElement>, session: SavedSession) => {
       if (!onSaveSession || event.button !== 0) return;
 
+      const sourceRect = event.currentTarget.getBoundingClientRect();
       pointerDragRef.current = {
         session,
         startX: event.clientX,
         startY: event.clientY,
         active: false,
+        sourceRect,
+        pointerOffsetX: event.clientX - sourceRect.left,
+        pointerOffsetY: event.clientY - sourceRect.top,
       };
 
       const cleanup = () => {
@@ -217,21 +237,46 @@ export function SessionTree({
           if (distance < SESSION_DRAG_THRESHOLD) return;
           drag.active = true;
           setDraggedSessionId(drag.session.id);
+          setDragVisual({
+            label: drag.session.name,
+            x: moveEvent.clientX - drag.pointerOffsetX,
+            y: moveEvent.clientY - drag.pointerOffsetY,
+            width: drag.sourceRect.width,
+            height: drag.sourceRect.height,
+          });
         }
-        setDropTargetGroupId(groupIdAt(moveEvent.clientX, moveEvent.clientY));
+        dragOverlayRef.current?.moveTo(
+          moveEvent.clientX - drag.pointerOffsetX,
+          moveEvent.clientY - drag.pointerOffsetY,
+        );
+        const nextTargetGroupId = groupIdAt(moveEvent.clientX, moveEvent.clientY);
+        setDropTargetGroupId((current) => (current === nextTargetGroupId ? current : nextTargetGroupId));
         moveEvent.preventDefault();
       };
-      const handlePointerUp = (upEvent: PointerEvent) => {
+      const finishPointerUp = async (upEvent: PointerEvent) => {
         const drag = pointerDragRef.current;
         const targetGroupId = drag?.active ? groupIdAt(upEvent.clientX, upEvent.clientY) : null;
         cleanup();
-        clearSessionDrag();
-        if (!drag?.active || !targetGroupId || drag.session.group_id === targetGroupId) return;
+        if (!drag?.active) return;
+        if (!targetGroupId || drag.session.group_id === targetGroupId) {
+          await dragOverlayRef.current?.animateTo(drag.sourceRect);
+          clearSessionDrag();
+          return;
+        }
+        const targetRow = Array.from(document.querySelectorAll<HTMLElement>("[data-session-group-id]"))
+          .find((item) => item.dataset.sessionGroupId === targetGroupId);
+        if (targetRow) await dragOverlayRef.current?.animateTo(targetRow.getBoundingClientRect());
         setActionError(null);
-        void Promise.resolve(onSaveSession(buildSavedSessionDraft(drag.session, targetGroupId))).catch((error) => {
+        try {
+          await onSaveSession(buildSavedSessionDraft(drag.session, targetGroupId));
+        } catch (error) {
           setActionError(fallbackOnlyErrorMessage(error, "移动会话失败"));
-        });
+          await dragOverlayRef.current?.animateTo(drag.sourceRect);
+        } finally {
+          clearSessionDrag();
+        }
       };
+      const handlePointerUp = (upEvent: PointerEvent) => void finishPointerUp(upEvent);
       const handlePointerCancel = () => {
         cleanup();
         clearSessionDrag();
@@ -249,6 +294,17 @@ export function SessionTree({
   return (
     <section className="zt-session-tree" aria-label="会话树" onContextMenu={openRootMenu}>
       {actionError ? <div className="zt-session-error">{actionError}</div> : null}
+      {dragVisual ? (
+        <DragOverlay
+          ref={dragOverlayRef}
+          label={dragVisual.label}
+          x={dragVisual.x}
+          y={dragVisual.y}
+          width={dragVisual.width}
+          height={dragVisual.height}
+          variant="session"
+        />
+      ) : null}
 
       <div className="zt-session-nodes">
         {sessionTree.groups.map((node) => (
@@ -376,6 +432,8 @@ function SessionGroupNode({
 }) {
   const { group, groups: childGroups, sessions: groupSessions } = node;
   const [expanded, setExpanded] = useState(group.expanded);
+  const sessionListRef = useRef<HTMLUListElement>(null);
+  useFlipLayout(sessionListRef, groupSessions.map((session) => session.id).join("/"));
 
   useEffect(() => {
     setExpanded(group.expanded);
@@ -429,7 +487,7 @@ function SessionGroupNode({
         </button>
       </div>
       {expanded ? (
-        <ul>
+        <ul ref={sessionListRef}>
           {groupSessions.map((session) => (
             <SessionNode
               key={session.id}
@@ -485,7 +543,11 @@ function SessionNode({
   }
 
   return (
-    <li className={`zt-session-node ${dragging ? "dragging" : ""}`} onContextMenu={openSessionMenu}>
+    <li
+      className={`zt-session-node ${dragging ? "dragging" : ""}`}
+      data-flip-id={session.id}
+      onContextMenu={openSessionMenu}
+    >
       <button
         type="button"
         className="zt-session-node-main"

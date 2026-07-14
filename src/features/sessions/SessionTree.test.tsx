@@ -277,8 +277,17 @@ describe("SessionTree", () => {
     await act(async () => {
       source?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: 0, clientY: 0 }));
       window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, cancelable: true, clientX: 20, clientY: 0 }));
-      window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, clientX: 20, clientY: 0 }));
       await Promise.resolve();
+    });
+
+    const dragOverlay = document.querySelector(".zt-drag-overlay");
+    expect(dragOverlay).not.toBeNull();
+    expect(dragOverlay?.textContent).toContain("生产跳板机");
+    expect(target?.classList.contains("drop-target")).toBe(true);
+
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, clientX: 20, clientY: 0 }));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 160));
     });
 
     expect(onSaveSession).toHaveBeenCalledWith(expect.objectContaining({ id: "ssh-prod", group_id: "group-dev" }));
