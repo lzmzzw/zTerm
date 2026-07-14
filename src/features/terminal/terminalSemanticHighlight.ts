@@ -379,7 +379,7 @@ function addShellPrompt(line: string, highlights: TerminalSemanticHighlight[]) {
     return;
   }
 
-  const posixPrompt = /^(?:\[[^\]]+\]\s*)?[^\r\n]*?([#$%])[ \t]+([A-Za-z_][\w.-]*)/.exec(line);
+  const posixPrompt = /^(?:\[[^\]]+\]\s*)?(?:[^@#$%\r\n]*@[^#$%\r\n]*)?([#$%])[ \t]*([A-Za-z_][\w.-]*)?/.exec(line);
   if (!posixPrompt) return;
   addCapture(line, posixPrompt, 1, "prompt", highlights);
   addCapture(line, posixPrompt, 2, "command", highlights);

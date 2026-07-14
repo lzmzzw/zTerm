@@ -690,6 +690,7 @@ function LeafPane({
       ) : null}
       {xtermMounted && visualMode === "normal" && workspaceActive && runtime && isInteractiveTerminalRuntime(runtime.kind) ? (
         <XtermPane
+          autoFocus={active}
           contextMenuEnabled={workspaceActive && isInteractiveTerminalRuntime(runtime.kind)}
           data={xtermReplay.data}
           liveData={outputChunk?.data ?? null}

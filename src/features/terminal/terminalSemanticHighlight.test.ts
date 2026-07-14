@@ -98,4 +98,13 @@ describe("findTerminalSemanticHighlights", () => {
       { role: "date", text: "2:33 PM" },
     ]);
   });
+
+  it("recognizes empty POSIX and Git Bash prompt rows as command lines", () => {
+    expect(highlightedText("root@host:~#", findTerminalSemanticHighlights("root@host:~#"))).toEqual([
+      { role: "prompt", text: "#" },
+    ]);
+    expect(highlightedText("$ ", findTerminalSemanticHighlights("$ "))).toEqual([
+      { role: "prompt", text: "$" },
+    ]);
+  });
 });

@@ -19,6 +19,7 @@ import {
 import type { CommandCompletionCandidate } from "./terminalStore";
 
 interface XtermPaneProps {
+  autoFocus?: boolean;
   data?: string;
   liveData?: string | null;
   liveSerial?: number | null;
@@ -38,6 +39,7 @@ const DIGE_BLACK_TERMINAL_THEME = {
   background: "#1f1f21",
   foreground: "#F8F8F2",
   cursor: "#ff9d00",
+  cursorAccent: "#1f1f21",
   black: "#333333",
   red: "#C4265E",
   green: "#86B42B",
@@ -60,6 +62,7 @@ const DIGE_WHITE_TERMINAL_THEME = {
   background: "#f7f7fa",
   foreground: "#333333",
   cursor: "#ff9d00",
+  cursorAccent: "#f7f7fa",
   black: "#272822",
   red: "#dc322f",
   green: "#32CD32",
@@ -88,6 +91,7 @@ interface QueuedTerminalWrite {
 }
 
 export function XtermPane({
+  autoFocus = true,
   data = "",
   liveData = null,
   liveSerial,
@@ -176,6 +180,7 @@ export function XtermPane({
           outputWriteTimerRef.current = window.setTimeout(writeNextChunk, 0);
           return;
         }
+        semanticHighlighterRef.current?.refresh();
         finishItem();
       });
     };
@@ -278,6 +283,8 @@ export function XtermPane({
     const terminal = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
+      cursorInactiveStyle: "outline",
+      cursorStyle: "block",
       fontFamily:
         'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Microsoft YaHei Mono", Consolas, "Liberation Mono", monospace',
       fontSize: resolveConfiguredTerminalFontSize(),
@@ -335,6 +342,10 @@ export function XtermPane({
       scheduleNextTask(() => terminal.dispose());
     };
   }, [cancelQueuedOutputWrites, handleTerminalInput]);
+
+  useEffect(() => {
+    if (autoFocus) terminalRef.current?.focus();
+  }, [autoFocus]);
 
   useEffect(() => {
     const terminal = terminalRef.current;

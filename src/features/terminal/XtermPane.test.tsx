@@ -199,6 +199,8 @@ import { XtermPane } from "./XtermPane";
 
 interface TerminalOptions {
   allowProposedApi?: boolean;
+  cursorInactiveStyle?: "outline";
+  cursorStyle?: "block";
   fontFamily?: string;
   fontSize?: number;
   fontWeight?: number | string;
@@ -280,6 +282,7 @@ describe("XtermPane", () => {
       background: "#1f1f21",
       foreground: "#F8F8F2",
       cursor: "#ff9d00",
+      cursorAccent: "#1f1f21",
       black: "#333333",
       red: "#C4265E",
       green: "#86B42B",
@@ -297,6 +300,9 @@ describe("XtermPane", () => {
       brightCyan: "#66D9EF",
       brightWhite: "#f8f8f2",
     });
+    expect(options.cursorStyle).toBe("block");
+    expect(options.cursorInactiveStyle).toBe("outline");
+    expect(terminalMock.instances[0]?.focus).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 
@@ -310,6 +316,7 @@ describe("XtermPane", () => {
       background: "#f7f7fa",
       foreground: "#333333",
       cursor: "#ff9d00",
+      cursorAccent: "#f7f7fa",
       black: "#272822",
       red: "#dc322f",
       green: "#32CD32",
@@ -330,6 +337,14 @@ describe("XtermPane", () => {
 
     view.unmount();
     delete document.documentElement.dataset.ztTheme;
+  });
+
+  it("does not take focus from an inactive terminal pane", () => {
+    const view = render(<XtermPane autoFocus={false} data="" />);
+
+    expect(terminalMock.instances[0]?.focus).not.toHaveBeenCalled();
+
+    view.unmount();
   });
 
   it("adds WindTerm-style semantic colors to default-colored terminal output", () => {
