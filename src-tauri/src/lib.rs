@@ -103,6 +103,7 @@ pub fn run() {
             commands::workspace::workspace_list,
             commands::workspace::workspace_get,
             commands::workspace::workspace_save,
+            commands::workspace::workspace_save_default_snapshot,
             commands::workspace::workspace_delete,
             commands::workspace::workspace_remove,
             commands::terminal::terminal_open,

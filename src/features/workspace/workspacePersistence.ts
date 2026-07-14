@@ -15,6 +15,10 @@ export async function workspaceSave(draft: WorkspaceDefinitionDraft): Promise<Wo
   return invoke<WorkspaceDefinition>("workspace_save", { draft });
 }
 
+export async function workspaceSaveDefaultSnapshot(draft: WorkspaceDefinitionDraft): Promise<WorkspaceDefinition> {
+  return invoke<WorkspaceDefinition>("workspace_save_default_snapshot", { draft });
+}
+
 export async function workspaceDelete(workspaceId: string): Promise<void> {
   await invoke("workspace_delete", { workspaceId });
 }

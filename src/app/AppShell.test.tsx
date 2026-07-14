@@ -30,6 +30,7 @@ const storeMocks = vi.hoisted(() => ({
   workspaceList: vi.fn().mockResolvedValue([]),
   workspaceGet: vi.fn(),
   workspaceSave: vi.fn(),
+  workspaceSaveDefaultSnapshot: vi.fn().mockResolvedValue(undefined),
   workspaceRemove: vi.fn().mockResolvedValue(undefined),
   cacheWorkspaceDefinition: vi.fn(),
   loadWorkspaceDefinition: vi.fn(),
@@ -623,6 +624,7 @@ vi.mock("../features/workspace/workspacePersistence", () => ({
   workspaceList: storeMocks.workspaceList,
   workspaceGet: storeMocks.workspaceGet,
   workspaceSave: storeMocks.workspaceSave,
+  workspaceSaveDefaultSnapshot: storeMocks.workspaceSaveDefaultSnapshot,
   workspaceRemove: storeMocks.workspaceRemove,
 }));
 
@@ -1039,6 +1041,17 @@ describe("AppShell", () => {
     storeMocks.workspaceGet.mockImplementation(async (workspaceId: string) => {
       const draft = storeMocks.buildActiveWorkspaceDraft();
       if (!draft) throw new Error(`workspace not found: ${workspaceId}`);
+      if (workspaceId === "default-workspace") {
+        return {
+          ...draft,
+          id: workspaceId,
+          name: "默认工作区",
+          status: "closed",
+          created_at_ms: 1,
+          updated_at_ms: 1,
+          tabs: [],
+        };
+      }
       return {
         ...draft,
         id: workspaceId,
@@ -1054,6 +1067,8 @@ describe("AppShell", () => {
       };
     });
     storeMocks.workspaceSave.mockReset();
+    storeMocks.workspaceSaveDefaultSnapshot.mockReset();
+    storeMocks.workspaceSaveDefaultSnapshot.mockResolvedValue(undefined);
     storeMocks.workspaceRemove.mockResolvedValue(undefined);
     storeMocks.removeWorkspace.mockReset();
     storeMocks.workspaceDefinitionState.definitions = {};
@@ -1714,7 +1729,8 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    expect(storeMocks.workspaceGet).toHaveBeenCalledTimes(1);
+    expect(storeMocks.workspaceGet).toHaveBeenCalledTimes(2);
+    expect(storeMocks.workspaceGet).toHaveBeenCalledWith("default-workspace");
     expect(storeMocks.workspaceGet).toHaveBeenCalledWith("workspace-closed");
     expect(view.container.querySelector('.zt-workspace-thumbnail.placeholder')).not.toBeNull();
 
@@ -1724,7 +1740,7 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    expect(storeMocks.workspaceGet).toHaveBeenCalledTimes(1);
+    expect(storeMocks.workspaceGet).toHaveBeenCalledTimes(2);
     view.unmount();
   });
 
@@ -2376,6 +2392,90 @@ describe("AppShell", () => {
     });
 
     expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
+
+    view.unmount();
+  });
+
+  it("restores the previous default workspace layout and connections on startup", async () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "session-1",
+        name: "生产机",
+        host: "10.0.0.10",
+        port: 22,
+        username: "ops",
+        type: "ssh",
+        auth_mode: "none",
+        group_id: null,
+        tags: [],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+      },
+    ];
+    storeMocks.workspaceGet.mockResolvedValue({
+      id: "default-workspace",
+      name: "默认工作区",
+      status: "closed",
+      active_tab_id: "tab-1",
+      sort_order: 0,
+      created_at_ms: 1,
+      updated_at_ms: 1,
+      tabs: [
+        {
+          id: "tab-1",
+          title: "主工作台",
+          active_pane_id: "pane-1",
+          sort_order: 0,
+          created_at_ms: 1,
+          updated_at_ms: 1,
+          root: {
+            kind: "leaf",
+            id: "pane-1",
+            title: "生产机",
+            runtime_session_id: null,
+            saved_session_id: "session-1",
+            active_terminal_tab_id: "pane-1-tab-1",
+            terminal_tabs: [
+              {
+                id: "pane-1-tab-1",
+                title: "生产机",
+                runtime_session_id: null,
+                saved_session_id: "session-1",
+                connection_source: "saved_session",
+              },
+            ],
+          },
+        },
+      ],
+    });
+    storeMocks.openTerminal.mockResolvedValue({
+      runtime_session_id: "runtime-restored",
+      saved_session_id: "session-1",
+      history_scope_kind: "saved_session",
+      history_scope_id: "session-1",
+      pane_id: "pane-1",
+      title: "生产机",
+      kind: "ssh",
+      cols: 120,
+      rows: 32,
+    });
+
+    const view = render(<AppShell />);
+    await flushWorkspacePostLayoutWork();
+
+    expect(storeMocks.workspaceGet).toHaveBeenCalledWith("default-workspace");
+    expect(storeMocks.restoreWorkbenchDefinition).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "default-workspace", status: "running" }),
+    );
+    expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1", null);
+    expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
+      "default-workspace",
+      "tab-1",
+      "pane-1",
+      "pane-1-tab-1",
+      expect.objectContaining({ runtime_session_id: "runtime-restored", restore_status: "connected" }),
+    );
 
     view.unmount();
   });

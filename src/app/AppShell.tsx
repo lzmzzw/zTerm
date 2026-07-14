@@ -51,7 +51,13 @@ import { useTerminalStore } from "../features/terminal/terminalStore";
 import { WorkspaceManagerPanel } from "../features/workspace/WorkspaceManagerPanel";
 import { WorkspacePreviewDialog } from "../features/workspace/WorkspacePreviewDialog";
 import { definitionFromDraft } from "../features/workspace/workspacePreviewModel";
-import { workspaceGet, workspaceList, workspaceRemove, workspaceSave } from "../features/workspace/workspacePersistence";
+import {
+  workspaceGet,
+  workspaceList,
+  workspaceRemove,
+  workspaceSave,
+  workspaceSaveDefaultSnapshot,
+} from "../features/workspace/workspacePersistence";
 import { findPane, getActiveTerminalTab } from "../features/workspace/workspaceLayout";
 import { markWorkspaceRestoreQueued, runWorkspaceRestoreQueue } from "../features/workspace/workspaceRestoreScheduler";
 import { DEFAULT_WORKSPACE_ID } from "../features/workspace/workspaceConstants";
@@ -238,6 +244,7 @@ export function AppShell() {
     })),
   );
   const [terminalError, setTerminalError] = useState<string | null>(null);
+  const [initialSessionsLoaded, setInitialSessionsLoaded] = useState(false);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
   const [sessionFolderDialogOpen, setSessionFolderDialogOpen] = useState(false);
   const [fileTransferDialogOpen, setFileTransferDialogOpen] = useState(false);
@@ -539,6 +546,8 @@ export function AppShell() {
   const activeHistoryScopeId = activeHistoryScope.scopeId;
   const language = appSettings?.language ?? "zhCN";
   const workspaceRestoreStrategy = appSettings?.workspace_restore_strategy ?? "visible_first";
+  const defaultWorkspaceRestoreStartedRef = useRef(false);
+  const defaultWorkspaceRestoreReadyRef = useRef(false);
   const recentTerminalOutput =
     activeTool === "agent" && activeRuntimeSessionId
       ? getTerminalOutputTail(activeRuntimeSessionId).slice(-4000)
@@ -571,7 +580,7 @@ export function AppShell() {
   useDomI18n(language);
 
   useEffect(() => {
-    void loadSessions();
+    void loadSessions().finally(() => setInitialSessionsLoaded(true));
     void loadSettings();
     void loadConversations();
     void loadPendingInvocations();
@@ -582,6 +591,49 @@ export function AppShell() {
     if (!appSettings) return;
     applyAppSettings(appSettings);
   }, [appSettings]);
+
+  useEffect(() => {
+    if (
+      !appSettings ||
+      !initialSessionsLoaded ||
+      activeWorkspaceId !== DEFAULT_WORKSPACE_ID ||
+      defaultWorkspaceRestoreStartedRef.current
+    ) {
+      return;
+    }
+    defaultWorkspaceRestoreStartedRef.current = true;
+    let disposed = false;
+
+    void workspaceGet(DEFAULT_WORKSPACE_ID)
+      .then(async (snapshot) => {
+        if (disposed || snapshot.id !== DEFAULT_WORKSPACE_ID || snapshot.tabs.length === 0) return;
+        const queuedSnapshot = markWorkspaceRestoreQueued({ ...snapshot, status: "running" });
+        restoreWorkbenchDefinition(queuedSnapshot);
+        await restoreWorkspaceTerminals(queuedSnapshot);
+      })
+      .catch((error) => {
+        if (!disposed) setWorkspaceActionError(fallbackOnlyErrorMessage(error, "恢复上次终端失败"));
+      })
+      .finally(() => {
+        if (!disposed) defaultWorkspaceRestoreReadyRef.current = true;
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [activeWorkspaceId, appSettings, initialSessionsLoaded, restoreWorkbenchDefinition]);
+
+  useEffect(() => {
+    if (!defaultWorkspaceRestoreReadyRef.current || activeWorkspaceId !== DEFAULT_WORKSPACE_ID) return;
+    const draft = buildActiveWorkspaceDraft();
+    if (!draft) return;
+    const timer = window.setTimeout(() => {
+      void workspaceSaveDefaultSnapshot(draft).catch((error) => {
+        setWorkspaceActionError(fallbackOnlyErrorMessage(error, "保存终端布局失败"));
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [activeTabId, activeWorkspaceId, buildActiveWorkspaceDraft, tabs]);
 
   useEffect(() => {
     let mounted = true;

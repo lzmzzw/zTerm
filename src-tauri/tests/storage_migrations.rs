@@ -443,7 +443,7 @@ fn workspace_tabs_belong_to_a_workspace_after_migration() {
 }
 
 #[test]
-fn migrations_clear_default_workspace_tabs_but_keep_default_workspace() {
+fn migrations_keep_default_workspace_tabs_for_session_restore() {
     let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
 
     run_migrations(&mut connection).expect("migrations should run on an empty database");
@@ -463,7 +463,7 @@ fn migrations_clear_default_workspace_tabs_but_keep_default_workspace() {
         )
         .expect("legacy default workspace tab should insert");
 
-    run_migrations(&mut connection).expect("migrations should clear default workspace tabs");
+    run_migrations(&mut connection).expect("migrations should preserve default workspace tabs");
 
     let default_count: i64 = connection
         .query_row(
@@ -480,7 +480,7 @@ fn migrations_clear_default_workspace_tabs_but_keep_default_workspace() {
         )
         .expect("default workspace tab count should read");
     assert_eq!(default_count, 1);
-    assert_eq!(tab_count, 0);
+    assert_eq!(tab_count, 1);
 }
 
 #[test]

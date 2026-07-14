@@ -246,7 +246,6 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
     ensure_ai_tool_audit_columns(&transaction)?;
     ensure_ai_tool_pending_columns(&transaction)?;
     reset_workspace_runtime_status(&transaction)?;
-    clear_default_workspace_tabs(&transaction)?;
     drop_legacy_agent_runs(&transaction)?;
     drop_source_reuse_records(&transaction)?;
     transaction.commit()?;
@@ -381,14 +380,6 @@ fn sqlite_column_exists(
 fn reset_workspace_runtime_status(transaction: &rusqlite::Transaction<'_>) -> AppResult<()> {
     transaction.execute(
         "update workspaces set status = 'closed' where status = 'running'",
-        [],
-    )?;
-    Ok(())
-}
-
-fn clear_default_workspace_tabs(transaction: &rusqlite::Transaction<'_>) -> AppResult<()> {
-    transaction.execute(
-        "delete from workspace_tabs where workspace_id = 'default-workspace'",
         [],
     )?;
     Ok(())

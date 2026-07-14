@@ -11,7 +11,8 @@ use zterm_lib::{
         sessions::{delete_session, save_session},
         sqlite::SqliteStore,
         workspace::{
-            close_workspace, get_workspace, list_workspaces, remove_workspace, save_workspace,
+            close_workspace, get_workspace, list_workspaces, remove_workspace,
+            save_default_workspace_snapshot, save_workspace,
         },
     },
 };
@@ -200,6 +201,29 @@ fn default_workspace_cannot_be_saved_with_layout_snapshot() {
         .expect("default workspace should remain after rejected save");
     assert_eq!(loaded.id, "default-workspace");
     assert!(loaded.tabs.is_empty());
+}
+
+#[test]
+fn default_workspace_runtime_snapshot_is_saved_and_restorable() {
+    let store = SqliteStore::open_in_memory().expect("sqlite store should open");
+    let mut draft = workspace_draft(None);
+    draft.id = Some("default-workspace".to_string());
+    draft.name = "默认工作区".to_string();
+
+    save_default_workspace_snapshot(&store, draft).expect("default snapshot should save");
+    let loaded = get_workspace(&store, "default-workspace").expect("default snapshot should load");
+
+    assert_eq!(loaded.tabs.len(), 1);
+    let PaneNode::Leaf {
+        runtime_session_id,
+        terminal_tabs,
+        ..
+    } = &loaded.tabs[0].root
+    else {
+        panic!("default workspace root should be a leaf");
+    };
+    assert_eq!(runtime_session_id, &None);
+    assert_eq!(terminal_tabs[0].runtime_session_id, None);
 }
 
 #[test]

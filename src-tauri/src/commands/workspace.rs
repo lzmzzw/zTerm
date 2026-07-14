@@ -9,7 +9,8 @@ use crate::{
     },
     state::AppState,
     storage::workspace::{
-        close_workspace, get_workspace, list_workspaces, remove_workspace, save_workspace,
+        close_workspace, get_workspace, list_workspaces, remove_workspace,
+        save_default_workspace_snapshot, save_workspace,
     },
 };
 
@@ -32,6 +33,14 @@ pub fn workspace_save(
     draft: WorkspaceDefinitionDraft,
 ) -> AppResult<WorkspaceDefinition> {
     save_workspace(state.storage().as_ref(), draft)
+}
+
+#[tauri::command]
+pub fn workspace_save_default_snapshot(
+    state: State<'_, AppState>,
+    draft: WorkspaceDefinitionDraft,
+) -> AppResult<WorkspaceDefinition> {
+    save_default_workspace_snapshot(state.storage().as_ref(), draft)
 }
 
 #[tauri::command]

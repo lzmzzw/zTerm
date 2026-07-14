@@ -83,6 +83,24 @@ pub fn save_workspace(
     store: &SqliteStore,
     draft: WorkspaceDefinitionDraft,
 ) -> AppResult<WorkspaceDefinition> {
+    save_workspace_inner(store, draft, false)
+}
+
+pub fn save_default_workspace_snapshot(
+    store: &SqliteStore,
+    draft: WorkspaceDefinitionDraft,
+) -> AppResult<WorkspaceDefinition> {
+    if normalized_id(draft.id.clone()).as_deref() != Some(DEFAULT_WORKSPACE_ID) {
+        return Err(AppError::validation("默认工作区快照 ID 无效"));
+    }
+    save_workspace_inner(store, draft, true)
+}
+
+fn save_workspace_inner(
+    store: &SqliteStore,
+    draft: WorkspaceDefinitionDraft,
+    allow_default_workspace: bool,
+) -> AppResult<WorkspaceDefinition> {
     let name = required_text("工作区名称", draft.name)?;
     let active_tab_id = required_text("活动标签 ID", draft.active_tab_id)?;
     if draft.tabs.is_empty() {
@@ -92,7 +110,7 @@ pub fn save_workspace(
         return Err(AppError::validation("活动标签不属于工作区"));
     }
     let id = normalized_id(draft.id);
-    if id.as_deref() == Some(DEFAULT_WORKSPACE_ID) {
+    if id.as_deref() == Some(DEFAULT_WORKSPACE_ID) && !allow_default_workspace {
         return Err(AppError::validation("默认工作区不能保存布局快照"));
     }
     let now = now_ms();
