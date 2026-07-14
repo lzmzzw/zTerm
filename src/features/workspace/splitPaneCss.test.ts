@@ -215,6 +215,11 @@ describe("split pane css direction mapping", () => {
     );
   });
 
+  it("keeps history and command group toolbars at the same height", () => {
+    expect(ruleBodiesForSelector(".zt-history-toolbar")).toContain("padding: 5px 8px");
+    expect(ruleBodiesForSelector(".zt-history-group-toolbar")).toContain("padding: 5px 8px");
+  });
+
   it("keeps xterm internal padding and viewport on the terminal background", () => {
     const terminalRootStyles = ruleBodiesForSelector(".zt-xterm-host .terminal");
     const viewportStyles = ruleBodiesForSelector(".zt-xterm-host .xterm-viewport");
