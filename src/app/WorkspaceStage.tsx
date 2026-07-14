@@ -10,6 +10,7 @@ interface WorkspaceStageProps {
   onAddPaneTab: (paneId: string) => void;
   onSelectPaneTab: (paneId: string, paneTabId: string) => void;
   onClosePaneTab: (paneId: string, paneTabId: string) => void;
+  onMovePaneTab: (sourcePaneId: string, paneTabId: string, targetPaneId: string, beforePaneTabId: string | null) => void;
   onSplitPane: (direction: PaneSplitDirection) => void;
   onResizeSplit?: (splitId: string, ratio: number) => void;
   onClosePane: () => void;
@@ -22,6 +23,7 @@ export function WorkspaceStage({
   onAddPaneTab,
   onSelectPaneTab,
   onClosePaneTab,
+  onMovePaneTab,
   onSplitPane,
   onResizeSplit,
   onClosePane,
@@ -48,6 +50,7 @@ export function WorkspaceStage({
             onAddPaneTab={onAddPaneTab}
             onSelectPaneTab={onSelectPaneTab}
             onClosePaneTab={onClosePaneTab}
+            onMovePaneTab={onMovePaneTab}
             onSplitPane={onSplitPane}
             onResizeSplit={onResizeSplit}
             onClosePane={onClosePane}

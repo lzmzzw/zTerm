@@ -764,6 +764,38 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
+  it("reports a dragged tab with its destination pane and insertion target", () => {
+    const onMovePaneTab = vi.fn();
+    const root: PaneNode = {
+      kind: "split", id: "split-root", direction: "horizontal", ratio: 0.5,
+      first: leaf("pane-a", "A"),
+      second: leaf("pane-b", "B"),
+    };
+    const view = render(
+      <SplitPaneView
+        root={root}
+        activePaneId="pane-a"
+        onActivatePane={vi.fn()}
+        onAddPaneTab={vi.fn()}
+        onSelectPaneTab={vi.fn()}
+        onClosePaneTab={vi.fn()}
+        onMovePaneTab={onMovePaneTab}
+        onSplitPane={vi.fn()}
+        onClosePane={vi.fn()}
+      />,
+    );
+    const [sourceTab, targetTab] = Array.from(view.container.querySelectorAll<HTMLElement>(".zt-pane-tab"));
+
+    act(() => {
+      sourceTab.dispatchEvent(new Event("dragstart", { bubbles: true, cancelable: true }));
+      targetTab.dispatchEvent(new MouseEvent("dragover", { bubbles: true, cancelable: true, clientX: -1 }));
+      targetTab.dispatchEvent(new MouseEvent("drop", { bubbles: true, cancelable: true, clientX: -1 }));
+    });
+
+    expect(onMovePaneTab).toHaveBeenCalledWith("pane-a", "pane-a-tab-1", "pane-b", "pane-b-tab-1");
+    view.unmount();
+  });
+
   it("shows a spinner and connecting placeholder for a pending restored tab", () => {
     const root: PaneNode = {
       kind: "leaf",

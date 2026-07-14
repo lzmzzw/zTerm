@@ -1,7 +1,7 @@
 // Author: Liz
 import { CircleAlert, Clock3, LoaderCircle, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, DragEvent, MutableRefObject, PointerEvent as ReactPointerEvent } from "react";
 
 import { TerminalPlaceholder } from "../terminal/TerminalPlaceholder";
 import { TerminalSnapshotPane } from "../terminal/TerminalSnapshotPane";
@@ -31,6 +31,7 @@ interface SplitPaneViewProps {
   onAddPaneTab: (paneId: string) => void;
   onSelectPaneTab: (paneId: string, paneTabId: string) => void;
   onClosePaneTab: (paneId: string, paneTabId: string) => void;
+  onMovePaneTab?: (sourcePaneId: string, paneTabId: string, targetPaneId: string, beforePaneTabId: string | null) => void;
   onSplitPane: (direction: PaneSplitDirection) => void;
   onResizeSplit?: (splitId: string, ratio: number) => void;
   onClosePane: () => void;
@@ -38,6 +39,14 @@ interface SplitPaneViewProps {
   onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string) => void;
   workspaceActive?: boolean;
   visualMode?: "normal" | "placeholder" | "snapshot";
+  dragState?: PaneTabDragState | null;
+  dragStateRef?: MutableRefObject<PaneTabDragState | null>;
+  onDragStateChange?: (dragState: PaneTabDragState | null) => void;
+}
+
+interface PaneTabDragState {
+  sourcePaneId: string;
+  paneTabId: string;
 }
 
 export function SplitPaneView({
@@ -47,6 +56,7 @@ export function SplitPaneView({
   onAddPaneTab,
   onSelectPaneTab,
   onClosePaneTab,
+  onMovePaneTab = () => undefined,
   onSplitPane,
   onResizeSplit,
   onClosePane,
@@ -54,7 +64,18 @@ export function SplitPaneView({
   onReconnectTerminal,
   workspaceActive = true,
   visualMode = "normal",
+  dragState: inheritedDragState,
+  dragStateRef: inheritedDragStateRef,
+  onDragStateChange: inheritedDragStateChange,
 }: SplitPaneViewProps) {
+  const [localDragState, setLocalDragState] = useState<PaneTabDragState | null>(null);
+  const localDragStateRef = useRef<PaneTabDragState | null>(null);
+  const dragState = inheritedDragState ?? localDragState;
+  const dragStateRef = inheritedDragStateRef ?? localDragStateRef;
+  const onDragStateChange = inheritedDragStateChange ?? ((nextDragState: PaneTabDragState | null) => {
+    localDragStateRef.current = nextDragState;
+    setLocalDragState(nextDragState);
+  });
   const handleSplitDividerPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>, split: Extract<PaneNode, { kind: "split" }>) => {
       if (!onResizeSplit) return;
@@ -135,6 +156,7 @@ export function SplitPaneView({
           onAddPaneTab={onAddPaneTab}
           onSelectPaneTab={onSelectPaneTab}
           onClosePaneTab={onClosePaneTab}
+          onMovePaneTab={onMovePaneTab}
           onSplitPane={onSplitPane}
           onResizeSplit={onResizeSplit}
           onClosePane={onClosePane}
@@ -142,6 +164,9 @@ export function SplitPaneView({
           onReconnectTerminal={onReconnectTerminal}
           workspaceActive={workspaceActive}
           visualMode={visualMode}
+          dragState={dragState}
+          dragStateRef={dragStateRef}
+          onDragStateChange={onDragStateChange}
         />
         <div
           className="zt-split-divider"
@@ -156,6 +181,7 @@ export function SplitPaneView({
           onAddPaneTab={onAddPaneTab}
           onSelectPaneTab={onSelectPaneTab}
           onClosePaneTab={onClosePaneTab}
+          onMovePaneTab={onMovePaneTab}
           onSplitPane={onSplitPane}
           onResizeSplit={onResizeSplit}
           onClosePane={onClosePane}
@@ -163,6 +189,9 @@ export function SplitPaneView({
           onReconnectTerminal={onReconnectTerminal}
           workspaceActive={workspaceActive}
           visualMode={visualMode}
+          dragState={dragState}
+          dragStateRef={dragStateRef}
+          onDragStateChange={onDragStateChange}
         />
       </div>
     );
@@ -176,12 +205,16 @@ export function SplitPaneView({
       onAddPaneTab={onAddPaneTab}
       onSelectPaneTab={onSelectPaneTab}
       onClosePaneTab={onClosePaneTab}
+      onMovePaneTab={onMovePaneTab}
       onSplitPane={onSplitPane}
       onClosePane={onClosePane}
       onDisconnectTerminal={onDisconnectTerminal}
       onReconnectTerminal={onReconnectTerminal}
       workspaceActive={workspaceActive}
       visualMode={visualMode}
+      dragState={dragState}
+      dragStateRef={dragStateRef}
+      onDragStateChange={onDragStateChange}
     />
   );
 }
@@ -193,12 +226,16 @@ function LeafPane({
   onAddPaneTab,
   onSelectPaneTab,
   onClosePaneTab,
+  onMovePaneTab,
   onSplitPane,
   onClosePane,
   onDisconnectTerminal,
   onReconnectTerminal,
   workspaceActive,
   visualMode,
+  dragState,
+  dragStateRef,
+  onDragStateChange,
 }: {
   root: Extract<PaneNode, { kind: "leaf" }>;
   active: boolean;
@@ -206,12 +243,16 @@ function LeafPane({
   onAddPaneTab: (paneId: string) => void;
   onSelectPaneTab: (paneId: string, paneTabId: string) => void;
   onClosePaneTab: (paneId: string, paneTabId: string) => void;
+  onMovePaneTab: (sourcePaneId: string, paneTabId: string, targetPaneId: string, beforePaneTabId: string | null) => void;
   onSplitPane: (direction: PaneSplitDirection) => void;
   onClosePane: () => void;
   onDisconnectTerminal?: (paneId: string, paneTabId: string, runtimeSessionId: string) => void;
   onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string) => void;
   workspaceActive: boolean;
   visualMode: "normal" | "placeholder" | "snapshot";
+  dragState: PaneTabDragState | null;
+  dragStateRef: MutableRefObject<PaneTabDragState | null>;
+  onDragStateChange: (dragState: PaneTabDragState | null) => void;
 }) {
   const terminalTabs = getLeafTerminalTabs(root);
   const activeTerminalTab = getActiveTerminalTab(root);
@@ -360,6 +401,19 @@ function LeafPane({
     [closeTerminal, onActivatePane, onClosePaneTab, root.id],
   );
 
+  const clearPaneTabDrag = useCallback(() => onDragStateChange(null), [onDragStateChange]);
+  const moveDraggedPaneTab = useCallback(
+    (event: DragEvent<HTMLElement>, beforePaneTabId: string | null) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const draggedTab = dragStateRef.current;
+      if (!draggedTab) return;
+      onMovePaneTab(draggedTab.sourcePaneId, draggedTab.paneTabId, root.id, beforePaneTabId);
+      clearPaneTabDrag();
+    },
+    [clearPaneTabDrag, dragStateRef, onMovePaneTab, root.id],
+  );
+
   return (
     <section
       className={`zt-terminal-frame ${active ? "active" : ""}`}
@@ -367,7 +421,15 @@ function LeafPane({
       onClick={activatePane}
     >
       <div className="zt-pane-tabs">
-        <div className="zt-pane-tablist" role="tablist" aria-label={`${activeTerminalTab.title} 标签`}>
+        <div
+          className={`zt-pane-tablist ${dragState ? "drag-over" : ""}`}
+          role="tablist"
+          aria-label={`${activeTerminalTab.title} 标签`}
+          onDragOver={(event) => {
+            if (dragStateRef.current) event.preventDefault();
+          }}
+          onDrop={(event) => moveDraggedPaneTab(event, null)}
+        >
           {visibleTerminalTabs.map((terminalTab) => {
             const isActivePaneTerminalTab = active && terminalTab.id === activeTerminalTab.id;
             const connecting = terminalTab.restore_status === "pending";
@@ -382,9 +444,29 @@ function LeafPane({
                   isActivePaneTerminalTab ? "active" : "",
                   connecting ? "connecting" : "",
                   queued || failed ? "statused" : "",
+                  dragState?.paneTabId === terminalTab.id ? "dragging" : "",
                 ]
                   .filter(Boolean)
                   .join(" ")}
+                draggable
+                onDragStart={(event) => {
+                  event.stopPropagation();
+                  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+                  onDragStateChange({ sourcePaneId: root.id, paneTabId: terminalTab.id });
+                }}
+                onDragEnd={clearPaneTabDrag}
+                onDragOver={(event) => {
+                  if (!dragStateRef.current) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(event) => {
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  const after = event.clientX >= bounds.left + bounds.width / 2;
+                  const index = terminalTabs.findIndex((tab) => tab.id === terminalTab.id);
+                  moveDraggedPaneTab(event, after ? (terminalTabs[index + 1]?.id ?? null) : terminalTab.id);
+                }}
               >
                 <button
                   type="button"

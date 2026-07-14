@@ -97,6 +97,52 @@ function splitWithDuplicatePaneIds(): PaneNode {
 }
 
 describe("workspaceStore pane tabs", () => {
+  it("reorders pane tabs and moves them across split panes while allowing an empty source pane", () => {
+    useWorkspaceStore.setState({
+      tabs: [{
+        id: "tab-1", title: "主工作区", active_pane_id: "pane-a", sort_order: 0, created_at_ms: 1, updated_at_ms: 1,
+        root: {
+          kind: "split", id: "split-root", direction: "horizontal", ratio: 0.5,
+          first: {
+            kind: "leaf", id: "pane-a", title: "A", runtime_session_id: "runtime-a", saved_session_id: "session-a",
+            active_terminal_tab_id: "pane-a-tab-1",
+            terminal_tabs: [
+              { id: "pane-a-tab-1", title: "A", runtime_session_id: "runtime-a", saved_session_id: "session-a" },
+              { id: "pane-a-tab-2", title: "B", runtime_session_id: "runtime-b", saved_session_id: "session-b" },
+            ],
+          },
+          second: {
+            kind: "leaf", id: "pane-b", title: "C", runtime_session_id: "runtime-c", saved_session_id: "session-c",
+            active_terminal_tab_id: "pane-b-tab-1",
+            terminal_tabs: [{ id: "pane-b-tab-1", title: "C", runtime_session_id: "runtime-c", saved_session_id: "session-c" }],
+          },
+        },
+      }],
+      activeTabId: "tab-1",
+    });
+
+    useWorkspaceStore.getState().movePaneTab("pane-a", "pane-a-tab-2", "pane-a", "pane-a-tab-1");
+    let root = useWorkspaceStore.getState().tabs[0].root;
+    expect(root.kind).toBe("split");
+    if (root.kind !== "split" || root.first.kind !== "leaf" || root.second.kind !== "leaf") return;
+    expect(root.first.terminal_tabs?.map((tab) => tab.id)).toEqual(["pane-a-tab-2", "pane-a-tab-1"]);
+
+    useWorkspaceStore.getState().movePaneTab("pane-a", "pane-a-tab-2", "pane-b", "pane-b-tab-1");
+    root = useWorkspaceStore.getState().tabs[0].root;
+    expect(root.kind).toBe("split");
+    if (root.kind !== "split" || root.first.kind !== "leaf" || root.second.kind !== "leaf") return;
+    expect(root.first.terminal_tabs?.map((tab) => tab.title)).toEqual(["A"]);
+    expect(root.second.terminal_tabs?.map((tab) => tab.id)).toEqual(["pane-a-tab-2", "pane-b-tab-1"]);
+    expect(root.second.active_terminal_tab_id).toBe("pane-a-tab-2");
+
+    useWorkspaceStore.getState().movePaneTab("pane-a", "pane-a-tab-1", "pane-b", null);
+    root = useWorkspaceStore.getState().tabs[0].root;
+    expect(root.kind).toBe("split");
+    if (root.kind !== "split" || root.first.kind !== "leaf" || root.second.kind !== "leaf") return;
+    expect(root.first.terminal_tabs).toEqual([]);
+    expect(root.second.terminal_tabs?.map((tab) => tab.id)).toEqual(["pane-a-tab-2", "pane-b-tab-1", "pane-a-tab-1"]);
+  });
+
   it("restores a saved definition into the independent live workbench without mutating the cache", () => {
     const definition: WorkspaceDefinition = {
       ...runtimeWorkspace("workspace-a", "runtime-from-snapshot"),

@@ -60,6 +60,7 @@ interface WorkspaceStore {
   addPaneTabAfter: (paneId: string, afterPaneTabId: string) => PaneTerminalTab;
   closePaneTab: (paneId: string, paneTabId: string) => void;
   selectPaneTab: (paneId: string, paneTabId: string) => void;
+  movePaneTab: (sourcePaneId: string, paneTabId: string, targetPaneId: string, beforePaneTabId: string | null) => void;
   setActivePane: (paneId: string) => void;
   bindRuntimeToPane: (runtime: RuntimeSessionInfo) => void;
   bindRuntimeToPaneTab: (
@@ -288,6 +289,18 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           }),
           updated_at_ms: Date.now(),
         };
+      }),
+      updated_at_ms: Date.now(),
+    }))),
+  movePaneTab: (sourcePaneId, paneTabId, targetPaneId, beforePaneTabId) =>
+    set((state) => updateActiveWorkspace(state, (workspace) => ({
+      ...workspace,
+      tabs: workspace.tabs.map((tab) => {
+        if (tab.id !== workspace.activeTabId) return tab;
+        const root = movePaneTabInRoot(tab.root, sourcePaneId, paneTabId, targetPaneId, beforePaneTabId);
+        return root === tab.root
+          ? tab
+          : { ...tab, active_pane_id: targetPaneId, root, updated_at_ms: Date.now() };
       }),
       updated_at_ms: Date.now(),
     }))),
@@ -715,6 +728,60 @@ function closePaneTabInRoot(root: PaneNode, paneId: string, paneTabId: string): 
     saved_session_id: nextActiveTerminalTab.saved_session_id,
     active_terminal_tab_id: nextActiveTerminalTab.id,
     terminal_tabs: nextTerminalTabs,
+  };
+}
+
+function movePaneTabInRoot(
+  root: PaneNode,
+  sourcePaneId: string,
+  paneTabId: string,
+  targetPaneId: string,
+  beforePaneTabId: string | null,
+): PaneNode {
+  const sourcePane = findLeafPane(root, sourcePaneId);
+  const targetPane = findLeafPane(root, targetPaneId);
+  if (!sourcePane || !targetPane) return root;
+
+  const sourceTabs = getLeafTerminalTabs(sourcePane);
+  const movedTab = sourceTabs.find((tab) => tab.id === paneTabId);
+  if (!movedTab) return root;
+
+  if (sourcePaneId === targetPaneId) {
+    if (beforePaneTabId === paneTabId) return root;
+    const remainingTabs = sourceTabs.filter((tab) => tab.id !== paneTabId);
+    const beforeIndex = beforePaneTabId ? remainingTabs.findIndex((tab) => tab.id === beforePaneTabId) : -1;
+    const terminalTabs = beforeIndex >= 0
+      ? [...remainingTabs.slice(0, beforeIndex), movedTab, ...remainingTabs.slice(beforeIndex)]
+      : [...remainingTabs, movedTab];
+    return updateLeafPane(root, sourcePaneId, leafPatchForActiveTab(terminalTabs, movedTab.id));
+  }
+
+  const remainingSourceTabs = sourceTabs.filter((tab) => tab.id !== paneTabId);
+  const nextSourceTabs = remainingSourceTabs;
+  const sourceActiveTabId = getActiveTerminalTab(sourcePane).id;
+  const sourceNextActiveTab = nextSourceTabs.find((tab) => tab.id === sourceActiveTabId) ?? nextSourceTabs[0] ?? null;
+
+  const targetTabs = getLeafTerminalTabs(targetPane);
+  const beforeIndex = beforePaneTabId ? targetTabs.findIndex((tab) => tab.id === beforePaneTabId) : -1;
+  const nextTargetTabs = beforeIndex >= 0
+    ? [...targetTabs.slice(0, beforeIndex), movedTab, ...targetTabs.slice(beforeIndex)]
+    : [...targetTabs, movedTab];
+
+  return updateLeafPane(
+    updateLeafPane(root, sourcePaneId, leafPatchForActiveTab(nextSourceTabs, sourceNextActiveTab?.id ?? null)),
+    targetPaneId,
+    leafPatchForActiveTab(nextTargetTabs, movedTab.id),
+  );
+}
+
+function leafPatchForActiveTab(terminalTabs: PaneTerminalTab[], activePaneTabId: string | null): Partial<LeafPane> {
+  const activeTerminalTab = terminalTabs.find((tab) => tab.id === activePaneTabId) ?? terminalTabs[0] ?? null;
+  return {
+    terminal_tabs: terminalTabs,
+    active_terminal_tab_id: activeTerminalTab?.id,
+    title: activeTerminalTab?.title ?? "新建终端",
+    runtime_session_id: activeTerminalTab?.runtime_session_id ?? null,
+    saved_session_id: activeTerminalTab?.saved_session_id ?? null,
   };
 }
 

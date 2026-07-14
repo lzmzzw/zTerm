@@ -116,7 +116,7 @@ function renamePaneTerminalTabIdValue(
 }
 
 export function getLeafTerminalTabs(leaf: LeafPane): PaneTerminalTab[] {
-  if (leaf.terminal_tabs && leaf.terminal_tabs.length > 0) {
+  if (leaf.terminal_tabs) {
     return leaf.terminal_tabs;
   }
 
@@ -134,7 +134,12 @@ export function getActiveTerminalTab(
   leaf: Extract<PaneNode, { kind: "leaf" }>,
 ): PaneTerminalTab {
   const terminalTabs = getLeafTerminalTabs(leaf);
-  return terminalTabs.find((tab) => tab.id === leaf.active_terminal_tab_id) ?? terminalTabs[0];
+  return terminalTabs.find((tab) => tab.id === leaf.active_terminal_tab_id) ?? terminalTabs[0] ?? {
+    id: `${leaf.id}-empty`,
+    title: "新建终端",
+    runtime_session_id: null,
+    saved_session_id: null,
+  };
 }
 
 function updateActiveTerminalTab(
@@ -145,6 +150,16 @@ function updateActiveTerminalTab(
   const terminalTabs = getLeafTerminalTabs(leaf).map((tab) =>
     tab.id === activeTerminalTab.id ? { ...tab, ...patch, id: tab.id } : tab,
   );
+  if (terminalTabs.length === 0) {
+    return {
+      ...leaf,
+      title: "新建终端",
+      runtime_session_id: null,
+      saved_session_id: null,
+      active_terminal_tab_id: undefined,
+      terminal_tabs: terminalTabs,
+    };
+  }
   const nextActiveTerminalTab = terminalTabs.find((tab) => tab.id === activeTerminalTab.id) ?? terminalTabs[0];
 
   return {

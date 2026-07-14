@@ -456,6 +456,7 @@ export function AppShell() {
     addPaneTabAfter,
     closePaneTab,
     selectPaneTab,
+    movePaneTab,
     setActivePane,
     bindRuntimeToPaneTab,
     splitActivePane,
@@ -477,6 +478,7 @@ export function AppShell() {
       addPaneTabAfter: state.addPaneTabAfter,
       closePaneTab: state.closePaneTab,
       selectPaneTab: state.selectPaneTab,
+      movePaneTab: state.movePaneTab,
       setActivePane: state.setActivePane,
       bindRuntimeToPaneTab: state.bindRuntimeToPaneTab,
       splitActivePane: state.splitActivePane,
@@ -1699,6 +1701,7 @@ export function AppShell() {
           onAddPaneTab={handleRequestPaneConnection}
           onSelectPaneTab={selectPaneTab}
           onClosePaneTab={(paneId, paneTabId) => closePaneTab(paneId, paneTabId)}
+          onMovePaneTab={movePaneTab}
           onSplitPane={handleSplitPane}
           onResizeSplit={resizeSplitPane}
           onClosePane={() => void handleCloseActivePane()}

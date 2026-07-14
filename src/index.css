@@ -3195,6 +3195,15 @@ button {
   font-size: var(--zt-font-size-ui);
 }
 
+.zt-pane-tab.dragging {
+  opacity: 0.45;
+}
+
+.zt-pane-tablist.drag-over {
+  outline: 1px dashed var(--zt-accent);
+  outline-offset: -2px;
+}
+
 .zt-transfer-dock-collapsed .zt-transfer-dock-header {
   display: flex;
   border-bottom: 0;
