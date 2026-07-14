@@ -320,7 +320,6 @@ export function CommandHistoryPanel({
                 aria-label={t(language, "filterHistory")}
                 value={query}
                 onChange={(event) => onQueryChange(event.currentTarget.value)}
-                placeholder={t(language, "filterHistory")}
               />
             </label>
             <ZtSwitch
