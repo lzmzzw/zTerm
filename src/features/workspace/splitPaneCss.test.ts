@@ -220,6 +220,12 @@ describe("split pane css direction mapping", () => {
     expect(ruleBodiesForSelector(".zt-history-group-toolbar")).toContain("padding: 5px 8px");
   });
 
+  it("prevents native text selection in command history rows", () => {
+    const historyEntryStyles = ruleBodiesForSelector(".zt-history-entry");
+    expect(historyEntryStyles).toMatch(/(?:^|\n)\s*user-select: none/);
+    expect(historyEntryStyles).toContain("-webkit-user-select: none");
+  });
+
   it("keeps xterm internal padding and viewport on the terminal background", () => {
     const terminalRootStyles = ruleBodiesForSelector(".zt-xterm-host .terminal");
     const viewportStyles = ruleBodiesForSelector(".zt-xterm-host .xterm-viewport");
