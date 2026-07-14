@@ -199,6 +199,7 @@ interface TerminalOptions {
   allowProposedApi?: boolean;
   fontFamily?: string;
   fontSize?: number;
+  fontWeight?: number | string;
   theme?: Record<string, string>;
 }
 
@@ -270,6 +271,7 @@ describe("XtermPane", () => {
 
     expect(options.allowProposedApi).toBe(true);
     expect(options.fontSize).toBe(13);
+    expect(options.fontWeight).toBe(200);
     expect(options.fontFamily).toContain("Cascadia Mono");
     expect(options.fontFamily).toContain("Microsoft YaHei Mono");
     expect(options.theme).toMatchObject({
