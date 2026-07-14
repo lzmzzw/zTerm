@@ -44,6 +44,7 @@ export function TransferPanel({
   const pausableTaskIds = tasks.filter((task) => pausableTransferStatuses.has(task.status)).map((task) => task.id);
   const resumableTaskIds = tasks.filter((task) => task.status === "paused").map((task) => task.id);
   const allTaskIds = tasks.map((task) => task.id);
+  const hasBulkActions = Boolean(onPauseAll || onResumeAll || onClearAll);
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const dockRef = useRef<HTMLElement | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<{
@@ -131,7 +132,7 @@ export function TransferPanel({
             }}
           />
         )}
-        <div className="zt-transfer-dock-header">
+        <div className={hasBulkActions ? "zt-transfer-dock-header zt-transfer-dock-header-with-actions" : "zt-transfer-dock-header"}>
           <button
             type="button"
             className="zt-transfer-dock-summary"
@@ -144,7 +145,7 @@ export function TransferPanel({
             <span>{activeCount > 0 ? `${activeCount} 个进行中` : `${tasks.length} 个任务`}</span>
             {collapsed ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
           </button>
-          {onPauseAll || onResumeAll || onClearAll ? (
+          {hasBulkActions ? (
             <div className="zt-transfer-dock-actions" aria-label="传输任务批量操作">
               {onPauseAll ? (
                 <button

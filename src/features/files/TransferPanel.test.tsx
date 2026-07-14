@@ -237,7 +237,7 @@ describe("TransferPanel", () => {
     view.unmount();
   });
 
-  it("keeps the collapsed transfer dock summary across the full title bar", () => {
+  it("uses a full-width title layout when no bulk actions are available", () => {
     const view = render(
       <TransferPanel
         collapsible
@@ -248,12 +248,11 @@ describe("TransferPanel", () => {
         onResume={vi.fn()}
         onCancel={vi.fn()}
         onDelete={vi.fn()}
-        onPauseAll={vi.fn()}
       />,
     );
 
     expect(button(view.container, "展开传输任务")).toBeTruthy();
-    expect(view.container.querySelector(".zt-transfer-dock-collapsed .zt-transfer-dock-actions")).toBeTruthy();
+    expect(view.container.querySelector(".zt-transfer-dock-header-with-actions")).toBeNull();
     expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
 
     view.unmount();

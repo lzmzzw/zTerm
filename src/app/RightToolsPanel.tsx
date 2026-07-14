@@ -237,6 +237,7 @@ export function RightToolsPanel({
                 />
                 <TransferPanel
                   collapsible
+                  defaultCollapsed
                   tasks={transfers.tasks}
                   onCancel={transfers.onCancel}
                   onDelete={transfers.onDelete}
