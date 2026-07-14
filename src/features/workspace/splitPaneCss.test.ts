@@ -206,6 +206,15 @@ describe("split pane css direction mapping", () => {
     expect(ruleBodiesForSelector(".zt-history-toolbar .zt-history-icon-button")).toBe("");
   });
 
+  it("keeps one action column in command group headers and items", () => {
+    expect(ruleBodiesForSelector(".zt-history-group header")).toContain(
+      "grid-template-columns: minmax(0, 1fr) 28px",
+    );
+    expect(ruleBodiesForSelector(".zt-history-group-item")).toContain(
+      "grid-template-columns: minmax(0, 1fr) 28px",
+    );
+  });
+
   it("keeps xterm internal padding and viewport on the terminal background", () => {
     const terminalRootStyles = ruleBodiesForSelector(".zt-xterm-host .terminal");
     const viewportStyles = ruleBodiesForSelector(".zt-xterm-host .xterm-viewport");

@@ -94,6 +94,22 @@ function historyEntry(container: HTMLElement, command: string) {
   return entry;
 }
 
+function commandGroup(container: HTMLElement, name: string) {
+  const group = Array.from(container.querySelectorAll<HTMLElement>(".zt-history-group")).find(
+    (item) => item.querySelector("strong")?.textContent?.trim() === name,
+  );
+  if (!group) throw new Error(`Command group not found: ${name}`);
+  return group;
+}
+
+function commandGroupItem(container: HTMLElement, command: string) {
+  const item = Array.from(container.querySelectorAll<HTMLElement>(".zt-history-group-item")).find(
+    (element) => element.querySelector("code")?.textContent?.trim() === command,
+  );
+  if (!item) throw new Error(`Command group item not found: ${command}`);
+  return item;
+}
+
 const entries: CommandHistoryEntry[] = [
   {
     id: "history-1",
@@ -381,13 +397,11 @@ describe("CommandHistoryPanel", () => {
   it("creates edits deletes and sends session command groups", async () => {
     const onSaveCommandGroup = vi.fn();
     const onDeleteCommandGroup = vi.fn();
-    const onSend = vi.fn();
     const view = renderPanel({
       activeView: "groups",
       commandGroups: groups,
       onDeleteCommandGroup,
       onSaveCommandGroup,
-      onSend,
     });
 
     await click(button(view.container, "新增指令组"));
@@ -405,14 +419,19 @@ describe("CommandHistoryPanel", () => {
       commands: ["git status", "npm test"],
     });
 
-    await click(button(view.container, "发送 uptime"));
-    await click(button(view.container, "编辑 巡检"));
+    await contextMenu(commandGroup(view.container, "巡检"));
+    expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
+      "复制",
+      "编辑",
+      "删除",
+    ]);
+    await click(button(view.container, "编辑"));
     expect(view.container.querySelector('[role="dialog"]')?.getAttribute("aria-label")).toBe("编辑指令组");
     await inputText(input(view.container, "指令组名称"), "快速巡检");
     await click(button(view.container, "保存指令组"));
-    await click(button(view.container, "删除 巡检"));
+    await contextMenu(commandGroup(view.container, "巡检"));
+    await click(button(view.container, "删除"));
 
-    expect(onSend).toHaveBeenCalledWith("uptime");
     expect(onSaveCommandGroup).toHaveBeenCalledWith({
       id: "group-1",
       saved_session_id: "session-1",
@@ -422,6 +441,49 @@ describe("CommandHistoryPanel", () => {
       commands: ["uptime", "df -h"],
     });
     expect(onDeleteCommandGroup).toHaveBeenCalledWith("group-1");
+
+    view.unmount();
+  });
+
+  it("uses a distinct batch icon to send every command and keeps only item send buttons", async () => {
+    const onSend = vi.fn();
+    const view = renderPanel({ activeView: "groups", commandGroups: groups, onSend });
+
+    const sendAll = button(view.container, "发送全部 巡检");
+    const sendItem = button(view.container, "发送 uptime");
+    expect(sendAll.querySelector(".lucide-fast-forward")).not.toBeNull();
+    expect(sendAll.querySelector(".lucide-play")).toBeNull();
+    expect(sendItem.querySelector(".lucide-play")).not.toBeNull();
+    expect(buttonExists(view.container, "复制 巡检")).toBe(false);
+    expect(buttonExists(view.container, "编辑 巡检")).toBe(false);
+    expect(buttonExists(view.container, "删除 巡检")).toBe(false);
+    expect(buttonExists(view.container, "复制 uptime")).toBe(false);
+
+    await click(sendAll);
+    expect(onSend.mock.calls).toEqual([["uptime"], ["df -h"]]);
+
+    view.unmount();
+  });
+
+  it("copies command groups and individual commands from their context menus", async () => {
+    const onCopy = vi.fn();
+    const view = renderPanel({ activeView: "groups", commandGroups: groups, onCopy });
+
+    await contextMenu(commandGroup(view.container, "巡检"));
+    expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
+      "复制",
+      "编辑",
+      "删除",
+    ]);
+    await click(button(view.container, "复制"));
+    expect(onCopy).toHaveBeenCalledWith("uptime\ndf -h");
+
+    await contextMenu(commandGroupItem(view.container, "uptime"));
+    expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
+      "复制",
+    ]);
+    await click(button(view.container, "复制"));
+    expect(onCopy).toHaveBeenLastCalledWith("uptime");
 
     view.unmount();
   });

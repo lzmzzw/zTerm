@@ -2319,12 +2319,13 @@ button {
 
 .zt-history-group header {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px 28px 28px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
   gap: 4px;
   min-width: 0;
   padding: 4px 5px 3px 8px;
   border-bottom: 1px solid var(--zt-border-subtle);
+  cursor: context-menu;
 }
 
 .zt-history-group strong {
@@ -2362,13 +2363,14 @@ button {
 
 .zt-history-group-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px 28px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
   gap: 4px;
   min-width: 0;
   min-height: 26px;
   padding-left: 4px;
   border-radius: var(--zt-radius-control);
+  cursor: context-menu;
 }
 
 .zt-history-group-item:hover {

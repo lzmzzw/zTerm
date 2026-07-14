@@ -1,5 +1,5 @@
 // Author: Liz
-import { Copy, Edit3, Play, Plus, Search, Trash2 } from "lucide-react";
+import { FastForward, Play, Plus, Search } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 
@@ -424,6 +424,41 @@ function CommandGroupView({
   onNewGroup: () => void;
   onSend: (command: string) => void;
 }) {
+  const [actionMenu, setActionMenu] = useState<
+    | { kind: "group"; group: SessionCommandGroup; x: number; y: number }
+    | { kind: "item"; command: string; x: number; y: number }
+    | null
+  >(null);
+
+  useEffect(() => {
+    if (!actionMenu) return undefined;
+    const closeMenu = () => setActionMenu(null);
+    const closeMenuOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMenu();
+    };
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", closeMenuOnEscape);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("keydown", closeMenuOnEscape);
+    };
+  }, [actionMenu]);
+
+  function openGroupMenu(event: ReactMouseEvent<HTMLElement>, group: SessionCommandGroup) {
+    event.preventDefault();
+    setActionMenu({ kind: "group", group, x: event.clientX, y: event.clientY });
+  }
+
+  function openItemMenu(event: ReactMouseEvent<HTMLElement>, command: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    setActionMenu({ kind: "item", command, x: event.clientX, y: event.clientY });
+  }
+
+  function sendGroup(group: SessionCommandGroup) {
+    group.items.forEach((item) => onSend(item.command));
+  }
+
   return (
     <>
       <div className="zt-history-group-toolbar">
@@ -440,28 +475,32 @@ function CommandGroupView({
         {hasHistoryScope && commandGroups.length === 0 ? <div className="zt-empty-line">{t(language, "noCommandGroups")}</div> : null}
         {hasHistoryScope
           ? commandGroups.map((group) => (
-              <article className="zt-history-group" key={group.id}>
+              <article
+                className="zt-history-group"
+                key={group.id}
+                onContextMenu={(event) => openGroupMenu(event, group)}
+              >
                 <header>
                   <strong>{group.name}</strong>
-                  <button type="button" aria-label={`${t(language, "copyPrefix")} ${group.name}`} onClick={() => onCopy(group.items.map((item) => item.command).join("\n"))}>
-                     <Copy size={14} aria-hidden="true" />
-                  </button>
-                  <button type="button" aria-label={`${t(language, "editPrefix")} ${group.name}`} onClick={() => onEditGroup(group)}>
-                     <Edit3 size={14} aria-hidden="true" />
-                  </button>
-                  <button type="button" className="zt-delete-button" aria-label={`${t(language, "deletePrefix")} ${group.name}`} onClick={() => void onDeleteCommandGroup(group.id)}>
-              <Trash2 size={14} aria-hidden="true" />
+                  <button
+                    type="button"
+                    aria-label={`${t(language, "sendAllPrefix")} ${group.name}`}
+                    title={`${t(language, "sendAllPrefix")} ${group.name}`}
+                    onClick={() => sendGroup(group)}
+                  >
+                    <FastForward size={14} aria-hidden="true" />
                   </button>
                 </header>
                 <div className="zt-history-group-items">
                   {group.items.map((item) => (
-                    <div className="zt-history-group-item" key={item.id}>
+                    <div
+                      className="zt-history-group-item"
+                      key={item.id}
+                      onContextMenu={(event) => openItemMenu(event, item.command)}
+                    >
                       <code>{item.command}</code>
-                      <button type="button" aria-label={`${t(language, "copyPrefix")} ${item.command}`} onClick={() => onCopy(item.command)}>
-                  <Copy size={14} aria-hidden="true" />
-                      </button>
                       <button type="button" aria-label={`${t(language, "sendPrefix")} ${item.command}`} onClick={() => onSend(item.command)}>
-                  <Play size={14} aria-hidden="true" />
+                        <Play size={14} aria-hidden="true" />
                       </button>
                     </div>
                   ))}
@@ -470,6 +509,50 @@ function CommandGroupView({
             ))
           : null}
       </div>
+
+      {actionMenu ? (
+        <ZtContextMenu className="zt-context-menu" role="menu" x={actionMenu.x} y={actionMenu.y}>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              onCopy(
+                actionMenu.kind === "group"
+                  ? actionMenu.group.items.map((item) => item.command).join("\n")
+                  : actionMenu.command,
+              );
+              setActionMenu(null);
+            }}
+          >
+            {t(language, "copyPrefix")}
+          </button>
+          {actionMenu.kind === "group" ? (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onEditGroup(actionMenu.group);
+                  setActionMenu(null);
+                }}
+              >
+                {t(language, "editPrefix")}
+              </button>
+              <button
+                type="button"
+                className="zt-delete-button"
+                role="menuitem"
+                onClick={() => {
+                  void onDeleteCommandGroup(actionMenu.group.id);
+                  setActionMenu(null);
+                }}
+              >
+                {t(language, "deletePrefix")}
+              </button>
+            </>
+          ) : null}
+        </ZtContextMenu>
+      ) : null}
     </>
   );
 }
