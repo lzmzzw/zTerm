@@ -761,6 +761,28 @@ describe("SessionTree", () => {
     view.unmount();
   });
 
+  it("places destructive actions last in session context menus", async () => {
+    const view = render(<SessionTree groups={groups} sessions={sessions} />);
+
+    await contextMenu(view.container.querySelector('[aria-label="分组 生产环境"] .zt-session-group-row') as HTMLElement);
+    expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
+      "新建连接",
+      "编辑",
+      "删除",
+    ]);
+
+    await contextMenu(
+      Array.from(view.container.querySelectorAll(".zt-session-node-main")).find((item) => item.textContent?.includes("日志节点")) as HTMLElement,
+    );
+    expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
+      "编辑",
+      "建立新连接",
+      "删除",
+    ]);
+
+    view.unmount();
+  });
+
   it("keeps fixed fallback text when deleting a group fails with a non-Error value", async () => {
     const onDeleteGroup = vi.fn().mockRejectedValue("raw group delete failure");
     const view = render(<SessionTree groups={groups} sessions={sessions} onDeleteGroup={onDeleteGroup} />);
