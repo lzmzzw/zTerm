@@ -163,16 +163,27 @@ function MetricCard({
 }) {
   return (
     <section className="zt-monitor-card">
-      <header>
+      <header
+        className="zt-monitor-card-toggle"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-label={`${expanded ? "收起" : "展开"}${title}详情`}
+        title={`${expanded ? "收起" : "展开"}${title}详情`}
+        onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          onToggle();
+        }}
+      >
         <div>
           {icon}
           <span>{title}</span>
           <small>{helper}</small>
         </div>
         <strong>{value}</strong>
-        <button type="button" aria-expanded={expanded} aria-label={`${expanded ? "收起" : "展开"}${title}详情`} title={`${expanded ? "收起" : "展开"}${title}详情`} onClick={onToggle}>
-          <ChevronDown size={14} aria-hidden="true" />
-        </button>
+        <ChevronDown className="zt-monitor-card-indicator" size={14} aria-hidden="true" />
       </header>
       {expanded ? <div className="zt-monitor-card-body">{children}</div> : null}
     </section>

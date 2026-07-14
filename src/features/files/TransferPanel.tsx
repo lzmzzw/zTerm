@@ -133,7 +133,18 @@ export function TransferPanel({
           />
         )}
         <div className="zt-transfer-dock-header">
-          <strong className="zt-transfer-dock-title">传输任务</strong>
+          <button
+            type="button"
+            className="zt-transfer-dock-toggle"
+            aria-label={collapsed ? "展开传输任务" : "折叠传输任务"}
+            aria-expanded={!collapsed}
+            title={collapsed ? "展开传输任务" : "折叠传输任务"}
+            onClick={toggleCollapsed}
+          >
+            <strong className="zt-transfer-dock-title">传输任务</strong>
+            <span className="zt-transfer-dock-count">{activeCount > 0 ? `${activeCount} 个进行中` : `${tasks.length} 个任务`}</span>
+            {collapsed ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+          </button>
           {hasBulkActions ? (
             <div className="zt-transfer-dock-actions" aria-label="传输任务批量操作">
               {onPauseAll ? (
@@ -178,17 +189,6 @@ export function TransferPanel({
               ) : null}
             </div>
           ) : null}
-          <button
-            type="button"
-            className="zt-transfer-dock-summary"
-            aria-label={collapsed ? "展开传输任务" : "折叠传输任务"}
-            aria-expanded={!collapsed}
-            title={collapsed ? "展开传输任务" : "折叠传输任务"}
-            onClick={toggleCollapsed}
-          >
-            <span>{activeCount > 0 ? `${activeCount} 个进行中` : `${tasks.length} 个任务`}</span>
-            {collapsed ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
-          </button>
         </div>
         {collapsed ? null : list}
         {confirmDialog}

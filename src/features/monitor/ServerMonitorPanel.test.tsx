@@ -67,7 +67,7 @@ describe("ServerMonitorPanel", () => {
     view.unmount();
   });
 
-  it("renders overview metric cards and expands details", async () => {
+  it("renders overview metric cards and expands details from the card title", async () => {
     const view = render(
       <ServerMonitorPanel
         active={true}
@@ -94,7 +94,10 @@ describe("ServerMonitorPanel", () => {
     expect(view.container.textContent).toContain("GPU");
     expect(view.container.textContent).toContain("内存");
 
-    await click(button(view.container, "展开CPU详情"));
+    const cpuHeader = Array.from(view.container.querySelectorAll<HTMLElement>(".zt-monitor-card header")).find((header) => header.textContent?.includes("CPU"));
+    expect(cpuHeader?.getAttribute("role")).toBe("button");
+    expect(cpuHeader?.querySelector(".zt-monitor-card-indicator")).toBeTruthy();
+    await click(cpuHeader as HTMLElement);
     expect(view.container.textContent).toContain("AMD EPYC Preview");
     expect(view.container.textContent).toContain("Load");
 

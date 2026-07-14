@@ -224,24 +224,18 @@ export function AiPanel({
                 <div className="zt-ai-history-row-header">
                   <button
                     type="button"
-                    className="zt-ai-history-expand"
+                    className="zt-ai-history-toggle"
                     aria-label={t(language, expanded ? "collapseAiConversation" : "expandAiConversation", { title: conversation.title })}
+                    aria-expanded={expanded}
                     title={t(language, expanded ? "collapseAiConversation" : "expandAiConversation", { title: conversation.title })}
                     onClick={() => toggleHistoryConversation(conversation.id)}
-                  >
-                    {expanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
-                  </button>
-                  <button
-                    type="button"
-                    className="zt-ai-history-main"
-                    aria-label={t(language, "restoreAiConversation", { title: conversation.title })}
-                    title={t(language, "restoreAiConversation", { title: conversation.title })}
                     onDoubleClick={() => void restoreConversation(conversation.id)}
                   >
                     <span className="zt-ai-history-title">{conversation.title}</span>
                     <time className="zt-ai-history-time" dateTime={new Date(conversation.updated_at_ms).toISOString()}>
                       {formatConversationTime(conversation.updated_at_ms)}
                     </time>
+                    {expanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
                   </button>
                   {onDeleteConversation ? (
                     <button

@@ -2516,8 +2516,7 @@ button {
   line-height: 1.4;
 }
 
-.zt-monitor-overview button,
-.zt-monitor-card button {
+.zt-monitor-overview button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2529,8 +2528,7 @@ button {
   color: var(--zt-text-muted);
 }
 
-.zt-monitor-overview button:hover,
-.zt-monitor-card button:hover {
+.zt-monitor-overview button:hover {
   border-color: var(--zt-border);
   background: var(--zt-bg-hover);
   color: var(--zt-text-primary);
@@ -2624,6 +2622,21 @@ button {
 
 .zt-monitor-card header {
   align-items: center;
+}
+
+.zt-monitor-card-toggle {
+  cursor: pointer;
+}
+
+.zt-monitor-card-toggle:focus-visible {
+  outline: 1px solid var(--zt-accent);
+  outline-offset: 2px;
+}
+
+.zt-monitor-card-indicator {
+  flex: 0 0 auto;
+  width: 28px;
+  color: var(--zt-text-muted);
 }
 
 .zt-monitor-card header div {
@@ -3284,13 +3297,13 @@ button {
   display: none;
 }
 
-.zt-transfer-dock-summary {
+.zt-transfer-dock-toggle {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 18px;
+  grid-template-columns: minmax(0, 1fr) auto 18px;
   align-items: center;
   gap: 8px;
+  flex: 1;
   min-width: 0;
-  width: auto;
   height: 24px;
   padding: 0 4px;
   border: 0;
@@ -3302,17 +3315,18 @@ button {
   text-align: left;
 }
 
-.zt-transfer-dock-summary:hover,
-.zt-transfer-dock-summary:focus-visible {
+.zt-transfer-dock-toggle:hover,
+.zt-transfer-dock-toggle:focus-visible {
   background: var(--zt-bg-hover);
 }
 
-.zt-transfer-dock-summary:focus-visible {
+.zt-transfer-dock-toggle:focus-visible {
   outline: 1px solid var(--zt-accent);
   outline-offset: -1px;
 }
 
-.zt-transfer-dock-summary span {
+.zt-transfer-dock-title,
+.zt-transfer-dock-count {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3320,11 +3334,10 @@ button {
 
 .zt-transfer-dock-title {
   min-width: 0;
-  margin-right: auto;
   font-weight: 600;
 }
 
-.zt-transfer-dock-summary span {
+.zt-transfer-dock-count {
   color: var(--zt-text-muted);
 }
 
@@ -3786,7 +3799,6 @@ button {
 }
 
 .zt-ai-toolbar button,
-.zt-ai-history-expand,
 .zt-ai-conversation-delete {
   display: inline-flex;
   align-items: center;
@@ -3803,7 +3815,6 @@ button {
 }
 
 .zt-ai-toolbar button:hover,
-.zt-ai-history-expand:hover,
 .zt-ai-conversation-delete:hover {
   background: var(--zt-bg-hover);
   color: var(--zt-text-primary);
@@ -3963,15 +3974,15 @@ button {
 
 .zt-ai-history-row-header {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
   gap: 5px;
   min-width: 0;
 }
 
-.zt-ai-history-main {
+.zt-ai-history-toggle {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto 18px;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -3984,7 +3995,7 @@ button {
   text-align: left;
 }
 
-.zt-ai-history-main:hover {
+.zt-ai-history-toggle:hover {
   background: var(--zt-bg-hover);
 }
 

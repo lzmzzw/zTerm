@@ -591,7 +591,7 @@ describe("AiPanel", () => {
 
     await click(button(view.container, "历史会话"));
     const historyView = view.container.querySelector(".zt-ai-history-view");
-    const historyMain = button(view.container, "恢复 AI 会话 历史排查");
+    const historyMain = button(view.container, "展开 AI 会话 历史排查");
     expect(historyView).not.toBeNull();
     expect(view.container.textContent).toContain("历史排查");
     expect(view.container.textContent).not.toContain("当前绑定窗格");
@@ -600,7 +600,7 @@ describe("AiPanel", () => {
     expect(historyMain.querySelector(".zt-ai-history-title")?.textContent).toBe("历史排查");
     expect(historyMain.querySelector(".zt-ai-history-time")?.textContent?.trim()).not.toBe("");
 
-    await click(button(view.container, "展开 AI 会话 历史排查"));
+    await click(historyMain);
     expect(onLoadConversationPreview).toHaveBeenCalledWith("conversation-old");
     expect(view.container.textContent).toContain("第二条");
     expect(view.container.textContent).toContain("第五条");
@@ -612,7 +612,7 @@ describe("AiPanel", () => {
     await click(button(view.container, "折叠 AI 会话 历史排查"));
     expect(view.container.textContent).not.toContain("第二条");
 
-    await doubleClick(button(view.container, "恢复 AI 会话 历史排查"));
+    await doubleClick(button(view.container, "展开 AI 会话 历史排查"));
     expect(onSelectConversation).toHaveBeenCalledWith("conversation-old");
     expect(view.container.textContent).toContain("当前内容");
     view.unmount();

@@ -212,7 +212,7 @@ describe("TransferPanel", () => {
     view.unmount();
   });
 
-  it("keeps the collapsible transfer dock expanded by default and collapses from its summary", async () => {
+  it("keeps the collapsible transfer dock expanded by default and collapses from its title", async () => {
     const view = render(
       <TransferPanel
         collapsible
@@ -226,10 +226,12 @@ describe("TransferPanel", () => {
     );
 
     expect(button(view.container, "折叠传输任务")).toBeTruthy();
-    expect(view.container.querySelector(".zt-transfer-dock-summary")).toBeTruthy();
+    const dockTitle = view.container.querySelector<HTMLElement>(".zt-transfer-dock-title");
+    expect(dockTitle).toBeTruthy();
+    expect(view.container.querySelector(".zt-transfer-dock-toggle")).toBeTruthy();
     expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeTruthy();
 
-    await click(button(view.container, "折叠传输任务"));
+    await click(dockTitle as HTMLElement);
 
     expect(button(view.container, "展开传输任务")).toBeTruthy();
     expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
@@ -237,7 +239,7 @@ describe("TransferPanel", () => {
     view.unmount();
   });
 
-  it("keeps the task count and collapse control at the end of the dock header", () => {
+  it("keeps the task count and collapse control in the dock title area", () => {
     const view = render(
       <TransferPanel
         collapsible
@@ -253,7 +255,7 @@ describe("TransferPanel", () => {
 
     expect(button(view.container, "展开传输任务")).toBeTruthy();
     expect(view.container.querySelector(".zt-transfer-dock-title")?.textContent).toBe("传输任务");
-    expect(view.container.querySelector(".zt-transfer-dock-header")?.lastElementChild?.getAttribute("aria-label")).toBe("展开传输任务");
+    expect(view.container.querySelector(".zt-transfer-dock-toggle")?.getAttribute("aria-label")).toBe("展开传输任务");
     expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
 
     view.unmount();
