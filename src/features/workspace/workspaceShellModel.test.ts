@@ -1,5 +1,5 @@
 // Author: Liz
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   collectWorkspaceTerminalTargets,
@@ -123,6 +123,36 @@ describe("workspaceShellModel", () => {
     const items = mergeWorkspaceSidebarItems(summaries, {});
 
     expect(items.map((item) => item.name)).toEqual(["Alpha", "Zulu"]);
+  });
+
+  it("uses the Chinese locale when sorting Chinese workspace names", () => {
+    const localeCompare = vi.spyOn(String.prototype, "localeCompare");
+    const summaries: WorkspaceSummary[] = [
+      {
+        id: "workspace-a",
+        name: "持久化工作区",
+        status: "closed",
+        active_tab_id: "tab-a",
+        tab_count: 1,
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+      },
+      {
+        id: "workspace-b",
+        name: "另一个工作区",
+        status: "closed",
+        active_tab_id: "tab-b",
+        tab_count: 1,
+        sort_order: 1,
+        created_at_ms: 2,
+        updated_at_ms: 2,
+      },
+    ];
+
+    mergeWorkspaceSidebarItems(summaries, {});
+
+    expect(localeCompare.mock.calls.some(([, locale]) => locale === "zh-CN")).toBe(true);
   });
 
   it("converts runtime workspaces and calculates the next sort order", () => {

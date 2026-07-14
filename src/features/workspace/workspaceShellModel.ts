@@ -116,10 +116,10 @@ function activeWorkspaceDefinitionRoot(workspace: WorkspaceDefinition) {
 
 function compareWorkspaceSidebarItems(left: WorkspaceSidebarItem, right: WorkspaceSidebarItem): number {
   return (
-    left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" }) ||
+    left.name.localeCompare(right.name, "zh-CN", { numeric: true, sensitivity: "base" }) ||
     left.sort_order - right.sort_order ||
     right.updated_at_ms - left.updated_at_ms ||
-    left.id.localeCompare(right.id)
+    left.id.localeCompare(right.id, "zh-CN")
   );
 }
 
