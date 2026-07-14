@@ -6,13 +6,27 @@ use zterm_lib::{
         session::{AuthMode, SavedSession, SessionType, SshOptions},
     },
     services::{
-        server_info_service::parse_server_info_output,
+        server_info_service::{collect_local_snapshot, parse_server_info_output},
         ssh_command_service::{
             build_ssh_command_execution, reusable_connection_key_for_execution,
             reusable_connection_metadata_for_execution, SshCommandSecretResolver,
         },
     },
 };
+
+#[test]
+fn collects_local_machine_resource_snapshot() {
+    let snapshot = collect_local_snapshot();
+
+    assert_eq!(snapshot.host_id, "local-machine");
+    assert_eq!(snapshot.host_name, "本机");
+    assert_eq!(snapshot.host, "localhost");
+    assert_eq!(snapshot.port, 0);
+    assert!(snapshot.cpu_count.is_some_and(|count| count > 0));
+    assert!(snapshot.memory_total_bytes.is_some_and(|bytes| bytes > 0));
+    assert!(snapshot.process_count.is_some_and(|count| count > 0));
+    assert!(!snapshot.captured_at.is_empty());
+}
 
 #[derive(Default)]
 struct StaticSecrets;

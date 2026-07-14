@@ -48,11 +48,18 @@ async function chooseSelect(container: HTMLElement, label: string, value: string
 }
 
 describe("ServerMonitorPanel", () => {
-  it("renders empty state without active ssh session", () => {
+  it("renders the local machine overview without an active ssh session", () => {
     const view = render(
       <ServerMonitorPanel
         active={true}
-        target={null}
+        target={{
+          kind: "local",
+          host: "localhost",
+          id: "local-machine",
+          name: "本机",
+          port: 0,
+          username: "",
+        }}
         error={null}
         loading={false}
         networkTraffic={null}
@@ -63,7 +70,8 @@ describe("ServerMonitorPanel", () => {
       />,
     );
 
-    expect(view.container.textContent).toContain("打开 SSH 会话后显示资源监控");
+    expect(view.container.textContent).toContain("本机");
+    expect(view.container.textContent).not.toContain("打开 SSH 会话后显示资源监控");
     view.unmount();
   });
 
@@ -72,6 +80,7 @@ describe("ServerMonitorPanel", () => {
       <ServerMonitorPanel
         active={true}
         target={{
+          kind: "ssh",
           host: "app.example.test",
           id: "ssh-1",
           name: "生产服务器",
@@ -111,6 +120,7 @@ describe("ServerMonitorPanel", () => {
       <ServerMonitorPanel
         active={true}
         target={{
+          kind: "ssh",
           host: "app.example.test",
           id: "ssh-1",
           name: "生产服务器",

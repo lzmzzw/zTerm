@@ -1,6 +1,8 @@
 // Author: Liz
 import { invoke } from "@tauri-apps/api/core";
 
+export const LOCAL_SERVER_INFO_TARGET_ID = "local-machine";
+
 export interface ServerInfoSnapshot {
   host_id: string;
   host_name: string;
@@ -72,6 +74,8 @@ interface ServerGpuInfo {
   temperature_celsius?: number | null;
 }
 
-export async function getServerInfoSnapshot(savedSessionId: string): Promise<ServerInfoSnapshot> {
-  return invoke<ServerInfoSnapshot>("server_info_snapshot", { savedSessionId });
+export async function getServerInfoSnapshot(targetId: string): Promise<ServerInfoSnapshot> {
+  return invoke<ServerInfoSnapshot>("server_info_snapshot", {
+    savedSessionId: targetId === LOCAL_SERVER_INFO_TARGET_ID ? null : targetId,
+  });
 }

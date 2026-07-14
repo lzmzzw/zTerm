@@ -9,6 +9,7 @@ import type { NetworkTrafficSnapshot } from "./serverInfoMetricsModel";
 import { ServerMetrics, type MetricCardId } from "./ServerMonitorMetrics";
 
 export interface ServerMonitorTarget {
+  kind: "local" | "ssh";
   id: string;
   name: string;
   host: string;
@@ -61,7 +62,7 @@ export function ServerMonitorPanel({
   }
 
   if (!target) {
-    return <div className="zt-empty-line">打开 SSH 会话后显示资源监控</div>;
+    return <div className="zt-empty-line">当前连接暂不支持资源监控</div>;
   }
 
   return (
@@ -70,9 +71,7 @@ export function ServerMonitorPanel({
         <header>
           <div>
             <strong>{snapshot?.host_name ?? target.name}</strong>
-            <span>
-              {target.username}@{target.host}:{target.port}
-            </span>
+            <span>{target.kind === "local" ? "本机资源" : `${target.username}@${target.host}:${target.port}`}</span>
           </div>
           <button
             type="button"

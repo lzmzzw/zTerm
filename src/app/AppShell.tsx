@@ -28,6 +28,7 @@ import type { CommandHistoryView } from "../features/history/CommandHistoryPanel
 import { resolveHistoryScope } from "../features/history/historyScopeModel";
 import { useHistoryStore } from "../features/history/historyStore";
 import { ModelManagerPanel } from "../features/models/ModelManagerPanel";
+import { LOCAL_SERVER_INFO_TARGET_ID } from "../features/monitor/serverInfoApi";
 import { SessionTree } from "../features/sessions/SessionTree";
 import { SessionGroupDialog } from "../features/sessions/SessionTreeDialogs";
 import { useSessionStore } from "../features/sessions/sessionStore";
@@ -1864,13 +1865,23 @@ export function AppShell() {
         monitor={{
           target: activeSavedSession?.type === "ssh"
             ? {
+                kind: "ssh",
                 id: activeSavedSession.id,
                 name: activeSavedSession.name,
                 host: activeSavedSession.host,
                 port: activeSavedSession.port,
                 username: activeSavedSession.username,
               }
-            : null,
+            : !activeRuntimeInfo || activeRuntimeInfo.kind === "local"
+              ? {
+                  kind: "local",
+                  id: LOCAL_SERVER_INFO_TARGET_ID,
+                  name: "本机",
+                  host: "localhost",
+                  port: 0,
+                  username: "",
+                }
+              : null,
         }}
         containers={{
           enabled: activeSshContainersEnabled,

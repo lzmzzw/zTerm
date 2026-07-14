@@ -3906,12 +3906,78 @@ describe("AppShell", () => {
 
     expect(view.container.querySelector('[aria-label="资源监控"]')).not.toBe(null);
     expect(storeMocks.monitorPanelProps?.target).toEqual({
+      kind: "ssh",
       id: "session-1",
       name: "开发机 A",
       host: "172.16.41.180",
       port: 22,
       username: "ubuntu",
     });
+
+    view.unmount();
+  });
+
+  it("opens resource monitor for the local machine without an active connection", async () => {
+    const view = render(<AppShell />);
+    const monitorButton = view.container.querySelector('.zt-tool-rail [aria-label="资源监控"]') as HTMLButtonElement;
+
+    await act(async () => {
+      monitorButton.click();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.monitorPanelProps?.target).toEqual({
+      kind: "local",
+      id: "local-machine",
+      name: "本机",
+      host: "localhost",
+      port: 0,
+      username: "",
+    });
+
+    view.unmount();
+  });
+
+  it("keeps showing the local machine when the active terminal is local", async () => {
+    storeMocks.terminalState.runtimes = {
+      "runtime-local": {
+        runtime_session_id: "runtime-local",
+        saved_session_id: null,
+        history_scope_kind: "local_profile",
+        history_scope_id: "powershell",
+        pane_id: "pane-1",
+        title: "PowerShell",
+        kind: "local",
+        cols: 120,
+        rows: 32,
+      },
+    };
+    storeMocks.workspaceState.tabs[0].root = {
+      kind: "leaf",
+      id: "pane-1",
+      title: "PowerShell",
+      runtime_session_id: "runtime-local",
+      saved_session_id: null,
+      active_terminal_tab_id: "pane-1-tab-1",
+      terminal_tabs: [
+        {
+          id: "pane-1-tab-1",
+          title: "PowerShell",
+          runtime_session_id: "runtime-local",
+          saved_session_id: null,
+          connection_source: "default_local",
+        },
+      ],
+    };
+    const view = render(<AppShell />);
+    const monitorButton = view.container.querySelector('.zt-tool-rail [aria-label="资源监控"]') as HTMLButtonElement;
+
+    await act(async () => {
+      monitorButton.click();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.monitorPanelProps?.target).toEqual(expect.objectContaining({ kind: "local", id: "local-machine" }));
 
     view.unmount();
   });

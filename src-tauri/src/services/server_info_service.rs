@@ -1,8 +1,11 @@
 // Author: Liz
 use std::{
     collections::HashMap,
+    ffi::OsStr,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+use sysinfo::{Disks, Networks, System};
 
 use crate::{
     error::{AppError, AppResult},
@@ -67,6 +70,133 @@ impl ServerInfoService {
             unix_timestamp(),
         ))
     }
+
+    pub async fn local_snapshot(&self) -> AppResult<ServerInfoSnapshot> {
+        tokio::task::spawn_blocking(collect_local_snapshot)
+            .await
+            .map_err(|error| AppError::terminal(format!("本机资源采集任务失败: {error}")))
+    }
+}
+
+pub fn collect_local_snapshot() -> ServerInfoSnapshot {
+    let mut system = System::new_all();
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    system.refresh_cpu_usage();
+
+    let disks = Disks::new_with_refreshed_list();
+    let disk_items = disks
+        .list()
+        .iter()
+        .map(|disk| {
+            let total = disk.total_space();
+            let available = disk.available_space();
+            ServerDiskInfo {
+                filesystem: os_text(disk.file_system()),
+                mount: disk.mount_point().to_string_lossy().into_owned(),
+                total_bytes: Some(total),
+                used_bytes: Some(total.saturating_sub(available)),
+                available_bytes: Some(available),
+            }
+        })
+        .collect::<Vec<_>>();
+    let primary_disk = disk_items.first();
+
+    let networks = Networks::new_with_refreshed_list();
+    let network_interfaces = networks
+        .iter()
+        .map(|(name, data)| ServerNetworkInterfaceInfo {
+            name: name.to_string(),
+            rx_bytes: Some(data.total_received()),
+            tx_bytes: Some(data.total_transmitted()),
+        })
+        .collect::<Vec<_>>();
+    let network_rx_bytes = Some(
+        network_interfaces
+            .iter()
+            .filter_map(|item| item.rx_bytes)
+            .sum(),
+    );
+    let network_tx_bytes = Some(
+        network_interfaces
+            .iter()
+            .filter_map(|item| item.tx_bytes)
+            .sum(),
+    );
+
+    let memory_total = system.total_memory();
+    let memory_used = system.used_memory();
+    let mut top_processes = system
+        .processes()
+        .iter()
+        .map(|(pid, process)| ServerProcessInfo {
+            pid: pid.as_u32(),
+            name: process.name().to_string_lossy().into_owned(),
+            cpu_usage_percent: Some(process.cpu_usage() as f64),
+            memory_percent: (memory_total > 0)
+                .then_some(process.memory() as f64 * 100.0 / memory_total as f64),
+            memory_bytes: Some(process.memory()),
+        })
+        .collect::<Vec<_>>();
+    top_processes.sort_by(|left, right| {
+        right
+            .cpu_usage_percent
+            .partial_cmp(&left.cpu_usage_percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    top_processes.truncate(5);
+
+    let hostname = System::host_name();
+    ServerInfoSnapshot {
+        host_id: "local-machine".to_string(),
+        host_name: "本机".to_string(),
+        host: "localhost".to_string(),
+        port: 0,
+        username: std::env::var("USERNAME")
+            .or_else(|_| std::env::var("USER"))
+            .unwrap_or_default(),
+        hostname,
+        os: System::long_os_version(),
+        architecture: Some(System::cpu_arch()),
+        kernel: System::kernel_version(),
+        uptime_seconds: Some(System::uptime()),
+        load_average: {
+            let load = System::load_average();
+            Some([load.one, load.five, load.fifteen])
+        },
+        cpu_usage_percent: Some(system.global_cpu_usage() as f64),
+        cpu_count: Some(system.cpus().len() as u64),
+        cpu_model: system.cpus().first().map(|cpu| cpu.brand().to_string()),
+        cpu_core_usage_percents: system
+            .cpus()
+            .iter()
+            .map(|cpu| cpu.cpu_usage() as f64)
+            .collect(),
+        process_count: Some(system.processes().len() as u64),
+        running_process_count: None,
+        memory_total_bytes: Some(memory_total),
+        memory_used_bytes: Some(memory_used),
+        memory_available_bytes: Some(system.available_memory()),
+        memory_buffers_bytes: None,
+        memory_cached_bytes: None,
+        swap_total_bytes: Some(system.total_swap()),
+        swap_used_bytes: Some(system.used_swap()),
+        disk_total_bytes: primary_disk.and_then(|disk| disk.total_bytes),
+        disk_used_bytes: primary_disk.and_then(|disk| disk.used_bytes),
+        disk_available_bytes: primary_disk.and_then(|disk| disk.available_bytes),
+        disk_mount: primary_disk.map(|disk| disk.mount.clone()),
+        disks: disk_items,
+        network_rx_bytes,
+        network_tx_bytes,
+        network_interfaces,
+        top_processes,
+        gpu_probe_status: Some("not_collected".to_string()),
+        gpus: Vec::new(),
+        captured_at: unix_timestamp(),
+    }
+}
+
+fn os_text(value: &OsStr) -> String {
+    value.to_string_lossy().into_owned()
 }
 
 pub fn parse_server_info_output(

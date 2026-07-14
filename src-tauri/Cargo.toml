@@ -25,6 +25,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 dirs = "6"
 keyring = "4"
 portable-pty = "0.9"
+sysinfo = "0.36"
 russh = { version = "0.61", default-features = false, features = ["flate2", "ring", "rsa"] }
 russh-sftp = { package = "bssh-russh-sftp", version = "2.3" }
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
