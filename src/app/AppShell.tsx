@@ -19,7 +19,7 @@ import { createTerminalActions } from "./terminalActions";
 import type { RightTool } from "./rightTools";
 import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
-import { ZtConfirmDialog } from "../components/ZtUi";
+import { ZtConfirmDialog, ZtModalBackdrop } from "../components/ZtUi";
 import { setAiAffectedDomainsHandler, useAiStore } from "../features/ai/aiStore";
 import { buildAiTerminalContext } from "../features/ai/aiTerminalContextModel";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
@@ -1868,7 +1868,7 @@ function ExternalSshTunnelEditorDialog({
   const [newTunnelMode, setNewTunnelMode] = useState<SshTunnelMode>("host_service");
 
   return (
-    <div className="zt-session-modal-backdrop">
+    <ZtModalBackdrop className="zt-session-modal-backdrop">
       <div
         className="zt-session-dialog zt-session-editor-dialog zt-transient-tunnel-dialog"
         role="dialog"
@@ -1909,6 +1909,6 @@ function ExternalSshTunnelEditorDialog({
           </button>
         </footer>
       </div>
-    </div>
+    </ZtModalBackdrop>
   );
 }

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { ZtNumberInput } from "../../components/ZtNumberInput";
 import { ZtSelect } from "../../components/ZtSelect";
-import { ZtInput } from "../../components/ZtUi";
+import { ZtInput, ZtModalBackdrop } from "../../components/ZtUi";
 import { fallbackOnlyErrorMessage } from "../../lib/unknownErrorMessage";
 import { LocalSessionForm } from "./LocalSessionForm";
 import { RdpSessionForm } from "./RdpSessionForm";
@@ -339,7 +339,7 @@ export function SessionEditorDialog({
   ] satisfies Array<{ icon: typeof Server; label: string; type: SessionType }>;
 
   return (
-    <div className="zt-session-modal-backdrop">
+    <ZtModalBackdrop className="zt-session-modal-backdrop">
       <div
         className="zt-session-dialog zt-session-editor-dialog"
         role="dialog"
@@ -489,7 +489,7 @@ export function SessionEditorDialog({
         </footer>
         </form>
       </div>
-    </div>
+    </ZtModalBackdrop>
   );
 }
 

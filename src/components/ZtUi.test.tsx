@@ -11,6 +11,7 @@ import {
   ZtIcon,
   ZtIconButton,
   ZtInput,
+  ZtModalBackdrop,
   ZtSegmentedControl,
   ZtSlider,
   ZtSwitch,
@@ -54,6 +55,33 @@ afterEach(() => {
 });
 
 describe("ZtUi primitives", () => {
+  it("marks the dialog for attention when its backdrop is clicked", () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        callback(0);
+        return 1;
+      });
+    const view = render(
+      <ZtModalBackdrop>
+        <section role="dialog" aria-label="需要操作的弹窗">
+          <button type="button">弹窗内操作</button>
+        </section>
+      </ZtModalBackdrop>,
+    );
+
+    const backdrop = view.container.querySelector(".zt-dialog-backdrop") as HTMLElement;
+    const dialog = view.container.querySelector('[role="dialog"]') as HTMLElement;
+
+    click(dialog.querySelector("button") as HTMLElement);
+    expect(backdrop.classList.contains("is-attention")).toBe(false);
+
+    click(backdrop);
+    expect(backdrop.classList.contains("is-attention")).toBe(true);
+
+    requestAnimationFrameSpy.mockRestore();
+  });
+
   it("renders a consistent large dialog shell with left title and right close button", () => {
     const onClose = vi.fn();
     const view = render(

@@ -9,7 +9,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { forwardRef, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { forwardRef, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import type {
   ButtonHTMLAttributes,
   CSSProperties,
@@ -142,6 +142,46 @@ export const ZtTextarea = forwardRef<HTMLTextAreaElement, ZtTextareaProps>(funct
   );
 });
 
+export function ZtModalBackdrop({ className, children, onClick, ...props }: HTMLAttributes<HTMLDivElement>) {
+  const [attention, setAttention] = useState(false);
+  const attentionFrameRef = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (attentionFrameRef.current !== null) {
+        window.cancelAnimationFrame(attentionFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  function handleClick(event: MouseEvent<HTMLDivElement>) {
+    onClick?.(event);
+    if (event.defaultPrevented || event.target !== event.currentTarget) {
+      return;
+    }
+
+    setAttention(false);
+    if (attentionFrameRef.current !== null) {
+      window.cancelAnimationFrame(attentionFrameRef.current);
+    }
+    attentionFrameRef.current = window.requestAnimationFrame(() => {
+      attentionFrameRef.current = null;
+      setAttention(true);
+    });
+  }
+
+  return (
+    <div
+      {...props}
+      className={classNames("zt-dialog-backdrop", attention && "is-attention", className)}
+      onClick={handleClick}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function ZtDialog({
   title,
   ariaLabel,
@@ -167,7 +207,7 @@ export function ZtDialog({
 }) {
   const titleText = typeof title === "string" ? title : ariaLabel;
   return (
-    <div className="zt-dialog-backdrop">
+    <ZtModalBackdrop>
       <section
         className={classNames("zt-dialog", `zt-dialog-${size}`, className)}
         role="dialog"
@@ -191,7 +231,7 @@ export function ZtDialog({
         <div className={classNames("zt-dialog-body", bodyClassName)}>{children}</div>
         {footer ? <footer className="zt-dialog-footer">{footer}</footer> : null}
       </section>
-    </div>
+    </ZtModalBackdrop>
   );
 }
 

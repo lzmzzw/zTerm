@@ -389,6 +389,48 @@ button {
   -webkit-backdrop-filter: blur(28px) saturate(160%);
 }
 
+.zt-dialog-backdrop.is-attention > [role="dialog"] {
+  animation: zt-dialog-attention 0.36s ease-in-out 2;
+}
+
+@keyframes zt-dialog-attention {
+  0%,
+  100% {
+    border-color: var(--zt-dialog-border);
+    box-shadow: var(--zt-dialog-shadow);
+  }
+
+  50% {
+    border-color: var(--zt-accent);
+    box-shadow: 0 0 0 2px var(--zt-focus-soft), var(--zt-dialog-shadow);
+  }
+}
+
+.zt-dialog-backdrop.is-attention > [role="dialog"] > header,
+.zt-dialog-backdrop.is-attention > [role="dialog"] > form > header {
+  animation: zt-dialog-header-attention 0.36s ease-in-out 2;
+}
+
+@keyframes zt-dialog-header-attention {
+  0%,
+  100% {
+    box-shadow: none;
+  }
+
+  50% {
+    box-shadow: inset 0 -2px 0 var(--zt-accent), inset 0 0 0 999px var(--zt-focus-soft);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zt-dialog-backdrop.is-attention > [role="dialog"],
+  .zt-dialog-backdrop.is-attention > [role="dialog"] > header,
+  .zt-dialog-backdrop.is-attention > [role="dialog"] > form > header {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+  }
+}
+
 .zt-dialog-compact {
   width: min(var(--zt-dialog-width-compact), calc(100vw - 48px));
   height: auto;
