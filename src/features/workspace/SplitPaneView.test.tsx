@@ -764,7 +764,7 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
-  it("reports a dragged tab with its destination pane and insertion target", () => {
+  it("moves a tab after a pointer drag crosses panes and reaches an insertion target", () => {
     const onMovePaneTab = vi.fn();
     const root: PaneNode = {
       kind: "split", id: "split-root", direction: "horizontal", ratio: 0.5,
@@ -785,14 +785,30 @@ describe("SplitPaneView", () => {
       />,
     );
     const [sourceTab, targetTab] = Array.from(view.container.querySelectorAll<HTMLElement>(".zt-pane-tab"));
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn(() => targetTab),
+    });
+    vi.spyOn(targetTab, "getBoundingClientRect").mockReturnValue({
+      x: 100,
+      y: 0,
+      left: 100,
+      top: 0,
+      right: 200,
+      bottom: 24,
+      width: 100,
+      height: 24,
+      toJSON: () => ({}),
+    });
 
     act(() => {
-      sourceTab.dispatchEvent(new Event("dragstart", { bubbles: true, cancelable: true }));
-      targetTab.dispatchEvent(new MouseEvent("dragover", { bubbles: true, cancelable: true, clientX: -1 }));
-      targetTab.dispatchEvent(new MouseEvent("drop", { bubbles: true, cancelable: true, clientX: -1 }));
+      sourceTab.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: 0, clientY: 10 }));
+      window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, cancelable: true, clientX: 110, clientY: 10 }));
+      window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, clientX: 110, clientY: 10 }));
     });
 
     expect(onMovePaneTab).toHaveBeenCalledWith("pane-a", "pane-a-tab-1", "pane-b", "pane-b-tab-1");
+    Reflect.deleteProperty(document, "elementFromPoint");
     view.unmount();
   });
 

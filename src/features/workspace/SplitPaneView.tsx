@@ -1,7 +1,7 @@
 // Author: Liz
 import { CircleAlert, Clock3, LoaderCircle, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, DragEvent, MutableRefObject, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, MutableRefObject, PointerEvent as ReactPointerEvent } from "react";
 
 import { TerminalPlaceholder } from "../terminal/TerminalPlaceholder";
 import { TerminalSnapshotPane } from "../terminal/TerminalSnapshotPane";
@@ -14,6 +14,7 @@ import type { PaneNode, PaneSplitDirection } from "./types";
 
 const ACTIVE_XTERM_MOUNT_DELAY_MS = 48;
 const INACTIVE_XTERM_MOUNT_DELAY_MS = 96;
+const PANE_TAB_DRAG_THRESHOLD = 6;
 type TerminalRuntimeKind = "local" | "ssh" | "ssh_container" | "rdp_placeholder";
 
 function isInteractiveTerminalRuntime(kind: TerminalRuntimeKind) {
@@ -49,6 +50,12 @@ interface PaneTabDragState {
   paneTabId: string;
 }
 
+interface PaneTabPointerDragState extends PaneTabDragState {
+  startX: number;
+  startY: number;
+  active: boolean;
+}
+
 export function SplitPaneView({
   root,
   activePaneId,
@@ -70,7 +77,7 @@ export function SplitPaneView({
 }: SplitPaneViewProps) {
   const [localDragState, setLocalDragState] = useState<PaneTabDragState | null>(null);
   const localDragStateRef = useRef<PaneTabDragState | null>(null);
-  const dragState = inheritedDragState ?? localDragState;
+  const dragState = inheritedDragStateRef ? (inheritedDragState ?? null) : localDragState;
   const dragStateRef = inheritedDragStateRef ?? localDragStateRef;
   const onDragStateChange = inheritedDragStateChange ?? ((nextDragState: PaneTabDragState | null) => {
     localDragStateRef.current = nextDragState;
@@ -213,7 +220,6 @@ export function SplitPaneView({
       workspaceActive={workspaceActive}
       visualMode={visualMode}
       dragState={dragState}
-      dragStateRef={dragStateRef}
       onDragStateChange={onDragStateChange}
     />
   );
@@ -234,7 +240,6 @@ function LeafPane({
   workspaceActive,
   visualMode,
   dragState,
-  dragStateRef,
   onDragStateChange,
 }: {
   root: Extract<PaneNode, { kind: "leaf" }>;
@@ -251,7 +256,6 @@ function LeafPane({
   workspaceActive: boolean;
   visualMode: "normal" | "placeholder" | "snapshot";
   dragState: PaneTabDragState | null;
-  dragStateRef: MutableRefObject<PaneTabDragState | null>;
   onDragStateChange: (dragState: PaneTabDragState | null) => void;
 }) {
   const terminalTabs = getLeafTerminalTabs(root);
@@ -402,16 +406,80 @@ function LeafPane({
   );
 
   const clearPaneTabDrag = useCallback(() => onDragStateChange(null), [onDragStateChange]);
-  const moveDraggedPaneTab = useCallback(
-    (event: DragEvent<HTMLElement>, beforePaneTabId: string | null) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const draggedTab = dragStateRef.current;
-      if (!draggedTab) return;
-      onMovePaneTab(draggedTab.sourcePaneId, draggedTab.paneTabId, root.id, beforePaneTabId);
-      clearPaneTabDrag();
+  const pointerDragRef = useRef<PaneTabPointerDragState | null>(null);
+  const pointerDragCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => pointerDragCleanupRef.current?.(), []);
+
+  const handlePaneTabPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>, paneTabId: string) => {
+      if (event.button !== 0 || (event.target as Element).closest(".zt-pane-tab-close")) return;
+
+      const pointerDrag: PaneTabPointerDragState = {
+        sourcePaneId: root.id,
+        paneTabId,
+        startX: event.clientX,
+        startY: event.clientY,
+        active: false,
+      };
+      pointerDragRef.current = pointerDrag;
+
+      const cleanup = () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerCancel);
+        pointerDragCleanupRef.current = null;
+      };
+      const finish = (clientX: number, clientY: number) => {
+        const completedDrag = pointerDragRef.current;
+        pointerDragRef.current = null;
+        cleanup();
+        if (!completedDrag?.active) return;
+
+        const target = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>("[data-pane-id]");
+        const targetPaneId = target?.dataset.paneId;
+        if (!targetPaneId) {
+          clearPaneTabDrag();
+          return;
+        }
+
+        const targetPaneTabId = target.dataset.paneTabId ?? null;
+        let beforePaneTabId = targetPaneTabId;
+        if (targetPaneTabId) {
+          const bounds = target.getBoundingClientRect();
+          if (clientX >= bounds.left + bounds.width / 2) {
+            const nextTab = target.nextElementSibling?.closest<HTMLElement>("[data-pane-tab-id]");
+            beforePaneTabId = nextTab?.dataset.paneTabId ?? null;
+          }
+        }
+        onMovePaneTab(completedDrag.sourcePaneId, completedDrag.paneTabId, targetPaneId, beforePaneTabId);
+        clearPaneTabDrag();
+      };
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        const currentDrag = pointerDragRef.current;
+        if (!currentDrag) return;
+        if (!currentDrag.active) {
+          const distance = Math.hypot(moveEvent.clientX - currentDrag.startX, moveEvent.clientY - currentDrag.startY);
+          if (distance < PANE_TAB_DRAG_THRESHOLD) return;
+          currentDrag.active = true;
+          onDragStateChange({ sourcePaneId: currentDrag.sourcePaneId, paneTabId: currentDrag.paneTabId });
+        }
+        moveEvent.preventDefault();
+      };
+      const handlePointerUp = (upEvent: PointerEvent) => finish(upEvent.clientX, upEvent.clientY);
+      const handlePointerCancel = () => {
+        pointerDragRef.current = null;
+        cleanup();
+        clearPaneTabDrag();
+      };
+
+      pointerDragCleanupRef.current?.();
+      pointerDragCleanupRef.current = cleanup;
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp, { once: true });
+      window.addEventListener("pointercancel", handlePointerCancel, { once: true });
     },
-    [clearPaneTabDrag, dragStateRef, onMovePaneTab, root.id],
+    [clearPaneTabDrag, onDragStateChange, onMovePaneTab, root.id],
   );
 
   return (
@@ -425,10 +493,7 @@ function LeafPane({
           className={`zt-pane-tablist ${dragState ? "drag-over" : ""}`}
           role="tablist"
           aria-label={`${activeTerminalTab.title} 标签`}
-          onDragOver={(event) => {
-            if (dragStateRef.current) event.preventDefault();
-          }}
-          onDrop={(event) => moveDraggedPaneTab(event, null)}
+          data-pane-id={root.id}
         >
           {visibleTerminalTabs.map((terminalTab) => {
             const isActivePaneTerminalTab = active && terminalTab.id === activeTerminalTab.id;
@@ -448,25 +513,9 @@ function LeafPane({
                 ]
                   .filter(Boolean)
                   .join(" ")}
-                draggable
-                onDragStart={(event) => {
-                  event.stopPropagation();
-                  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-                  onDragStateChange({ sourcePaneId: root.id, paneTabId: terminalTab.id });
-                }}
-                onDragEnd={clearPaneTabDrag}
-                onDragOver={(event) => {
-                  if (!dragStateRef.current) return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-                }}
-                onDrop={(event) => {
-                  const bounds = event.currentTarget.getBoundingClientRect();
-                  const after = event.clientX >= bounds.left + bounds.width / 2;
-                  const index = terminalTabs.findIndex((tab) => tab.id === terminalTab.id);
-                  moveDraggedPaneTab(event, after ? (terminalTabs[index + 1]?.id ?? null) : terminalTab.id);
-                }}
+                data-pane-id={root.id}
+                data-pane-tab-id={terminalTab.id}
+                onPointerDown={(event) => handlePaneTabPointerDown(event, terminalTab.id)}
               >
                 <button
                   type="button"

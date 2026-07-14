@@ -1718,6 +1718,8 @@ button {
     background-color 0.15s ease,
     border-color 0.15s ease,
     color 0.15s ease;
+  cursor: grab;
+  touch-action: none;
 }
 
 .zt-pane-tab.connecting,
@@ -3197,6 +3199,7 @@ button {
 
 .zt-pane-tab.dragging {
   opacity: 0.45;
+  cursor: grabbing;
 }
 
 .zt-pane-tablist.drag-over {
