@@ -245,6 +245,47 @@ const sessions: SavedSession[] = [
 ];
 
 describe("SessionTree", () => {
+  it("moves a session to another group after a pointer drag reaches the group row", async () => {
+    const targetGroup: SessionGroup = {
+      id: "group-dev",
+      parent_id: null,
+      name: "开发环境",
+      expanded: false,
+      sort_order: 1,
+      created_at_ms: 1,
+      updated_at_ms: 1,
+    };
+    const onSaveSession = vi.fn().mockResolvedValue(undefined);
+    const view = render(
+      <SessionTree
+        groups={[...groups, targetGroup]}
+        sessions={sessions}
+        onSaveSession={onSaveSession}
+      />,
+    );
+    const source = Array.from(view.container.querySelectorAll<HTMLElement>(".zt-session-node-main")).find(
+      (item) => item.textContent?.includes("生产跳板机"),
+    );
+    const target = view.container.querySelector<HTMLElement>('[aria-label="分组 开发环境"] .zt-session-group-row');
+    expect(source).toBeTruthy();
+    expect(target).toBeTruthy();
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn(() => target),
+    });
+
+    await act(async () => {
+      source?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: 0, clientY: 0 }));
+      window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, cancelable: true, clientX: 20, clientY: 0 }));
+      window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, cancelable: true, clientX: 20, clientY: 0 }));
+      await Promise.resolve();
+    });
+
+    expect(onSaveSession).toHaveBeenCalledWith(expect.objectContaining({ id: "ssh-prod", group_id: "group-dev" }));
+    Reflect.deleteProperty(document, "elementFromPoint");
+    view.unmount();
+  });
+
   it("removes the search box and top-level add session buttons", () => {
     const view = render(<SessionTree groups={groups} sessions={sessions} />);
 

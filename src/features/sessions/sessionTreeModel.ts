@@ -1,5 +1,5 @@
 // Author: Liz
-import type { SavedSession, SessionGroup, SessionGroupDraft } from "./types";
+import type { SavedSession, SavedSessionDraft, SessionGroup, SessionGroupDraft } from "./types";
 
 const nameCollator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
 
@@ -94,5 +94,25 @@ export function buildSessionGroupDraft({
     name,
     expanded: editingGroup?.expanded ?? true,
     sort_order: editingGroup?.sort_order ?? groupCount,
+  };
+}
+
+export function buildSavedSessionDraft(session: SavedSession, groupId: string | null): SavedSessionDraft {
+  return {
+    id: session.id,
+    name: session.name,
+    type: session.type,
+    group_id: groupId,
+    host: session.host,
+    port: session.port,
+    username: session.username,
+    auth_mode: session.auth_mode,
+    credential_ref: session.credential_ref,
+    description: session.description,
+    tags: [...session.tags],
+    sort_order: session.sort_order,
+    ssh_options: session.ssh_options ?? null,
+    rdp_options: session.rdp_options ?? null,
+    local_options: session.local_options ?? null,
   };
 }

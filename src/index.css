@@ -3524,6 +3524,12 @@ button {
   background: var(--zt-bg-hover);
 }
 
+.zt-session-group-row.drop-target {
+  outline: 1px solid var(--zt-accent);
+  outline-offset: -1px;
+  background: var(--zt-bg-active);
+}
+
 .zt-session-group-row button {
   display: inline-flex;
   align-items: center;
@@ -3561,6 +3567,10 @@ button {
   border-radius: var(--zt-radius-control);
 }
 
+.zt-session-node.dragging {
+  opacity: 0.45;
+}
+
 .zt-session-node-main {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr);
@@ -3575,6 +3585,12 @@ button {
   color: var(--zt-text-primary);
   text-align: left;
   font-size: var(--zt-font-size-ui);
+  cursor: grab;
+  touch-action: none;
+}
+
+.zt-session-node.dragging .zt-session-node-main {
+  cursor: grabbing;
 }
 
 .zt-session-node-main svg {

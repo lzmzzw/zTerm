@@ -1,6 +1,7 @@
 // Author: Liz
 import { ChevronDown, ChevronRight, Folder, Monitor, MoreHorizontal, Server, Terminal } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 
 import { fallbackOnlyErrorMessage } from "../../lib/unknownErrorMessage";
 import { SessionEditorDialog } from "./SessionEditorDialog";
@@ -12,6 +13,7 @@ import {
 } from "./SessionTreeDialogs";
 import {
   buildSessionGroupDraft,
+  buildSavedSessionDraft,
   buildSessionTreeModel,
   type SessionGroupTreeNode,
 } from "./sessionTreeModel";
@@ -25,6 +27,15 @@ import type {
   SessionType,
 } from "./types";
 import type { CredentialDraft, CredentialRecord, TerminalProfile } from "../settings/settingsStore";
+
+const SESSION_DRAG_THRESHOLD = 6;
+
+interface SessionPointerDragState {
+  session: SavedSession;
+  startX: number;
+  startY: number;
+  active: boolean;
+}
 
 interface SessionTreeProps {
   groups: SessionGroup[];
@@ -63,6 +74,10 @@ export function SessionTree({
   const [pendingDeleteSession, setPendingDeleteSession] = useState<SavedSession | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<SessionTreeContextMenu | null>(null);
+  const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
+  const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
+  const pointerDragRef = useRef<SessionPointerDragState | null>(null);
+  const pointerDragCleanupRef = useRef<(() => void) | null>(null);
 
   function handleCreateGroup(parentId: string | null = null) {
     setContextMenu(null);
@@ -167,6 +182,70 @@ export function SessionTree({
     return () => window.removeEventListener("click", closeMenu);
   }, [contextMenu]);
 
+  const clearSessionDrag = useCallback(() => {
+    pointerDragRef.current = null;
+    setDraggedSessionId(null);
+    setDropTargetGroupId(null);
+  }, []);
+
+  useEffect(() => () => pointerDragCleanupRef.current?.(), []);
+
+  const handleSessionPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, session: SavedSession) => {
+      if (!onSaveSession || event.button !== 0) return;
+
+      pointerDragRef.current = {
+        session,
+        startX: event.clientX,
+        startY: event.clientY,
+        active: false,
+      };
+
+      const cleanup = () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerCancel);
+        pointerDragCleanupRef.current = null;
+      };
+      const groupIdAt = (clientX: number, clientY: number) =>
+        document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>("[data-session-group-id]")?.dataset.sessionGroupId ?? null;
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        const drag = pointerDragRef.current;
+        if (!drag) return;
+        if (!drag.active) {
+          const distance = Math.hypot(moveEvent.clientX - drag.startX, moveEvent.clientY - drag.startY);
+          if (distance < SESSION_DRAG_THRESHOLD) return;
+          drag.active = true;
+          setDraggedSessionId(drag.session.id);
+        }
+        setDropTargetGroupId(groupIdAt(moveEvent.clientX, moveEvent.clientY));
+        moveEvent.preventDefault();
+      };
+      const handlePointerUp = (upEvent: PointerEvent) => {
+        const drag = pointerDragRef.current;
+        const targetGroupId = drag?.active ? groupIdAt(upEvent.clientX, upEvent.clientY) : null;
+        cleanup();
+        clearSessionDrag();
+        if (!drag?.active || !targetGroupId || drag.session.group_id === targetGroupId) return;
+        setActionError(null);
+        void Promise.resolve(onSaveSession(buildSavedSessionDraft(drag.session, targetGroupId))).catch((error) => {
+          setActionError(fallbackOnlyErrorMessage(error, "移动会话失败"));
+        });
+      };
+      const handlePointerCancel = () => {
+        cleanup();
+        clearSessionDrag();
+      };
+
+      pointerDragCleanupRef.current?.();
+      pointerDragCleanupRef.current = cleanup;
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp, { once: true });
+      window.addEventListener("pointercancel", handlePointerCancel, { once: true });
+    },
+    [clearSessionDrag, onSaveSession],
+  );
+
   return (
     <section className="zt-session-tree" aria-label="会话树" onContextMenu={openRootMenu}>
       {actionError ? <div className="zt-session-error">{actionError}</div> : null}
@@ -184,6 +263,9 @@ export function SessionTree({
             onCreateSession={handleCreateSession}
             onToggleGroup={onSaveGroup ? handleToggleGroup : undefined}
             onOpenContextMenu={setContextMenu}
+            onSessionPointerDown={handleSessionPointerDown}
+            draggedSessionId={draggedSessionId}
+            dropTargetGroupId={dropTargetGroupId}
           />
         ))}
 
@@ -200,6 +282,8 @@ export function SessionTree({
                   session={session}
                   onOpenSession={onOpenSession}
                   onOpenContextMenu={setContextMenu}
+                  onPointerDown={handleSessionPointerDown}
+                  dragging={draggedSessionId === session.id}
                 />
               ))}
             </ul>
@@ -273,6 +357,9 @@ function SessionGroupNode({
   onCreateSession,
   onToggleGroup,
   onOpenContextMenu,
+  onSessionPointerDown,
+  draggedSessionId,
+  dropTargetGroupId,
 }: {
   node: SessionGroupTreeNode;
   onOpenSession?: (session: SavedSession) => void;
@@ -283,6 +370,9 @@ function SessionGroupNode({
   onCreateSession: (groupId: string | null) => void;
   onToggleGroup?: (group: SessionGroup) => Promise<void>;
   onOpenContextMenu: (menu: SessionTreeContextMenu) => void;
+  onSessionPointerDown: (event: ReactPointerEvent<HTMLElement>, session: SavedSession) => void;
+  draggedSessionId: string | null;
+  dropTargetGroupId: string | null;
 }) {
   const { group, groups: childGroups, sessions: groupSessions } = node;
   const [expanded, setExpanded] = useState(group.expanded);
@@ -316,7 +406,11 @@ function SessionGroupNode({
 
   return (
     <section className="zt-session-group" aria-label={`分组 ${group.name}`}>
-      <div className="zt-session-group-row" onContextMenu={openGroupMenu}>
+      <div
+        className={`zt-session-group-row ${dropTargetGroupId === group.id ? "drop-target" : ""}`}
+        data-session-group-id={group.id}
+        onContextMenu={openGroupMenu}
+      >
         <button
           type="button"
           className="zt-session-group-toggle"
@@ -342,6 +436,8 @@ function SessionGroupNode({
               session={session}
               onOpenSession={onOpenSession}
               onOpenContextMenu={onOpenContextMenu}
+              onPointerDown={onSessionPointerDown}
+              dragging={draggedSessionId === session.id}
             />
           ))}
           {childGroups.map((child) => (
@@ -356,6 +452,9 @@ function SessionGroupNode({
                 onCreateSession={onCreateSession}
                 onToggleGroup={onToggleGroup}
                 onOpenContextMenu={onOpenContextMenu}
+                onSessionPointerDown={onSessionPointerDown}
+                draggedSessionId={draggedSessionId}
+                dropTargetGroupId={dropTargetGroupId}
               />
             </li>
           ))}
@@ -368,10 +467,14 @@ function SessionNode({
   session,
   onOpenSession,
   onOpenContextMenu,
+  onPointerDown,
+  dragging = false,
 }: {
   session: SavedSession;
   onOpenSession?: (session: SavedSession) => void;
   onOpenContextMenu: (menu: SessionTreeContextMenu) => void;
+  onPointerDown?: (event: ReactPointerEvent<HTMLElement>, session: SavedSession) => void;
+  dragging?: boolean;
 }) {
   const Icon = session.type === "rdp" ? Monitor : session.type === "local" ? Terminal : Server;
 
@@ -382,12 +485,13 @@ function SessionNode({
   }
 
   return (
-    <li className="zt-session-node" onContextMenu={openSessionMenu}>
+    <li className={`zt-session-node ${dragging ? "dragging" : ""}`} onContextMenu={openSessionMenu}>
       <button
         type="button"
         className="zt-session-node-main"
         title={`${sessionTypeTitle(session.type)} ${session.name}`}
         onDoubleClick={() => onOpenSession?.(session)}
+        onPointerDown={(event) => onPointerDown?.(event, session)}
       >
         <Icon size={14} aria-hidden="true" />
         <span>{session.name}</span>

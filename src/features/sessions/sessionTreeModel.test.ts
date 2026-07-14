@@ -1,7 +1,7 @@
 // Author: Liz
 import { describe, expect, it } from "vitest";
 
-import { buildSessionGroupDraft, buildSessionTreeModel } from "./sessionTreeModel";
+import { buildSavedSessionDraft, buildSessionGroupDraft, buildSessionTreeModel } from "./sessionTreeModel";
 import type { SavedSession, SessionGroup } from "./types";
 
 function group(overrides: Partial<SessionGroup>): SessionGroup {
@@ -107,6 +107,34 @@ describe("sessionTreeModel", () => {
       name: "Renamed",
       expanded: false,
       sort_order: 7,
+    });
+  });
+
+  it("builds a complete session draft when moving a session to another group", () => {
+    const source = session({
+      id: "session-move",
+      group_id: "group-old",
+      description: "keep me",
+      tags: ["prod"],
+      ssh_options: { connect_timeout_ms: 15_000 },
+    });
+
+    expect(buildSavedSessionDraft(source, "group-new")).toEqual({
+      id: "session-move",
+      name: source.name,
+      type: source.type,
+      group_id: "group-new",
+      host: source.host,
+      port: source.port,
+      username: source.username,
+      auth_mode: source.auth_mode,
+      credential_ref: source.credential_ref,
+      description: "keep me",
+      tags: ["prod"],
+      sort_order: source.sort_order,
+      ssh_options: { connect_timeout_ms: 15_000 },
+      rdp_options: null,
+      local_options: null,
     });
   });
 });
