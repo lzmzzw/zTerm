@@ -66,7 +66,10 @@ async fn configured_ssh_container_lists_and_enters_running_container() {
         .iter()
         .find(|container| container.running)
         .unwrap_or_else(|| {
-            panic!("configured SSH container smoke requires at least one running container")
+            panic!(
+                "configured SSH container smoke requires at least one running container; stdout={:?}; stderr={:?}",
+                output.stdout, output.stderr
+            )
         });
 
     let container_name = if container.name.trim().is_empty() {

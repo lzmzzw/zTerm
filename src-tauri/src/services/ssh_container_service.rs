@@ -41,7 +41,7 @@ pub fn normalize_container_runtime(runtime: &str) -> AppResult<String> {
 pub fn build_container_list_script(runtime: &str) -> AppResult<String> {
     let runtime = normalize_container_runtime(runtime)?;
     Ok(format!(
-        "runtime='{runtime}'; if command -v \"$runtime\" >/dev/null 2>&1; then \"$runtime\" ps -a --format '{{{{.ID}}}}\\t{{{{.Names}}}}\\t{{{{.Image}}}}\\t{{{{.Status}}}}'; else printf 'container runtime not found: %s\\n' \"$runtime\" >&2; exit 127; fi",
+        "runtime='{runtime}'; if command -v \"$runtime\" >/dev/null 2>&1; then \"$runtime\" ps -a --format '{{{{.ID}}}}|{{{{.Names}}}}|{{{{.Image}}}}|{{{{.Status}}}}'; else printf 'container runtime not found: %s\\n' \"$runtime\" >&2; exit 127; fi",
     ))
 }
 
@@ -75,21 +75,15 @@ pub fn parse_container_ps_output(stdout: &str) -> Vec<SshContainerInfo> {
             if line.trim().is_empty() {
                 return None;
             }
-            let parts = if line.contains('\t') {
-                line.splitn(4, '\t').collect::<Vec<_>>()
-            } else {
-                line.splitn(4, "\\t").collect::<Vec<_>>()
-            };
-            if parts.len() != 4 {
-                return None;
-            }
-            let id = parts[0].trim().to_string();
+            let separator = if line.contains('|') { '|' } else { '\t' };
+            let mut parts = line.splitn(4, separator);
+            let id = parts.next()?.trim().to_string();
             if !container_id_looks_valid(&id) {
                 return None;
             }
-            let name = parts[1].trim().to_string();
-            let image = parts[2].trim().to_string();
-            let status = parts[3].trim().to_string();
+            let name = parts.next()?.trim().to_string();
+            let image = parts.next()?.trim().to_string();
+            let status = parts.next()?.trim().to_string();
             Some(SshContainerInfo {
                 id,
                 name,

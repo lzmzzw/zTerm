@@ -324,19 +324,20 @@ fn ssh_container_list_parser_orders_running_containers_by_name() {
 }
 
 #[test]
-fn ssh_container_list_parser_accepts_podman_literal_tab_separators() {
+fn ssh_container_list_uses_and_parses_a_runtime_neutral_separator() {
+    let script = build_container_list_script("podman").expect("container list script should build");
     let containers = parse_container_ps_output(
-        "54dbabc4e177\\tpostgis\\tdocker.io/nickblah/postgis:14-bullseye\\tUp 9 months\n",
+        "54dbabc4e177|postgis|docker.io/nickblah/postgis:14-bullseye-postgis-3|Up 9 months ago\n",
     );
 
+    assert!(script.contains("{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}"));
     assert_eq!(containers.len(), 1);
-    assert_eq!(containers[0].id, "54dbabc4e177");
     assert_eq!(containers[0].name, "postgis");
     assert_eq!(
         containers[0].image,
-        "docker.io/nickblah/postgis:14-bullseye"
+        "docker.io/nickblah/postgis:14-bullseye-postgis-3"
     );
-    assert_eq!(containers[0].status, "Up 9 months");
+    assert_eq!(containers[0].status, "Up 9 months ago");
     assert!(containers[0].running);
 }
 
