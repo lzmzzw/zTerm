@@ -458,23 +458,29 @@ function SessionGroupNode({
   return (
     <section className="zt-session-group" aria-label={`分组 ${group.name}`}>
       <div
+        role="button"
+        tabIndex={onToggleGroup ? 0 : -1}
+        aria-expanded={expanded}
+        aria-label={`${expanded ? "折叠" : "展开"}分组 ${group.name}`}
+        aria-disabled={!onToggleGroup}
+        title={`${expanded ? "折叠" : "展开"}分组 ${group.name}`}
         className={`zt-session-group-row ${dropTargetGroupId === group.id ? "drop-target" : ""}`}
         data-session-group-id={group.id}
         onContextMenu={openGroupMenu}
+        onClick={() => void toggleGroup()}
+        onKeyDown={(event) => {
+          if (!onToggleGroup || (event.key !== "Enter" && event.key !== " ")) return;
+          event.preventDefault();
+          void toggleGroup();
+        }}
       >
-        <button
-          type="button"
-          className="zt-session-group-toggle"
-          aria-expanded={expanded}
-          aria-label={`${expanded ? "折叠" : "展开"}分组 ${group.name}`}
-          title={`${expanded ? "折叠" : "展开"}分组 ${group.name}`}
-          onClick={() => void toggleGroup()}
-          disabled={!onToggleGroup}
-        >
-          {expanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
-        </button>
         <Folder size={14} aria-hidden="true" />
         <span>{group.name}</span>
+        {expanded ? (
+          <ChevronDown className="zt-session-group-indicator" size={14} aria-hidden="true" />
+        ) : (
+          <ChevronRight className="zt-session-group-indicator" size={14} aria-hidden="true" />
+        )}
       </div>
       {expanded ? (
         <ul ref={sessionListRef}>

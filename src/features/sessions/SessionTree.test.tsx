@@ -309,12 +309,17 @@ describe("SessionTree", () => {
     view.unmount();
   });
 
-  it("persists group collapse state and hides sessions in collapsed groups", async () => {
+  it("toggles a group from its name and shows the state indicator on the right", async () => {
     const onSaveGroup = vi.fn();
     const expandedView = render(<SessionTree groups={groups} sessions={sessions} onSaveGroup={onSaveGroup} />);
+    const groupRow = expandedView.container.querySelector<HTMLElement>('[aria-label="分组 生产环境"] .zt-session-group-row');
+    const groupName = groupRow?.querySelector<HTMLElement>("span");
 
     expect(expandedView.container.textContent).toContain("生产跳板机");
-    await click(button(expandedView.container, "折叠分组 生产环境"));
+    expect(groupRow?.getAttribute("aria-expanded")).toBe("true");
+    expect(groupRow?.querySelector(".zt-session-group-toggle")).toBeNull();
+    expect(groupRow?.lastElementChild?.classList.contains("zt-session-group-indicator")).toBe(true);
+    await click(groupName as HTMLElement);
     expect(expandedView.container.textContent).not.toContain("生产跳板机");
     expect(onSaveGroup).toHaveBeenCalledWith({
       id: "group-prod",
@@ -327,7 +332,7 @@ describe("SessionTree", () => {
 
     const collapsedView = render(<SessionTree groups={[{ ...groups[0], expanded: false }]} sessions={sessions} />);
 
-    expect(button(collapsedView.container, "展开分组 生产环境").getAttribute("aria-expanded")).toBe("false");
+    expect(collapsedView.container.querySelector('[aria-label="分组 生产环境"] .zt-session-group-row')?.getAttribute("aria-expanded")).toBe("false");
     expect(collapsedView.container.textContent).not.toContain("生产跳板机");
     collapsedView.unmount();
   });

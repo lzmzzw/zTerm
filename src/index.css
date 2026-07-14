@@ -3577,7 +3577,7 @@ button {
 
 .zt-session-group-row {
   display: grid;
-  grid-template-columns: 26px 16px minmax(0, 1fr);
+  grid-template-columns: 16px minmax(0, 1fr) 26px;
   align-items: center;
   gap: 6px;
   min-height: 28px;
@@ -3585,6 +3585,16 @@ button {
   border-radius: var(--zt-radius-control);
   color: var(--zt-text-primary);
   font-size: var(--zt-font-size-ui);
+  cursor: pointer;
+}
+
+.zt-session-group-row:focus-visible {
+  outline: 1px solid var(--zt-accent);
+  outline-offset: -1px;
+}
+
+.zt-session-group-row[aria-disabled="true"] {
+  cursor: default;
 }
 
 .zt-session-group-row:hover,
@@ -3598,33 +3608,10 @@ button {
   background: var(--zt-bg-active);
 }
 
-.zt-session-group-row button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 26px;
-  width: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--zt-radius-control);
-  background: transparent;
+.zt-session-group-indicator {
+  justify-self: end;
   color: var(--zt-text-secondary);
-  font-size: var(--zt-font-size-ui);
-}
-
-.zt-session-group-row .zt-session-group-toggle {
   width: 26px;
-  padding: 0;
-}
-
-.zt-session-group-row button:hover {
-  background: var(--zt-bg-hover);
-  color: var(--zt-text-primary);
-}
-
-.zt-session-group-row button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
 }
 
 .zt-session-node {
