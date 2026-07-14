@@ -1,7 +1,7 @@
 {
   "name": "zterm",
   "private": true,
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Windows-first Tauri terminal workspace for SSH, SFTP, command history, and AI-assisted operations.",
   "type": "module",
   "license": "GPL-3.0-only",
@@ -13,6 +13,8 @@
     "build": "npm run typecheck && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "test:frontend": "vitest run --passWithNoTests",
+    "version:check": "node scripts/version.mjs check",
+    "version:set": "node scripts/version.mjs set",
     "tauri": "tauri",
     "tauri:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tauri-msvc.ps1 dev",
     "tauri:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tauri-msvc.ps1 build",
