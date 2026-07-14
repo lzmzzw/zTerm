@@ -31,6 +31,11 @@ export interface TerminalSemanticHighlight {
 
 export type TerminalSemanticPalette = Record<TerminalSemanticRole, string>;
 
+export interface TerminalLineHighlightPalette {
+  commandLineBackground: string;
+  cursorLineBackground: string;
+}
+
 export const DIGE_BLACK_SEMANTIC_PALETTE: TerminalSemanticPalette = {
   permissionType: "#b267e6",
   permissionRead: "#6796e6",
@@ -77,6 +82,16 @@ export const DIGE_WHITE_SEMANTIC_PALETTE: TerminalSemanticPalette = {
   error: "#f44747",
 };
 
+export const DIGE_BLACK_LINE_HIGHLIGHT_PALETTE: TerminalLineHighlightPalette = {
+  commandLineBackground: "#27272b",
+  cursorLineBackground: "#30303a",
+};
+
+export const DIGE_WHITE_LINE_HIGHLIGHT_PALETTE: TerminalLineHighlightPalette = {
+  commandLineBackground: "#ebecf2",
+  cursorLineBackground: "#dde1ec",
+};
+
 export interface TerminalSemanticHighlighter {
   clear: () => void;
   dispose: () => void;
@@ -86,10 +101,12 @@ export interface TerminalSemanticHighlighter {
 export function createTerminalSemanticHighlighter(
   terminal: Terminal,
   palette: TerminalSemanticPalette,
+  linePalette: TerminalLineHighlightPalette = DIGE_BLACK_LINE_HIGHLIGHT_PALETTE,
 ): TerminalSemanticHighlighter {
   const highlightedLines: HighlightedTerminalLine[] = [];
   const writeDisposable = terminal.onWriteParsed(() => refresh());
   const scrollDisposable = terminal.onScroll(() => refresh());
+  const cursorDisposable = terminal.onCursorMove(() => refresh());
 
   function refresh() {
     const buffer = terminal.buffer.active;
@@ -106,15 +123,31 @@ export function createTerminalSemanticHighlighter(
       const bufferLine = buffer.getLine(lineIndex);
       if (!bufferLine) continue;
       const line = readTerminalLine(bufferLine, terminal.cols);
+      const highlights = findTerminalSemanticHighlights(line.text);
+      const backgroundColor = lineIndex === cursorLine
+        ? linePalette.cursorLineBackground
+        : highlights.some((highlight) => highlight.role === "prompt")
+          ? linePalette.commandLineBackground
+          : undefined;
       const existing = highlightedLines.find((entry) => entry.marker.line === lineIndex);
-      if (existing?.signature === line.signature) continue;
+      const signature = `${line.signature}\u0000${backgroundColor ?? ""}`;
+      if (existing?.signature === signature) continue;
       if (existing) disposeHighlightedLine(highlightedLines, existing);
 
-      const highlights = findTerminalSemanticHighlights(line.text);
-      if (highlights.length === 0) continue;
+      if (!backgroundColor && highlights.length === 0) continue;
       const marker = terminal.registerMarker(lineIndex - cursorLine);
       if (!marker) continue;
       const decorations: IDecoration[] = [];
+      if (backgroundColor) {
+        const decoration = terminal.registerDecoration({
+          marker,
+          x: 0,
+          width: terminal.cols,
+          backgroundColor,
+          layer: "bottom",
+        });
+        if (decoration) decorations.push(decoration);
+      }
       const decorationRanges: Array<{ color: string; width: number; x: number }> = [];
       for (const highlight of highlights) {
         for (const range of defaultForegroundRanges(line.cells, highlight.start, highlight.end)) {
@@ -135,7 +168,7 @@ export function createTerminalSemanticHighlighter(
         marker.dispose();
         continue;
       }
-      highlightedLines.push({ decorations, marker, signature: line.signature });
+      highlightedLines.push({ decorations, marker, signature });
     }
   }
 
@@ -151,6 +184,7 @@ export function createTerminalSemanticHighlighter(
     dispose: () => {
       writeDisposable.dispose();
       scrollDisposable.dispose();
+      cursorDisposable.dispose();
       clear();
     },
     refresh,

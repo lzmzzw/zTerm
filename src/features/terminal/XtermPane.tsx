@@ -11,6 +11,8 @@ import { scheduleNextTask } from "../../lib/renderScheduling";
 import {
   createTerminalSemanticHighlighter,
   DIGE_BLACK_SEMANTIC_PALETTE,
+  DIGE_BLACK_LINE_HIGHLIGHT_PALETTE,
+  DIGE_WHITE_LINE_HIGHLIGHT_PALETTE,
   DIGE_WHITE_SEMANTIC_PALETTE,
   type TerminalSemanticHighlighter,
 } from "./terminalSemanticHighlight";
@@ -35,7 +37,7 @@ interface XtermPaneProps {
 const DIGE_BLACK_TERMINAL_THEME = {
   background: "#1f1f21",
   foreground: "#F8F8F2",
-  cursor: "rgba(245, 245, 247, 0.9)",
+  cursor: "#ff9d00",
   black: "#333333",
   red: "#C4265E",
   green: "#86B42B",
@@ -57,7 +59,7 @@ const DIGE_BLACK_TERMINAL_THEME = {
 const DIGE_WHITE_TERMINAL_THEME = {
   background: "#f7f7fa",
   foreground: "#333333",
-  cursor: "#1d1d1f",
+  cursor: "#ff9d00",
   black: "#272822",
   red: "#dc322f",
   green: "#32CD32",
@@ -288,7 +290,11 @@ export function XtermPane({
     terminal.loadAddon(searchAddon);
     terminal.loadAddon(new WebLinksAddon());
     terminal.open(containerRef.current);
-    const semanticHighlighter = createTerminalSemanticHighlighter(terminal, resolveTerminalSemanticPalette());
+    const semanticHighlighter = createTerminalSemanticHighlighter(
+      terminal,
+      resolveTerminalSemanticPalette(),
+      resolveTerminalLineHighlightPalette(),
+    );
     terminalRef.current = terminal;
     semanticHighlighterRef.current = semanticHighlighter;
     searchAddonRef.current = searchAddon;
@@ -523,6 +529,12 @@ function resolveTerminalSemanticPalette() {
   return document.documentElement.dataset.ztTheme === "light"
     ? DIGE_WHITE_SEMANTIC_PALETTE
     : DIGE_BLACK_SEMANTIC_PALETTE;
+}
+
+function resolveTerminalLineHighlightPalette() {
+  return document.documentElement.dataset.ztTheme === "light"
+    ? DIGE_WHITE_LINE_HIGHLIGHT_PALETTE
+    : DIGE_BLACK_LINE_HIGHLIGHT_PALETTE;
 }
 
 function applyTerminalInput(current: string, value: string) {

@@ -45,6 +45,7 @@ const terminalMock = vi.hoisted(() => {
     host?: HTMLElement;
     loadAddon: ReturnType<typeof vi.fn>;
     onData: ReturnType<typeof vi.fn>;
+    onCursorMove: ReturnType<typeof vi.fn>;
     onRender: ReturnType<typeof vi.fn>;
     onResize: ReturnType<typeof vi.fn>;
     onScroll: ReturnType<typeof vi.fn>;
@@ -107,6 +108,7 @@ const terminalMock = vi.hoisted(() => {
         instance.dataListener = listener;
         return disposable();
       }),
+      onCursorMove: vi.fn(() => disposable()),
       onRender: vi.fn((listener: () => void) => {
         instance.renderListener = listener;
         return disposable();
@@ -277,7 +279,7 @@ describe("XtermPane", () => {
     expect(options.theme).toMatchObject({
       background: "#1f1f21",
       foreground: "#F8F8F2",
-      cursor: "rgba(245, 245, 247, 0.9)",
+      cursor: "#ff9d00",
       black: "#333333",
       red: "#C4265E",
       green: "#86B42B",
@@ -307,7 +309,7 @@ describe("XtermPane", () => {
     expect(options.theme).toMatchObject({
       background: "#f7f7fa",
       foreground: "#333333",
-      cursor: "#1d1d1f",
+      cursor: "#ff9d00",
       black: "#272822",
       red: "#dc322f",
       green: "#32CD32",
