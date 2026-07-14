@@ -49,6 +49,8 @@ interface FileTransferState {
   setPath: (side: FileTransferSide, path: string) => void;
   selectPath: (side: FileTransferSide, path: string | null, event?: FileSelectionEvent) => void;
   loadEndpoint: (side: FileTransferSide) => Promise<void>;
+  renameEndpoint: (side: FileTransferSide, from: string, to: string) => Promise<void>;
+  deleteEndpoint: (side: FileTransferSide, paths: string[], recursive: boolean) => Promise<void>;
   checkConflicts: (items: TransferEndpointConflictCheckItem[]) => Promise<TransferEndpointConflict[]>;
   enqueueTransfer: (
     source: TransferEndpoint,
@@ -175,6 +177,31 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
         updatePane(set, side, { loading: false, error: fileTransferErrorMessage(error) });
       }
     }
+  },
+  async renameEndpoint(side, from, to) {
+    const endpoint = { ...get()[side].endpoint, path: from };
+    try {
+      await invoke("file_transfer_rename_endpoint", { endpoint, to });
+      await get().loadEndpoint(side);
+    } catch (error) {
+      updatePane(set, side, { error: fileTransferErrorMessage(error) });
+    }
+  },
+  async deleteEndpoint(side, paths, recursive) {
+    const paneEndpoint = get()[side].endpoint;
+    let operationError: unknown = null;
+    try {
+      for (const path of paths) {
+        await invoke("file_transfer_delete_endpoint", {
+          endpoint: { ...paneEndpoint, path },
+          recursive,
+        });
+      }
+    } catch (error) {
+      operationError = error;
+    }
+    await get().loadEndpoint(side);
+    if (operationError) updatePane(set, side, { error: fileTransferErrorMessage(operationError) });
   },
   checkConflicts(items) {
     return invoke<TransferEndpointConflict[]>("file_transfer_check_conflicts", { items });

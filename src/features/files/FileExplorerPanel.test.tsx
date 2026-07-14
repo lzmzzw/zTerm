@@ -133,6 +133,51 @@ describe("FileExplorerPanel", () => {
     view.unmount();
   });
 
+  it("offers rename and delete for the row opened by context menu", async () => {
+    const onSelect = vi.fn();
+    const onRename = vi.fn();
+    const onDelete = vi.fn();
+    const view = render(
+      <FileExplorerPanel
+        savedSessionId="session-1"
+        path="/home/ops"
+        entries={entries}
+        selectedPaths={[]}
+        loading={false}
+        error={null}
+        onPathChange={vi.fn()}
+        onSelect={onSelect}
+        onRefresh={vi.fn()}
+        onParent={vi.fn()}
+        onMkdir={vi.fn()}
+        onUpload={vi.fn()}
+        onUploadDropped={vi.fn()}
+        onDownload={vi.fn()}
+        onRename={onRename}
+        onDelete={onDelete}
+      />,
+    );
+
+    const row = Array.from(view.container.querySelectorAll("button[role='listitem']")).find((item) =>
+      item.textContent?.includes("deploy.sh"),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 30 }));
+    });
+
+    expect(onSelect).toHaveBeenCalledWith("/home/ops/deploy.sh", undefined, entries.filter((entry) => !entry.name.startsWith(".")));
+    await click(Array.from(view.container.querySelectorAll('[role="menu"] button')).find((item) => item.textContent?.trim() === "重命名") as HTMLElement);
+    expect(onRename).toHaveBeenCalledWith("/home/ops/deploy.sh");
+
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 30 }));
+    });
+    await click(view.container.querySelector('[role="menu"] .zt-delete-button') as HTMLElement);
+    expect(onDelete).toHaveBeenCalledWith(["/home/ops/deploy.sh"], false);
+
+    view.unmount();
+  });
+
   it("renders directory and extension-specific file icons", () => {
     const view = render(
       <FileExplorerPanel

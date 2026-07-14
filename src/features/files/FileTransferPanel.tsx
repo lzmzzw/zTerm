@@ -1,11 +1,11 @@
 // Author: Liz
-import { ArrowLeft, ArrowRight, Eye, EyeOff, FolderUp, RefreshCw } from "lucide-react";
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, Edit3, Eye, EyeOff, FolderUp, RefreshCw, Trash2 } from "lucide-react";
+import { type CSSProperties, type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 
 import { ZtSelect } from "../../components/ZtSelect";
-import { ZtConfirmDialog } from "../../components/ZtUi";
+import { ZtConfirmDialog, ZtContextMenu, ZtPromptDialog } from "../../components/ZtUi";
 import { formatBytes } from "../../lib/byteFormatters";
 import type { AppLanguage } from "../settings/settingsStore";
 import { useSessionStore } from "../sessions/sessionStore";
@@ -51,6 +51,13 @@ type TransferPlan = {
   kind: TransferKind;
 };
 
+type FileContextMenuState = {
+  side: FileTransferSide;
+  entries: FileEntry[];
+  x: number;
+  y: number;
+};
+
 const MIN_FILE_TRANSFER_PANES_HEIGHT = 200;
 const MIN_TRANSFER_DOCK_HEIGHT = 120;
 const POINTER_DRAG_THRESHOLD = 6;
@@ -78,6 +85,8 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     setPath,
     selectPath,
     loadEndpoint,
+    renameEndpoint,
+    deleteEndpoint,
     checkConflicts,
     enqueueTransfer,
     loadTransfers,
@@ -106,6 +115,8 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       setPath: state.setPath,
       selectPath: state.selectPath,
       loadEndpoint: state.loadEndpoint,
+      renameEndpoint: state.renameEndpoint,
+      deleteEndpoint: state.deleteEndpoint,
       checkConflicts: state.checkConflicts,
       enqueueTransfer: state.enqueueTransfer,
       loadTransfers: state.loadTransfers,
@@ -124,6 +135,9 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [dragPreview, setDragPreview] = useState<DragPreviewState | null>(null);
   const [pendingOverwrite, setPendingOverwrite] = useState<{ count: number; plans: TransferPlan[] } | null>(null);
+  const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
+  const [renameEntry, setRenameEntry] = useState<{ side: FileTransferSide; entry: FileEntry } | null>(null);
+  const [deleteEntries, setDeleteEntries] = useState<{ side: FileTransferSide; entries: FileEntry[] } | null>(null);
   const [transferDockCollapsed, setTransferDockCollapsed] = useState(false);
   const [transferDockHeight, setTransferDockHeight] = useState<number | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
@@ -167,6 +181,25 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     setEndpoint("right", { kind: "ssh", saved_session_id: sshSessions[0].id, path: "/" });
     void Promise.resolve().then(() => loadEndpoint("right"));
   }, [loadEndpoint, right.endpoint.kind, right.endpoint.saved_session_id, setEndpoint, sshSessions]);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const closeMenu = () => setContextMenu(null);
+    window.addEventListener("click", closeMenu);
+    return () => window.removeEventListener("click", closeMenu);
+  }, [contextMenu]);
+
+  function openEntryContextMenu(side: FileTransferSide, entry: FileEntry, event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const pane = side === "left" ? left : right;
+    if (pane.loading) return;
+    const entries = pane.selectedPaths.includes(entry.path)
+      ? pane.entries.filter((item) => pane.selectedPaths.includes(item.path))
+      : [entry];
+    if (!pane.selectedPaths.includes(entry.path)) selectPath(side, entry.path);
+    setContextMenu({ side, entries, x: event.clientX, y: event.clientY });
+  }
 
   async function transferSelected(sourceSide: FileTransferSide) {
     const sourcePane = sourceSide === "left" ? left : right;
@@ -319,6 +352,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           onPointerDragMove={movePointerDrag}
           onPointerDragEnd={finishPointerDrag}
           onPointerDragCancel={cancelPointerDrag}
+          onContextMenu={openEntryContextMenu}
           dropActive={Boolean(dragState) && canDropOn("left")}
         />
         <div className="zt-file-transfer-arrows" aria-label="文件传输方向">
@@ -369,6 +403,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           onPointerDragMove={movePointerDrag}
           onPointerDragEnd={finishPointerDrag}
           onPointerDragCancel={cancelPointerDrag}
+          onContextMenu={openEntryContextMenu}
           dropActive={Boolean(dragState) && canDropOn("right")}
         />
       </div>
@@ -419,6 +454,65 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           }}
         />
       ) : null}
+      {contextMenu
+        ? createPortal(
+            <ZtContextMenu className="zt-context-menu" role="menu" x={contextMenu.x} y={contextMenu.y}>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={contextMenu.entries.length !== 1}
+                onClick={() => setRenameEntry({ side: contextMenu.side, entry: contextMenu.entries[0] })}
+              >
+                <Edit3 size={14} aria-hidden="true" />
+                重命名
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="zt-delete-button"
+                onClick={() => setDeleteEntries({ side: contextMenu.side, entries: contextMenu.entries })}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+                删除
+              </button>
+            </ZtContextMenu>,
+            document.body,
+          )
+        : null}
+      {renameEntry ? (
+        <ZtPromptDialog
+          title="重命名"
+          label="重命名为"
+          initialValue={renameEntry.entry.name}
+          requiredMessage="请填写新名称"
+          confirmLabel="确认重命名"
+          onCancel={() => setRenameEntry(null)}
+          onSubmit={(name) => {
+            const pending = renameEntry;
+            setRenameEntry(null);
+            const to = renamedSiblingPath(pending.entry.path, name);
+            if (to !== pending.entry.path) void renameEndpoint(pending.side, pending.entry.path, to);
+          }}
+        />
+      ) : null}
+      {deleteEntries ? (
+        <ZtConfirmDialog
+          title="删除文件"
+          message={`确认删除选中的 ${deleteEntries.entries.length} 个项目？`}
+          confirmLabel="确认删除"
+          danger
+          onCancel={() => setDeleteEntries(null)}
+          onConfirm={() => {
+            const pending = deleteEntries;
+            setDeleteEntries(null);
+            void deleteEndpoint(
+              pending.side,
+              pending.entries.map((entry) => entry.path),
+              pending.entries.some((entry) => entry.kind === "directory"),
+            );
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -442,6 +536,7 @@ function EndpointPane({
   onPointerDragMove,
   onPointerDragEnd,
   onPointerDragCancel,
+  onContextMenu,
   dropActive,
 }: {
   side: FileTransferSide;
@@ -468,6 +563,7 @@ function EndpointPane({
   onPointerDragMove: (clientX: number, clientY: number) => boolean;
   onPointerDragEnd: (clientX: number, clientY: number) => void;
   onPointerDragCancel: () => void;
+  onContextMenu: (side: FileTransferSide, entry: FileEntry, event: MouseEvent<HTMLButtonElement>) => void;
   dropActive: boolean;
 }) {
   const endpointValue = pane.endpoint.kind === "local" ? "local" : `ssh:${pane.endpoint.saved_session_id ?? ""}`;
@@ -579,6 +675,7 @@ function EndpointPane({
             onDoubleClick={() => {
               if (entry.kind === "directory") void onOpenDirectory(entry.path);
             }}
+            onContextMenu={(event) => onContextMenu(side, entry, event)}
           >
             <span className="zt-file-kind-icon" aria-hidden="true">
               {resolveFileIcon(entry)}
@@ -591,6 +688,11 @@ function EndpointPane({
       </div>
     </section>
   );
+}
+
+function renamedSiblingPath(path: string, name: string) {
+  const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return separatorIndex < 0 ? name : `${path.slice(0, separatorIndex + 1)}${name}`;
 }
 
 function rootPathFor(path: string) {

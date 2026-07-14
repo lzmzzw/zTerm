@@ -1,5 +1,6 @@
 // Author: Liz
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { Edit3, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { FileToolbar } from "./FileToolbar";
@@ -52,7 +53,7 @@ export function FileExplorerPanel({
   const panelRef = useRef<HTMLDivElement>(null);
   const [confirmDeletePaths, setConfirmDeletePaths] = useState<string[] | null>(null);
   const [showHiddenFiles, setShowHiddenFiles] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entries: FileEntry[] } | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const visibleEntries = useMemo(
     () => (showHiddenFiles ? entries : entries.filter((entry) => !entry.name.startsWith("."))),
@@ -64,10 +65,10 @@ export function FileExplorerPanel({
   );
   const disabled = !savedSessionId;
 
-  function requestDelete() {
-    if (selectedEntries.length === 0) return;
-    const paths = selectedEntries.map((entry) => entry.path);
-    if (selectedEntries.some((entry) => entry.kind === "directory")) {
+  function requestDelete(entriesToDelete = selectedEntries) {
+    if (entriesToDelete.length === 0) return;
+    const paths = entriesToDelete.map((entry) => entry.path);
+    if (entriesToDelete.some((entry) => entry.kind === "directory")) {
       setConfirmDeletePaths(paths);
       return;
     }
@@ -117,7 +118,7 @@ export function FileExplorerPanel({
       className={dragActive ? "zt-file-panel zt-file-panel-drag-active" : "zt-file-panel"}
       onContextMenu={(event) => {
         event.preventDefault();
-        setContextMenu({ x: event.clientX, y: event.clientY });
+        setContextMenu({ x: event.clientX, y: event.clientY, entries: [] });
       }}
     >
       <div className="zt-file-path">
@@ -177,6 +178,13 @@ export function FileExplorerPanel({
                 }
               }
             }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              const contextEntries = selectedPaths.includes(entry.path) ? selectedEntries : [entry];
+              if (!selectedPaths.includes(entry.path)) onSelect(entry.path, undefined, visibleEntries);
+              setContextMenu({ x: event.clientX, y: event.clientY, entries: contextEntries });
+            }}
           >
             <span className="zt-file-kind-icon" aria-hidden="true">
               {resolveFileIcon(entry)}
@@ -222,6 +230,30 @@ export function FileExplorerPanel({
           <button type="button" role="menuitem" onClick={() => setShowHiddenFiles((current) => !current)}>
             {showHiddenFiles ? "不显示隐藏文件" : "显示隐藏文件"}
           </button>
+          {contextMenu.entries.length > 0 ? <div className="zt-context-menu-separator" role="separator" /> : null}
+          {contextMenu.entries.length > 0 ? (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={loading || contextMenu.entries.length !== 1}
+              onClick={() => void onRename(contextMenu.entries[0].path)}
+            >
+              <Edit3 size={14} aria-hidden="true" />
+              重命名
+            </button>
+          ) : null}
+          {contextMenu.entries.length > 0 ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="zt-delete-button"
+              disabled={loading}
+              onClick={() => requestDelete(contextMenu.entries)}
+            >
+              <Trash2 size={14} aria-hidden="true" />
+              删除
+            </button>
+          ) : null}
         </ZtContextMenu>
       ) : null}
     </div>

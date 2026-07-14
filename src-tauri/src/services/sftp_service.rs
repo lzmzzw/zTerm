@@ -938,6 +938,40 @@ pub async fn list_local_directory(path: &str) -> AppResult<Vec<FileEntry>> {
     Ok(result)
 }
 
+pub async fn rename_local_path(from: &str, to: &str) -> AppResult<()> {
+    let from = validate_destructive_local_path(from)?;
+    let to = validate_destructive_local_path(to)?;
+    if from.parent() != to.parent() {
+        return Err(AppError::validation("重命名后的路径必须位于原目录"));
+    }
+    fs::rename(from, to).await?;
+    Ok(())
+}
+
+pub async fn delete_local_path(path: &str, recursive: bool) -> AppResult<()> {
+    let path = validate_destructive_local_path(path)?;
+    let metadata = fs::symlink_metadata(&path).await?;
+    if metadata.file_type().is_symlink() || metadata.is_file() {
+        fs::remove_file(path).await?;
+    } else if recursive {
+        fs::remove_dir_all(path).await?;
+    } else {
+        fs::remove_dir(path).await?;
+    }
+    Ok(())
+}
+
+fn validate_destructive_local_path(path: &str) -> AppResult<PathBuf> {
+    let path = PathBuf::from(required_path(path)?);
+    if !path.is_absolute() {
+        return Err(AppError::validation("本机文件操作必须使用绝对路径"));
+    }
+    if path.parent().is_none() {
+        return Err(AppError::validation("不允许对本机根目录执行该操作"));
+    }
+    Ok(path)
+}
+
 async fn connect_sftp(
     session: &SavedSession,
     all_sessions: &[SavedSession],
@@ -990,7 +1024,10 @@ impl ConnectedSftpSession {
 
 #[cfg(test)]
 mod tests {
-    use super::should_retry_sftp_list_error;
+    use super::{
+        delete_local_path, rename_local_path, should_retry_sftp_list_error,
+        validate_destructive_local_path,
+    };
     use crate::error::AppError;
 
     #[test]
@@ -1007,6 +1044,54 @@ mod tests {
         assert!(!should_retry_sftp_list_error(&AppError::validation(
             "invalid path"
         )));
+    }
+
+    #[tokio::test]
+    async fn renames_and_deletes_local_files_and_directories() {
+        let root =
+            std::env::temp_dir().join(format!("zterm-local-file-ops-{}", uuid::Uuid::new_v4()));
+        let original = root.join("original.txt");
+        let renamed = root.join("renamed.txt");
+        let directory = root.join("nested");
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create test directory");
+        tokio::fs::write(&original, b"data")
+            .await
+            .expect("create test file");
+        tokio::fs::write(directory.join("child.txt"), b"data")
+            .await
+            .expect("create nested test file");
+
+        rename_local_path(&original.to_string_lossy(), &renamed.to_string_lossy())
+            .await
+            .expect("rename local file");
+        assert!(!original.exists());
+        assert!(renamed.exists());
+
+        delete_local_path(&renamed.to_string_lossy(), false)
+            .await
+            .expect("delete local file");
+        assert!(!renamed.exists());
+        assert!(delete_local_path(&directory.to_string_lossy(), false)
+            .await
+            .is_err());
+        delete_local_path(&directory.to_string_lossy(), true)
+            .await
+            .expect("delete local directory recursively");
+        assert!(!directory.exists());
+
+        tokio::fs::remove_dir(root).await.expect("remove test root");
+    }
+
+    #[test]
+    fn rejects_local_root_paths() {
+        #[cfg(windows)]
+        let root = r"C:\";
+        #[cfg(not(windows))]
+        let root = "/";
+        assert!(validate_destructive_local_path(root).is_err());
+        assert!(validate_destructive_local_path("relative/file.txt").is_err());
     }
 }
 

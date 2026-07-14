@@ -89,6 +89,8 @@ pub fn run() {
             commands::sftp::file_transfer_default_local_path,
             commands::sftp::file_transfer_local_roots,
             commands::sftp::file_transfer_list_endpoint,
+            commands::sftp::file_transfer_rename_endpoint,
+            commands::sftp::file_transfer_delete_endpoint,
             commands::sftp::file_transfer_check_conflicts,
             commands::sftp::file_transfer_enqueue,
             commands::sftp::file_transfer_list,

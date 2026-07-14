@@ -180,7 +180,7 @@ describe("FileTransferPanel", () => {
   });
 
   it("does not render a manual transfer task refresh button", async () => {
-    invokeMock.mockImplementation((command: string) => {
+    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
       if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
       if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
@@ -193,6 +193,100 @@ describe("FileTransferPanel", () => {
     await flushEffects();
 
     expect(view.container.querySelector('[aria-label="刷新文件传输任务"]')).toBeNull();
+
+    view.unmount();
+  });
+
+  it("renames and deletes a local endpoint entry from its context menu", async () => {
+    const localFile = fileEntry("C:/Users/Ops/bundle.zip");
+    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list") return Promise.resolve([]);
+      if (command === "file_transfer_list_endpoint") {
+        const endpoint = args?.endpoint as { kind: string };
+        return Promise.resolve(endpoint.kind === "local" ? [localFile] : []);
+      }
+      if (command === "file_transfer_rename_endpoint" || command === "file_transfer_delete_endpoint") {
+        return Promise.resolve({ renamed: true, deleted: true });
+      }
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+    const row = Array.from(view.container.querySelectorAll('button[role="listitem"]')).find((item) =>
+      item.textContent?.includes("bundle.zip"),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 30 }));
+    });
+    await click(button(document.body, "重命名"));
+    const renameInput = document.body.querySelector('[aria-label="重命名为"]') as HTMLInputElement;
+    await act(async () => {
+      const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+      descriptor?.set?.call(renameInput, "release.zip");
+      renameInput.dispatchEvent(new Event("input", { bubbles: true }));
+      renameInput.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await click(button(document.body, "确认重命名"));
+    await flushEffects();
+    expect(invokeMock).toHaveBeenCalledWith("file_transfer_rename_endpoint", {
+      endpoint: { kind: "local", saved_session_id: null, path: "C:/Users/Ops/bundle.zip" },
+      to: "C:/Users/Ops/release.zip",
+    });
+
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 30 }));
+    });
+    await click(button(document.body, "删除"));
+    await click(button(document.body, "确认删除"));
+    await flushEffects();
+    expect(invokeMock).toHaveBeenCalledWith("file_transfer_delete_endpoint", {
+      endpoint: { kind: "local", saved_session_id: null, path: "C:/Users/Ops/bundle.zip" },
+      recursive: false,
+    });
+
+    view.unmount();
+  });
+
+  it("uses the selected SSH endpoint for context-menu file operations", async () => {
+    const remoteFile = fileEntry("/var/log/app.log");
+    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list") return Promise.resolve([]);
+      if (command === "file_transfer_list_endpoint") {
+        const endpoint = args?.endpoint as { kind: string };
+        return Promise.resolve(endpoint.kind === "ssh" ? [remoteFile] : []);
+      }
+      if (command === "file_transfer_rename_endpoint" || command === "file_transfer_delete_endpoint") {
+        return Promise.resolve({ renamed: true, deleted: true });
+      }
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+    const row = Array.from(view.container.querySelectorAll('button[role="listitem"]')).find((item) =>
+      item.textContent?.includes("app.log"),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 30 }));
+    });
+    await click(button(document.body, "删除"));
+    await click(button(document.body, "确认删除"));
+    await flushEffects();
+
+    expect(invokeMock).toHaveBeenCalledWith("file_transfer_delete_endpoint", {
+      endpoint: { kind: "ssh", saved_session_id: "ssh-1", path: "/var/log/app.log" },
+      recursive: false,
+    });
 
     view.unmount();
   });

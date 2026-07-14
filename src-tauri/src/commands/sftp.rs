@@ -12,8 +12,9 @@ use crate::{
     services::{
         external_launch_service::CompositeSshSecretResolver,
         sftp_service::{
-            default_local_directory, list_local_directory, local_path_total_bytes,
-            local_root_directories, SftpService, TransferProgressUpdate,
+            default_local_directory, delete_local_path, list_local_directory,
+            local_path_total_bytes, local_root_directories, rename_local_path, SftpService,
+            TransferProgressUpdate,
         },
         transfer_queue::TransferQueue,
     },
@@ -215,6 +216,54 @@ pub async fn file_transfer_list_endpoint(
                 .await
         }
     }
+}
+
+#[tauri::command]
+pub async fn file_transfer_rename_endpoint(
+    state: State<'_, AppState>,
+    endpoint: TransferEndpoint,
+    to: String,
+) -> AppResult<SftpRenameResult> {
+    match endpoint.kind {
+        TransferEndpointKind::Local => rename_local_path(&endpoint.path, &to).await?,
+        TransferEndpointKind::Ssh => {
+            let session = session_for_endpoint(&state, &endpoint)?;
+            let storage = state.storage();
+            let all_sessions = list_sessions(storage.as_ref())?.sessions;
+            let secrets = state
+                .external_launch_service()
+                .composite_secret_resolver(state.credential_service());
+            state
+                .sftp_service()
+                .rename(&session, &all_sessions, &secrets, &endpoint.path, &to)
+                .await?;
+        }
+    }
+    Ok(SftpRenameResult { renamed: true })
+}
+
+#[tauri::command]
+pub async fn file_transfer_delete_endpoint(
+    state: State<'_, AppState>,
+    endpoint: TransferEndpoint,
+    recursive: bool,
+) -> AppResult<SftpDeleteResult> {
+    match endpoint.kind {
+        TransferEndpointKind::Local => delete_local_path(&endpoint.path, recursive).await?,
+        TransferEndpointKind::Ssh => {
+            let session = session_for_endpoint(&state, &endpoint)?;
+            let storage = state.storage();
+            let all_sessions = list_sessions(storage.as_ref())?.sessions;
+            let secrets = state
+                .external_launch_service()
+                .composite_secret_resolver(state.credential_service());
+            state
+                .sftp_service()
+                .delete(&session, &all_sessions, &secrets, &endpoint.path, recursive)
+                .await?;
+        }
+    }
+    Ok(SftpDeleteResult { deleted: true })
 }
 
 #[tauri::command]
