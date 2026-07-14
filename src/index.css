@@ -2109,7 +2109,7 @@ button {
 
 .zt-history-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 26px 26px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
@@ -2190,23 +2190,7 @@ button {
   opacity: 0.55;
 }
 
-.zt-history-toolbar button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  height: 24px;
-  border: 1px solid var(--zt-border);
-  border-radius: var(--zt-radius-control);
-  background: var(--zt-bg-surface);
-  color: var(--zt-text-primary);
-  font-size: var(--zt-font-size-ui);
-  white-space: nowrap;
-}
-
-.zt-history-entry button,
-.zt-history-toolbar button[aria-label],
-.zt-history-toolbar .zt-history-icon-button {
+.zt-history-entry button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2219,21 +2203,9 @@ button {
   font-size: var(--zt-font-size-ui);
 }
 
-.zt-history-toolbar button:not([aria-label]):hover {
-  border-color: var(--zt-border-strong);
-  background: var(--zt-bg-hover);
-}
-
-.zt-history-entry button:hover,
-.zt-history-toolbar button[aria-label]:hover,
-.zt-history-toolbar .zt-history-icon-button:hover {
+.zt-history-entry button:hover {
   background: var(--zt-bg-hover);
   color: var(--zt-text-primary);
-}
-
-.zt-history-toolbar button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
 }
 
 .zt-history-error {
@@ -2256,7 +2228,7 @@ button {
 
 .zt-history-entry {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) 24px 24px;
+  grid-template-columns: minmax(120px, 1fr) 24px;
   align-items: center;
   gap: 6px;
   min-width: 0;

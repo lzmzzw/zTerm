@@ -197,9 +197,13 @@ describe("split pane css direction mapping", () => {
     expectBorderlessIconButton(".zt-session-group-row button");
     expect(ruleBodiesForSelector(".zt-session-node-actions button")).toBe("");
     expectBorderlessIconButton(".zt-file-toolbar button");
-    expectBorderlessIconButton(".zt-history-toolbar button[aria-label]");
     expectBorderlessIconButton(".zt-history-entry button");
     expectBorderlessIconButton(".zt-transfer-row button");
+  });
+
+  it("keeps removed history toolbar icon button styles absent", () => {
+    expect(ruleBodiesForSelector(".zt-history-toolbar button[aria-label]")).toBe("");
+    expect(ruleBodiesForSelector(".zt-history-toolbar .zt-history-icon-button")).toBe("");
   });
 
   it("keeps xterm internal padding and viewport on the terminal background", () => {

@@ -179,13 +179,11 @@ function renderPanel(overrides: Partial<Parameters<typeof CommandHistoryPanel>[0
 }
 
 describe("CommandHistoryPanel", () => {
-  it("filters copies and sends command history entries without a search button", async () => {
+  it("filters and sends history entries without toolbar actions or row copy buttons", async () => {
     const onQueryChange = vi.fn();
-    const onCopy = vi.fn();
     const onSend = vi.fn();
     const view = renderPanel({
       onQueryChange,
-      onCopy,
       onSend,
     });
 
@@ -194,13 +192,13 @@ describe("CommandHistoryPanel", () => {
     expect(buttonExists(view.container, "搜索")).toBe(false);
 
     change(filterInput, "who");
-    await click(button(view.container, "复制 pwd"));
     await click(button(view.container, "发送 pwd"));
 
     expect(onQueryChange).toHaveBeenCalledWith("who");
-    expect(onCopy).toHaveBeenCalledWith("pwd");
     expect(onSend).toHaveBeenCalledWith("pwd");
-    expect(button(view.container, "保存为指令组").disabled).toBe(true);
+    expect(buttonExists(view.container, "保存为指令组")).toBe(false);
+    expect(buttonExists(view.container, "清空历史")).toBe(false);
+    expect(buttonExists(view.container, "复制 pwd")).toBe(false);
 
     view.unmount();
   });
@@ -251,14 +249,13 @@ describe("CommandHistoryPanel", () => {
     view.unmount();
   });
 
-  it("saves selected history entries as a session command group", async () => {
+  it("saves selected history entries from the first context menu action", async () => {
     const onSaveCommandGroup = vi.fn();
     const view = renderPanel({ onSaveCommandGroup });
 
-    await click(historyEntry(view.container, "pwd"));
-    const saveSelectedButton = button(view.container, "保存为指令组");
-    expect(saveSelectedButton.textContent).not.toContain("保存为指令组");
-    await click(saveSelectedButton);
+    await contextMenu(historyEntry(view.container, "pwd"));
+    expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())[0]).toBe("保存");
+    await click(button(view.container, "保存"));
     expect(view.container.querySelector('[role="dialog"]')?.getAttribute("aria-label")).toBe("保存为指令组");
     await inputText(input(view.container, "指令组名称"), "巡检");
     await click(button(view.container, "保存指令组"));
@@ -330,6 +327,7 @@ describe("CommandHistoryPanel", () => {
     await clickWithModifiers(whoami, { ctrlKey: true });
     await contextMenu(pwd);
     expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
+      "保存",
       "复制",
       "发送",
       "删除",
@@ -345,6 +343,17 @@ describe("CommandHistoryPanel", () => {
     await contextMenu(pwd);
     await click(button(view.container, "删除"));
     expect(onDeleteEntries).toHaveBeenCalledWith(["history-1", "history-2"]);
+
+    view.unmount();
+  });
+
+  it("does not open history actions without an active history scope", async () => {
+    const view = renderPanel({ historyScopeKind: null, historyScopeId: null });
+
+    await contextMenu(historyEntry(view.container, "pwd"));
+
+    expect(view.container.querySelector('[role="menu"]')).toBeNull();
+    expect(view.container.querySelector('[role="dialog"]')).toBeNull();
 
     view.unmount();
   });

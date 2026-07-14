@@ -1,5 +1,5 @@
 // Author: Liz
-import { Copy, Edit3, Play, Plus, Save, Search, Trash2 } from "lucide-react";
+import { Copy, Edit3, Play, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 
@@ -48,7 +48,6 @@ export function CommandHistoryPanel({
   deduplicateHistory,
   entries,
   query,
-  loading,
   error,
   groupLoading,
   groupError,
@@ -60,7 +59,6 @@ export function CommandHistoryPanel({
   onSearch,
   onCopy,
   onSend,
-  onClear,
   onDeleteEntries,
   onDeduplicateHistoryChange,
   onSaveCommandGroup,
@@ -217,6 +215,7 @@ export function CommandHistoryPanel({
 
   function openSelectedGroupForm() {
     if (!hasHistoryScope || selectedCommands.length === 0) return;
+    setContextMenu(null);
     setEditingGroup(null);
     setFormName("");
     setFormCommands(selectedCommands.join("\n"));
@@ -330,26 +329,6 @@ export function CommandHistoryPanel({
               checked={deduplicateHistory}
               onChange={onDeduplicateHistoryChange}
             />
-            <button
-              type="button"
-              aria-label={t(language, "saveAsCommandGroup")}
-              className="zt-history-icon-button"
-              onClick={openSelectedGroupForm}
-              title={t(language, "saveAsCommandGroup")}
-              disabled={loading || !hasHistoryScope || selectedCommands.length === 0}
-            >
-              <Save size={14} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              aria-label={t(language, "clearHistory")}
-              className="zt-history-icon-button"
-              onClick={onClear}
-              title={t(language, "clearHistory")}
-              disabled={loading || !hasHistoryScope}
-            >
-              <Trash2 size={14} aria-hidden="true" />
-            </button>
           </div>
 
           {error ? <div className="zt-history-error">{error}</div> : null}
@@ -373,16 +352,6 @@ export function CommandHistoryPanel({
                 <code>{entry.command}</code>
                 <button
                   type="button"
-                  aria-label={`${t(language, "copyPrefix")} ${entry.command}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onCopy(entry.command);
-                  }}
-                >
-                  <Copy size={14} aria-hidden="true" />
-                </button>
-                <button
-                  type="button"
                   aria-label={`${t(language, "sendPrefix")} ${entry.command}`}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -397,6 +366,9 @@ export function CommandHistoryPanel({
           </div>
           {contextMenu ? (
             <ZtContextMenu className="zt-context-menu" role="menu" x={contextMenu.x} y={contextMenu.y}>
+              <button type="button" role="menuitem" onClick={openSelectedGroupForm}>
+                {t(language, "save")}
+              </button>
               <button type="button" role="menuitem" onClick={copySelectedEntries}>
                 复制
               </button>
