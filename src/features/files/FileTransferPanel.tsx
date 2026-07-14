@@ -1,5 +1,5 @@
 // Author: Liz
-import { ArrowLeft, ArrowRight, Edit3, Eye, EyeOff, FolderUp, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Eye, EyeOff, FolderUp, RefreshCw } from "lucide-react";
 import { type CSSProperties, type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
@@ -463,7 +463,6 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
                 disabled={contextMenu.entries.length !== 1}
                 onClick={() => setRenameEntry({ side: contextMenu.side, entry: contextMenu.entries[0] })}
               >
-                <Edit3 size={14} aria-hidden="true" />
                 重命名
               </button>
               <button
@@ -472,7 +471,6 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
                 className="zt-delete-button"
                 onClick={() => setDeleteEntries({ side: contextMenu.side, entries: contextMenu.entries })}
               >
-                <Trash2 size={14} aria-hidden="true" />
                 删除
               </button>
             </ZtContextMenu>,

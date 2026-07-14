@@ -166,6 +166,7 @@ describe("FileExplorerPanel", () => {
     });
 
     expect(onSelect).toHaveBeenCalledWith("/home/ops/deploy.sh", undefined, entries.filter((entry) => !entry.name.startsWith(".")));
+    expect(view.container.querySelector('[role="menu"] svg')).toBeNull();
     await click(Array.from(view.container.querySelectorAll('[role="menu"] button')).find((item) => item.textContent?.trim() === "重命名") as HTMLElement);
     expect(onRename).toHaveBeenCalledWith("/home/ops/deploy.sh");
 

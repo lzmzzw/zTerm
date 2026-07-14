@@ -224,6 +224,7 @@ describe("FileTransferPanel", () => {
     await act(async () => {
       row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 30 }));
     });
+    expect(document.body.querySelector('[role="menu"] svg')).toBeNull();
     await click(button(document.body, "重命名"));
     const renameInput = document.body.querySelector('[aria-label="重命名为"]') as HTMLInputElement;
     await act(async () => {

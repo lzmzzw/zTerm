@@ -1,6 +1,5 @@
 // Author: Liz
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { Edit3, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { FileToolbar } from "./FileToolbar";
@@ -238,7 +237,6 @@ export function FileExplorerPanel({
               disabled={loading || contextMenu.entries.length !== 1}
               onClick={() => void onRename(contextMenu.entries[0].path)}
             >
-              <Edit3 size={14} aria-hidden="true" />
               重命名
             </button>
           ) : null}
@@ -250,7 +248,6 @@ export function FileExplorerPanel({
               disabled={loading}
               onClick={() => requestDelete(contextMenu.entries)}
             >
-              <Trash2 size={14} aria-hidden="true" />
               删除
             </button>
           ) : null}
