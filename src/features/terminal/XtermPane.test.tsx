@@ -210,7 +210,7 @@ describe("XtermPane", () => {
     delete document.documentElement.dataset.ztTheme;
   });
 
-  it("initializes xterm with the kerminal-like dark ANSI palette without changing font settings", () => {
+  it("initializes xterm with the dige-black ANSI palette without changing font settings", () => {
     const view = render(<XtermPane data="" />);
 
     const options = terminalMock.instances[0]?.options as TerminalOptions;
@@ -220,29 +220,29 @@ describe("XtermPane", () => {
     expect(options.fontFamily).toContain("Microsoft YaHei Mono");
     expect(options.theme).toMatchObject({
       background: "#1f1f21",
-      foreground: "rgba(245, 245, 247, 0.9)",
+      foreground: "#F8F8F2",
       cursor: "rgba(245, 245, 247, 0.9)",
-      black: "rgba(38, 38, 42, 0.96)",
-      red: "rgba(255, 95, 86, 0.94)",
-      green: "rgba(48, 209, 88, 0.94)",
-      yellow: "rgba(255, 214, 10, 0.94)",
-      blue: "rgba(100, 210, 255, 0.94)",
-      magenta: "rgba(191, 90, 242, 0.94)",
-      cyan: "rgba(100, 210, 255, 0.88)",
-      white: "rgba(245, 245, 247, 0.86)",
-      brightBlack: "rgba(150, 150, 158, 0.9)",
-      brightRed: "rgba(249, 38, 114, 0.94)",
-      brightGreen: "rgba(50, 215, 75, 0.94)",
-      brightYellow: "rgba(255, 214, 10, 0.94)",
-      brightBlue: "rgba(10, 132, 255, 0.94)",
-      brightMagenta: "rgba(191, 90, 242, 0.94)",
-      brightCyan: "rgba(102, 217, 239, 0.94)",
-      brightWhite: "rgba(255, 255, 255, 0.92)",
+      black: "#333333",
+      red: "#C4265E",
+      green: "#86B42B",
+      yellow: "#D0A500",
+      blue: "#3465A4",
+      magenta: "#8C6BC8",
+      cyan: "#56ADBC",
+      white: "#e3e3dd",
+      brightBlack: "#666666",
+      brightRed: "#f92672",
+      brightGreen: "#A6E22E",
+      brightYellow: "#9e862f",
+      brightBlue: "#819aff",
+      brightMagenta: "#AE81FF",
+      brightCyan: "#66D9EF",
+      brightWhite: "#f8f8f2",
     });
     view.unmount();
   });
 
-  it("initializes xterm with a readable light palette when the document theme is light", () => {
+  it("initializes xterm with the dige-white ANSI palette when the document theme is light", () => {
     document.documentElement.dataset.ztTheme = "light";
     const view = render(<XtermPane data="" />);
 
@@ -250,18 +250,24 @@ describe("XtermPane", () => {
 
     expect(options.theme).toMatchObject({
       background: "#f7f7fa",
-      foreground: "#1d1d1f",
+      foreground: "#333333",
       cursor: "#1d1d1f",
-      black: "#1d1d1f",
-      red: "#d70015",
-      green: "#248a3d",
-      yellow: "#b25000",
-      blue: "#0066cc",
-      magenta: "#af52de",
-      cyan: "#0071a4",
-      white: "#f5f5f7",
-      brightBlack: "#6e6e73",
-      brightWhite: "#ffffff",
+      black: "#272822",
+      red: "#dc322f",
+      green: "#32CD32",
+      yellow: "#FFD700",
+      blue: "#3465A4",
+      magenta: "#d33682",
+      cyan: "#3A96DD",
+      white: "#D3D3D3",
+      brightBlack: "#333333",
+      brightRed: "#ff7882",
+      brightGreen: "#3CB371",
+      brightYellow: "#D2691E",
+      brightBlue: "#80baff",
+      brightMagenta: "#d778ff",
+      brightCyan: "#78ffff",
+      brightWhite: "#708090",
     });
 
     view.unmount();
