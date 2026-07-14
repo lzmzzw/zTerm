@@ -279,7 +279,7 @@ export function XtermPane({
       fontFamily:
         'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Microsoft YaHei Mono", Consolas, "Liberation Mono", monospace',
       fontSize: resolveConfiguredTerminalFontSize(),
-      fontWeight: 200,
+      fontWeight: 350,
       theme: resolveTerminalTheme(),
     });
     const fitAddon = new FitAddon();
