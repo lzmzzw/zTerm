@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ZtButton,
+  ZtAttentionRegion,
   ZtCheckbox,
   ZtDialog,
   ZtFloatingSurface,
@@ -55,6 +56,31 @@ afterEach(() => {
 });
 
 describe("ZtUi primitives", () => {
+  it("marks a configured empty region for attention without reacting to its content", () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        callback(0);
+        return 1;
+      });
+    const view = render(
+      <ZtAttentionRegion className="settings-region">
+        <section className="settings-content">设置内容</section>
+      </ZtAttentionRegion>,
+    );
+
+    const region = view.container.querySelector(".settings-region") as HTMLElement;
+    const content = view.container.querySelector(".settings-content") as HTMLElement;
+
+    click(content);
+    expect(region.classList.contains("is-attention")).toBe(false);
+
+    click(region);
+    expect(region.classList.contains("is-attention")).toBe(true);
+
+    requestAnimationFrameSpy.mockRestore();
+  });
+
   it("marks the dialog for attention when its backdrop is clicked", () => {
     const requestAnimationFrameSpy = vi
       .spyOn(window, "requestAnimationFrame")

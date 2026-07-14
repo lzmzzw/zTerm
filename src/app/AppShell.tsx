@@ -19,7 +19,7 @@ import { createTerminalActions } from "./terminalActions";
 import type { RightTool } from "./rightTools";
 import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
-import { ZtConfirmDialog, ZtModalBackdrop } from "../components/ZtUi";
+import { ZtAttentionRegion, ZtConfirmDialog, ZtModalBackdrop } from "../components/ZtUi";
 import { setAiAffectedDomainsHandler, useAiStore } from "../features/ai/aiStore";
 import { buildAiTerminalContext } from "../features/ai/aiTerminalContextModel";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
@@ -1457,7 +1457,10 @@ export function AppShell() {
 
   if (viewMode === "settings") {
     return (
-      <div className="zt-workbench zt-workbench-settings" onContextMenu={(event) => event.preventDefault()}>
+      <ZtAttentionRegion
+        className="zt-workbench zt-workbench-settings"
+        onContextMenu={(event) => event.preventDefault()}
+      >
         <TitleBar />
         <SettingsPage
           settings={appSettings}
@@ -1474,7 +1477,7 @@ export function AppShell() {
           onSetMcpEnabled={setMcpEnabled}
           onRotateMcpToken={rotateMcpToken}
         />
-      </div>
+      </ZtAttentionRegion>
     );
   }
 

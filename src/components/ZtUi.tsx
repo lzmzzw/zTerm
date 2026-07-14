@@ -142,7 +142,7 @@ export const ZtTextarea = forwardRef<HTMLTextAreaElement, ZtTextareaProps>(funct
   );
 });
 
-export function ZtModalBackdrop({ className, children, onClick, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function ZtAttentionRegion({ className, children, onClick, ...props }: HTMLAttributes<HTMLDivElement>) {
   const [attention, setAttention] = useState(false);
   const attentionFrameRef = useRef<number | null>(null);
 
@@ -174,12 +174,16 @@ export function ZtModalBackdrop({ className, children, onClick, ...props }: HTML
   return (
     <div
       {...props}
-      className={classNames("zt-dialog-backdrop", attention && "is-attention", className)}
+      className={classNames(attention && "is-attention", className)}
       onClick={handleClick}
     >
       {children}
     </div>
   );
+}
+
+export function ZtModalBackdrop({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+  return <ZtAttentionRegion {...props} className={classNames("zt-dialog-backdrop", className)} />;
 }
 
 export function ZtDialog({
