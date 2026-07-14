@@ -11,8 +11,8 @@ use crate::{
     error::{AppError, AppResult},
     models::history::{
         ClearCommandHistoryResult, CommandGroupDeleted, CommandHistoryDraft, CommandHistoryEntry,
-        HistoryScopeKind, HistorySearchOptions, SessionCommandGroup, SessionCommandGroupDraft,
-        SessionCommandGroupItem,
+        DeleteCommandHistoryEntriesResult, HistoryScopeKind, HistorySearchOptions,
+        SessionCommandGroup, SessionCommandGroupDraft, SessionCommandGroupItem,
     },
     storage::sqlite::SqliteStore,
 };
@@ -173,6 +173,37 @@ pub fn clear_command_history(
             params![scope.kind.as_str(), scope.id],
         )?;
         Ok(ClearCommandHistoryResult { cleared: true })
+    })
+}
+
+pub fn delete_command_history_entries(
+    store: &SqliteStore,
+    scope_kind: Option<HistoryScopeKind>,
+    scope_id: Option<&str>,
+    entry_ids: &[String],
+) -> AppResult<DeleteCommandHistoryEntriesResult> {
+    let scope = history_scope_from_parts(scope_kind, scope_id)?;
+    let entry_ids = entry_ids
+        .iter()
+        .map(|id| id.trim())
+        .filter(|id| !id.is_empty())
+        .collect::<HashSet<_>>();
+    if entry_ids.is_empty() {
+        return Err(AppError::validation("至少选择一条历史命令"));
+    }
+
+    store.write_transaction(|transaction| {
+        let placeholders = vec!["?"; entry_ids.len()].join(", ");
+        let sql = format!(
+            "delete from command_history where scope_kind = ? and scope_id = ? and id in ({placeholders})"
+        );
+        let mut params = vec![
+            Value::Text(scope.kind.as_str().to_string()),
+            Value::Text(scope.id.clone()),
+        ];
+        params.extend(entry_ids.iter().map(|id| Value::Text((*id).to_string())));
+        let deleted_count = transaction.execute(&sql, params_from_iter(params))?;
+        Ok(DeleteCommandHistoryEntriesResult { deleted_count })
     })
 }
 

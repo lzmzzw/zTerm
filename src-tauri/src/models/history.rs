@@ -65,6 +65,11 @@ pub struct ClearCommandHistoryResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteCommandHistoryEntriesResult {
+    pub deleted_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionCommandGroupItem {
     pub id: String,
     pub group_id: String,

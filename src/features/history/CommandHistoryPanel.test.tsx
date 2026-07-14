@@ -56,6 +56,18 @@ async function clickWithModifiers(element: HTMLElement, options: { ctrlKey?: boo
   });
 }
 
+async function contextMenu(element: HTMLElement) {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 12, clientY: 16 }));
+  });
+}
+
+async function keyDown(element: HTMLElement, key: string) {
+  await act(async () => {
+    element.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key }));
+  });
+}
+
 async function inputText(element: HTMLInputElement | HTMLTextAreaElement, value: string) {
   await act(async () => {
     const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value");
@@ -153,6 +165,7 @@ function renderPanel(overrides: Partial<Parameters<typeof CommandHistoryPanel>[0
       historyScopeId="session-1"
       onClear={vi.fn()}
       onCopy={vi.fn()}
+      onDeleteEntries={vi.fn().mockResolvedValue(undefined)}
       onDeleteCommandGroup={vi.fn()}
       onDeduplicateHistoryChange={vi.fn()}
       onQueryChange={vi.fn()}
@@ -282,8 +295,17 @@ describe("CommandHistoryPanel", () => {
     expect(pwd.classList.contains("is-selected")).toBe(true);
     expect(whoami.classList.contains("is-selected")).toBe(false);
 
+    await click(pwd);
+    expect(pwd.classList.contains("is-selected")).toBe(false);
+
+    await click(pwd);
+
     await clickWithModifiers(uname, { ctrlKey: true });
     expect(pwd.classList.contains("is-selected")).toBe(true);
+    expect(uname.classList.contains("is-selected")).toBe(true);
+
+    await click(pwd);
+    expect(pwd.classList.contains("is-selected")).toBe(false);
     expect(uname.classList.contains("is-selected")).toBe(true);
 
     await click(pwd);
@@ -291,6 +313,57 @@ describe("CommandHistoryPanel", () => {
     expect(pwd.classList.contains("is-selected")).toBe(true);
     expect(whoami.classList.contains("is-selected")).toBe(true);
     expect(uname.classList.contains("is-selected")).toBe(true);
+
+    view.unmount();
+  });
+
+  it("opens a batch context menu for selected history entries", async () => {
+    const onCopy = vi.fn();
+    const onSend = vi.fn();
+    const onDeleteEntries = vi.fn().mockResolvedValue(undefined);
+    const view = renderPanel({ onCopy, onSend, onDeleteEntries });
+    const pwd = historyEntry(view.container, "pwd");
+    const whoami = historyEntry(view.container, "whoami");
+
+    await click(pwd);
+    await clickWithModifiers(whoami, { ctrlKey: true });
+    await contextMenu(pwd);
+    expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
+      "复制",
+      "发送",
+      "删除",
+    ]);
+    await click(button(view.container, "复制"));
+    expect(onCopy).toHaveBeenCalledWith("pwd\nwhoami");
+
+    await contextMenu(pwd);
+    await click(button(view.container, "发送"));
+    expect(onSend).toHaveBeenNthCalledWith(1, "pwd");
+    expect(onSend).toHaveBeenNthCalledWith(2, "whoami");
+
+    await contextMenu(pwd);
+    await click(button(view.container, "删除"));
+    expect(onDeleteEntries).toHaveBeenCalledWith(["history-1", "history-2"]);
+
+    view.unmount();
+  });
+
+  it("selects an unselected history entry before opening its context menu and supports keyboard actions", async () => {
+    const onSend = vi.fn();
+    const onDeleteEntries = vi.fn().mockResolvedValue(undefined);
+    const view = renderPanel({ onSend, onDeleteEntries });
+    const pwd = historyEntry(view.container, "pwd");
+    const whoami = historyEntry(view.container, "whoami");
+
+    await click(pwd);
+    await contextMenu(whoami);
+    expect(pwd.classList.contains("is-selected")).toBe(false);
+    expect(whoami.classList.contains("is-selected")).toBe(true);
+
+    await keyDown(whoami, "Enter");
+    expect(onSend).toHaveBeenCalledWith("whoami");
+    await keyDown(whoami, "Delete");
+    expect(onDeleteEntries).toHaveBeenCalledWith(["history-2"]);
 
     view.unmount();
   });

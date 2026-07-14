@@ -64,6 +64,7 @@ interface HistoryState {
   groupError: string | null;
   searchHistory: (input: HistorySearchInput) => Promise<void>;
   clearHistory: (scopeKind: HistoryScopeKind | null, scopeId: string | null) => Promise<void>;
+  deleteHistoryEntries: (scopeKind: HistoryScopeKind | null, scopeId: string | null, entryIds: string[]) => Promise<void>;
   loadCommandGroups: (scopeKind: HistoryScopeKind | null, scopeId: string | null) => Promise<void>;
   saveCommandGroup: (draft: SessionCommandGroupDraft) => Promise<void>;
   deleteCommandGroup: (groupId: string) => Promise<void>;
@@ -114,6 +115,15 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     }
     await invoke("history_clear", { scopeKind, scopeId });
     await get().searchHistory({ query: "", scopeKind, scopeId });
+  },
+  async deleteHistoryEntries(scopeKind, scopeId, entryIds) {
+    if (!scopeKind || !scopeId || entryIds.length === 0) return;
+    try {
+      await invoke("history_delete_entries", { scopeKind, scopeId, entryIds });
+    } catch (error) {
+      set({ error: unknownErrorMessage(error, "历史命令操作失败") });
+      throw error;
+    }
   },
   async loadCommandGroups(scopeKind, scopeId) {
     const requestId = (commandGroupsRequestId += 1);

@@ -44,6 +44,7 @@ pub fn run() {
             commands::command_completion::command_completion_suggest,
             commands::history::history_search,
             commands::history::history_clear,
+            commands::history::history_delete_entries,
             commands::history::history_command_group_list,
             commands::history::history_command_group_save,
             commands::history::history_command_group_delete,

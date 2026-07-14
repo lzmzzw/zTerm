@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
-import { ZtSwitch } from "../../components/ZtUi";
+import { ZtContextMenu, ZtSwitch } from "../../components/ZtUi";
 import { t } from "../settings/i18n";
 import type { AppLanguage } from "../settings/settingsStore";
 import type {
@@ -33,8 +33,9 @@ interface CommandHistoryPanelProps {
   onQueryChange: (query: string) => void;
   onSearch: (options?: { deduplicate?: boolean }) => void;
   onCopy: (command: string) => void;
-  onSend: (command: string) => void;
+  onSend: (command: string) => Promise<void> | void;
   onClear: () => void;
+  onDeleteEntries: (entryIds: string[]) => Promise<void> | void;
   onDeduplicateHistoryChange: (enabled: boolean) => void;
   onSaveCommandGroup: (draft: SessionCommandGroupDraft) => Promise<unknown> | unknown;
   onDeleteCommandGroup: (groupId: string) => Promise<unknown> | unknown;
@@ -59,12 +60,14 @@ export function CommandHistoryPanel({
   onCopy,
   onSend,
   onClear,
+  onDeleteEntries,
   onDeduplicateHistoryChange,
   onSaveCommandGroup,
   onDeleteCommandGroup,
 }: CommandHistoryPanelProps) {
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
   const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [editingGroup, setEditingGroup] = useState<SessionCommandGroup | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [formName, setFormName] = useState("");
@@ -75,12 +78,13 @@ export function CommandHistoryPanel({
     () => [...entries].sort((left, right) => historyEntryTime(left) - historyEntryTime(right)),
     [entries],
   );
-  const selectedCommands = useMemo(
-    () =>
-      selectedEntryIds
-        .map((id) => orderedEntries.find((entry) => entry.id === id)?.command)
-        .filter((command): command is string => Boolean(command)),
+  const selectedEntries = useMemo(
+    () => orderedEntries.filter((entry) => selectedEntryIds.includes(entry.id)),
     [orderedEntries, selectedEntryIds],
+  );
+  const selectedCommands = useMemo(
+    () => selectedEntries.map((entry) => entry.command),
+    [selectedEntries],
   );
   const hasHistoryScope = Boolean(historyScopeKind && historyScopeId);
 
@@ -94,8 +98,23 @@ export function CommandHistoryPanel({
   useEffect(() => {
     setSelectedEntryIds([]);
     setSelectionAnchorId(null);
+    setContextMenu(null);
     resetForm();
   }, [activeView, historyScopeKind, historyScopeId]);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const closeMenu = () => setContextMenu(null);
+    const closeMenuOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMenu();
+    };
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", closeMenuOnEscape);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("keydown", closeMenuOnEscape);
+    };
+  }, [contextMenu]);
 
   function changeView(view: CommandHistoryView) {
     onViewChange(view);
@@ -121,7 +140,11 @@ export function CommandHistoryPanel({
       return;
     }
 
-    if (usesAdditiveSelection) {
+    if (!usesAdditiveSelection && selectedEntryIds.includes(entryId)) {
+      setSelectedEntryIds((current) => current.filter((id) => id !== entryId));
+      if (selectionAnchorId === entryId) setSelectionAnchorId(null);
+      return;
+    } else if (usesAdditiveSelection) {
       setSelectedEntryIds((current) =>
         current.includes(entryId) ? current.filter((id) => id !== entryId) : [...current, entryId],
       );
@@ -136,9 +159,58 @@ export function CommandHistoryPanel({
   }
 
   function handleEntryKeyDown(entryId: string, event: ReactKeyboardEvent<HTMLElement>) {
-    if (event.key !== "Enter" && event.key !== " ") return;
+    if (event.key === "Enter") {
+      if (!selectedEntryIds.includes(entryId)) return;
+      event.preventDefault();
+      void sendSelectedEntries();
+      return;
+    }
+    if (event.key === "Backspace" || event.key === "Delete") {
+      if (selectedEntryIds.length === 0) return;
+      event.preventDefault();
+      void deleteSelectedEntries();
+      return;
+    }
+    if (event.key === " ") {
+      event.preventDefault();
+      selectEntry(entryId, event);
+    }
+  }
+
+  function openContextMenu(entryId: string, event: ReactMouseEvent<HTMLElement>) {
     event.preventDefault();
-    selectEntry(entryId, event);
+    if (!hasHistoryScope) return;
+    if (!selectedEntryIds.includes(entryId)) {
+      setSelectedEntryIds([entryId]);
+      setSelectionAnchorId(entryId);
+    }
+    setContextMenu({ x: event.clientX, y: event.clientY });
+  }
+
+  function copySelectedEntries() {
+    if (selectedCommands.length === 0) return;
+    onCopy(selectedCommands.join("\n"));
+    setContextMenu(null);
+  }
+
+  async function sendSelectedEntries() {
+    if (selectedCommands.length === 0) return;
+    setContextMenu(null);
+    for (const command of selectedCommands) {
+      await onSend(command);
+    }
+  }
+
+  async function deleteSelectedEntries() {
+    if (selectedEntryIds.length === 0) return;
+    setContextMenu(null);
+    try {
+      await onDeleteEntries(selectedEntryIds);
+      setSelectedEntryIds([]);
+      setSelectionAnchorId(null);
+    } catch {
+      // The parent store exposes the failed operation through the history error state.
+    }
   }
 
   function openSelectedGroupForm() {
@@ -310,6 +382,7 @@ export function CommandHistoryPanel({
                   aria-label={`${t(language, "selectPrefix")} ${entry.command}`}
                   aria-disabled={!hasHistoryScope}
                   onClick={(event) => handleEntryClick(entry.id, event)}
+                  onContextMenu={(event) => openContextMenu(entry.id, event)}
                   onKeyDown={(event) => handleEntryKeyDown(entry.id, event)}
                 >
                 <code>{entry.command}</code>
@@ -337,6 +410,19 @@ export function CommandHistoryPanel({
               );
             })}
           </div>
+          {contextMenu ? (
+            <ZtContextMenu className="zt-context-menu" role="menu" x={contextMenu.x} y={contextMenu.y}>
+              <button type="button" role="menuitem" onClick={copySelectedEntries}>
+                复制
+              </button>
+              <button type="button" role="menuitem" onClick={() => void sendSelectedEntries()}>
+                发送
+              </button>
+              <button type="button" className="zt-delete-button" role="menuitem" onClick={() => void deleteSelectedEntries()}>
+                删除
+              </button>
+            </ZtContextMenu>
+          ) : null}
         </div>
       )}
     </section>

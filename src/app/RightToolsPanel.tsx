@@ -104,6 +104,7 @@ interface RightToolsPanelProps {
     historyScopeKind: HistoryScopeKind | null;
     historyScopeId: string | null;
     onClear: () => void;
+    onDeleteEntries: (entryIds: string[]) => Promise<void> | void;
     onCopy: (command: string) => void;
     onDeleteCommandGroup: (groupId: string) => Promise<unknown> | unknown;
     onDeduplicateHistoryChange: (enabled: boolean) => void;
@@ -272,6 +273,7 @@ export function RightToolsPanel({
                 onCopy={history.onCopy}
                 onSend={history.onSend}
                 onClear={history.onClear}
+                onDeleteEntries={history.onDeleteEntries}
                 onSaveCommandGroup={history.onSaveCommandGroup}
                 onDeleteCommandGroup={history.onDeleteCommandGroup}
               />

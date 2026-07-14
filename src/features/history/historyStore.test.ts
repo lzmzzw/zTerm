@@ -92,4 +92,16 @@ describe("historyStore", () => {
     expect(invokeMock).not.toHaveBeenCalled();
     expect(useHistoryStore.getState().entries).toEqual([]);
   });
+
+  it("deletes selected history entries within the active scope", async () => {
+    invokeMock.mockResolvedValue({ deleted_count: 2 });
+
+    await useHistoryStore.getState().deleteHistoryEntries("saved_session", "session-current", ["history-1", "history-2"]);
+
+    expect(invokeMock).toHaveBeenCalledWith("history_delete_entries", {
+      scopeKind: "saved_session",
+      scopeId: "session-current",
+      entryIds: ["history-1", "history-2"],
+    });
+  });
 });

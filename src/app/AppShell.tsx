@@ -395,6 +395,7 @@ export function AppShell() {
   const {
     searchHistory,
     clearHistory,
+    deleteHistoryEntries,
     loadCommandGroups,
     saveCommandGroup,
     deleteCommandGroup,
@@ -402,6 +403,7 @@ export function AppShell() {
     useShallow((state) => ({
       searchHistory: state.searchHistory,
       clearHistory: state.clearHistory,
+      deleteHistoryEntries: state.deleteHistoryEntries,
       loadCommandGroups: state.loadCommandGroups,
       saveCommandGroup: state.saveCommandGroup,
       deleteCommandGroup: state.deleteCommandGroup,
@@ -1832,6 +1834,16 @@ export function AppShell() {
             if (!activeHistoryScopeKind || !activeHistoryScopeId) return;
             void clearHistory(activeHistoryScopeKind, activeHistoryScopeId);
           },
+          onDeleteEntries: async (entryIds) => {
+            if (!activeHistoryScopeKind || !activeHistoryScopeId) return;
+            await deleteHistoryEntries(activeHistoryScopeKind, activeHistoryScopeId, entryIds);
+            await searchHistory({
+              query: historyQuery,
+              scopeKind: activeHistoryScopeKind,
+              scopeId: activeHistoryScopeId,
+              deduplicate: deduplicateHistory,
+            });
+          },
           onCopy: (command) => void navigator.clipboard?.writeText(command),
           onDeleteCommandGroup: (groupId) => deleteCommandGroup(groupId),
           onDeduplicateHistoryChange: setDeduplicateHistory,
@@ -1846,7 +1858,7 @@ export function AppShell() {
               deduplicate: options?.deduplicate ?? deduplicateHistory,
             });
           },
-          onSend: (command) => void terminalActions.sendCommand(command),
+          onSend: (command) => terminalActions.sendCommand(command),
           onViewChange: setHistoryView,
         }}
         monitor={{

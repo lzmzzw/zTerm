@@ -4,13 +4,14 @@ use tauri::State;
 use crate::{
     error::AppResult,
     models::history::{
-        ClearCommandHistoryResult, CommandGroupDeleted, CommandHistoryEntry, HistoryScopeKind,
-        HistorySearchOptions, SessionCommandGroup, SessionCommandGroupDraft,
+        ClearCommandHistoryResult, CommandGroupDeleted, CommandHistoryEntry,
+        DeleteCommandHistoryEntriesResult, HistoryScopeKind, HistorySearchOptions,
+        SessionCommandGroup, SessionCommandGroupDraft,
     },
     state::AppState,
     storage::history::{
-        clear_command_history, delete_session_command_group, list_session_command_groups,
-        save_session_command_group, search_command_history,
+        clear_command_history, delete_command_history_entries, delete_session_command_group,
+        list_session_command_groups, save_session_command_group, search_command_history,
     },
 };
 
@@ -42,6 +43,21 @@ pub fn history_clear(
     scope_id: Option<String>,
 ) -> AppResult<ClearCommandHistoryResult> {
     clear_command_history(state.storage().as_ref(), scope_kind, scope_id.as_deref())
+}
+
+#[tauri::command]
+pub fn history_delete_entries(
+    state: State<'_, AppState>,
+    scope_kind: Option<HistoryScopeKind>,
+    scope_id: Option<String>,
+    entry_ids: Vec<String>,
+) -> AppResult<DeleteCommandHistoryEntriesResult> {
+    delete_command_history_entries(
+        state.storage().as_ref(),
+        scope_kind,
+        scope_id.as_deref(),
+        &entry_ids,
+    )
 }
 
 #[tauri::command]

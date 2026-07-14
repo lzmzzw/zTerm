@@ -12,8 +12,9 @@ use zterm_lib::{
     services::command_history_service::CommandHistoryService,
     storage::{
         history::{
-            clear_command_history, delete_session_command_group, insert_command_history,
-            list_session_command_groups, save_session_command_group, search_command_history,
+            clear_command_history, delete_command_history_entries, delete_session_command_group,
+            insert_command_history, list_session_command_groups, save_session_command_group,
+            search_command_history,
         },
         sessions::save_session,
         sqlite::SqliteStore,
@@ -164,6 +165,85 @@ fn command_history_search_filters_limits_and_clears_by_session() {
     assert_eq!(
         remaining[0].scope_id.as_deref(),
         Some(session_b.id.as_str())
+    );
+}
+
+#[test]
+fn command_history_deletes_only_selected_entries_in_the_active_scope() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let session_a =
+        save_session(store.as_ref(), ssh_draft("开发机 A")).expect("session should save");
+    let session_b =
+        save_session(store.as_ref(), ssh_draft("开发机 B")).expect("session should save");
+    let first = insert_command_history(
+        store.as_ref(),
+        CommandHistoryDraft {
+            scope_kind: Some(HistoryScopeKind::SavedSession),
+            scope_id: Some(session_a.id.clone()),
+            runtime_session_id: "runtime-a".to_string(),
+            command: "pwd".to_string(),
+            cwd: None,
+            exit_code: None,
+            started_at_ms: 1,
+            finished_at_ms: None,
+        },
+    )
+    .expect("first history should save");
+    let second = insert_command_history(
+        store.as_ref(),
+        CommandHistoryDraft {
+            scope_kind: Some(HistoryScopeKind::SavedSession),
+            scope_id: Some(session_a.id.clone()),
+            runtime_session_id: "runtime-a".to_string(),
+            command: "whoami".to_string(),
+            cwd: None,
+            exit_code: None,
+            started_at_ms: 2,
+            finished_at_ms: None,
+        },
+    )
+    .expect("second history should save");
+    let other_scope = insert_command_history(
+        store.as_ref(),
+        CommandHistoryDraft {
+            scope_kind: Some(HistoryScopeKind::SavedSession),
+            scope_id: Some(session_b.id.clone()),
+            runtime_session_id: "runtime-b".to_string(),
+            command: "hostname".to_string(),
+            cwd: None,
+            exit_code: None,
+            started_at_ms: 3,
+            finished_at_ms: None,
+        },
+    )
+    .expect("other scope history should save");
+
+    let result = delete_command_history_entries(
+        store.as_ref(),
+        Some(HistoryScopeKind::SavedSession),
+        Some(session_a.id.as_str()),
+        &[first.id, other_scope.id],
+    )
+    .expect("selected entries should delete");
+    assert_eq!(result.deleted_count, 1);
+
+    let remaining = search_command_history(
+        store.as_ref(),
+        HistorySearchOptions {
+            query: None,
+            scope_kind: Some(HistoryScopeKind::SavedSession),
+            scope_id: Some(session_a.id),
+            limit: None,
+            deduplicate: None,
+        },
+    )
+    .expect("remaining history should search");
+    assert_eq!(
+        remaining
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![second.id.as_str()]
     );
 }
 
