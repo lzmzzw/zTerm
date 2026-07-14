@@ -62,6 +62,32 @@ function fakeTerminal(lineText: string, ansiColumns: number[] = [], bufferType: 
 }
 
 describe("createTerminalSemanticHighlighter", () => {
+  it("requires xterm's proposed API gate before decorations can be registered", async () => {
+    const getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => null);
+    const { Terminal: XtermTerminal } = await import("@xterm/xterm");
+    const guardedTerminal = new XtermTerminal();
+    const guardedMarker = guardedTerminal.registerMarker();
+
+    expect(() =>
+      guardedTerminal.registerDecoration({
+        marker: guardedMarker,
+        foregroundColor: "#f44747",
+      }),
+    ).toThrow(/allowProposedApi/);
+    guardedTerminal.dispose();
+
+    const enabledTerminal = new XtermTerminal({ allowProposedApi: true });
+    const enabledMarker = enabledTerminal.registerMarker();
+    const decoration = enabledTerminal.registerDecoration({
+      marker: enabledMarker,
+      foregroundColor: "#f44747",
+    });
+
+    expect(decoration).toBeDefined();
+    enabledTerminal.dispose();
+    getContextSpy.mockRestore();
+  });
+
   it("registers WindTerm-style decorations at the matching terminal columns", () => {
     const fake = fakeTerminal("drwx------  5 root root  4096 Jun 30 10:25");
     const highlighter = createTerminalSemanticHighlighter(fake.terminal, DIGE_BLACK_SEMANTIC_PALETTE);

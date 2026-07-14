@@ -188,6 +188,7 @@ vi.mock("@xterm/addon-web-links", () => ({
 import { XtermPane } from "./XtermPane";
 
 interface TerminalOptions {
+  allowProposedApi?: boolean;
   fontFamily?: string;
   fontSize?: number;
   theme?: Record<string, string>;
@@ -257,6 +258,7 @@ describe("XtermPane", () => {
 
     const options = terminalMock.instances[0]?.options as TerminalOptions;
 
+    expect(options.allowProposedApi).toBe(true);
     expect(options.fontSize).toBe(13);
     expect(options.fontFamily).toContain("Cascadia Mono");
     expect(options.fontFamily).toContain("Microsoft YaHei Mono");

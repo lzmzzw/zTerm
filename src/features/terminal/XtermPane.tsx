@@ -274,6 +274,7 @@ export function XtermPane({
     if (!containerRef.current) return undefined;
 
     const terminal = new Terminal({
+      allowProposedApi: true,
       cursorBlink: true,
       fontFamily:
         'ui-monospace, "SFMono-Regular", "Cascadia Mono", "Microsoft YaHei Mono", Consolas, "Liberation Mono", monospace',
