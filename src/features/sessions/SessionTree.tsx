@@ -12,6 +12,7 @@ import {
   type SessionTreeContextMenu,
 } from "./SessionTreeDialogs";
 import {
+  buildCopiedSessionDraft,
   buildSessionGroupDraft,
   buildSavedSessionDraft,
   buildSessionTreeModel,
@@ -170,6 +171,17 @@ export function SessionTree({
     setInitialGroupId(null);
     setEditingSession(session);
     setDialogType(session.type);
+  }
+
+  async function handleCopySession(session: SavedSession) {
+    if (!onSaveSession) return;
+    setActionError(null);
+    setContextMenu(null);
+    try {
+      await onSaveSession(buildCopiedSessionDraft(session, sessions));
+    } catch (error) {
+      setActionError(fallbackOnlyErrorMessage(error, "复制会话失败"));
+    }
   }
 
   function handleCreateSession(groupId: string | null = null) {
@@ -377,6 +389,7 @@ export function SessionTree({
           onEditGroup={handleEditGroup}
           onDeleteGroup={handleDeleteGroup}
           onEditSession={handleEditSession}
+          onCopySession={handleCopySession}
           onDeleteSession={setPendingDeleteSession}
           onOpenSession={onOpenSession}
         />

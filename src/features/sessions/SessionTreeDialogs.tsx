@@ -16,6 +16,7 @@ export function SessionContextMenu({
   onEditGroup,
   onDeleteGroup,
   onEditSession,
+  onCopySession,
   onDeleteSession,
   onOpenSession,
 }: {
@@ -25,6 +26,7 @@ export function SessionContextMenu({
   onEditGroup: (group: SessionGroup) => void;
   onDeleteGroup: (group: SessionGroup) => Promise<void>;
   onEditSession: (session: SavedSession) => void;
+  onCopySession: (session: SavedSession) => Promise<void>;
   onDeleteSession: (session: SavedSession) => void;
   onOpenSession?: (session: SavedSession) => void;
 }) {
@@ -59,6 +61,9 @@ export function SessionContextMenu({
         <>
           <button type="button" role="menuitem" onClick={() => onOpenSession?.(menu.session)}>
             连接
+          </button>
+          <button type="button" role="menuitem" onClick={() => void onCopySession(menu.session)}>
+            复制
           </button>
           <button type="button" role="menuitem" onClick={() => onEditSession(menu.session)}>
             编辑

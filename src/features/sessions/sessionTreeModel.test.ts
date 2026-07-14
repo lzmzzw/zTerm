@@ -1,7 +1,7 @@
 // Author: Liz
 import { describe, expect, it } from "vitest";
 
-import { buildSavedSessionDraft, buildSessionGroupDraft, buildSessionTreeModel } from "./sessionTreeModel";
+import { buildCopiedSessionDraft, buildSavedSessionDraft, buildSessionGroupDraft, buildSessionTreeModel } from "./sessionTreeModel";
 import type { SavedSession, SessionGroup } from "./types";
 
 function group(overrides: Partial<SessionGroup>): SessionGroup {
@@ -130,6 +130,41 @@ describe("sessionTreeModel", () => {
       auth_mode: source.auth_mode,
       credential_ref: source.credential_ref,
       description: "keep me",
+      tags: ["prod"],
+      sort_order: source.sort_order,
+      ssh_options: { connect_timeout_ms: 15_000 },
+      rdp_options: null,
+      local_options: null,
+    });
+  });
+
+  it("copies a session into the same group with the next available name suffix and credential reference", () => {
+    const source = session({
+      id: "session-source",
+      name: "生产跳板机",
+      group_id: "group-prod",
+      username: "deploy",
+      credential_ref: "credential:ssh-prod",
+      tags: ["prod"],
+      ssh_options: { connect_timeout_ms: 15_000 },
+    });
+
+    expect(
+      buildCopiedSessionDraft(source, [
+        source,
+        session({ id: "session-copy-2", name: "生产跳板机-2", group_id: "group-prod" }),
+        session({ id: "session-other-group", name: "生产跳板机-3", group_id: "group-dev" }),
+      ]),
+    ).toEqual({
+      name: "生产跳板机-3",
+      type: source.type,
+      group_id: "group-prod",
+      host: source.host,
+      port: source.port,
+      username: "deploy",
+      auth_mode: source.auth_mode,
+      credential_ref: "credential:ssh-prod",
+      description: source.description,
       tags: ["prod"],
       sort_order: source.sort_order,
       ssh_options: { connect_timeout_ms: 15_000 },

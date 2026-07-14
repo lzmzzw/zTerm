@@ -776,9 +776,33 @@ describe("SessionTree", () => {
     );
     expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
       "连接",
+      "复制",
       "编辑",
       "删除",
     ]);
+
+    view.unmount();
+  });
+
+  it("copies a session into the same group and preserves its account credential reference", async () => {
+    const onSaveSession = vi.fn().mockResolvedValue(undefined);
+    const copiedSessions = [...sessions, { ...sessions[0], id: "ssh-prod-copy", name: "生产跳板机-2" }];
+    const view = render(<SessionTree groups={groups} sessions={copiedSessions} onSaveSession={onSaveSession} />);
+
+    await contextMenu(
+      Array.from(view.container.querySelectorAll(".zt-session-node-main")).find((item) => item.textContent?.includes("生产跳板机")) as HTMLElement,
+    );
+    await click(button(view.container, "复制"));
+
+    expect(onSaveSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "生产跳板机-3",
+        group_id: "group-prod",
+        username: "deploy",
+        credential_ref: "cred-prod",
+      }),
+    );
+    expect(onSaveSession.mock.calls[0][0].id).toBeUndefined();
 
     view.unmount();
   });

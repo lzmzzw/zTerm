@@ -116,3 +116,19 @@ export function buildSavedSessionDraft(session: SavedSession, groupId: string | 
     local_options: session.local_options ?? null,
   };
 }
+
+export function buildCopiedSessionDraft(session: SavedSession, sessions: SavedSession[]): SavedSessionDraft {
+  const { id: _id, ...draft } = buildSavedSessionDraft(session, session.group_id);
+  const groupId = session.group_id ?? null;
+  const baseName = session.name.replace(/-\d+$/, "");
+  const siblingNames = new Set(
+    sessions.filter((item) => (item.group_id ?? null) === groupId).map((item) => item.name),
+  );
+  let suffix = 2;
+  while (siblingNames.has(`${baseName}-${suffix}`)) suffix += 1;
+
+  return {
+    ...draft,
+    name: `${baseName}-${suffix}`,
+  };
+}
