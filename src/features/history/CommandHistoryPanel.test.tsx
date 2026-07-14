@@ -50,6 +50,12 @@ async function click(element: HTMLElement) {
   });
 }
 
+async function clickWithModifiers(element: HTMLElement, options: { ctrlKey?: boolean; shiftKey?: boolean }) {
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true, ...options }));
+  });
+}
+
 async function inputText(element: HTMLInputElement | HTMLTextAreaElement, value: string) {
   await act(async () => {
     const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value");
@@ -66,6 +72,14 @@ function change(element: HTMLInputElement, value: string) {
     element.dispatchEvent(new Event("input", { bubbles: true }));
     element.dispatchEvent(new Event("change", { bubbles: true }));
   });
+}
+
+function historyEntry(container: HTMLElement, command: string) {
+  const entry = Array.from(container.querySelectorAll<HTMLElement>(".zt-history-entry")).find(
+    (item) => item.querySelector("code")?.textContent?.trim() === command,
+  );
+  if (!entry) throw new Error(`History entry not found: ${command}`);
+  return entry;
 }
 
 const entries: CommandHistoryEntry[] = [
@@ -173,6 +187,7 @@ describe("CommandHistoryPanel", () => {
     expect(onQueryChange).toHaveBeenCalledWith("who");
     expect(onCopy).toHaveBeenCalledWith("pwd");
     expect(onSend).toHaveBeenCalledWith("pwd");
+    expect(button(view.container, "保存为指令组").disabled).toBe(true);
 
     view.unmount();
   });
@@ -227,7 +242,7 @@ describe("CommandHistoryPanel", () => {
     const onSaveCommandGroup = vi.fn();
     const view = renderPanel({ onSaveCommandGroup });
 
-    await click(input(view.container, "选择 pwd"));
+    await click(historyEntry(view.container, "pwd"));
     const saveSelectedButton = button(view.container, "保存为指令组");
     expect(saveSelectedButton.textContent).not.toContain("保存为指令组");
     await click(saveSelectedButton);
@@ -242,6 +257,40 @@ describe("CommandHistoryPanel", () => {
       name: "巡检",
       commands: ["pwd"],
     });
+
+    view.unmount();
+  });
+
+  it("selects history entries by row click with ctrl and shift modifiers", async () => {
+    const selectionEntries = [
+      ...entries,
+      {
+        ...entries[1],
+        id: "history-3",
+        command: "uname -a",
+        started_at_ms: 3,
+      },
+    ];
+    const view = renderPanel({ entries: selectionEntries });
+    const pwd = historyEntry(view.container, "pwd");
+    const whoami = historyEntry(view.container, "whoami");
+    const uname = historyEntry(view.container, "uname -a");
+
+    expect(view.container.querySelector(".zt-history-entry-checkbox")).toBeNull();
+
+    await click(pwd);
+    expect(pwd.classList.contains("is-selected")).toBe(true);
+    expect(whoami.classList.contains("is-selected")).toBe(false);
+
+    await clickWithModifiers(uname, { ctrlKey: true });
+    expect(pwd.classList.contains("is-selected")).toBe(true);
+    expect(uname.classList.contains("is-selected")).toBe(true);
+
+    await click(pwd);
+    await clickWithModifiers(uname, { shiftKey: true });
+    expect(pwd.classList.contains("is-selected")).toBe(true);
+    expect(whoami.classList.contains("is-selected")).toBe(true);
+    expect(uname.classList.contains("is-selected")).toBe(true);
 
     view.unmount();
   });

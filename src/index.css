@@ -2157,8 +2157,7 @@ button {
   color: var(--zt-text-primary);
 }
 
-.zt-history-dedupe input,
-.zt-history-entry-checkbox {
+.zt-history-dedupe input {
   width: 14px;
   height: 14px;
   margin: 0;
@@ -2259,7 +2258,7 @@ button {
 
 .zt-history-entry {
   display: grid;
-  grid-template-columns: 18px minmax(120px, 1fr) 24px 24px;
+  grid-template-columns: minmax(120px, 1fr) 24px 24px;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -2267,11 +2266,22 @@ button {
   padding: 0 4px;
   border-radius: var(--zt-radius-control);
   color: var(--zt-text-primary);
+  cursor: pointer;
   font-size: var(--zt-font-size-ui);
 }
 
 .zt-history-entry:hover {
   background: var(--zt-bg-hover);
+}
+
+.zt-history-entry.is-selected {
+  background: var(--zt-bg-active);
+  box-shadow: inset 2px 0 0 var(--zt-accent);
+}
+
+.zt-history-entry:focus-visible {
+  outline: 2px solid var(--zt-focus);
+  outline-offset: -2px;
 }
 
 .zt-history-entry code {

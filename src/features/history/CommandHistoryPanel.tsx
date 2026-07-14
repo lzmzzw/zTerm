@@ -1,6 +1,7 @@
 // Author: Liz
 import { CheckSquare, Copy, Edit3, Play, Plus, Save, Search, Trash2, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 import { ZtSwitch } from "../../components/ZtUi";
@@ -63,6 +64,7 @@ export function CommandHistoryPanel({
   onDeleteCommandGroup,
 }: CommandHistoryPanelProps) {
   const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
+  const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null);
   const [editingGroup, setEditingGroup] = useState<SessionCommandGroup | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [formName, setFormName] = useState("");
@@ -91,6 +93,7 @@ export function CommandHistoryPanel({
 
   useEffect(() => {
     setSelectedEntryIds([]);
+    setSelectionAnchorId(null);
     resetForm();
   }, [activeView, historyScopeKind, historyScopeId]);
 
@@ -101,10 +104,41 @@ export function CommandHistoryPanel({
     }
   }
 
-  function toggleEntry(entryId: string, checked: boolean) {
-    setSelectedEntryIds((current) =>
-      checked ? [...new Set([...current, entryId])] : current.filter((id) => id !== entryId),
-    );
+  function selectEntry(
+    entryId: string,
+    modifiers: Pick<ReactMouseEvent<HTMLElement>, "ctrlKey" | "metaKey" | "shiftKey">,
+  ) {
+    if (!hasHistoryScope) return;
+    const usesAdditiveSelection = modifiers.ctrlKey || modifiers.metaKey;
+    const entryIndex = orderedEntries.findIndex((entry) => entry.id === entryId);
+    const anchorIndex = selectionAnchorId ? orderedEntries.findIndex((entry) => entry.id === selectionAnchorId) : -1;
+
+    if (modifiers.shiftKey && anchorIndex >= 0 && entryIndex >= 0) {
+      const rangeIds = orderedEntries
+        .slice(Math.min(anchorIndex, entryIndex), Math.max(anchorIndex, entryIndex) + 1)
+        .map((entry) => entry.id);
+      setSelectedEntryIds((current) => (usesAdditiveSelection ? [...new Set([...current, ...rangeIds])] : rangeIds));
+      return;
+    }
+
+    if (usesAdditiveSelection) {
+      setSelectedEntryIds((current) =>
+        current.includes(entryId) ? current.filter((id) => id !== entryId) : [...current, entryId],
+      );
+    } else {
+      setSelectedEntryIds([entryId]);
+    }
+    setSelectionAnchorId(entryId);
+  }
+
+  function handleEntryClick(entryId: string, event: ReactMouseEvent<HTMLElement>) {
+    selectEntry(entryId, event);
+  }
+
+  function handleEntryKeyDown(entryId: string, event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    selectEntry(entryId, event);
   }
 
   function openSelectedGroupForm() {
@@ -263,27 +297,45 @@ export function CommandHistoryPanel({
 
           {error ? <div className="zt-history-error">{error}</div> : null}
 
-          <div className="zt-history-list" ref={historyListRef}>
+          <div className="zt-history-list" role="list" ref={historyListRef}>
             {orderedEntries.length === 0 ? <div className="zt-empty-line">{t(language, "noHistory")}</div> : null}
-            {orderedEntries.map((entry) => (
-              <article className="zt-history-entry" key={entry.id}>
-                <input
-                  className="zt-history-entry-checkbox"
-                  type="checkbox"
+            {orderedEntries.map((entry) => {
+              const selected = selectedEntryIds.includes(entry.id);
+              return (
+                <article
+                  className={`zt-history-entry${selected ? " is-selected" : ""}`}
+                  key={entry.id}
+                  role="listitem"
+                  tabIndex={hasHistoryScope ? 0 : -1}
                   aria-label={`${t(language, "selectPrefix")} ${entry.command}`}
-                  checked={selectedEntryIds.includes(entry.id)}
-                  disabled={!hasHistoryScope}
-                  onChange={(event) => toggleEntry(entry.id, event.currentTarget.checked)}
-                />
+                  aria-disabled={!hasHistoryScope}
+                  onClick={(event) => handleEntryClick(entry.id, event)}
+                  onKeyDown={(event) => handleEntryKeyDown(entry.id, event)}
+                >
                 <code>{entry.command}</code>
-                <button type="button" aria-label={`${t(language, "copyPrefix")} ${entry.command}`} onClick={() => onCopy(entry.command)}>
+                <button
+                  type="button"
+                  aria-label={`${t(language, "copyPrefix")} ${entry.command}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onCopy(entry.command);
+                  }}
+                >
                   <Copy size={14} aria-hidden="true" />
                 </button>
-                <button type="button" aria-label={`${t(language, "sendPrefix")} ${entry.command}`} onClick={() => onSend(entry.command)}>
+                <button
+                  type="button"
+                  aria-label={`${t(language, "sendPrefix")} ${entry.command}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSend(entry.command);
+                  }}
+                >
                   <Play size={14} aria-hidden="true" />
                 </button>
               </article>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
