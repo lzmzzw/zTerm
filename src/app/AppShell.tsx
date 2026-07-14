@@ -273,7 +273,7 @@ export function AppShell() {
   const workspaceSummaryIdsRef = useRef<Set<string>>(new Set());
   const activeContextTokenRef = useRef(0);
   const [historyView, setHistoryView] = useState<CommandHistoryView>("history");
-  const [deduplicateHistory, setDeduplicateHistory] = useState(false);
+  const [deduplicateHistory, setDeduplicateHistory] = useState(true);
   const [historyQuery, setHistoryQuery] = useState("");
   const {
     loadConversations,

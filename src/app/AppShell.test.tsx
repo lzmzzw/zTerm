@@ -3511,7 +3511,7 @@ describe("AppShell", () => {
       query: "",
       scopeKind: "saved_session",
       scopeId: "session-1",
-      deduplicate: false,
+      deduplicate: true,
     });
     expect(storeMocks.loadCommandGroups).toHaveBeenLastCalledWith("saved_session", "session-1");
     expect(storeMocks.historyPanelProps?.historyScopeKind).toBe("saved_session");
@@ -3550,7 +3550,7 @@ describe("AppShell", () => {
       query: "",
       scopeKind: "saved_session",
       scopeId: "session-2",
-      deduplicate: false,
+      deduplicate: true,
     });
     expect(storeMocks.loadCommandGroups).toHaveBeenLastCalledWith("saved_session", "session-2");
     expect(storeMocks.historyPanelProps?.historyScopeKind).toBe("saved_session");
@@ -3603,7 +3603,7 @@ describe("AppShell", () => {
       query: "",
       scopeKind: "saved_session",
       scopeId: "session-1",
-      deduplicate: false,
+      deduplicate: true,
     });
 
     const deduplicateButton = view.container.querySelector('[aria-label="切换去重历史"]') as HTMLButtonElement;
@@ -3671,7 +3671,7 @@ describe("AppShell", () => {
       query: "",
       scopeKind: "saved_session",
       scopeId: "session-a",
-      deduplicate: false,
+      deduplicate: true,
     });
 
     storeMocks.workspaceState.tabs = [
@@ -3713,7 +3713,7 @@ describe("AppShell", () => {
       query: "",
       scopeKind: "saved_session",
       scopeId: "session-b",
-      deduplicate: false,
+      deduplicate: true,
     });
     expect(storeMocks.loadCommandGroups).toHaveBeenLastCalledWith("saved_session", "session-b");
     expect(storeMocks.historyPanelProps?.historyScopeKind).toBe("saved_session");
@@ -3771,7 +3771,7 @@ describe("AppShell", () => {
       query: "",
       scopeKind: "local_profile",
       scopeId: "pwsh",
-      deduplicate: false,
+      deduplicate: true,
     });
     expect(storeMocks.loadCommandGroups).toHaveBeenLastCalledWith("local_profile", "pwsh");
     expect(storeMocks.historyPanelProps?.historyScopeKind).toBe("local_profile");
@@ -3845,7 +3845,7 @@ describe("AppShell", () => {
       query: "",
       scopeKind: null,
       scopeId: null,
-      deduplicate: false,
+      deduplicate: true,
     });
     expect(storeMocks.loadCommandGroups).toHaveBeenLastCalledWith(null, null);
     expect(storeMocks.historyPanelProps?.historyScopeKind).toBe(null);
