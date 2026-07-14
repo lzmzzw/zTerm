@@ -75,14 +75,21 @@ pub fn parse_container_ps_output(stdout: &str) -> Vec<SshContainerInfo> {
             if line.trim().is_empty() {
                 return None;
             }
-            let mut parts = line.splitn(4, '\t');
-            let id = parts.next()?.trim().to_string();
+            let parts = if line.contains('\t') {
+                line.splitn(4, '\t').collect::<Vec<_>>()
+            } else {
+                line.splitn(4, "\\t").collect::<Vec<_>>()
+            };
+            if parts.len() != 4 {
+                return None;
+            }
+            let id = parts[0].trim().to_string();
             if !container_id_looks_valid(&id) {
                 return None;
             }
-            let name = parts.next()?.trim().to_string();
-            let image = parts.next()?.trim().to_string();
-            let status = parts.next()?.trim().to_string();
+            let name = parts[1].trim().to_string();
+            let image = parts[2].trim().to_string();
+            let status = parts[3].trim().to_string();
             Some(SshContainerInfo {
                 id,
                 name,
