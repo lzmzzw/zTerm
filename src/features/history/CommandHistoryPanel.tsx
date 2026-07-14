@@ -1,10 +1,10 @@
 // Author: Liz
-import { CheckSquare, Copy, Edit3, Play, Plus, Save, Search, Trash2, X } from "lucide-react";
+import { Copy, Edit3, Play, Plus, Save, Search, Trash2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
-import { ZtContextMenu, ZtSwitch } from "../../components/ZtUi";
+import { ZtButton, ZtContextMenu, ZtDialog, ZtInput, ZtSwitch, ZtTextarea } from "../../components/ZtUi";
 import { t } from "../settings/i18n";
 import type { AppLanguage } from "../settings/settingsStore";
 import type {
@@ -15,6 +15,7 @@ import type {
 } from "./historyStore";
 
 export type CommandHistoryView = "history" | "groups";
+type CommandGroupFormMode = "selected" | "new" | "edit";
 
 interface CommandHistoryPanelProps {
   activeView: CommandHistoryView;
@@ -69,10 +70,11 @@ export function CommandHistoryPanel({
   const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [editingGroup, setEditingGroup] = useState<SessionCommandGroup | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
+  const [formMode, setFormMode] = useState<CommandGroupFormMode | null>(null);
   const [formName, setFormName] = useState("");
   const [formCommands, setFormCommands] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  const [formSaving, setFormSaving] = useState(false);
   const historyListRef = useRef<HTMLDivElement | null>(null);
   const orderedEntries = useMemo(
     () => [...entries].sort((left, right) => historyEntryTime(left) - historyEntryTime(right)),
@@ -219,7 +221,7 @@ export function CommandHistoryPanel({
     setFormName("");
     setFormCommands(selectedCommands.join("\n"));
     setFormError(null);
-    setFormOpen(true);
+    setFormMode("selected");
   }
 
   function openNewGroupForm() {
@@ -228,7 +230,7 @@ export function CommandHistoryPanel({
     setFormName("");
     setFormCommands("");
     setFormError(null);
-    setFormOpen(true);
+    setFormMode("new");
   }
 
   function openEditGroupForm(group: SessionCommandGroup) {
@@ -236,7 +238,7 @@ export function CommandHistoryPanel({
     setFormName(group.name);
     setFormCommands(group.items.map((item) => item.command).join("\n"));
     setFormError(null);
-    setFormOpen(true);
+    setFormMode("edit");
   }
 
   async function saveGroup() {
@@ -255,6 +257,7 @@ export function CommandHistoryPanel({
       return;
     }
     setFormError(null);
+    setFormSaving(true);
     try {
       await onSaveCommandGroup({
         id: editingGroup?.id,
@@ -268,15 +271,18 @@ export function CommandHistoryPanel({
       resetForm();
     } catch (error) {
       setFormError(unknownErrorMessage(error, "指令组保存失败"));
+    } finally {
+      setFormSaving(false);
     }
   }
 
   function resetForm() {
     setEditingGroup(null);
-    setFormOpen(false);
+    setFormMode(null);
     setFormName("");
     setFormCommands("");
     setFormError(null);
+    setFormSaving(false);
   }
 
   return (
@@ -294,22 +300,14 @@ export function CommandHistoryPanel({
         <div className="zt-history-groups-view">
           <CommandGroupView
             commandGroups={commandGroups}
-            formCommands={formCommands}
-            formError={formError}
-            formName={formName}
-            formOpen={formOpen}
             groupError={groupError}
             groupLoading={groupLoading}
             language={language}
             hasHistoryScope={hasHistoryScope}
-            onCancelForm={resetForm}
             onCopy={onCopy}
             onDeleteCommandGroup={onDeleteCommandGroup}
             onEditGroup={openEditGroupForm}
-            onFormCommandsChange={setFormCommands}
-            onFormNameChange={setFormName}
             onNewGroup={openNewGroupForm}
-            onSaveGroup={() => void saveGroup()}
             onSend={onSend}
           />
         </div>
@@ -353,19 +351,6 @@ export function CommandHistoryPanel({
               <Trash2 size={14} aria-hidden="true" />
             </button>
           </div>
-
-          {formOpen ? (
-            <CommandGroupForm
-              commands={formCommands}
-              error={formError}
-              language={language}
-              name={formName}
-              onCancel={resetForm}
-              onCommandsChange={setFormCommands}
-              onNameChange={setFormName}
-              onSave={() => void saveGroup()}
-            />
-          ) : null}
 
           {error ? <div className="zt-history-error">{error}</div> : null}
 
@@ -425,47 +410,46 @@ export function CommandHistoryPanel({
           ) : null}
         </div>
       )}
+
+      {formMode ? (
+        <CommandGroupDialog
+          commands={formCommands}
+          error={formError}
+          language={language}
+          mode={formMode}
+          name={formName}
+          saving={formSaving}
+          onCancel={resetForm}
+          onCommandsChange={setFormCommands}
+          onNameChange={setFormName}
+          onSave={() => void saveGroup()}
+        />
+      ) : null}
     </section>
   );
 }
 
 function CommandGroupView({
   commandGroups,
-  formCommands,
-  formError,
-  formName,
-  formOpen,
   groupError,
   groupLoading,
   hasHistoryScope,
   language,
-  onCancelForm,
   onCopy,
   onDeleteCommandGroup,
   onEditGroup,
-  onFormCommandsChange,
-  onFormNameChange,
   onNewGroup,
-  onSaveGroup,
   onSend,
 }: {
   commandGroups: SessionCommandGroup[];
-  formCommands: string;
-  formError: string | null;
-  formName: string;
-  formOpen: boolean;
   groupError: string | null;
   groupLoading: boolean;
   hasHistoryScope: boolean;
   language: AppLanguage;
-  onCancelForm: () => void;
   onCopy: (command: string) => void;
   onDeleteCommandGroup: (groupId: string) => Promise<unknown> | unknown;
   onEditGroup: (group: SessionCommandGroup) => void;
-  onFormCommandsChange: (value: string) => void;
-  onFormNameChange: (value: string) => void;
   onNewGroup: () => void;
-  onSaveGroup: () => void;
   onSend: (command: string) => void;
 }) {
   return (
@@ -476,19 +460,6 @@ function CommandGroupView({
           {t(language, "addCommandGroup")}
         </button>
       </div>
-
-      {formOpen ? (
-        <CommandGroupForm
-          commands={formCommands}
-          error={formError}
-          language={language}
-          name={formName}
-          onCancel={onCancelForm}
-          onCommandsChange={onFormCommandsChange}
-          onNameChange={onFormNameChange}
-          onSave={onSaveGroup}
-        />
-      ) : null}
 
       {groupError ? <div className="zt-history-error">{groupError}</div> : null}
 
@@ -531,11 +502,13 @@ function CommandGroupView({
   );
 }
 
-function CommandGroupForm({
+function CommandGroupDialog({
   commands,
   error,
   language,
+  mode,
   name,
+  saving,
   onCancel,
   onCommandsChange,
   onNameChange,
@@ -544,56 +517,78 @@ function CommandGroupForm({
   commands: string;
   error: string | null;
   language: AppLanguage;
+  mode: CommandGroupFormMode;
   name: string;
+  saving: boolean;
   onCancel: () => void;
   onCommandsChange: (value: string) => void;
   onNameChange: (value: string) => void;
   onSave: () => void;
 }) {
+  const title =
+    mode === "edit"
+      ? t(language, "editCommandGroup")
+      : mode === "selected"
+        ? t(language, "saveAsCommandGroup")
+        : t(language, "addCommandGroup");
+  const formId = "zt-command-group-dialog-form";
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!saving) onSave();
+  }
+
   return (
-    <div className="zt-history-group-form">
-      <label>
-        <span>{t(language, "commandGroupNameLabel")}</span>
-        <input
-          type="text"
-          aria-label={t(language, "commandGroupName")}
-          value={name}
-          onChange={(event) => onNameChange(event.currentTarget.value)}
-        />
-      </label>
-      <label>
-        <span>{t(language, "commandGroupCommandsLabel")}</span>
-        <textarea
-          aria-label={t(language, "commandGroupCommands")}
-          value={commands}
-          onChange={(event) => onCommandsChange(event.currentTarget.value)}
-          placeholder={t(language, "commandGroupCommandsPlaceholder")}
-        />
-      </label>
-      {error ? <div className="zt-history-error">{error}</div> : null}
-      <div className="zt-history-group-form-actions">
-        <button
-          type="button"
-          className="zt-history-group-save-action"
-          onClick={onSave}
-          aria-label={t(language, "saveCommandGroup")}
-          title={t(language, "saveCommandGroup")}
-        >
-          <CheckSquare size={14} aria-hidden="true" />
-          {t(language, "saveCommandGroup")}
-        </button>
-        <button
-          type="button"
-          className="zt-history-group-cancel-action"
-          onClick={onCancel}
-          aria-label={t(language, "cancel")}
-          title={t(language, "cancel")}
-        >
-          <X size={14} aria-hidden="true" />
-          {t(language, "cancel")}
-        </button>
-      </div>
-    </div>
+    <ZtDialog
+      ariaLabel={title}
+      title={title}
+      size="compact"
+      className="zt-command-group-dialog"
+      onClose={onCancel}
+      closeLabel={`${t(language, "close")}${language === "zhCN" ? "" : " "}${title}`}
+      closeDisabled={saving}
+      footer={
+        <>
+          <ZtButton disabled={saving} onClick={onCancel}>
+            {t(language, "cancel")}
+          </ZtButton>
+          <ZtButton
+            aria-label={t(language, "saveCommandGroup")}
+            form={formId}
+            type="submit"
+            disabled={saving}
+            variant="primary"
+          >
+            {t(language, "saveCommandGroup")}
+          </ZtButton>
+        </>
+      }
+    >
+      <form id={formId} className="zt-dialog-form zt-command-group-dialog-form" onSubmit={handleSubmit}>
+        <label>
+          <span>{t(language, "commandGroupNameLabel")}</span>
+          <ZtInput
+            autoFocus
+            aria-label={t(language, "commandGroupName")}
+            value={name}
+            disabled={saving}
+            onChange={(event) => onNameChange(event.currentTarget.value)}
+          />
+        </label>
+        <label>
+          <span>{t(language, "commandGroupCommandsLabel")}</span>
+          <ZtTextarea
+            className="zt-command-group-dialog-commands"
+            aria-label={t(language, "commandGroupCommands")}
+            value={commands}
+            disabled={saving}
+            onChange={(event) => onCommandsChange(event.currentTarget.value)}
+            placeholder={t(language, "commandGroupCommandsPlaceholder")}
+          />
+        </label>
+        {error ? <p className="zt-command-group-dialog-error" role="alert">{error}</p> : null}
+      </form>
+    </ZtDialog>
   );
 }
 

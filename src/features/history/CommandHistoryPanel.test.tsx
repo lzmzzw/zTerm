@@ -259,6 +259,7 @@ describe("CommandHistoryPanel", () => {
     const saveSelectedButton = button(view.container, "保存为指令组");
     expect(saveSelectedButton.textContent).not.toContain("保存为指令组");
     await click(saveSelectedButton);
+    expect(view.container.querySelector('[role="dialog"]')?.getAttribute("aria-label")).toBe("保存为指令组");
     await inputText(input(view.container, "指令组名称"), "巡检");
     await click(button(view.container, "保存指令组"));
 
@@ -381,6 +382,7 @@ describe("CommandHistoryPanel", () => {
     });
 
     await click(button(view.container, "新增指令组"));
+    expect(view.container.querySelector('[role="dialog"]')?.getAttribute("aria-label")).toBe("新增指令组");
     await inputText(input(view.container, "指令组名称"), "发布检查");
     await inputText(input(view.container, "指令组命令"), "git status\nnpm test");
     await click(button(view.container, "保存指令组"));
@@ -396,6 +398,7 @@ describe("CommandHistoryPanel", () => {
 
     await click(button(view.container, "发送 uptime"));
     await click(button(view.container, "编辑 巡检"));
+    expect(view.container.querySelector('[role="dialog"]')?.getAttribute("aria-label")).toBe("编辑指令组");
     await inputText(input(view.container, "指令组名称"), "快速巡检");
     await click(button(view.container, "保存指令组"));
     await click(button(view.container, "删除 巡检"));
@@ -414,34 +417,79 @@ describe("CommandHistoryPanel", () => {
     view.unmount();
   });
 
-  it("renders the command group form as a compact inline editor", async () => {
+  it("renders the command group form as a centered shared dialog", async () => {
     const view = renderPanel({ activeView: "groups", commandGroups: [] });
 
     expect(view.container.querySelector(".zt-history-group-toolbar")?.textContent).not.toContain("当前历史作用域");
 
     await click(button(view.container, "新增指令组"));
 
+    const dialog = view.container.querySelector('[role="dialog"]') as HTMLElement;
+    expect(dialog.getAttribute("aria-label")).toBe("新增指令组");
+    expect(dialog.classList.contains("zt-dialog")).toBe(true);
+    expect(dialog.classList.contains("zt-dialog-compact")).toBe(true);
+    expect(dialog.closest(".zt-dialog-backdrop")).not.toBeNull();
     expect(input(view.container, "指令组名称").getAttribute("placeholder")).toBeNull();
-    expect(button(view.container, "保存指令组").classList.contains("zt-history-group-save-action")).toBe(true);
-    expect(button(view.container, "取消").classList.contains("zt-history-group-cancel-action")).toBe(true);
+    expect(button(view.container, "保存指令组").classList.contains("zt-button-primary")).toBe(true);
 
     await click(button(view.container, "取消"));
 
-    expect(view.container.querySelector(".zt-history-group-form")).toBeNull();
+    expect(view.container.querySelector('[role="dialog"]')).toBeNull();
 
     view.unmount();
   });
 
-  it("keeps command group form out of the panel stretch row", async () => {
+  it("keeps the command group editor out of the right panel layout", async () => {
     const view = renderPanel({ activeView: "groups", commandGroups: [] });
 
     await click(button(view.container, "新增指令组"));
 
     const panel = view.container.querySelector(".zt-history-panel") as HTMLElement;
     const directClasses = Array.from(panel.children).map((child) => child.className);
-    expect(directClasses).toEqual(["zt-history-mode-tabs", "zt-history-groups-view"]);
-    expect(panel.querySelector(":scope > .zt-history-group-form")).toBeNull();
-    expect(panel.querySelector(".zt-history-groups-view > .zt-history-group-form")).not.toBeNull();
+    expect(directClasses).toEqual(["zt-history-mode-tabs", "zt-history-groups-view", "zt-dialog-backdrop zt-modal-overlay"]);
+    expect(panel.querySelector(".zt-history-groups-view .zt-history-group-form")).toBeNull();
+    expect(panel.querySelector(":scope > .zt-dialog-backdrop > [role=dialog]")).not.toBeNull();
+
+    view.unmount();
+  });
+
+  it("disables command group dialog actions while saving", async () => {
+    let resolveSave: (() => void) | undefined;
+    const onSaveCommandGroup = vi.fn(
+      () => new Promise<void>((resolve) => {
+        resolveSave = resolve;
+      }),
+    );
+    const view = renderPanel({ activeView: "groups", commandGroups: [], onSaveCommandGroup });
+
+    await click(button(view.container, "新增指令组"));
+    await inputText(input(view.container, "指令组名称"), "发布检查");
+    await inputText(input(view.container, "指令组命令"), "git status");
+    await click(button(view.container, "保存指令组"));
+
+    expect(button(view.container, "保存指令组").disabled).toBe(true);
+    expect(button(view.container, "取消").disabled).toBe(true);
+    expect(button(view.container, "关闭新增指令组").disabled).toBe(true);
+
+    await act(async () => resolveSave?.());
+    expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+
+    view.unmount();
+  });
+
+  it("keeps the command group dialog open when saving fails", async () => {
+    const onSaveCommandGroup = vi.fn().mockRejectedValue(new Error("保存失败，请重试"));
+    const view = renderPanel({ activeView: "groups", commandGroups: [], onSaveCommandGroup });
+
+    await click(button(view.container, "新增指令组"));
+    await inputText(input(view.container, "指令组名称"), "发布检查");
+    await inputText(input(view.container, "指令组命令"), "git status");
+    await click(button(view.container, "保存指令组"));
+
+    expect(view.container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe("保存失败，请重试");
+    expect(button(view.container, "保存指令组").disabled).toBe(false);
+    expect(button(view.container, "取消").disabled).toBe(false);
 
     view.unmount();
   });
