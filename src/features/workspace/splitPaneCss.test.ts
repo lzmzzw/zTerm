@@ -194,11 +194,25 @@ describe("split pane css direction mapping", () => {
     expectBorderlessIconButton(".zt-left-rail button");
     expectBorderlessIconButton(".zt-tool-rail button");
     expectBorderlessIconButton(".zt-panel-header-action button");
-    expectBorderlessIconButton(".zt-session-group-row button");
     expect(ruleBodiesForSelector(".zt-session-node-actions button")).toBe("");
     expectBorderlessIconButton(".zt-file-toolbar button");
     expectBorderlessIconButton(".zt-history-entry button");
     expectBorderlessIconButton(".zt-transfer-row button");
+  });
+
+  it("keeps the session tree compact", () => {
+    const treeStyles = ruleBodiesForSelector(".zt-session-tree");
+    const nodeListStyles = ruleBodiesForSelector(".zt-session-nodes");
+    const groupRowStyles = ruleBodiesForSelector(".zt-session-group-row");
+    const sessionNodeStyles = ruleBodiesForSelector(".zt-session-node");
+    const sessionButtonStyles = ruleBodiesForSelector(".zt-session-node-main");
+
+    expect(treeStyles).toContain("gap: 2px");
+    expect(treeStyles).toContain("padding: 4px 6px");
+    expect(nodeListStyles).toContain("gap: 0");
+    expect(groupRowStyles).toContain("min-height: 26px");
+    expect(sessionNodeStyles).toContain("min-height: 28px");
+    expect(sessionButtonStyles).toContain("min-height: 28px");
   });
 
   it("keeps removed history toolbar icon button styles absent", () => {

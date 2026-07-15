@@ -3414,8 +3414,8 @@ button {
   position: relative;
   display: grid;
   align-content: start;
-  gap: 6px;
-  padding: 6px;
+  gap: 2px;
+  padding: 4px 6px;
 }
 
 .zt-session-toolbar {
@@ -3510,7 +3510,7 @@ button {
 .zt-session-group ul {
   display: grid;
   align-content: start;
-  gap: 2px;
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -3525,7 +3525,7 @@ button {
   grid-template-columns: 16px minmax(0, 1fr) 26px;
   align-items: center;
   gap: 6px;
-  min-height: 28px;
+  min-height: 26px;
   padding: 0 6px;
   border-radius: var(--zt-radius-control);
   color: var(--zt-text-primary);
@@ -3563,7 +3563,7 @@ button {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: center;
-  min-height: 34px;
+  min-height: 28px;
   border-radius: var(--zt-radius-control);
 }
 
@@ -3578,7 +3578,7 @@ button {
   gap: 6px;
   width: 100%;
   min-width: 0;
-  min-height: 34px;
+  min-height: 28px;
   padding: 0 6px;
   border: 0;
   background: transparent;
