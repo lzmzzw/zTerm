@@ -651,9 +651,9 @@ describe("FileTransferPanel", () => {
       resizeHandle.dispatchEvent(Object.assign(new MouseEvent("pointerup", { bubbles: true, button: 0, clientX: 108 }), { pointerId: 2 }));
     });
 
-    expect(leftPane.style.getPropertyValue("--zt-file-name-fr")).toBe("57fr");
+    expect(leftPane.style.getPropertyValue("--zt-file-name-fr")).toBe("72fr");
     expect(leftPane.style.getPropertyValue("--zt-file-size-fr")).toBe("13fr");
-    expect(rightPane.style.getPropertyValue("--zt-file-name-fr")).toBe("55fr");
+    expect(rightPane.style.getPropertyValue("--zt-file-name-fr")).toBe("70fr");
     expect(rightPane.style.getPropertyValue("--zt-file-size-fr")).toBe("15fr");
 
     view.unmount();
@@ -661,9 +661,9 @@ describe("FileTransferPanel", () => {
     const reopenedView = render(<FileTransferPanel />);
     await flushEffects();
     const reopenedLeftPane = reopenedView.container.querySelector('[aria-label="左侧文件端点"]') as HTMLElement;
-    expect(reopenedLeftPane.style.getPropertyValue("--zt-file-name-fr")).toBe("55fr");
+    expect(reopenedLeftPane.style.getPropertyValue("--zt-file-name-fr")).toBe("70fr");
     expect(reopenedLeftPane.style.getPropertyValue("--zt-file-size-fr")).toBe("15fr");
-    expect(reopenedLeftPane.style.getPropertyValue("--zt-file-modified-fr")).toBe("30fr");
+    expect(reopenedLeftPane.style.getPropertyValue("--zt-file-modified-fr")).toBe("15fr");
     reopenedView.unmount();
   });
 

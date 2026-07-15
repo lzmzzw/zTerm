@@ -2843,12 +2843,12 @@ button {
 }
 
 .zt-file-transfer-pane {
-  --zt-file-name-fr: 55fr;
+  --zt-file-name-fr: 70fr;
   --zt-file-size-fr: 15fr;
-  --zt-file-modified-fr: 30fr;
+  --zt-file-modified-fr: 15fr;
   --zt-file-transfer-columns:
-    24px minmax(0, var(--zt-file-name-fr)) minmax(64px, var(--zt-file-size-fr))
-    minmax(120px, var(--zt-file-modified-fr));
+    24px minmax(0, var(--zt-file-name-fr)) minmax(0, var(--zt-file-size-fr))
+    minmax(0, var(--zt-file-modified-fr));
   display: grid;
   grid-template-rows: 36px 34px auto 30px minmax(0, 1fr);
   min-width: 0;
@@ -3019,10 +3019,6 @@ button {
   white-space: nowrap;
 }
 
-.zt-file-transfer-column-header.is-numeric .zt-file-transfer-sort-button {
-  justify-content: flex-end;
-}
-
 .zt-file-transfer-sort-button:hover {
   background: var(--zt-bg-hover);
   color: var(--zt-text-primary);
@@ -3087,6 +3083,8 @@ button {
 
 .zt-file-transfer-list strong,
 .zt-file-transfer-list small {
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3094,7 +3092,7 @@ button {
 
 .zt-file-transfer-list small {
   color: var(--zt-text-muted);
-  text-align: right;
+  text-align: left;
 }
 
 .zt-file-path {
@@ -4800,11 +4798,20 @@ button {
   background: var(--zt-bg-hover);
 }
 
-.zt-file-transfer-dialog .zt-file-kind-icon,
+.zt-file-transfer-dialog .zt-file-kind-icon {
+  justify-self: start;
+}
+
 .zt-file-transfer-dialog .zt-file-transfer-list strong,
 .zt-file-transfer-dialog .zt-file-transfer-list small {
-  justify-self: start;
+  justify-self: stretch;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .zt-session-dialog footer {

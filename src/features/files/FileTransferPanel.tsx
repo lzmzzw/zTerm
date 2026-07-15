@@ -82,8 +82,8 @@ type FileSortState = { key: FileSortKey; direction: "ascending" | "descending" }
 type FileColumnRatios = { name: number; size: number; modified: number };
 type FileColumnBoundary = "name-size" | "size-modified";
 
-const DEFAULT_FILE_COLUMN_RATIOS: FileColumnRatios = { name: 55, size: 15, modified: 30 };
-const MIN_FILE_COLUMN_RATIOS: FileColumnRatios = { name: 25, size: 12, modified: 20 };
+const DEFAULT_FILE_COLUMN_RATIOS: FileColumnRatios = { name: 70, size: 15, modified: 15 };
+const MIN_FILE_COLUMN_RATIOS: FileColumnRatios = { name: 25, size: 10, modified: 10 };
 
 const MIN_FILE_TRANSFER_PANES_HEIGHT = 200;
 const MIN_TRANSFER_DOCK_HEIGHT = 120;

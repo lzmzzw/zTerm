@@ -59,13 +59,27 @@ describe("file transfer dialog styles", () => {
     const row = ruleBody(".zt-file-transfer-dialog .zt-file-transfer-list button");
     const resizer = ruleBody(".zt-file-transfer-column-resizer");
 
-    expect(pane).toContain("--zt-file-name-fr: 55");
+    expect(pane).toContain("--zt-file-name-fr: 70");
     expect(pane).toContain("--zt-file-size-fr: 15");
-    expect(pane).toContain("--zt-file-modified-fr: 30");
+    expect(pane).toContain("--zt-file-modified-fr: 15");
     expect(header).toContain("grid-template-columns: var(--zt-file-transfer-columns)");
     expect(row).toContain("grid-template-columns: var(--zt-file-transfer-columns)");
     expect(resizer).toContain("cursor: col-resize");
     expect(resizer).toContain("touch-action: none");
+  });
+
+  it("left-aligns file columns and clips long values within their own grid tracks", () => {
+    const sortButton = ruleBody(".zt-file-transfer-sort-button");
+    const values = ruleBody(".zt-file-transfer-dialog .zt-file-transfer-list strong,\n.zt-file-transfer-dialog .zt-file-transfer-list small");
+
+    expect(sortButton).toContain("justify-content: flex-start");
+    expect(css).not.toContain(".zt-file-transfer-column-header.is-numeric .zt-file-transfer-sort-button");
+    expect(values).toContain("justify-self: stretch");
+    expect(values).toContain("min-width: 0");
+    expect(values).toContain("max-width: 100%");
+    expect(values).toContain("overflow: hidden");
+    expect(values).toContain("text-overflow: ellipsis");
+    expect(values).toContain("text-align: left");
   });
 
   it("keeps transfer errors in the dialog flow instead of overlaying adjacent content", () => {
