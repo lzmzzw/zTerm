@@ -147,6 +147,7 @@ type AffectedDomainsHandler = (domains: string[]) => Promise<void> | void;
 
 export interface AiToolSecretInputs {
   api_key?: string;
+  password?: string;
 }
 
 interface AiState {

@@ -1060,6 +1060,14 @@ export function AppShell() {
         if (workspaceId) await handleRestoreWorkspace(workspaceId);
         break;
       }
+      case "terminal.close": {
+        const runtimeSessionId = readString(args, "runtime_session_id");
+        if (runtimeSessionId) {
+          await closeTerminal(runtimeSessionId);
+          clearRuntimeSession(runtimeSessionId);
+        }
+        break;
+      }
       case "sftp.list":
       case "sftp.mkdir":
       case "sftp.upload":
@@ -1610,6 +1618,21 @@ export function AppShell() {
     writeTerminal,
     activeRuntimeSessionId,
   });
+
+  useEffect(() => {
+    let disposed = false;
+    let cleanup: (() => void) | null = null;
+    void listen("zterm:tool-pending", () => {
+      void loadPendingInvocations();
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else cleanup = unlisten;
+    });
+    return () => {
+      disposed = true;
+      cleanup?.();
+    };
+  }, [loadPendingInvocations]);
 
   async function openSavedSession(session: SavedSession) {
     await openSavedSessionTarget(session, {

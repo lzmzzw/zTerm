@@ -549,6 +549,58 @@ fn tool_parameters(tool: &AiToolDefinition) -> Value {
             "additionalProperties": true
         });
     }
+    if tool.id == "terminal.list" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "saved_session_id": { "type": "string" }
+            },
+            "additionalProperties": false
+        });
+    }
+    if tool.id == "terminal.open" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "saved_session_id": { "type": "string" }
+            },
+            "required": ["saved_session_id"],
+            "additionalProperties": false
+        });
+    }
+    if tool.id == "terminal.read" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "runtime_session_id": { "type": "string" },
+                "cursor": { "type": "integer", "minimum": 0 },
+                "max_chars": { "type": "integer", "minimum": 1, "maximum": 4000 }
+            },
+            "required": ["runtime_session_id"],
+            "additionalProperties": false
+        });
+    }
+    if tool.id == "terminal.close" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "runtime_session_id": { "type": "string" }
+            },
+            "required": ["runtime_session_id"],
+            "additionalProperties": false
+        });
+    }
+    if tool.id == "ssh.execute" {
+        return json!({
+            "type": "object",
+            "properties": {
+                "saved_session_id": { "type": "string" },
+                "script": { "type": "string", "maxLength": 16384 }
+            },
+            "required": ["saved_session_id", "script"],
+            "additionalProperties": false
+        });
+    }
     if tool.id == "history.search" {
         return json!({
             "type": "object",
@@ -570,6 +622,15 @@ fn tool_parameters(tool: &AiToolDefinition) -> Value {
                 "scope_id": { "type": "string" }
             },
             "required": ["scope_kind", "scope_id"],
+            "additionalProperties": false
+        });
+    }
+    if matches!(tool.id.as_str(), "sessions.list" | "llm_provider.list") {
+        return json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string" }
+            },
             "additionalProperties": false
         });
     }
@@ -1180,6 +1241,44 @@ mod tests {
         assert_eq!(parsed.tool_calls[0].id, "call-2");
         assert_eq!(parsed.tool_calls[0].tool_id, "terminal.write");
         assert_eq!(parsed.tool_calls[0].arguments["data"], "whoami\r");
+    }
+
+    #[test]
+    fn terminal_and_ssh_tool_schemas_expose_operational_arguments() {
+        let tools = [
+            ("terminal.list", RiskLevel::Low),
+            ("terminal.open", RiskLevel::Medium),
+            ("terminal.read", RiskLevel::Low),
+            ("terminal.close", RiskLevel::Medium),
+            ("ssh.execute", RiskLevel::High),
+        ]
+        .into_iter()
+        .map(|(id, risk_level)| AiToolDefinition {
+            id: id.to_string(),
+            title: id.to_string(),
+            description: id.to_string(),
+            risk_level,
+            requires_confirmation: false,
+        })
+        .collect::<Vec<_>>();
+        let schemas = openai_responses_tools(&tools);
+
+        assert_eq!(
+            schemas[1]["parameters"]["required"],
+            json!(["saved_session_id"])
+        );
+        assert_eq!(
+            schemas[2]["parameters"]["required"],
+            json!(["runtime_session_id"])
+        );
+        assert_eq!(
+            schemas[3]["parameters"]["required"],
+            json!(["runtime_session_id"])
+        );
+        assert_eq!(
+            schemas[4]["parameters"]["required"],
+            json!(["saved_session_id", "script"])
+        );
     }
 
     #[test]

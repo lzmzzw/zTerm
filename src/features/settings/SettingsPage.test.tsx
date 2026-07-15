@@ -381,6 +381,13 @@ describe("SettingsPage", () => {
         risk_level: "low",
         requires_confirmation: false,
       },
+      {
+        id: "ssh.execute",
+        title: "执行 SSH 命令",
+        description: "复用 zTerm 认证执行远程命令",
+        risk_level: "high",
+        requires_confirmation: true,
+      },
     ]);
     const view = render(
       <SettingsPage
@@ -411,9 +418,11 @@ describe("SettingsPage", () => {
     expect(onLoadMcpTools).toHaveBeenCalledTimes(1);
     expect(view.container.textContent).toContain("终端 (2)");
     expect(view.container.textContent).toContain("工作区 (1)");
+    expect(view.container.textContent).toContain("SSH (1)");
     expect(view.container.textContent).toContain("terminal.list");
     expect(view.container.textContent).toContain("terminal.write");
     expect(view.container.textContent).toContain("workspace.list");
+    expect(view.container.textContent).toContain("ssh.execute");
 
     await click(detailsButton);
     await click(detailsButton);

@@ -69,7 +69,7 @@ export function SettingsPage({
   mcpStatus = { enabled: false, endpoint: null, token: null },
   onSetMcpEnabled = async () => ({ enabled: false, endpoint: null, token: null }),
   onRotateMcpToken = async () => ({ enabled: false, endpoint: null, token: null }),
-  onLoadMcpTools = () => invoke<McpToolDefinition[]>("ai_tool_registry_list"),
+  onLoadMcpTools = () => invoke<McpToolDefinition[]>("mcp_tool_catalog_list"),
 }: SettingsPageProps) {
   const [tab, setTab] = useState<SettingsTab>("general");
   const [draft, setDraft] = useState<AppSettings>(settings ?? fallbackSettings);
@@ -355,6 +355,7 @@ function mcpToolGroupLabel(language: AppLanguage, key: string) {
     history: "mcpToolGroupHistory",
     transfer: "mcpToolGroupTransfers",
     server_info: "mcpToolGroupMonitor",
+    ssh: "mcpToolGroupSsh",
     ssh_container: "mcpToolGroupTerminal",
     zterm: "mcpToolGroupZterm",
   } as const;

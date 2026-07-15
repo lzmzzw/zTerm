@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    models::ai::{AiApprovalMode, AiToolAuditRecord, AiToolPrepareRequest},
+    models::ai::{AiApprovalMode, AiToolAuditRecord, AiToolPrepareRequest, RiskLevel},
     services::ai_tool_service::AiToolService,
     storage::sqlite::SqliteStore,
 };
@@ -31,6 +31,16 @@ pub struct McpServerStatus {
     pub enabled: bool,
     pub endpoint: Option<String>,
     pub token: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct McpToolDefinition {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub risk_level: RiskLevel,
+    pub requires_confirmation: bool,
+    pub input_schema: Value,
 }
 
 #[derive(Clone)]
@@ -225,19 +235,14 @@ fn handle_json_rpc(store: &SqliteStore, tools: &AiToolService, body: Value) -> A
             "serverInfo": { "name": "zTerm", "version": env!("CARGO_PKG_VERSION") }
         }),
         "tools/list" => {
-            let tools = tools
-                .definitions()
+            let tools = mcp_tool_catalog()
                 .into_iter()
                 .map(|tool| {
                     json!({
                         "name": tool.id,
                         "title": tool.title,
                         "description": tool.description,
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {},
-                            "additionalProperties": true
-                        }
+                        "inputSchema": tool.input_schema
                     })
                 })
                 .collect::<Vec<_>>();
@@ -251,11 +256,59 @@ fn handle_json_rpc(store: &SqliteStore, tools: &AiToolService, body: Value) -> A
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| AppError::validation("MCP tools/call 缺少 name"))?;
+            if !mcp_tool_catalog().iter().any(|tool| tool.id == name) {
+                return Ok(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {
+                        "code": -32601,
+                        "message": format!("tool not exposed by zTerm MCP: {name}")
+                    }
+                }));
+            }
             let arguments = params
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            mcp_tool_call_result(store, tools, name, arguments)?
+            if mcp_contains_plaintext_secret(&arguments) {
+                return Ok(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {
+                        "code": -32602,
+                        "message": "MCP tool arguments must not contain plaintext secrets; provide authentication in zTerm"
+                    }
+                }));
+            }
+            if let Err(message) = validate_mcp_arguments(name, &arguments) {
+                return Ok(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32602, "message": message }
+                }));
+            }
+            let mapped_name = match name {
+                "llm_provider.save"
+                    if arguments
+                        .pointer("/draft/id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty()) =>
+                {
+                    "llm_provider.update"
+                }
+                "llm_provider.save" => "llm_provider.create",
+                _ => name,
+            };
+            match mcp_tool_call_result(store, tools, mapped_name, arguments) {
+                Ok(result) => result,
+                Err(error) => {
+                    return Ok(json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": { "code": -32602, "message": error.to_string() }
+                    }));
+                }
+            }
         }
         _ => {
             return Ok(json!({
@@ -266,6 +319,210 @@ fn handle_json_rpc(store: &SqliteStore, tools: &AiToolService, body: Value) -> A
         }
     };
     Ok(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+}
+
+pub fn mcp_tool_catalog() -> Vec<McpToolDefinition> {
+    vec![
+        mcp_tool(
+            "sessions.list",
+            "列出连接",
+            "返回不含认证 secret 的已保存连接列表",
+            RiskLevel::Low,
+            false,
+            object_schema(
+                json!({
+                    "query": { "type": "string", "description": "按名称、主机或用户名筛选。" }
+                }),
+                &[],
+            ),
+        ),
+        mcp_tool(
+            "sessions.save",
+            "保存连接",
+            "创建或更新连接；认证由 zTerm 本地提供或从已有连接复用",
+            RiskLevel::Medium,
+            false,
+            object_schema(
+                json!({
+                    "draft": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" },
+                            "name": { "type": "string" },
+                            "type": { "type": "string", "enum": ["ssh", "local", "rdp"] },
+                            "group_id": { "type": ["string", "null"] },
+                            "group_name": { "type": "string" },
+                            "host": { "type": "string" },
+                            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                            "username": { "type": "string" },
+                            "auth_mode": { "type": "string", "enum": ["password", "key", "agent", "none"] },
+                            "description": { "type": ["string", "null"] },
+                            "tags": { "type": "array", "items": { "type": "string" } },
+                            "sort_order": { "type": "integer" }
+                        },
+                        "required": ["name", "type", "host", "port", "username", "auth_mode"],
+                        "additionalProperties": false
+                    },
+                    "reuse_auth_from_session_id": {
+                        "type": "string",
+                        "description": "复用已有连接的认证引用，引用本身不会返回给 MCP。"
+                    }
+                }),
+                &["draft"],
+            ),
+        ),
+        mcp_tool(
+            "terminal.list",
+            "列出终端",
+            "返回 zTerm 当前运行终端及 runtime ID",
+            RiskLevel::Low,
+            false,
+            object_schema(
+                json!({
+                    "saved_session_id": { "type": "string", "description": "可选的连接 ID 筛选。" }
+                }),
+                &[],
+            ),
+        ),
+        mcp_tool(
+            "terminal.open",
+            "打开终端",
+            "在 zTerm 中打开已保存连接；随后通过 terminal.list 获取 runtime ID",
+            RiskLevel::Medium,
+            true,
+            object_schema(
+                json!({
+                    "saved_session_id": { "type": "string" }
+                }),
+                &["saved_session_id"],
+            ),
+        ),
+        mcp_tool(
+            "terminal.read",
+            "读取终端",
+            "读取运行终端的输出尾部或指定 cursor 之后的增量输出",
+            RiskLevel::Low,
+            false,
+            object_schema(
+                json!({
+                    "runtime_session_id": { "type": "string" },
+                    "cursor": { "type": "integer", "minimum": 0 },
+                    "max_chars": { "type": "integer", "minimum": 1, "maximum": 4000 }
+                }),
+                &["runtime_session_id"],
+            ),
+        ),
+        mcp_tool(
+            "terminal.write",
+            "写入终端",
+            "向运行终端写入数据并回读本次产生的输出",
+            RiskLevel::High,
+            true,
+            object_schema(
+                json!({
+                    "runtime_session_id": { "type": "string" },
+                    "data": { "type": "string", "description": "写入终端的数据，命令通常以回车结尾。" }
+                }),
+                &["runtime_session_id", "data"],
+            ),
+        ),
+        mcp_tool(
+            "terminal.close",
+            "关闭终端",
+            "关闭指定 zTerm 运行终端",
+            RiskLevel::Medium,
+            true,
+            object_schema(
+                json!({
+                    "runtime_session_id": { "type": "string" }
+                }),
+                &["runtime_session_id"],
+            ),
+        ),
+        mcp_tool(
+            "ssh.execute",
+            "执行 SSH 命令",
+            "通过已保存连接执行非交互脚本并复用 zTerm 的认证和 SSH 连接",
+            RiskLevel::High,
+            true,
+            object_schema(
+                json!({
+                    "saved_session_id": { "type": "string" },
+                    "script": { "type": "string", "maxLength": 16384 }
+                }),
+                &["saved_session_id", "script"],
+            ),
+        ),
+        mcp_tool(
+            "llm_provider.list",
+            "列出模型",
+            "返回不含 API Key 的模型 Provider 列表",
+            RiskLevel::Low,
+            false,
+            object_schema(
+                json!({
+                    "query": { "type": "string", "description": "按名称或模型筛选。" }
+                }),
+                &[],
+            ),
+        ),
+        mcp_tool(
+            "llm_provider.save",
+            "保存模型",
+            "创建或更新模型 Provider；需要 API Key 时在 zTerm 本地确认",
+            RiskLevel::Medium,
+            false,
+            object_schema(
+                json!({
+                    "draft": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" },
+                            "name": { "type": "string" },
+                            "kind": { "type": "string", "enum": ["openai_chat", "openai_responses", "anthropic"] },
+                            "base_url": { "type": "string" },
+                            "model": { "type": "string" },
+                            "enabled": { "type": "boolean" },
+                            "is_default": { "type": "boolean" }
+                        },
+                        "required": ["name", "kind", "base_url", "model", "enabled"],
+                        "additionalProperties": false
+                    }
+                }),
+                &["draft"],
+            ),
+        ),
+    ]
+}
+
+fn mcp_tool(
+    id: &str,
+    title: &str,
+    description: &str,
+    risk_level: RiskLevel,
+    requires_confirmation: bool,
+    input_schema: Value,
+) -> McpToolDefinition {
+    McpToolDefinition {
+        id: id.to_string(),
+        title: title.to_string(),
+        description: description.to_string(),
+        risk_level,
+        requires_confirmation,
+        input_schema,
+    }
+}
+
+fn object_schema(properties: Value, required: &[&str]) -> Value {
+    let mut schema = json!({
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": false
+    });
+    if !required.is_empty() {
+        schema["required"] = json!(required);
+    }
+    schema
 }
 
 fn mcp_tool_call_result(
@@ -305,17 +562,17 @@ fn mcp_tool_call_result(
     let audit = outcome
         .audit_record
         .ok_or_else(|| AppError::ai("MCP 工具调用未产生结果"))?;
-    Ok(mcp_audit_result(audit))
+    Ok(mcp_audit_result(audit, outcome.structured_content))
 }
 
-fn mcp_audit_result(audit: AiToolAuditRecord) -> Value {
+fn mcp_audit_result(audit: AiToolAuditRecord, structured_content: Option<Value>) -> Value {
     let is_error = audit.status.as_str() == "failed";
     let text = audit
         .result_summary
         .clone()
         .or_else(|| audit.error.clone())
         .unwrap_or_else(|| "工具调用已完成。".to_string());
-    json!({
+    let mut result = json!({
         "content": [
             { "type": "text", "text": text }
         ],
@@ -326,7 +583,92 @@ fn mcp_audit_result(audit: AiToolAuditRecord) -> Value {
             "affected_domains": audit.affected_domains
         },
         "isError": is_error
-    })
+    });
+    if let Some(structured_content) = structured_content {
+        result["structuredContent"]["result"] = structured_content;
+    }
+    result
+}
+
+fn mcp_contains_plaintext_secret(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => object.iter().any(|(key, child)| {
+            let key = key.to_ascii_lowercase();
+            let is_reference = key.ends_with("_ref");
+            let is_secret = !is_reference
+                && (key == "api_key"
+                    || key == "token"
+                    || key.ends_with("_token")
+                    || key.contains("password")
+                    || key.contains("passwd")
+                    || key.contains("secret")
+                    || key.contains("private_key"));
+            (is_secret && !child.is_null()) || mcp_contains_plaintext_secret(child)
+        }),
+        Value::Array(items) => items.iter().any(mcp_contains_plaintext_secret),
+        _ => false,
+    }
+}
+
+fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), String> {
+    let object = arguments
+        .as_object()
+        .ok_or_else(|| "MCP tool arguments must be an object".to_string())?;
+    let allowed = match tool_name {
+        "sessions.list" | "llm_provider.list" => &["query"][..],
+        "sessions.save" => &["draft", "reuse_auth_from_session_id"][..],
+        "terminal.list" => &["saved_session_id"][..],
+        "terminal.open" => &["saved_session_id"][..],
+        "terminal.read" => &["runtime_session_id", "cursor", "max_chars"][..],
+        "terminal.write" => &["runtime_session_id", "data"][..],
+        "terminal.close" => &["runtime_session_id"][..],
+        "ssh.execute" => &["saved_session_id", "script"][..],
+        "llm_provider.save" => &["draft"][..],
+        _ => return Err(format!("tool not exposed by zTerm MCP: {tool_name}")),
+    };
+    reject_unknown_mcp_keys(object, allowed, "arguments")?;
+
+    if let Some(draft) = object.get("draft").and_then(Value::as_object) {
+        let draft_allowed = if tool_name == "sessions.save" {
+            &[
+                "id",
+                "name",
+                "type",
+                "group_id",
+                "group_name",
+                "host",
+                "port",
+                "username",
+                "auth_mode",
+                "description",
+                "tags",
+                "sort_order",
+            ][..]
+        } else {
+            &[
+                "id",
+                "name",
+                "kind",
+                "base_url",
+                "model",
+                "enabled",
+                "is_default",
+            ][..]
+        };
+        reject_unknown_mcp_keys(draft, draft_allowed, "arguments.draft")?;
+    }
+    Ok(())
+}
+
+fn reject_unknown_mcp_keys(
+    object: &serde_json::Map<String, Value>,
+    allowed: &[&str],
+    path: &str,
+) -> Result<(), String> {
+    if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
+        return Err(format!("unknown MCP tool argument: {path}.{key}"));
+    }
+    Ok(())
 }
 
 async fn handle_connection(mut stream: TcpStream, context: McpContext) -> AppResult<()> {

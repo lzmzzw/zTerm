@@ -4,10 +4,15 @@ use tauri::State;
 use crate::{
     error::AppResult,
     models::settings::McpSettings,
-    services::mcp_service::McpServerStatus,
+    services::mcp_service::{mcp_tool_catalog, McpServerStatus, McpToolDefinition},
     state::AppState,
     storage::settings::{get_app_settings, save_app_settings},
 };
+
+#[tauri::command]
+pub fn mcp_tool_catalog_list() -> AppResult<Vec<McpToolDefinition>> {
+    Ok(mcp_tool_catalog())
+}
 
 #[tauri::command]
 pub async fn mcp_server_status(state: State<'_, AppState>) -> AppResult<McpServerStatus> {

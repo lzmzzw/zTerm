@@ -30,10 +30,10 @@ use crate::{
             AiToolInvocationStatus, AiToolPendingInvocation, AiToolPrepareRequest,
             AiToolSecretInputs, RiskLevel,
         },
-        credential::{AiProviderProfileDraft, CredentialDraft, CredentialKind},
+        credential::{AiProviderProfile, AiProviderProfileDraft, CredentialDraft, CredentialKind},
         history::{HistoryScopeKind, HistorySearchOptions},
         server_info::{ServerInfoRequest, ServerInfoSnapshot},
-        session::{AuthMode, SavedSessionDraft, SessionGroupDraft, SessionType},
+        session::{AuthMode, SavedSession, SavedSessionDraft, SessionGroupDraft, SessionType},
         terminal::RuntimeSessionInfo,
         terminal_profile::TerminalProfileDraft,
         workspace::{
@@ -68,6 +68,10 @@ pub trait AiToolCommandWriter: Send + Sync {
         Ok(())
     }
 
+    fn notify_pending_tools(&self) -> AppResult<()> {
+        Ok(())
+    }
+
     fn list_terminals(&self) -> AppResult<Vec<RuntimeSessionInfo>> {
         Ok(Vec::new())
     }
@@ -83,18 +87,28 @@ pub trait AiToolCommandWriter: Send + Sync {
     ) -> AppResult<Option<String>> {
         Ok(None)
     }
+
+    fn read_terminal_output_tail(
+        &self,
+        _runtime_session_id: &str,
+        _max_chars: usize,
+    ) -> AppResult<Option<String>> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct AiToolExecutionOutcome {
     pub pending_invocation: Option<AiToolPendingInvocation>,
     pub audit_record: Option<AiToolAuditRecord>,
+    pub structured_content: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
 struct AiToolExecutionResult {
     summary: String,
     affected_domains: Vec<String>,
+    structured_content: Option<Value>,
 }
 
 #[derive(Clone)]
@@ -146,6 +160,15 @@ impl AiToolCommandWriter for RuntimeAiToolWriter {
         Ok(())
     }
 
+    fn notify_pending_tools(&self) -> AppResult<()> {
+        if let Some(app_handle) = &self.app_handle {
+            app_handle
+                .emit("zterm:tool-pending", ())
+                .map_err(|error| AppError::ai(format!("通知待确认工具失败: {error}")))?;
+        }
+        Ok(())
+    }
+
     fn list_terminals(&self) -> AppResult<Vec<RuntimeSessionInfo>> {
         self.manager.runtime_infos()
     }
@@ -166,6 +189,14 @@ impl AiToolCommandWriter for RuntimeAiToolWriter {
     ) -> AppResult<Option<String>> {
         self.manager
             .wait_for_output_after(runtime_session_id, cursor, 2500, 250, 4000)
+    }
+
+    fn read_terminal_output_tail(
+        &self,
+        runtime_session_id: &str,
+        max_chars: usize,
+    ) -> AppResult<Option<String>> {
+        self.manager.output_tail(runtime_session_id, max_chars)
     }
 }
 
@@ -236,14 +267,16 @@ impl AiToolService {
         let (pending, arguments) = self.build_pending(store, request, approval_mode)?;
         if pending.requires_confirmation {
             upsert_ai_tool_pending(store, &pending, &arguments)?;
+            let _ = self.writer.notify_pending_tools();
             return Ok(AiToolExecutionOutcome {
                 pending_invocation: Some(pending),
                 audit_record: None,
+                structured_content: None,
             });
         }
 
         let invocation_id = pending.id.clone();
-        let audit = self.audit_execution(
+        let (audit, structured_content) = self.audit_execution(
             store,
             invocation_id,
             pending,
@@ -258,6 +291,7 @@ impl AiToolService {
         Ok(AiToolExecutionOutcome {
             pending_invocation: None,
             audit_record: Some(audit),
+            structured_content,
         })
     }
 
@@ -304,7 +338,7 @@ impl AiToolService {
     ) -> AppResult<AiToolAuditRecord> {
         let invocation_id = required_text("待确认工具调用 ID", request.invocation_id)?;
         let (pending, arguments) = get_ai_tool_pending_state(store, &invocation_id)?;
-        let audit = self.audit_execution(
+        let (audit, _) = self.audit_execution(
             store,
             invocation_id,
             pending,
@@ -326,12 +360,12 @@ impl AiToolService {
         approved: bool,
         secret_inputs: Option<AiToolSecretInputs>,
         audit_context_json: Option<String>,
-    ) -> AppResult<AiToolAuditRecord> {
+    ) -> AppResult<(AiToolAuditRecord, Option<Value>)> {
         let execution = if approved {
             if pending.requires_secret_input
-                && secret_inputs_api_key(secret_inputs.as_ref()).is_none()
+                && !secret_inputs_present_for_tool(&pending.tool_id, secret_inputs.as_ref())
             {
-                Err(AppError::validation("确认该工具需要在本地输入 API Key"))
+                Err(AppError::validation("确认该工具需要在本地输入认证信息"))
             } else {
                 self.execute(store, &pending.tool_id, arguments, secret_inputs.as_ref())
             }
@@ -340,9 +374,14 @@ impl AiToolService {
             Ok(AiToolExecutionResult {
                 summary: "用户已拒绝执行。".to_string(),
                 affected_domains: Vec::new(),
+                structured_content: None,
             })
         };
         let completed_at_ms = now_ms();
+        let structured_content = execution
+            .as_ref()
+            .ok()
+            .and_then(|result| result.structured_content.clone());
         let audit = match execution {
             Ok(result) => AiToolAuditRecord {
                 id: Uuid::new_v4().to_string(),
@@ -383,7 +422,7 @@ impl AiToolService {
         };
         insert_ai_tool_audit(store, &audit)?;
         persist_tool_message(store, &pending, &audit)?;
-        Ok(audit)
+        Ok((audit, structured_content))
     }
 
     pub fn list_pending(&self, store: &SqliteStore) -> AppResult<Vec<AiToolPendingInvocation>> {
@@ -426,17 +465,71 @@ impl AiToolService {
                     })
                     .transpose()?
                     .flatten();
-                Ok(execution_result(
+                let next_cursor = self.writer.terminal_output_cursor(&runtime_session_id)?;
+                let readable_output = terminal_output_for_response(&data, output.as_deref(), 4000);
+                Ok(structured_execution_result(
                     terminal_write_result_summary(&data, output.as_deref()),
                     ["terminal", "history"],
+                    json!({
+                        "runtime_session_id": runtime_session_id,
+                        "output": readable_output,
+                        "cursor": next_cursor
+                    }),
                 ))
             }
             "terminal.list" => {
-                let terminals = self.writer.list_terminals()?;
-                Ok(execution_result(
+                let saved_session_id = optional_string_arg(arguments, "saved_session_id");
+                let terminals = self
+                    .writer
+                    .list_terminals()?
+                    .into_iter()
+                    .filter(|terminal| {
+                        saved_session_id.as_ref().is_none_or(|saved_session_id| {
+                            terminal.saved_session_id.as_deref() == Some(saved_session_id.as_str())
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                Ok(structured_execution_result(
                     format!("终端运行态已读取：{} 个。", terminals.len()),
                     ["terminal"],
+                    json!({ "terminals": terminals }),
                 ))
+            }
+            "terminal.read" => {
+                let runtime_session_id = string_arg(arguments, "runtime_session_id")?;
+                let max_chars = optional_usize_arg(arguments, "max_chars")
+                    .unwrap_or(4000)
+                    .clamp(1, 4000);
+                let cursor = optional_usize_arg(arguments, "cursor");
+                let output = match cursor {
+                    Some(cursor) => self
+                        .writer
+                        .read_terminal_output_after(&runtime_session_id, cursor)?,
+                    None => self
+                        .writer
+                        .read_terminal_output_tail(&runtime_session_id, max_chars)?,
+                };
+                let next_cursor = self.writer.terminal_output_cursor(&runtime_session_id)?;
+                let output = output
+                    .map(|value| terminal_read_output_for_response(&value, max_chars))
+                    .unwrap_or_default();
+                let summary = if output.is_empty() {
+                    "终端输出：未读取到内容。".to_string()
+                } else {
+                    format!("终端输出：\n{output}")
+                };
+                Ok(structured_execution_result(
+                    summary,
+                    ["terminal"],
+                    json!({
+                        "runtime_session_id": runtime_session_id,
+                        "output": output,
+                        "cursor": next_cursor
+                    }),
+                ))
+            }
+            "terminal.close" => {
+                self.emit_frontend_action(tool_id, arguments, affected_domains_for_tool(tool_id))
             }
             "terminal.open" | "terminal.split" | "terminal.focus" | "workspace.open_tool" => {
                 self.emit_frontend_action(tool_id, arguments, affected_domains_for_tool(tool_id))
@@ -469,13 +562,31 @@ impl AiToolService {
             }
             "sessions.list" => {
                 let sessions = list_sessions(store)?;
-                Ok(execution_result(
+                let query =
+                    optional_string_arg(arguments, "query").map(|value| value.to_ascii_lowercase());
+                let sanitized_sessions = sessions
+                    .sessions
+                    .iter()
+                    .filter(|session| {
+                        query.as_ref().is_none_or(|query| {
+                            session.name.to_ascii_lowercase().contains(query)
+                                || session.host.to_ascii_lowercase().contains(query)
+                                || session.username.to_ascii_lowercase().contains(query)
+                        })
+                    })
+                    .map(sanitized_session_value)
+                    .collect::<Vec<_>>();
+                Ok(structured_execution_result(
                     format!(
                         "会话树已读取：{} 个分组，{} 个会话。",
                         sessions.groups.len(),
                         sessions.sessions.len()
                     ),
                     ["sessions"],
+                    json!({
+                        "groups": sessions.groups,
+                        "sessions": sanitized_sessions
+                    }),
                 ))
             }
             "session_groups.save" => {
@@ -492,11 +603,13 @@ impl AiToolService {
                 Ok(execution_result("会话分组已删除。", ["sessions"]))
             }
             "sessions.save" => {
-                let draft = object_arg::<SavedSessionDraft>(arguments, "draft")?;
+                let mut draft = object_arg::<SavedSessionDraft>(arguments, "draft")?;
+                self.apply_session_password_secret(&mut draft, secret_inputs)?;
                 let session = save_session(store, draft)?;
-                Ok(execution_result(
+                Ok(structured_execution_result(
                     format!("会话已保存：{}。", session.name),
                     ["sessions", "workspace"],
+                    json!({ "session": sanitized_session_value(&session) }),
                 ))
             }
             "sessions.delete" => {
@@ -513,10 +626,23 @@ impl AiToolService {
                 Ok(execution_result("会话配置测试通过。", ["sessions"]))
             }
             "llm_provider.list" => {
+                let query =
+                    optional_string_arg(arguments, "query").map(|value| value.to_ascii_lowercase());
                 let providers = list_ai_provider_profiles(store)?;
-                Ok(execution_result(
+                let sanitized_providers = providers
+                    .iter()
+                    .filter(|provider| {
+                        query.as_ref().is_none_or(|query| {
+                            provider.name.to_ascii_lowercase().contains(query)
+                                || provider.model.to_ascii_lowercase().contains(query)
+                        })
+                    })
+                    .map(sanitized_provider_value)
+                    .collect::<Vec<_>>();
+                Ok(structured_execution_result(
                     format!("LLM Provider 已读取：{} 个。", providers.len()),
                     ["models"],
+                    json!({ "providers": sanitized_providers }),
                 ))
             }
             "llm_provider.create" | "llm_provider.update" => {
@@ -524,9 +650,10 @@ impl AiToolService {
                 apply_ai_provider_secret_input(&mut draft, secret_inputs)?;
                 let credentials = self.credential_service()?;
                 let profile = credentials.save_ai_provider(draft)?;
-                Ok(execution_result(
+                Ok(structured_execution_result(
                     format!("LLM Provider 已保存：{}。", profile.name),
                     ["models"],
+                    json!({ "provider": sanitized_provider_value(&profile) }),
                 ))
             }
             "llm_provider.delete" => {
@@ -780,6 +907,43 @@ impl AiToolService {
                     ["terminal"],
                 ))
             }
+            "ssh.execute" => {
+                let saved_session_id = string_arg(arguments, "saved_session_id")?;
+                let script = string_arg_preserve(arguments, "script")?;
+                let session = get_session(store, &saved_session_id)?;
+                if session.session_type != SessionType::Ssh {
+                    return Err(AppError::validation("ssh.execute 只支持 SSH 连接"));
+                }
+                let all_sessions = list_sessions(store)?.sessions;
+                let output = block_on_tool(self.ssh_command_service()?.execute_reusable(
+                    "mcp",
+                    &session,
+                    &all_sessions,
+                    script,
+                    &self.credential_service()?,
+                ))?;
+                Ok(structured_execution_result(
+                    format!(
+                        "SSH 命令执行完成：exit_code={}，耗时 {} ms。",
+                        output
+                            .exit_code
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        output.duration_ms
+                    ),
+                    ["terminal", "history"],
+                    json!({
+                        "saved_session_id": saved_session_id,
+                        "stdout": redact_sensitive(&output.stdout),
+                        "stderr": redact_sensitive(&output.stderr),
+                        "exit_code": output.exit_code,
+                        "success": output.success,
+                        "stdout_truncated": output.stdout_truncated,
+                        "stderr_truncated": output.stderr_truncated,
+                        "duration_ms": output.duration_ms
+                    }),
+                ))
+            }
             "sftp.upload" | "sftp.download" | "history.record" => {
                 self.emit_frontend_action(tool_id, arguments, affected_domains_for_tool(tool_id))
             }
@@ -838,12 +1002,46 @@ impl AiToolService {
             .or_else(|| take_nonempty_string(root, "account"));
         let top_password = take_nonempty_string(root, "password");
         let top_group_name = take_nonempty_string(root, "group_name");
+        let reuse_auth_from_session_id = take_nonempty_string(root, "reuse_auth_from_session_id");
         let Some(draft_value) = root.get_mut("draft") else {
             return Ok(arguments);
         };
         let Some(draft_object) = draft_value.as_object_mut() else {
             return Ok(arguments);
         };
+
+        if let Some(source_session_id) = reuse_auth_from_session_id {
+            let source = get_session(store, &source_session_id)?;
+            draft_object.insert(
+                "auth_mode".to_string(),
+                Value::String(source.auth_mode.as_str().to_string()),
+            );
+            match source.credential_ref {
+                Some(credential_ref) => {
+                    draft_object
+                        .insert("credential_ref".to_string(), Value::String(credential_ref));
+                }
+                None => {
+                    draft_object.remove("credential_ref");
+                }
+            }
+            if source.auth_mode == AuthMode::Key && !draft_object.contains_key("ssh_options") {
+                if let Some(options) = source.ssh_options {
+                    draft_object.insert(
+                        "ssh_options".to_string(),
+                        json!({
+                            "connect_timeout_ms": options.connect_timeout_ms,
+                            "keepalive_interval_ms": options.keepalive_interval_ms,
+                            "proxy_command": null,
+                            "identity_file": options.identity_file,
+                            "jump_hosts": [],
+                            "tunnels": [],
+                            "container": null
+                        }),
+                    );
+                }
+            }
+        }
 
         let draft_url = take_nonempty_string(draft_object, "url").or(top_url);
         let explicit_password = take_nonempty_string(draft_object, "password").or(top_password);
@@ -1043,6 +1241,20 @@ impl AiToolService {
         Ok(record.credential_ref)
     }
 
+    fn apply_session_password_secret(
+        &self,
+        draft: &mut SavedSessionDraft,
+        secret_inputs: Option<&AiToolSecretInputs>,
+    ) -> AppResult<()> {
+        if draft.auth_mode != AuthMode::Password || draft.credential_ref.is_some() {
+            return Ok(());
+        }
+        let password = secret_inputs_password(secret_inputs)
+            .ok_or_else(|| AppError::validation("保存密码连接需要在 zTerm 本地输入密码"))?;
+        draft.credential_ref = Some(self.save_session_password_credential(draft, password)?);
+        Ok(())
+    }
+
     fn emit_frontend_action(
         &self,
         action: &str,
@@ -1057,6 +1269,7 @@ impl AiToolService {
         Ok(AiToolExecutionResult {
             summary: format!("已分发前端动作：{action}。"),
             affected_domains,
+            structured_content: None,
         })
     }
 
@@ -1171,6 +1384,20 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
             "terminal.open",
             "打开终端",
             "打开保存的会话或本地终端",
+            RiskLevel::Medium,
+            true,
+        ),
+        (
+            "terminal.read",
+            "读取终端",
+            "读取运行终端的最近或增量输出",
+            RiskLevel::Low,
+            false,
+        ),
+        (
+            "terminal.close",
+            "关闭终端",
+            "关闭指定运行终端",
             RiskLevel::Medium,
             true,
         ),
@@ -1462,6 +1689,13 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
             false,
         ),
         (
+            "ssh.execute",
+            "执行 SSH 命令",
+            "通过保存连接复用 zTerm 认证执行非交互脚本",
+            RiskLevel::High,
+            true,
+        ),
+        (
             "zterm.context",
             "读取 zTerm 上下文",
             "读取当前资源数量和工作台上下文",
@@ -1503,11 +1737,30 @@ fn validate_arguments(tool_id: &str, arguments: &Value) -> AppResult<()> {
             let _ = string_arg(arguments, "runtime_session_id")?;
             let _ = string_arg_preserve(arguments, "data")?;
         }
+        "terminal.read" => {
+            let _ = string_arg(arguments, "runtime_session_id")?;
+            if optional_usize_arg(arguments, "max_chars").is_some_and(|value| value > 4000) {
+                return Err(AppError::validation("max_chars 不能超过 4000"));
+            }
+        }
+        "terminal.open" => {
+            let _ = string_arg(arguments, "saved_session_id")?;
+        }
+        "terminal.close" => {
+            let _ = string_arg(arguments, "runtime_session_id")?;
+        }
+        "ssh.execute" => {
+            let _ = string_arg(arguments, "saved_session_id")?;
+            let script = string_arg_preserve(arguments, "script")?;
+            if script.chars().count() > 16_384 {
+                return Err(AppError::validation("SSH script 不能超过 16384 个字符"));
+            }
+        }
         "history.search" | "history.clear" => {
             let _ = history_scope_kind_arg(arguments)?;
             let _ = string_arg(arguments, "scope_id")?;
         }
-        "settings.get" | "llm_provider.list" | "sessions.list" => {}
+        "settings.get" | "llm_provider.list" | "sessions.list" | "terminal.list" => {}
         "session_groups.save" => {
             let _ = object_arg::<SessionGroupDraft>(arguments, "draft")?;
         }
@@ -1581,6 +1834,16 @@ fn secret_input_requirement(
     tool_id: &str,
     arguments: &Value,
 ) -> AppResult<SecretInputRequirement> {
+    if tool_id == "sessions.save" {
+        let draft = object_arg::<SavedSessionDraft>(arguments, "draft")?;
+        if draft.auth_mode == AuthMode::Password && draft.credential_ref.is_none() {
+            return Ok(SecretInputRequirement {
+                required: true,
+                label: Some("SSH/RDP 密码".to_string()),
+            });
+        }
+        return Ok(SecretInputRequirement::default());
+    }
     if !matches!(tool_id, "llm_provider.create" | "llm_provider.update") {
         return Ok(SecretInputRequirement::default());
     }
@@ -1646,10 +1909,34 @@ fn secret_inputs_api_key(secret_inputs: Option<&AiToolSecretInputs>) -> Option<S
         .map(ToOwned::to_owned)
 }
 
+fn secret_inputs_password(secret_inputs: Option<&AiToolSecretInputs>) -> Option<String> {
+    secret_inputs?
+        .password
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn secret_inputs_present_for_tool(
+    tool_id: &str,
+    secret_inputs: Option<&AiToolSecretInputs>,
+) -> bool {
+    if tool_id == "sessions.save" {
+        secret_inputs_password(secret_inputs).is_some()
+    } else {
+        secret_inputs_api_key(secret_inputs).is_some()
+    }
+}
+
 fn assess_risk(tool: &AiToolDefinition, arguments: &Value) -> AssessedRisk {
-    if tool.id == "terminal.write" {
+    if tool.id == "terminal.write" || tool.id == "ssh.execute" {
         let command = arguments
-            .get("data")
+            .get(if tool.id == "ssh.execute" {
+                "script"
+            } else {
+                "data"
+            })
             .and_then(Value::as_str)
             .unwrap_or_default()
             .trim_matches(['\r', '\n']);
@@ -1671,7 +1958,7 @@ fn requires_confirmation(
     risk_level: RiskLevel,
 ) -> bool {
     if force_confirmation_tool(tool_id)
-        || (tool_id == "terminal.write"
+        || (matches!(tool_id, "terminal.write" | "ssh.execute")
             && matches!(risk_level, RiskLevel::High | RiskLevel::Critical))
     {
         return true;
@@ -2186,7 +2473,18 @@ fn execution_result(
             .into_iter()
             .map(|value| value.as_ref().to_string())
             .collect(),
+        structured_content: None,
     }
+}
+
+fn structured_execution_result(
+    summary: impl Into<String>,
+    affected_domains: impl IntoIterator<Item = impl AsRef<str>>,
+    structured_content: Value,
+) -> AiToolExecutionResult {
+    let mut result = execution_result(summary, affected_domains);
+    result.structured_content = Some(structured_content);
+    result
 }
 
 fn server_info_snapshot_summary(snapshot: &ServerInfoSnapshot) -> String {
@@ -2210,8 +2508,8 @@ fn server_info_snapshot_summary(snapshot: &ServerInfoSnapshot) -> String {
 
 fn affected_domains_for_tool(tool_id: &str) -> Vec<String> {
     let domains: &[&str] = match tool_id {
-        "terminal.list" | "terminal.write" | "terminal.open" | "terminal.split"
-        | "terminal.focus" => &["terminal"],
+        "terminal.list" | "terminal.read" | "terminal.write" | "terminal.open"
+        | "terminal.close" | "terminal.split" | "terminal.focus" | "ssh.execute" => &["terminal"],
         "workspace.open_tool" => &["workspace"],
         "settings.get" => &["settings"],
         "settings.update_ai_security" => &["ai"],
@@ -2514,6 +2812,55 @@ fn terminal_write_result_summary(command: &str, output: Option<&str>) -> String 
         Some(output) => format!("命令已写入活动终端。\n命令：{command}\n终端输出：\n{output}"),
         None => format!("命令已写入活动终端。\n命令：{command}\n终端输出：未读取到额外输出。"),
     }
+}
+
+fn terminal_output_for_response(command: &str, output: Option<&str>, max_chars: usize) -> String {
+    output
+        .and_then(|value| readable_terminal_output(value, &readable_terminal_command(command)))
+        .map(|value| redact_sensitive(&truncate(&value, max_chars)))
+        .unwrap_or_default()
+}
+
+fn terminal_read_output_for_response(output: &str, max_chars: usize) -> String {
+    redact_sensitive(&truncate(
+        &strip_terminal_controls(output)
+            .replace("\r\n", "\n")
+            .replace('\r', "\n"),
+        max_chars,
+    ))
+}
+
+fn sanitized_session_value(session: &SavedSession) -> Value {
+    json!({
+        "id": session.id,
+        "name": session.name,
+        "type": session.session_type.as_str(),
+        "group_id": session.group_id,
+        "host": session.host,
+        "port": session.port,
+        "username": session.username,
+        "auth_mode": session.auth_mode.as_str(),
+        "has_saved_auth": session.credential_ref.is_some(),
+        "description": session.description,
+        "tags": session.tags,
+        "sort_order": session.sort_order,
+        "last_used_at_ms": session.last_used_at_ms
+    })
+}
+
+fn sanitized_provider_value(provider: &AiProviderProfile) -> Value {
+    json!({
+        "id": provider.id,
+        "name": provider.name,
+        "kind": provider.kind.as_str(),
+        "base_url": provider.base_url,
+        "model": provider.model,
+        "has_api_key": !provider.api_key_ref.trim().is_empty(),
+        "enabled": provider.enabled,
+        "is_default": provider.is_default,
+        "created_at_ms": provider.created_at_ms,
+        "updated_at_ms": provider.updated_at_ms
+    })
 }
 
 fn readable_terminal_command(command: &str) -> String {

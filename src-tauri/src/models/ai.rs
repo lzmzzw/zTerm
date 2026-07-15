@@ -330,6 +330,7 @@ pub struct AiToolPrepareRequest {
 #[serde(rename_all = "snake_case")]
 pub struct AiToolSecretInputs {
     pub api_key: Option<String>,
+    pub password: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

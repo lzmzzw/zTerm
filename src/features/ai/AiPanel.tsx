@@ -144,8 +144,12 @@ export function AiPanel({
   }
 
   function confirmToolInvocation(invocation: AiToolPendingInvocation, approved: boolean) {
-    const apiKey = toolSecretInputs[invocation.id]?.trim() ?? "";
-    const secretInputs = invocation.requires_secret_input && approved ? { api_key: apiKey } : undefined;
+    const secret = toolSecretInputs[invocation.id]?.trim() ?? "";
+    const secretInputs = invocation.requires_secret_input && approved
+      ? invocation.tool_id === "sessions.save"
+        ? { password: secret }
+        : { api_key: secret }
+      : undefined;
     if (secretInputs) {
       void onConfirmTool?.(invocation.id, approved, secretInputs);
     } else {

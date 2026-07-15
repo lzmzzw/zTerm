@@ -1094,6 +1094,7 @@ fn tool_service_provider_secret_is_collected_only_during_confirm() {
                 audit_context_json: None,
                 secret_inputs: Some(AiToolSecretInputs {
                     api_key: Some("sk-local-only".to_string()),
+                    password: None,
                 }),
             },
         )

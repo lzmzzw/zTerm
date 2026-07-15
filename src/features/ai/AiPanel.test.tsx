@@ -478,6 +478,40 @@ describe("AiPanel", () => {
     view.unmount();
   });
 
+  it("sends connection passwords through the dedicated local secret field", async () => {
+    const onConfirmTool = vi.fn();
+    const view = render(
+      <AiPanel
+        activeRuntimeSessionId="runtime-1"
+        providersAvailable
+        recentOutput=""
+        loading={false}
+        error={null}
+        messages={[]}
+        pendingInvocations={[
+          {
+            id: "tool-call-password",
+            tool_id: "sessions.save",
+            tool_title: "保存连接",
+            risk_level: "medium",
+            arguments_summary: "draft={8 项}",
+            requires_confirmation: true,
+            requires_secret_input: true,
+            secret_input_label: "SSH/RDP 密码",
+            status: "pending",
+          },
+        ]}
+        onConfirmTool={onConfirmTool}
+      />,
+    );
+
+    changeTextInput(input(view.container, "SSH/RDP 密码") as unknown as HTMLInputElement, "local-password");
+    await click(button(view.container, "批准"));
+
+    expect(onConfirmTool).toHaveBeenCalledWith("tool-call-password", true, { password: "local-password" });
+    view.unmount();
+  });
+
   it("changes approval mode per conversation", async () => {
     const onApprovalModeChange = vi.fn();
     const view = render(
