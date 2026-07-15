@@ -87,7 +87,7 @@ function button(container: HTMLElement, label: string) {
   return match as HTMLButtonElement;
 }
 
-function fileEntry(path: string): FileEntry {
+function fileEntry(path: string, overrides: Partial<FileEntry> = {}): FileEntry {
   return {
     name: path.split(/[\\/]/).pop() ?? path,
     path,
@@ -95,6 +95,7 @@ function fileEntry(path: string): FileEntry {
     size: 10,
     modified_at_ms: null,
     permissions: null,
+    ...overrides,
   };
 }
 
@@ -584,6 +585,86 @@ describe("FileTransferPanel", () => {
     expect((headers[1].firstElementChild as HTMLElement).getAttribute("aria-label")).toBe("右侧端点");
 
     view.unmount();
+  });
+
+  it("shows sortable file columns and toggles each column between ascending and descending", async () => {
+    const entries = [
+      fileEntry("C:/Users/Ops/zeta.zip", { size: 20, modified_at_ms: 200 }),
+      fileEntry("C:/Users/Ops/alpha.zip", { size: 30, modified_at_ms: 100 }),
+      fileEntry("C:/Users/Ops/middle.zip", { size: 10, modified_at_ms: 300 }),
+    ];
+    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list") return Promise.resolve([]);
+      if (command === "file_transfer_list_endpoint") {
+        return Promise.resolve((args?.endpoint as { kind: string }).kind === "local" ? entries : []);
+      }
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+    const leftPane = view.container.querySelector('[aria-label="左侧文件端点"]') as HTMLElement;
+    const rowNames = () => Array.from(leftPane.querySelectorAll('button[role="listitem"] strong')).map((item) => item.textContent);
+
+    expect(leftPane.querySelector(".zt-file-transfer-list-header")?.textContent).toContain("文件名文件大小最近修改");
+    await click(button(leftPane, "按文件名升序排列"));
+    expect(rowNames()).toEqual(["alpha.zip", "middle.zip", "zeta.zip"]);
+    await click(button(leftPane, "按文件名降序排列"));
+    expect(rowNames()).toEqual(["zeta.zip", "middle.zip", "alpha.zip"]);
+    await click(button(leftPane, "按文件大小升序排列"));
+    expect(rowNames()).toEqual(["middle.zip", "zeta.zip", "alpha.zip"]);
+    await click(button(leftPane, "按文件大小降序排列"));
+    expect(rowNames()).toEqual(["alpha.zip", "zeta.zip", "middle.zip"]);
+    await click(button(leftPane, "按最近修改升序排列"));
+    expect(rowNames()).toEqual(["alpha.zip", "zeta.zip", "middle.zip"]);
+    await click(button(leftPane, "按最近修改降序排列"));
+    expect(rowNames()).toEqual(["middle.zip", "zeta.zip", "alpha.zip"]);
+
+    view.unmount();
+  });
+
+  it("resizes file columns for only the current endpoint without persisting the ratio", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list" || command === "file_transfer_list_endpoint") return Promise.resolve([]);
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+    const leftPane = view.container.querySelector('[aria-label="左侧文件端点"]') as HTMLElement;
+    const rightPane = view.container.querySelector('[aria-label="右侧文件端点"]') as HTMLElement;
+    const leftHeader = leftPane.querySelector(".zt-file-transfer-list-header") as HTMLElement;
+    const resizeHandle = button(leftPane, "调整文件名和文件大小列宽");
+    Object.defineProperty(leftHeader, "clientWidth", { configurable: true, value: 400 });
+
+    await act(async () => {
+      resizeHandle.dispatchEvent(Object.assign(new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 100 }), { pointerId: 2 }));
+      resizeHandle.dispatchEvent(Object.assign(new MouseEvent("pointermove", { bubbles: true, buttons: 1, clientX: 108 }), { pointerId: 2 }));
+      resizeHandle.dispatchEvent(Object.assign(new MouseEvent("pointerup", { bubbles: true, button: 0, clientX: 108 }), { pointerId: 2 }));
+    });
+
+    expect(leftPane.style.getPropertyValue("--zt-file-name-fr")).toBe("57fr");
+    expect(leftPane.style.getPropertyValue("--zt-file-size-fr")).toBe("13fr");
+    expect(rightPane.style.getPropertyValue("--zt-file-name-fr")).toBe("55fr");
+    expect(rightPane.style.getPropertyValue("--zt-file-size-fr")).toBe("15fr");
+
+    view.unmount();
+
+    const reopenedView = render(<FileTransferPanel />);
+    await flushEffects();
+    const reopenedLeftPane = reopenedView.container.querySelector('[aria-label="左侧文件端点"]') as HTMLElement;
+    expect(reopenedLeftPane.style.getPropertyValue("--zt-file-name-fr")).toBe("55fr");
+    expect(reopenedLeftPane.style.getPropertyValue("--zt-file-size-fr")).toBe("15fr");
+    expect(reopenedLeftPane.style.getPropertyValue("--zt-file-modified-fr")).toBe("30fr");
+    reopenedView.unmount();
   });
 
   it("starts with the transfer task dock collapsed", async () => {

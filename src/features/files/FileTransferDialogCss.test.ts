@@ -50,7 +50,22 @@ describe("file transfer dialog styles", () => {
   it("keeps file lists and the transfer dock in their flexible grid rows when status messages are absent", () => {
     expect(css).toContain(".zt-file-transfer-operation-status");
     expect(css).toContain(".zt-file-transfer-pane-status");
-    expect(ruleBody(".zt-file-transfer-pane")).toContain("grid-template-rows: 36px 34px auto minmax(0, 1fr)");
+    expect(ruleBody(".zt-file-transfer-pane")).toContain("grid-template-rows: 36px 34px auto 30px minmax(0, 1fr)");
+  });
+
+  it("aligns resizable file headers and rows with shared column proportions", () => {
+    const pane = ruleBody(".zt-file-transfer-pane");
+    const header = ruleBody(".zt-file-transfer-list-header");
+    const row = ruleBody(".zt-file-transfer-dialog .zt-file-transfer-list button");
+    const resizer = ruleBody(".zt-file-transfer-column-resizer");
+
+    expect(pane).toContain("--zt-file-name-fr: 55");
+    expect(pane).toContain("--zt-file-size-fr: 15");
+    expect(pane).toContain("--zt-file-modified-fr: 30");
+    expect(header).toContain("grid-template-columns: var(--zt-file-transfer-columns)");
+    expect(row).toContain("grid-template-columns: var(--zt-file-transfer-columns)");
+    expect(resizer).toContain("cursor: col-resize");
+    expect(resizer).toContain("touch-action: none");
   });
 
   it("keeps transfer errors in the dialog flow instead of overlaying adjacent content", () => {

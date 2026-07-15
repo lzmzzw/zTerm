@@ -4,6 +4,7 @@ import {
   ArrowRight,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Eye,
   EyeOff,
   Folder,
@@ -75,6 +76,14 @@ type FileContextMenuState = {
   x: number;
   y: number;
 };
+
+type FileSortKey = "name" | "size" | "modified";
+type FileSortState = { key: FileSortKey; direction: "ascending" | "descending" } | null;
+type FileColumnRatios = { name: number; size: number; modified: number };
+type FileColumnBoundary = "name-size" | "size-modified";
+
+const DEFAULT_FILE_COLUMN_RATIOS: FileColumnRatios = { name: 55, size: 15, modified: 30 };
+const MIN_FILE_COLUMN_RATIOS: FileColumnRatios = { name: 25, size: 12, modified: 20 };
 
 const MIN_FILE_TRANSFER_PANES_HEIGHT = 200;
 const MIN_TRANSFER_DOCK_HEIGHT = 120;
@@ -615,6 +624,15 @@ function EndpointPane({
   onContextMenu: (side: FileTransferSide, entry: FileEntry, event: MouseEvent<HTMLButtonElement>) => void;
   dropActive: boolean;
 }) {
+  const [sort, setSort] = useState<FileSortState>(null);
+  const [columnRatios, setColumnRatios] = useState<FileColumnRatios>(DEFAULT_FILE_COLUMN_RATIOS);
+  const listHeaderRef = useRef<HTMLDivElement>(null);
+  const columnResizeRef = useRef<{
+    boundary: FileColumnBoundary;
+    startX: number;
+    width: number;
+    ratios: FileColumnRatios;
+  } | null>(null);
   const endpointValue = pane.endpoint.kind === "local" ? "local" : `session:${pane.endpoint.saved_session_id ?? ""}`;
   const selectedSessionItem = sessionTreeItems.find(
     (item) => item.kind === "session" && item.session.id === pane.endpoint.saved_session_id,
@@ -660,12 +678,42 @@ function EndpointPane({
     ),
   ];
   const visibleEntries = showHidden ? pane.entries : pane.entries.filter((entry) => !entry.name.startsWith("."));
+  const sortedEntries = useMemo(() => sortFileEntries(visibleEntries, sort), [sort, visibleEntries]);
   const endpointReady = pane.endpoint.kind === "local" || Boolean(pane.endpoint.saved_session_id);
   const localRoot = rootPathFor(pane.endpoint.path);
   const rootOptions = Array.from(new Set([...localRoots, ...(localRoot ? [localRoot] : [])])).map((root) => ({
     value: root,
     label: root,
   }));
+
+  function toggleSort(key: FileSortKey) {
+    setSort((current) => ({
+      key,
+      direction: current?.key === key && current.direction === "ascending" ? "descending" : "ascending",
+    }));
+  }
+
+  function beginColumnResize(boundary: FileColumnBoundary, clientX: number) {
+    columnResizeRef.current = {
+      boundary,
+      startX: clientX,
+      width: Math.max(1, listHeaderRef.current?.clientWidth ?? 1),
+      ratios: columnRatios,
+    };
+  }
+
+  function resizeColumns(clientX: number) {
+    const resize = columnResizeRef.current;
+    if (!resize) return;
+    const delta = ((clientX - resize.startX) / resize.width) * 100;
+    setColumnRatios(resizeFileColumnRatios(resize.ratios, resize.boundary, delta));
+  }
+
+  const columnStyle = {
+    "--zt-file-name-fr": `${columnRatios.name}fr`,
+    "--zt-file-size-fr": `${columnRatios.size}fr`,
+    "--zt-file-modified-fr": `${columnRatios.modified}fr`,
+  } as CSSProperties;
   return (
     <section
       className={dropActive ? "zt-file-transfer-pane zt-file-transfer-pane-drop" : "zt-file-transfer-pane"}
@@ -673,6 +721,7 @@ function EndpointPane({
       data-side={side}
       data-file-transfer-side={side}
       data-local={pane.endpoint.kind === "local" ? "true" : "false"}
+      style={columnStyle}
     >
       <div className="zt-file-transfer-pane-header">
         <ZtSelect
@@ -734,8 +783,33 @@ function EndpointPane({
         {pane.loading ? <div className="zt-empty-line">加载中</div> : null}
         {endpointReady && !pane.loading && visibleEntries.length === 0 ? <div className="zt-empty-line">暂无文件</div> : null}
       </div>
+      <div ref={listHeaderRef} className="zt-file-transfer-list-header" role="row" aria-label={`${title}文件列表表头`}>
+        <span aria-hidden="true" />
+        <FileColumnHeader
+          label="文件名"
+          sortKey="name"
+          sort={sort}
+          onSort={toggleSort}
+          resizeLabel="调整文件名和文件大小列宽"
+          onResizeStart={(clientX) => beginColumnResize("name-size", clientX)}
+          onResize={resizeColumns}
+          onResizeEnd={() => { columnResizeRef.current = null; }}
+        />
+        <FileColumnHeader
+          label="文件大小"
+          sortKey="size"
+          sort={sort}
+          numeric
+          onSort={toggleSort}
+          resizeLabel="调整文件大小和最近修改列宽"
+          onResizeStart={(clientX) => beginColumnResize("size-modified", clientX)}
+          onResize={resizeColumns}
+          onResizeEnd={() => { columnResizeRef.current = null; }}
+        />
+        <FileColumnHeader label="最近修改" sortKey="modified" sort={sort} numeric onSort={toggleSort} />
+      </div>
       <div className="zt-file-transfer-list" role="list" aria-label={`${title}文件列表`}>
-        {visibleEntries.map((entry) => (
+        {sortedEntries.map((entry) => (
           <button
             key={entry.path}
             type="button"
@@ -778,6 +852,121 @@ function EndpointPane({
       </div>
     </section>
   );
+}
+
+function FileColumnHeader({
+  label,
+  sortKey,
+  sort,
+  numeric = false,
+  onSort,
+  resizeLabel,
+  onResizeStart,
+  onResize,
+  onResizeEnd,
+}: {
+  label: string;
+  sortKey: FileSortKey;
+  sort: FileSortState;
+  numeric?: boolean;
+  onSort: (key: FileSortKey) => void;
+  resizeLabel?: string;
+  onResizeStart?: (clientX: number) => void;
+  onResize?: (clientX: number) => void;
+  onResizeEnd?: () => void;
+}) {
+  const activeDirection = sort?.key === sortKey ? sort.direction : null;
+  const nextDirection = activeDirection === "ascending" ? "降序" : "升序";
+  return (
+    <div
+      className={numeric ? "zt-file-transfer-column-header is-numeric" : "zt-file-transfer-column-header"}
+      role="columnheader"
+      aria-sort={activeDirection ?? "none"}
+    >
+      <button
+        type="button"
+        className="zt-file-transfer-sort-button"
+        aria-label={`按${label}${nextDirection}排列`}
+        title={`按${label}${nextDirection}排列`}
+        onClick={() => onSort(sortKey)}
+      >
+        <span>{label}</span>
+        {activeDirection === "ascending" ? <ChevronUp size={12} aria-hidden="true" /> : null}
+        {activeDirection === "descending" ? <ChevronDown size={12} aria-hidden="true" /> : null}
+      </button>
+      {resizeLabel ? (
+        <button
+          type="button"
+          className="zt-file-transfer-column-resizer"
+          aria-label={resizeLabel}
+          title={resizeLabel}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+            onResizeStart?.(event.clientX);
+          }}
+          onPointerMove={(event) => {
+            if (event.buttons !== 1) return;
+            onResize?.(event.clientX);
+          }}
+          onPointerUp={(event) => {
+            if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }
+            onResizeEnd?.();
+          }}
+          onPointerCancel={onResizeEnd}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function sortFileEntries(entries: FileEntry[], sort: FileSortState) {
+  if (!sort) return entries;
+  const direction = sort.direction === "ascending" ? 1 : -1;
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => {
+      const comparison = compareFileEntries(left.entry, right.entry, sort.key);
+      return comparison === 0 ? left.index - right.index : comparison * direction;
+    })
+    .map(({ entry }) => entry);
+}
+
+function compareFileEntries(left: FileEntry, right: FileEntry, key: FileSortKey) {
+  if (key === "name") {
+    return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" });
+  }
+  if (key === "size") return left.size - right.size;
+  if (left.modified_at_ms === null && right.modified_at_ms === null) return 0;
+  if (left.modified_at_ms === null) return 1;
+  if (right.modified_at_ms === null) return -1;
+  return left.modified_at_ms - right.modified_at_ms;
+}
+
+function resizeFileColumnRatios(
+  ratios: FileColumnRatios,
+  boundary: FileColumnBoundary,
+  delta: number,
+): FileColumnRatios {
+  if (boundary === "name-size") {
+    const total = ratios.name + ratios.size;
+    const name = clamp(ratios.name + delta, MIN_FILE_COLUMN_RATIOS.name, total - MIN_FILE_COLUMN_RATIOS.size);
+    return { ...ratios, name: roundColumnRatio(name), size: roundColumnRatio(total - name) };
+  }
+  const total = ratios.size + ratios.modified;
+  const size = clamp(ratios.size + delta, MIN_FILE_COLUMN_RATIOS.size, total - MIN_FILE_COLUMN_RATIOS.modified);
+  return { ...ratios, size: roundColumnRatio(size), modified: roundColumnRatio(total - size) };
+}
+
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function roundColumnRatio(value: number) {
+  return Math.round(value * 10) / 10;
 }
 
 function renamedSiblingPath(path: string, name: string) {
