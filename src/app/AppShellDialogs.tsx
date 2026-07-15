@@ -1,16 +1,14 @@
 // Author: Liz
 
-import { ChevronDown, Folder, Monitor, Server, Terminal } from "lucide-react";
-import type { CSSProperties } from "react";
+import { ChevronDown, ChevronRight, Folder, Monitor, Server, Terminal } from "lucide-react";
+import { type CSSProperties, useState } from "react";
 
 import { ZtButton, ZtDialog, ZtPromptDialog } from "../components/ZtUi";
 import type { TransferConflict, TransferConflictPolicy } from "../features/files/fileStore";
-import { buildSessionTreeListItems } from "../features/sessions/sessionTreeModel";
+import { buildSessionTreeListItems, visibleSessionTreeListItems } from "../features/sessions/sessionTreeModel";
 import type { SavedSession, SessionGroup } from "../features/sessions/types";
 
-export type ConnectionChoice =
-  | { kind: "default_local" }
-  | { kind: "saved_session"; session: SavedSession };
+export type ConnectionChoice = { kind: "saved_session"; session: SavedSession };
 
 export function AppTextInputDialog({
   title,
@@ -58,6 +56,17 @@ export function ConnectionPickerDialog({
   onSelect: (choice: ConnectionChoice) => void;
 }) {
   const treeItems = buildSessionTreeListItems({ groups, sessions });
+  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(() => new Set());
+  const visibleTreeItems = visibleSessionTreeListItems(treeItems, collapsedGroupKeys);
+
+  function toggleGroup(key: string) {
+    setCollapsedGroupKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   return (
     <ZtDialog
@@ -75,39 +84,32 @@ export function ConnectionPickerDialog({
       }
     >
       <div className="zt-session-picker-tree" role="tree" aria-label="可用连接">
-        <button
-          type="button"
-          role="treeitem"
-          className="zt-session-picker-row zt-session-picker-option"
-          disabled={opening}
-          aria-label="选择默认本地终端"
-          aria-level={1}
-          data-session-tree-depth="0"
-          style={{ "--zt-session-tree-depth": 0 } as CSSProperties}
-          onClick={() => onSelect({ kind: "default_local" })}
-        >
-          <Terminal size={14} aria-hidden="true" />
-          <span>默认本地终端</span>
-        </button>
-        {treeItems.map((item) => {
+        {visibleTreeItems.map((item) => {
           const depthStyle = { "--zt-session-tree-depth": item.depth } as CSSProperties;
           if (item.kind === "group") {
+            const collapsed = collapsedGroupKeys.has(item.key);
             return (
-              <div
+              <button
+                type="button"
                 key={item.key}
                 role="treeitem"
-                aria-expanded="true"
+                aria-expanded={!collapsed}
+                aria-label={`${collapsed ? "展开" : "折叠"}分组 ${item.name}`}
                 aria-level={item.depth + 1}
+                disabled={opening}
                 className="zt-session-picker-row zt-session-picker-group"
                 data-session-tree-depth={item.depth}
                 style={depthStyle}
+                onClick={() => toggleGroup(item.key)}
               >
                 <Folder size={14} aria-hidden="true" />
                 <span>{item.name}</span>
-                {item.groupId ? (
+                {collapsed ? (
+                  <ChevronRight className="zt-session-picker-indicator" size={14} aria-hidden="true" />
+                ) : (
                   <ChevronDown className="zt-session-picker-indicator" size={14} aria-hidden="true" />
-                ) : null}
-              </div>
+                )}
+              </button>
             );
           }
           const Icon = item.session.type === "rdp" ? Monitor : item.session.type === "local" ? Terminal : Server;

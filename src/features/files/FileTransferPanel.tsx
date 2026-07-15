@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ArrowRight,
   ChevronDown,
+  ChevronRight,
   Eye,
   EyeOff,
   Folder,
@@ -20,7 +21,11 @@ import { ZtConfirmDialog, ZtContextMenu, ZtPromptDialog } from "../../components
 import { formatBytes } from "../../lib/byteFormatters";
 import type { AppLanguage } from "../settings/settingsStore";
 import { useSessionStore } from "../sessions/sessionStore";
-import { buildSessionTreeListItems, type SessionTreeListItem } from "../sessions/sessionTreeModel";
+import {
+  buildSessionTreeListItems,
+  type SessionTreeListItem,
+  visibleSessionTreeListItems,
+} from "../sessions/sessionTreeModel";
 import { TransferPanel } from "./TransferPanel";
 import type { FileEntry, TransferEndpoint, TransferKind } from "./fileStore";
 import {
@@ -164,6 +169,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   const [deleteEntries, setDeleteEntries] = useState<{ side: FileTransferSide; entries: FileEntry[] } | null>(null);
   const [transferDockCollapsed, setTransferDockCollapsed] = useState(false);
   const [transferDockHeight, setTransferDockHeight] = useState<number | null>(null);
+  const [collapsedEndpointGroupKeys, setCollapsedEndpointGroupKeys] = useState<Set<string>>(() => new Set());
   const dragStateRef = useRef<DragState | null>(null);
   const pointerDragRef = useRef<PointerDragState | null>(null);
 
@@ -338,6 +344,15 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     setTransferDockHeight(Math.min(maxHeight, Math.max(MIN_TRANSFER_DOCK_HEIGHT, Math.round(requestedHeight))));
   }
 
+  function toggleEndpointGroup(key: string) {
+    setCollapsedEndpointGroupKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   const panelClassName = transferDockCollapsed
     ? "zt-file-transfer-panel zt-file-transfer-panel-transfer-collapsed"
     : "zt-file-transfer-panel";
@@ -353,6 +368,8 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           title="左侧"
           pane={left}
           sessionTreeItems={sshSessionTreeItems}
+          collapsedGroupKeys={collapsedEndpointGroupKeys}
+          onToggleGroup={toggleEndpointGroup}
           defaultLocalPath={defaultLocalPath}
           localRoots={localRoots}
           showHidden={showHidden.left}
@@ -404,6 +421,8 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           title="右侧"
           pane={right}
           sessionTreeItems={sshSessionTreeItems}
+          collapsedGroupKeys={collapsedEndpointGroupKeys}
+          onToggleGroup={toggleEndpointGroup}
           defaultLocalPath={defaultLocalPath}
           localRoots={localRoots}
           showHidden={showHidden.right}
@@ -544,6 +563,8 @@ function EndpointPane({
   title,
   pane,
   sessionTreeItems,
+  collapsedGroupKeys,
+  onToggleGroup,
   defaultLocalPath,
   localRoots,
   showHidden,
@@ -571,6 +592,8 @@ function EndpointPane({
     error: string | null;
   };
   sessionTreeItems: SessionTreeListItem[];
+  collapsedGroupKeys: ReadonlySet<string>;
+  onToggleGroup: (key: string) => void;
   defaultLocalPath: string;
   localRoots: string[];
   showHidden: boolean;
@@ -589,19 +612,37 @@ function EndpointPane({
   dropActive: boolean;
 }) {
   const endpointValue = pane.endpoint.kind === "local" ? "local" : `ssh:${pane.endpoint.saved_session_id ?? ""}`;
+  const selectedSessionItem = sessionTreeItems.find(
+    (item) => item.kind === "session" && item.session.id === pane.endpoint.saved_session_id,
+  );
+  const endpointSelectedLabel =
+    pane.endpoint.kind === "local"
+      ? "本机"
+      : selectedSessionItem?.kind === "session"
+        ? selectedSessionItem.session.name
+        : undefined;
+  const visibleTreeItems = visibleSessionTreeListItems(sessionTreeItems, collapsedGroupKeys);
   const endpointOptions = [
     { value: "local", label: "本机", depth: 0, icon: <HardDrive size={14} aria-hidden="true" /> },
-    ...sessionTreeItems.map((item) =>
+    ...visibleTreeItems.map((item) =>
       item.kind === "group"
-        ? {
-            value: item.key,
-            label: item.name,
-            kind: "group" as const,
-            disabled: true,
-            depth: item.depth,
-            icon: <Folder size={14} aria-hidden="true" />,
-            trailing: item.groupId ? <ChevronDown size={14} aria-hidden="true" /> : undefined,
-          }
+        ? (() => {
+            const collapsed = collapsedGroupKeys.has(item.key);
+            return {
+              value: item.key,
+              label: item.name,
+              kind: "group" as const,
+              collapsed,
+              depth: item.depth,
+              icon: <Folder size={14} aria-hidden="true" />,
+              trailing: collapsed ? (
+                <ChevronRight size={14} aria-hidden="true" />
+              ) : (
+                <ChevronDown size={14} aria-hidden="true" />
+              ),
+              onToggle: () => onToggleGroup(item.key),
+            };
+          })()
         : {
             value: `ssh:${item.session.id}`,
             label: item.session.name,
@@ -631,6 +672,7 @@ function EndpointPane({
           value={endpointValue}
           options={endpointOptions}
           tree
+          selectedLabel={endpointSelectedLabel}
           onChange={(value) => {
             if (value === "local") {
               onEndpointChange({ kind: "local", saved_session_id: null, path: defaultLocalPath });

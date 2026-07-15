@@ -128,11 +128,16 @@ describe("sessionTreeModel", () => {
 
     const items = buildSessionTreeListItems({ groups, sessions: sshSessions, hideEmptyGroups: true });
 
-    expect(items.map((item) => `${item.kind}:${item.kind === "group" ? item.groupId : item.session.id}:${item.depth}`)).toEqual([
-      "group:group-10:0",
-      "group:group-child:1",
-      "session:ssh-20:2",
-      "session:ssh-198:2",
+    expect(
+      items.map(
+        (item) =>
+          `${item.kind}:${item.kind === "group" ? item.groupId : item.session.id}:${item.depth}:${item.ancestorGroupKeys.join(",")}`,
+      ),
+    ).toEqual([
+      "group:group-10:0:",
+      "group:group-child:1:group:group-10",
+      "session:ssh-20:2:group:group-10,group:group-child",
+      "session:ssh-198:2:group:group-10,group:group-child",
     ]);
   });
 

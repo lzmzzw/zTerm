@@ -921,9 +921,22 @@ button {
   grid-template-columns: 16px minmax(0, 1fr) 26px;
   align-items: center;
   gap: 6px;
+  width: 100%;
   min-height: 26px;
+  padding-top: 0;
+  padding-right: 6px;
+  padding-bottom: 0;
+  border: 0;
+  border-radius: var(--zt-radius-control);
+  background: transparent;
   color: var(--zt-text-primary);
+  cursor: pointer;
   font-size: var(--zt-font-size-ui);
+  text-align: left;
+}
+
+.zt-select-tree-group:hover {
+  background: var(--zt-bg-hover);
 }
 
 .zt-select-option.zt-select-tree-option {
@@ -4698,14 +4711,21 @@ button {
 .zt-session-picker-group {
   grid-template-columns: 16px minmax(0, 1fr) 26px;
   min-height: 26px;
+  cursor: pointer;
 }
 
 .zt-session-picker-option {
   min-height: 28px;
 }
 
-.zt-session-picker-option:hover:not(:disabled) {
+.zt-session-picker-option:hover:not(:disabled),
+.zt-session-picker-group:hover:not(:disabled) {
   background: var(--zt-bg-hover);
+}
+
+.zt-session-picker-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .zt-session-picker-row span {

@@ -13,6 +13,8 @@ export interface ZtSelectOption {
   depth?: number;
   icon?: ReactNode;
   trailing?: ReactNode;
+  collapsed?: boolean;
+  onToggle?: () => void;
 }
 
 interface ZtSelectProps {
@@ -25,9 +27,14 @@ interface ZtSelectProps {
   searchable?: boolean;
   className?: string;
   tree?: boolean;
+  selectedLabel?: string;
 }
 
 const SEARCH_THRESHOLD = 6;
+
+function isSelectableOption(option: ZtSelectOption) {
+  return option.kind !== "group" && !option.disabled;
+}
 
 export function ZtSelect({
   value,
@@ -39,6 +46,7 @@ export function ZtSelect({
   searchable = false,
   className,
   tree = false,
+  selectedLabel,
 }: ZtSelectProps) {
   const id = useId();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -49,6 +57,7 @@ export function ZtSelect({
   const [activeIndex, setActiveIndex] = useState(0);
   const [panelStyle, setPanelStyle] = useState<CSSProperties>({});
   const selectedOption = options.find((option) => option.value === value);
+  const displayLabel = selectedOption?.label ?? selectedLabel;
   const showSearch = searchable && options.length > SEARCH_THRESHOLD;
 
   const filteredOptions = useMemo(() => {
@@ -63,12 +72,12 @@ export function ZtSelect({
 
   useEffect(() => {
     if (!open) return;
-    const selectedIndex = filteredOptions.findIndex((option) => option.value === value && !option.disabled);
+    const selectedIndex = filteredOptions.findIndex((option) => option.value === value && isSelectableOption(option));
     if (selectedIndex >= 0) {
       setActiveIndex(selectedIndex);
       return;
     }
-    const firstEnabledIndex = filteredOptions.findIndex((option) => !option.disabled);
+    const firstEnabledIndex = filteredOptions.findIndex(isSelectableOption);
     setActiveIndex(firstEnabledIndex >= 0 ? firstEnabledIndex : 0);
   }, [filteredOptions, open, value]);
 
@@ -128,7 +137,7 @@ export function ZtSelect({
   }
 
   function selectOption(option: ZtSelectOption | undefined) {
-    if (!option || option.disabled) return;
+    if (!option || !isSelectableOption(option)) return;
     onChange(option.value);
     closePanel();
     triggerRef.current?.focus();
@@ -139,7 +148,7 @@ export function ZtSelect({
     let nextIndex = activeIndex;
     for (let step = 0; step < filteredOptions.length; step += 1) {
       nextIndex = (nextIndex + offset + filteredOptions.length) % filteredOptions.length;
-      if (!filteredOptions[nextIndex]?.disabled) {
+      if (filteredOptions[nextIndex] && isSelectableOption(filteredOptions[nextIndex])) {
         setActiveIndex(nextIndex);
         return;
       }
@@ -205,7 +214,7 @@ export function ZtSelect({
         onClick={() => (open ? closePanel() : openPanel())}
         onKeyDown={handleKeyboard}
       >
-        <span className={selectedOption ? "zt-select-value" : "zt-select-placeholder"}>{selectedOption?.label ?? placeholder}</span>
+        <span className={displayLabel ? "zt-select-value" : "zt-select-placeholder"}>{displayLabel ?? placeholder}</span>
         <span className="zt-select-chevron" aria-hidden="true" />
       </button>
       {open
@@ -234,16 +243,20 @@ export function ZtSelect({
                     const depthStyle = { "--zt-session-tree-depth": option.depth ?? 0 } as CSSProperties;
                     if (option.kind === "group") {
                       return (
-                        <div
+                        <button
+                          type="button"
                           key={option.value}
                           className="zt-select-tree-row zt-select-tree-group"
+                          aria-label={`${option.collapsed ? "展开" : "折叠"}分组 ${option.label}`}
+                          aria-expanded={!option.collapsed}
                           data-session-tree-depth={option.depth ?? 0}
                           style={depthStyle}
+                          onClick={option.onToggle}
                         >
                           {option.icon ? <span className="zt-select-tree-icon">{option.icon}</span> : null}
                           <span className="zt-select-option-label">{option.label}</span>
                           {option.trailing ? <span className="zt-select-tree-trailing">{option.trailing}</span> : null}
-                        </div>
+                        </button>
                       );
                     }
                     const selected = option.value === value;

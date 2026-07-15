@@ -16,8 +16,8 @@ interface SessionTreeModel {
 }
 
 export type SessionTreeListItem =
-  | { kind: "group"; key: string; groupId: string | null; name: string; depth: number }
-  | { kind: "session"; key: string; session: SavedSession; depth: number };
+  | { kind: "group"; key: string; groupId: string | null; name: string; depth: number; ancestorGroupKeys: string[] }
+  | { kind: "session"; key: string; session: SavedSession; depth: number; ancestorGroupKeys: string[] };
 
 export function buildSessionTreeModel({
   groups,
@@ -114,42 +114,59 @@ export function buildSessionTreeListItems({
 }): SessionTreeListItem[] {
   const model = buildSessionTreeModel({ groups, sessions });
 
-  function flattenGroupNodes(nodes: SessionGroupTreeNode[], depth: number): SessionTreeListItem[] {
+  function flattenGroupNodes(
+    nodes: SessionGroupTreeNode[],
+    depth: number,
+    ancestorGroupKeys: string[],
+  ): SessionTreeListItem[] {
     return nodes.flatMap((node) => {
-      const childItems = flattenGroupNodes(node.groups, depth + 1);
+      const groupKey = `group:${node.group.id}`;
+      const childAncestorGroupKeys = [...ancestorGroupKeys, groupKey];
+      const childItems = flattenGroupNodes(node.groups, depth + 1, childAncestorGroupKeys);
       if (hideEmptyGroups && node.sessions.length === 0 && childItems.length === 0) return [];
       return [
         {
           kind: "group" as const,
-          key: `group:${node.group.id}`,
+          key: groupKey,
           groupId: node.group.id,
           name: node.group.name,
           depth,
+          ancestorGroupKeys,
         },
         ...node.sessions.map((session) => ({
           kind: "session" as const,
           key: `session:${session.id}`,
           session,
           depth: depth + 1,
+          ancestorGroupKeys: childAncestorGroupKeys,
         })),
         ...childItems,
       ];
     });
   }
 
-  const items = flattenGroupNodes(model.groups, 0);
+  const items = flattenGroupNodes(model.groups, 0, []);
   if (model.rootSessions.length > 0) {
+    const ungroupedKey = "group:__ungrouped__";
     items.push(
-      { kind: "group", key: "group:__ungrouped__", groupId: null, name: "未分组", depth: 0 },
+      { kind: "group", key: ungroupedKey, groupId: null, name: "未分组", depth: 0, ancestorGroupKeys: [] },
       ...model.rootSessions.map((session) => ({
         kind: "session" as const,
         key: `session:${session.id}`,
         session,
         depth: 1,
+        ancestorGroupKeys: [ungroupedKey],
       })),
     );
   }
   return items;
+}
+
+export function visibleSessionTreeListItems(
+  items: SessionTreeListItem[],
+  collapsedGroupKeys: ReadonlySet<string>,
+): SessionTreeListItem[] {
+  return items.filter((item) => item.ancestorGroupKeys.every((key) => !collapsedGroupKeys.has(key)));
 }
 
 export function buildSessionGroupDraft({

@@ -1247,10 +1247,7 @@ export function AppShell() {
       const targetPaneTab = isReusableConnectionTab(activeTargetPaneTab)
         ? activeTargetPaneTab
         : addPaneTab(target.paneId);
-      const runtime =
-        choice.kind === "default_local"
-          ? await openDefaultLocalTerminal(target.paneId)
-          : await openTerminal(choice.session.id, target.paneId);
+      const runtime = await openTerminal(choice.session.id, target.paneId);
       bindRuntimeToPaneTab(target.workspaceId, target.workspaceTabId, target.paneId, targetPaneTab.id, runtime);
       setConnectionDialogTarget(null);
     } catch (openError) {

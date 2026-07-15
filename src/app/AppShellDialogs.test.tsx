@@ -140,7 +140,6 @@ describe("AppShellDialogs", () => {
     );
 
     expect(Array.from(view.container.querySelectorAll(".zt-session-picker-row")).map((node) => node.textContent)).toEqual([
-      "默认本地终端",
       "Group 2",
       "Group 10",
       "172.16.40.20",
@@ -153,6 +152,13 @@ describe("AppShellDialogs", () => {
     ]);
     expect(view.container.querySelector('[data-session-tree-depth="2"]')?.textContent).toBe("Child local");
     expect(view.container.querySelector('[aria-label="选择连接 Child local"]')?.getAttribute("aria-level")).toBe("3");
+
+    click(button(view.container, "折叠分组 Group 10"));
+    expect(view.container.textContent).not.toContain("172.16.40.20");
+    expect(view.container.textContent).not.toContain("Child local");
+    expect(button(view.container, "展开分组 Group 10")).toBeTruthy();
+    click(button(view.container, "展开分组 Group 10"));
+    expect(view.container.textContent).toContain("Child local");
     view.unmount();
   });
 
@@ -170,13 +176,12 @@ describe("AppShellDialogs", () => {
 
     expect(button(view.container, "关闭选择连接").disabled).toBe(true);
     expect(button(view.container, "取消选择连接").disabled).toBe(true);
-    expect(button(view.container, "选择默认本地终端").disabled).toBe(true);
     expect(button(view.container, "选择连接 SSH Prod").disabled).toBe(true);
     expect(view.container.textContent).toContain("正在打开连接");
     view.unmount();
   });
 
-  it("emits default local and saved session choices", () => {
+  it("emits saved session choices without a synthetic default local option", () => {
     const selected: ConnectionChoice[] = [];
     const sshSession = session({ id: "ssh", name: "SSH Prod", sort_order: 0 });
     const view = render(
@@ -190,10 +195,10 @@ describe("AppShellDialogs", () => {
       />,
     );
 
-    click(button(view.container, "选择默认本地终端"));
+    expect(view.container.textContent).not.toContain("默认本地终端");
     click(button(view.container, "选择连接 SSH Prod"));
 
-    expect(selected).toEqual([{ kind: "default_local" }, { kind: "saved_session", session: sshSession }]);
+    expect(selected).toEqual([{ kind: "saved_session", session: sshSession }]);
     view.unmount();
   });
 });

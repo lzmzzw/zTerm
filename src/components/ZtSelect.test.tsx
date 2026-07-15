@@ -182,6 +182,7 @@ describe("ZtSelect", () => {
 
   it("renders tree groups and skips them during keyboard selection", async () => {
     const onChange = vi.fn();
+    const onToggle = vi.fn();
     render(
       <ZtSelect
         ariaLabel="选择端点"
@@ -189,7 +190,7 @@ describe("ZtSelect", () => {
         tree
         options={[
           { value: "local", label: "本机", depth: 0 },
-          { value: "group:prod", label: "生产环境", kind: "group", disabled: true, depth: 0 },
+          { value: "group:prod", label: "生产环境", kind: "group", collapsed: false, depth: 0, onToggle },
           { value: "ssh:prod", label: "生产 SSH", depth: 1 },
         ]}
         onChange={onChange}
@@ -198,6 +199,9 @@ describe("ZtSelect", () => {
 
     await keyDown(trigger("选择端点"), "Enter");
     expect(document.querySelector(".zt-select-tree-group")?.textContent).toBe("生产环境");
+    await click(document.querySelector(".zt-select-tree-group") as HTMLElement);
+    expect(onToggle).toHaveBeenCalledOnce();
+    expect(document.querySelector('[role="listbox"]')).not.toBeNull();
     await keyDown(trigger("选择端点"), "ArrowDown");
     await keyDown(trigger("选择端点"), "Enter");
 

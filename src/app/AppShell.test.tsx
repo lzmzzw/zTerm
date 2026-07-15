@@ -3151,7 +3151,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("opens the connection picker from a pane plus button before creating a connection", async () => {
+  it("opens the connection picker without creating or offering a synthetic default local connection", async () => {
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -3159,22 +3159,10 @@ describe("AppShell", () => {
     });
 
     expect(view.container.querySelector('[aria-label="选择连接"]')).not.toBe(null);
+    expect(view.container.querySelector('[aria-label="选择默认本地终端"]')).toBe(null);
     expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
     expect(storeMocks.addPaneTab).not.toHaveBeenCalled();
-
-    await act(async () => {
-      (view.container.querySelector('[aria-label="选择默认本地终端"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.openDefaultLocalTerminal).toHaveBeenCalledWith("pane-1");
-    expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "default-workspace",
-      "tab-1",
-      "pane-1",
-      "pane-1-tab-1",
-      expect.objectContaining({ runtime_session_id: "runtime-local", kind: "local" }),
-    );
+    expect(storeMocks.bindRuntimeToPaneTab).not.toHaveBeenCalled();
     view.unmount();
   });
 

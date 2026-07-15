@@ -398,6 +398,15 @@ describe("FileTransferPanel", () => {
     expect(document.body.textContent).not.toContain("RDP Only");
     expect(document.body.textContent).not.toContain("RDP Connection");
 
+    await click(document.body.querySelector('[aria-label="折叠分组 Parent"]') as HTMLElement);
+    expect(document.body.querySelector('[role="listbox"]')?.textContent).toContain("Parent");
+    expect(document.body.querySelector('[role="listbox"]')?.textContent).not.toContain("SSH Group");
+    expect(document.body.querySelector('[role="listbox"]')?.textContent).not.toContain("a-host-172.16.40.20");
+    expect(view.container.querySelector('[aria-label="右侧端点"]')?.textContent).toContain("a-host-172.16.40.20");
+    await click(document.body.querySelector('[aria-label="展开分组 Parent"]') as HTMLElement);
+    expect(document.body.textContent).toContain("SSH Group");
+    expect(document.body.textContent).toContain("a-host-172.16.40.20");
+
     view.unmount();
   });
 
