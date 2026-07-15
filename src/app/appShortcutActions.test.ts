@@ -21,6 +21,7 @@ describe("resolveAppShortcutAction", () => {
       paneId: "pane-1",
       paneTabId: "pane-tab-1",
     });
+    expect(resolveAppShortcutAction("sync_channel.open", readyContext)).toEqual({ kind: "open_sync_channel" });
   });
 
   it("keeps tab actions inert when the required active pane context is missing", () => {

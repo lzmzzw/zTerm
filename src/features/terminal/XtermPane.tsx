@@ -17,6 +17,7 @@ import {
   type TerminalSemanticHighlighter,
 } from "./terminalSemanticHighlight";
 import type { CommandCompletionCandidate } from "./terminalStore";
+import type { TerminalInputSource } from "./syncInputStore";
 
 interface XtermPaneProps {
   autoFocus?: boolean;
@@ -28,7 +29,7 @@ interface XtermPaneProps {
   contextMenuEnabled?: boolean;
   onCompletionRequest?: (input: string, cursor: number) => Promise<CommandCompletionCandidate[]>;
   onDisconnect?: () => void;
-  onInput?: (data: string) => void;
+  onInput?: (data: string, metadata?: { source: TerminalInputSource }) => void;
   onReconnect?: () => void;
   onResize?: (cols: number, rows: number) => void;
 }
@@ -116,6 +117,7 @@ export function XtermPane({
   const ghostCandidateRef = useRef<CommandCompletionCandidate | null>(null);
   const lastResizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const replayingOutputRef = useRef(false);
+  const parsingOutputRef = useRef(false);
   const outputWriteQueueRef = useRef<QueuedTerminalWrite[]>([]);
   const outputWriteInProgressRef = useRef(false);
   const outputWriteGenerationRef = useRef(0);
@@ -170,6 +172,7 @@ export function XtermPane({
       }
       const chunk = item.data.slice(offset, offset + MAX_TERMINAL_WRITE_CHUNK_CHARS);
       offset += chunk.length;
+      parsingOutputRef.current = true;
       terminal.write(chunk, () => {
         if (generation !== outputWriteGenerationRef.current || terminalRef.current !== terminal) {
           outputWriteInProgressRef.current = false;
@@ -183,6 +186,7 @@ export function XtermPane({
         semanticHighlighterRef.current?.refresh();
         finishItem();
       });
+      parsingOutputRef.current = false;
     };
 
     writeNextChunk();
@@ -256,6 +260,11 @@ export function XtermPane({
       if (value === "\x1b" && candidate) {
         ghostCandidateRef.current = null;
         setGhostCandidate(null);
+        return;
+      }
+
+      if (parsingOutputRef.current) {
+        onInputRef.current?.(value, { source: "terminal_response" });
         return;
       }
 

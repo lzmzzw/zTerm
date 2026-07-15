@@ -1,12 +1,13 @@
 // Author: Liz
 
-import { ChevronDown, ChevronRight, Folder, Monitor, Server, Terminal } from "lucide-react";
-import { type CSSProperties, useState } from "react";
+import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Folder, Monitor, Server, Terminal } from "lucide-react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 
 import { ZtButton, ZtDialog, ZtPromptDialog } from "../components/ZtUi";
 import type { TransferConflict, TransferConflictPolicy } from "../features/files/fileStore";
 import { buildSessionTreeListItems, visibleSessionTreeListItems } from "../features/sessions/sessionTreeModel";
 import type { SavedSession, SessionGroup } from "../features/sessions/types";
+import type { SyncChannelMember } from "../features/terminal/syncInputStore";
 
 export type ConnectionChoice = { kind: "saved_session"; session: SavedSession };
 
@@ -134,6 +135,131 @@ export function ConnectionPickerDialog({
       </div>
       {error ? <p className="zt-session-error">{error}</p> : null}
     </ZtDialog>
+  );
+}
+
+export function SyncChannelDialog({
+  candidates,
+  initialMemberIds,
+  onCancel,
+  onSubmit,
+}: {
+  candidates: SyncChannelMember[];
+  initialMemberIds: string[];
+  onCancel: () => void;
+  onSubmit: (memberIds: string[]) => void;
+}) {
+  const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+  const [memberIds, setMemberIds] = useState<string[]>(() =>
+    initialMemberIds.filter((memberId) => candidateIds.has(memberId)),
+  );
+  const selectedIds = new Set(memberIds);
+  const available = candidates.filter((candidate) => !selectedIds.has(candidate.id));
+  const selected = memberIds
+    .map((memberId) => candidates.find((candidate) => candidate.id === memberId))
+    .filter((candidate): candidate is SyncChannelMember => Boolean(candidate));
+
+  function addMember(memberId: string) {
+    setMemberIds((current) => (current.includes(memberId) ? current : [...current, memberId]));
+  }
+
+  function removeMember(memberId: string) {
+    setMemberIds((current) => current.filter((id) => id !== memberId));
+  }
+
+  return (
+    <ZtDialog
+      ariaLabel="创建同步频道"
+      title="创建同步频道"
+      size="medium"
+      className="zt-sync-channel-dialog"
+      bodyClassName="zt-sync-channel-body"
+      onClose={onCancel}
+      closeLabel="关闭同步频道创建"
+      footer={
+        <>
+          <ZtButton aria-label="取消创建同步频道" onClick={onCancel}>
+            取消
+          </ZtButton>
+          <ZtButton
+            aria-label="创建同步频道"
+            variant="primary"
+            disabled={selected.length < 2}
+            onClick={() => onSubmit(selected.map((member) => member.id))}
+          >
+            创建频道
+          </ZtButton>
+        </>
+      }
+    >
+      <div className="zt-sync-channel-columns">
+        <SyncChannelMemberList title="可用 SSH 连接" emptyText="没有其他可用 SSH 连接">
+          {available.map((candidate) => (
+            <SyncChannelMemberRow
+              key={candidate.id}
+              candidate={candidate}
+              actionLabel={`添加 ${candidate.title}`}
+              icon={<ArrowRight size={14} aria-hidden="true" />}
+              onAction={() => addMember(candidate.id)}
+            />
+          ))}
+        </SyncChannelMemberList>
+        <SyncChannelMemberList title={`频道成员（${selected.length}）`} emptyText="请添加至少两个 SSH 连接">
+          {selected.map((candidate) => (
+            <SyncChannelMemberRow
+              key={candidate.id}
+              candidate={candidate}
+              actionLabel={`移除 ${candidate.title}`}
+              icon={<ArrowLeft size={14} aria-hidden="true" />}
+              onAction={() => removeMember(candidate.id)}
+            />
+          ))}
+        </SyncChannelMemberList>
+      </div>
+    </ZtDialog>
+  );
+}
+
+function SyncChannelMemberList({
+  title,
+  emptyText,
+  children,
+}: {
+  title: string;
+  emptyText: string;
+  children: ReactNode;
+}) {
+  const empty = !Array.isArray(children) || children.length === 0;
+  return (
+    <section className="zt-sync-channel-column" aria-label={title}>
+      <header>{title}</header>
+      <div className="zt-sync-channel-list">{empty ? <p>{emptyText}</p> : children}</div>
+    </section>
+  );
+}
+
+function SyncChannelMemberRow({
+  candidate,
+  actionLabel,
+  icon,
+  onAction,
+}: {
+  candidate: SyncChannelMember;
+  actionLabel: string;
+  icon: ReactNode;
+  onAction: () => void;
+}) {
+  return (
+    <div className="zt-sync-channel-row">
+      <Server size={14} aria-hidden="true" />
+      <span>
+        <strong>{candidate.title}</strong>
+        <small>{candidate.host}</small>
+      </span>
+      <button type="button" aria-label={actionLabel} title={actionLabel} onClick={onAction}>
+        {icon}
+      </button>
+    </div>
   );
 }
 

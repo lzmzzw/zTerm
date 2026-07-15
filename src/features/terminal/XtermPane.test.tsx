@@ -539,7 +539,7 @@ describe("XtermPane", () => {
 
     view.rerender(<XtermPane data={"\x1b[6n"} streamId="runtime-1" onInput={onInput} />);
 
-    expect(onInput).toHaveBeenCalledWith("\x1b[1;1R");
+    expect(onInput).toHaveBeenCalledWith("\x1b[1;1R", { source: "terminal_response" });
     view.unmount();
   });
 
@@ -598,7 +598,7 @@ describe("XtermPane", () => {
       await Promise.resolve();
     });
 
-    expect(onInput).toHaveBeenCalledWith("\x1b[1;1R");
+    expect(onInput).toHaveBeenCalledWith("\x1b[1;1R", { source: "terminal_response" });
     expect(onInput).toHaveBeenCalledWith("e");
     view.unmount();
   });
@@ -616,7 +616,7 @@ describe("XtermPane", () => {
 
     view.rerender(<XtermPane data={"\x1b[?25l\x1b[6n"} streamId="runtime-1" onInput={onInput} />);
 
-    expect(onInput).toHaveBeenCalledWith("\x1b[1;1R");
+    expect(onInput).toHaveBeenCalledWith("\x1b[1;1R", { source: "terminal_response" });
     view.unmount();
   });
 
@@ -637,7 +637,7 @@ describe("XtermPane", () => {
     });
     view.rerender(<XtermPane data={"\x1b[?25l\x1b[6n"} streamId="runtime-new" onInput={onInput} />);
 
-    expect(onInput).toHaveBeenCalledWith("\x1b[1;1R");
+    expect(onInput).toHaveBeenCalledWith("\x1b[1;1R", { source: "terminal_response" });
     view.unmount();
   });
 
@@ -884,6 +884,29 @@ describe("XtermPane", () => {
 
     expect(onReconnect).toHaveBeenCalledTimes(1);
     expect(onDisconnect).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("marks input generated while parsing live output as a terminal response", () => {
+    const onInput = vi.fn();
+    const view = render(<XtermPane data="" streamId="runtime-1" onInput={onInput} />);
+    const terminal = terminalMock.instances[0];
+    terminal.write.mockImplementationOnce((_data: string, callback?: () => void) => {
+      terminal.dataListener?.("\u001b[12;40R");
+      callback?.();
+    });
+
+    view.rerender(
+      <XtermPane
+        data=""
+        liveData={"\u001b[6n"}
+        liveSerial={1}
+        streamId="runtime-1"
+        onInput={onInput}
+      />,
+    );
+
+    expect(onInput).toHaveBeenCalledWith("\u001b[12;40R", { source: "terminal_response" });
     view.unmount();
   });
 

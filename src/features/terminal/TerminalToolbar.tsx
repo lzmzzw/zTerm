@@ -1,16 +1,36 @@
 // Author: Liz
-import { SquareSplitHorizontal, SquareSplitVertical, X } from "lucide-react";
+import { CircleX, LogOut, SquareSplitHorizontal, SquareSplitVertical, X } from "lucide-react";
 
 import type { PaneSplitDirection } from "../workspace/types";
 
 interface TerminalToolbarProps {
   onSplitPane: (direction: PaneSplitDirection) => void;
   onClosePane: () => void;
+  syncChannelMember?: boolean;
+  onLeaveSyncChannel?: () => void;
+  onCloseSyncChannel?: () => void;
 }
 
-export function TerminalToolbar({ onSplitPane, onClosePane }: TerminalToolbarProps) {
+export function TerminalToolbar({
+  onSplitPane,
+  onClosePane,
+  syncChannelMember = false,
+  onLeaveSyncChannel,
+  onCloseSyncChannel,
+}: TerminalToolbarProps) {
   return (
     <div className="zt-terminal-toolbar" aria-label="终端分栏操作">
+      {syncChannelMember ? (
+        <>
+          <button type="button" aria-label="离开同步频道" title="离开同步频道" onClick={onLeaveSyncChannel}>
+            <LogOut size={14} aria-hidden="true" />
+          </button>
+          <button type="button" aria-label="关闭同步频道" title="关闭同步频道" onClick={onCloseSyncChannel}>
+            <CircleX size={14} aria-hidden="true" />
+          </button>
+          <span className="zt-terminal-toolbar-separator" aria-hidden="true" />
+        </>
+      ) : null}
       <button type="button" aria-label="横向分栏" onClick={() => onSplitPane("horizontal")}>
         <SquareSplitHorizontal size={14} aria-hidden="true" />
       </button>

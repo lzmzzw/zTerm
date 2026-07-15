@@ -10,6 +10,7 @@ interface AppShortcutContext {
 
 type AppShortcutCommand =
   | { kind: "open_settings" }
+  | { kind: "open_sync_channel" }
   | { kind: "add_terminal_tab"; paneId: string }
   | { kind: "close_terminal_tab"; paneId: string; paneTabId: string }
   | { kind: "split_pane"; direction: PaneSplitDirection }
@@ -19,6 +20,9 @@ type AppShortcutCommand =
 export function resolveAppShortcutAction(actionId: string, context: AppShortcutContext): AppShortcutCommand {
   if (actionId === "settings.open") {
     return { kind: "open_settings" };
+  }
+  if (actionId === "sync_channel.open") {
+    return { kind: "open_sync_channel" };
   }
   if (actionId === "terminal.new_tab") {
     return context.newTabPaneId ? { kind: "add_terminal_tab", paneId: context.newTabPaneId } : { kind: "noop" };

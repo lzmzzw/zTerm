@@ -36,6 +36,7 @@ fn app_settings_have_expected_defaults() {
             ("settings.open", "Ctrl+,"),
             ("terminal.new_tab", "Ctrl+N"),
             ("terminal.close_tab", "Ctrl+W"),
+            ("sync_channel.open", "Ctrl+Shift+M"),
             ("terminal.split_horizontal", "Ctrl+Shift+Arrowright"),
             ("terminal.split_vertical", "Ctrl+Shift+Arrowdown"),
             ("right_tool.files", "Ctrl+Shift+S"),

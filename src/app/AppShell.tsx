@@ -8,6 +8,7 @@ import {
   AppTextInputDialog,
   AppTransferConflictDialog,
   ConnectionPickerDialog,
+  SyncChannelDialog,
   type ConnectionChoice,
 } from "./AppShellDialogs";
 import { RightToolsPanel } from "./RightToolsPanel";
@@ -52,6 +53,7 @@ import {
   type ExternalSshLaunchEvent,
 } from "../features/terminal/externalLaunchApi";
 import { useTerminalStore } from "../features/terminal/terminalStore";
+import { collectSyncChannelCandidates, useSyncInputStore } from "../features/terminal/syncInputStore";
 import { WorkspaceManagerPanel } from "../features/workspace/WorkspaceManagerPanel";
 import { WorkspacePreviewDialog } from "../features/workspace/WorkspacePreviewDialog";
 import { definitionFromDraft } from "../features/workspace/workspacePreviewModel";
@@ -273,6 +275,7 @@ export function AppShell() {
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
   const [sessionFolderDialogOpen, setSessionFolderDialogOpen] = useState(false);
   const [fileTransferDialogOpen, setFileTransferDialogOpen] = useState(false);
+  const [syncChannelDialogOpen, setSyncChannelDialogOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"workbench" | "settings">("workbench");
   const [activeLeftTool, setActiveLeftTool] = useState<LeftTool | null>(null);
   const [activeTool, setActiveTool] = useState<RightTool | null>(null);
@@ -294,6 +297,9 @@ export function AppShell() {
   const [sshTunnelEditor, setSshTunnelEditor] = useState<SshTunnelEditorState | null>(null);
   const [pendingSshTunnelDelete, setPendingSshTunnelDelete] = useState<PendingSshTunnelDelete | null>(null);
   const [sshTunnelNeedsReconnectBySessionId, setSshTunnelNeedsReconnectBySessionId] = useState<Record<string, boolean>>({});
+  const syncChannel = useSyncInputStore((state) => state.channel);
+  const createSyncChannel = useSyncInputStore((state) => state.createChannel);
+  const retainSyncChannelMembers = useSyncInputStore((state) => state.retainMembers);
   const restoringWorkspaceIdsRef = useRef<Set<string>>(new Set());
   const workspaceRestoreEpochRef = useRef(0);
   const processedExternalLaunchIdsRef = useRef<Set<string>>(new Set());
@@ -549,13 +555,30 @@ export function AppShell() {
       ? activeSavedSession.ssh_options?.container?.enabled === true
       : activeExternalSshOptions?.container?.enabled === true && !activeExternalSshSingleChannel;
   const activeRuntimeSessionId = activePaneTab?.runtime_session_id ?? null;
-  const titleBarCenterContent = activeRuntimeSessionId
-    ? activeSavedSession?.type === "ssh"
-      ? activeSavedSession.host.trim() || null
-      : activeSavedSession?.type === "local"
-        ? activeSavedSession.local_options?.working_directory?.trim() || null
-        : activeExternalSshSession?.host.trim() || null
+  const syncChannelCandidates = collectSyncChannelCandidates(
+    tabs,
+    useTerminalStore.getState().runtimes,
+    (savedSessionId, runtime) => {
+      const savedSession = savedSessionId ? sessions.find((session) => session.id === savedSessionId) : null;
+      if (savedSession?.type === "ssh") return savedSession.host.trim();
+      if (savedSessionId && isExternalSessionId(savedSessionId)) {
+        return externalSshSessions[savedSessionId]?.host.trim() ?? runtime.title;
+      }
+      return runtime.title;
+    },
+  );
+  const activeSyncChannelMember = activePaneTab
+    ? syncChannel?.members.find((member) => member.id === activePaneTab.id) ?? null
     : null;
+  const titleBarCenterContent = activeSyncChannelMember
+    ? `频道：${syncChannel!.members.map((member) => member.host).join("、")}`
+    : activeRuntimeSessionId
+      ? activeSavedSession?.type === "ssh"
+        ? activeSavedSession.host.trim() || null
+        : activeSavedSession?.type === "local"
+          ? activeSavedSession.local_options?.working_directory?.trim() || null
+          : activeExternalSshSession?.host.trim() || null
+      : null;
   const bindTerminalEvents = useTerminalStore((state) => state.bindTerminalEvents);
   const openTerminal = useTerminalStore((state) => state.openTerminal);
   const openSshContainerTerminal = useTerminalStore((state) => state.openSshContainerTerminal);
@@ -631,6 +654,13 @@ export function AppShell() {
   );
 
   useDomI18n(language);
+
+  const syncChannelCandidateKey = syncChannelCandidates
+    .map((candidate) => `${candidate.id}:${candidate.runtimeSessionId}:${candidate.host}`)
+    .join("|");
+  useEffect(() => {
+    retainSyncChannelMembers(syncChannelCandidates);
+  }, [retainSyncChannelMembers, syncChannelCandidateKey]);
 
   useEffect(() => {
     void loadSessions().finally(() => setInitialSessionsLoaded(true));
@@ -842,6 +872,7 @@ export function AppShell() {
     },
     {
       onOpenSettings: () => setViewMode("settings"),
+      onOpenSyncChannel: () => setSyncChannelDialogOpen(true),
       onAddTerminalTab: addPaneTab,
       onCloseTerminalTab: (paneId, paneTabId) => void closePaneTab(paneId, paneTabId),
       onSplitPane: splitActivePane,
@@ -1892,6 +1923,25 @@ export function AppShell() {
           singleChannel={externalSshChannelPolicy(externalSshSessions[externalSshTunnelEditor] ?? null) === "single_channel"}
           onCancel={() => setExternalSshTunnelEditor(null)}
           onSave={(options) => void saveExternalTunnelOptions(externalSshTunnelEditor, options)}
+        />
+      ) : null}
+
+      {syncChannelDialogOpen ? (
+        <SyncChannelDialog
+          candidates={syncChannelCandidates}
+          initialMemberIds={
+            syncChannel?.members.map((member) => member.id) ??
+            (activePaneTab && syncChannelCandidates.some((candidate) => candidate.id === activePaneTab.id)
+              ? [activePaneTab.id]
+              : [])
+          }
+          onCancel={() => setSyncChannelDialogOpen(false)}
+          onSubmit={(memberIds) => {
+            const members = memberIds
+              .map((memberId) => syncChannelCandidates.find((candidate) => candidate.id === memberId))
+              .filter((member): member is (typeof syncChannelCandidates)[number] => Boolean(member));
+            if (createSyncChannel(members)) setSyncChannelDialogOpen(false);
+          }}
         />
       ) : null}
 

@@ -8,6 +8,7 @@ import { TerminalSnapshotPane } from "../terminal/TerminalSnapshotPane";
 import { useTerminalStore } from "../terminal/terminalStore";
 import { TerminalToolbar } from "../terminal/TerminalToolbar";
 import { XtermPane } from "../terminal/XtermPane";
+import { routeSyncTerminalInput, useSyncInputStore, type TerminalInputSource } from "../terminal/syncInputStore";
 import { scheduleAfterPaintDelay } from "../../lib/renderScheduling";
 import { DragOverlay, type DragOverlayHandle } from "../../components/drag/DragOverlay";
 import { useFlipLayout } from "../../components/drag/useFlipLayout";
@@ -309,6 +310,12 @@ function LeafPane({
   const suggestCompletion = useTerminalStore((state) => state.suggestCompletion);
   const resizeTerminal = useTerminalStore((state) => state.resizeTerminal);
   const closeTerminal = useTerminalStore((state) => state.closeTerminal);
+  const syncChannel = useSyncInputStore((state) => state.channel);
+  const leaveSyncChannel = useSyncInputStore((state) => state.leaveChannel);
+  const closeSyncChannel = useSyncInputStore((state) => state.closeChannel);
+  const activeSyncChannelMember = Boolean(
+    syncChannel?.members.some((member) => member.id === activeTerminalTab.id),
+  );
 
   const activatePane = useCallback(() => onActivatePane(root.id), [onActivatePane, root.id]);
   const visibleTerminalTabs = terminalTabs.filter((terminalTab) => !isEmptyPaneTerminalTab(terminalTab));
@@ -362,9 +369,14 @@ function LeafPane({
   }, [activeRuntimeSessionId, beginLiveOutput, xtermLive]);
 
   const handleInput = useCallback(
-    (data: string) => {
+    (data: string, metadata?: { source: TerminalInputSource }) => {
       if (runtime && isInteractiveTerminalRuntime(runtime.kind)) {
-        void writeTerminal(runtime.runtime_session_id, data);
+        void routeSyncTerminalInput(
+          runtime.runtime_session_id,
+          data,
+          metadata?.source ?? "user",
+          writeTerminal,
+        );
       }
     },
     [runtime, writeTerminal],
@@ -675,7 +687,13 @@ function LeafPane({
             <Plus size={14} aria-hidden="true" />
           </button>
         </div>
-        <TerminalToolbar onSplitPane={handleSplitPane} onClosePane={handleClosePane} />
+        <TerminalToolbar
+          onSplitPane={handleSplitPane}
+          onClosePane={handleClosePane}
+          syncChannelMember={activeSyncChannelMember}
+          onLeaveSyncChannel={() => leaveSyncChannel(activeTerminalTab.id)}
+          onCloseSyncChannel={closeSyncChannel}
+        />
       </div>
       {dragState?.sourcePaneId === root.id ? (
         <DragOverlay

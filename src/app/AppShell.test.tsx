@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "./AppShell";
+import { useSyncInputStore } from "../features/terminal/syncInputStore";
 
 const storeMocks = vi.hoisted(() => ({
   noop: vi.fn(),
@@ -931,6 +932,7 @@ function runningWorkspace(id: string, sortOrder: number, updatedAtMs: number, ru
 describe("AppShell", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useSyncInputStore.getState().closeChannel();
     storeMocks.aiAffectedDomainsHandler = null;
     storeMocks.tauriEventHandlers.clear();
     storeMocks.pendingExternalLaunches = [];
@@ -1231,6 +1233,45 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("10.20.30.40");
+    view.unmount();
+  });
+
+  it("shows all channel hosts in the titlebar while a channel member is active", () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "ssh-1", name: "生产机 A", type: "ssh", group_id: null, host: "10.20.30.40", port: 22,
+        username: "root", auth_mode: "none", credential_ref: null, description: null, tags: [], sort_order: 0,
+        created_at_ms: 1, updated_at_ms: 1, last_used_at_ms: null,
+      },
+      {
+        id: "ssh-2", name: "生产机 B", type: "ssh", group_id: null, host: "10.20.30.41", port: 22,
+        username: "root", auth_mode: "none", credential_ref: null, description: null, tags: [], sort_order: 1,
+        created_at_ms: 1, updated_at_ms: 1, last_used_at_ms: null,
+      },
+    ];
+    storeMocks.terminalState.runtimes = {
+      "runtime-1": { runtime_session_id: "runtime-1", kind: "ssh", title: "生产机 A" },
+      "runtime-2": { runtime_session_id: "runtime-2", kind: "ssh", title: "生产机 B" },
+    };
+    Object.assign(storeMocks.workspaceState.tabs[0].root as Record<string, unknown>, {
+      runtime_session_id: "runtime-1",
+      saved_session_id: "ssh-1",
+      active_terminal_tab_id: "pane-1-tab-1",
+      terminal_tabs: [
+        { id: "pane-1-tab-1", title: "生产机 A", runtime_session_id: "runtime-1", saved_session_id: "ssh-1" },
+        { id: "pane-1-tab-2", title: "生产机 B", runtime_session_id: "runtime-2", saved_session_id: "ssh-2" },
+      ],
+    });
+    useSyncInputStore.getState().createChannel([
+      { id: "pane-1-tab-1", runtimeSessionId: "runtime-1", title: "生产机 A", host: "10.20.30.40" },
+      { id: "pane-1-tab-2", runtimeSessionId: "runtime-2", title: "生产机 B", host: "10.20.30.41" },
+    ]);
+
+    const view = render(<AppShell />);
+
+    expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe(
+      "频道：10.20.30.40、10.20.30.41",
+    );
     view.unmount();
   });
 

@@ -206,6 +206,7 @@ pub fn shortcut_registry() -> Vec<ShortcutDefinition> {
         ShortcutDefinition::new("settings.open", "打开设置", "Ctrl+,"),
         ShortcutDefinition::new("terminal.new_tab", "新建终端标签", "Ctrl+N"),
         ShortcutDefinition::new("terminal.close_tab", "关闭终端标签", "Ctrl+W"),
+        ShortcutDefinition::new("sync_channel.open", "创建同步频道", "Ctrl+Shift+M"),
         ShortcutDefinition::new(
             "terminal.split_horizontal",
             "水平分屏",
@@ -326,6 +327,7 @@ mod tests {
                 ("settings.open".to_string(), "Ctrl+,".to_string()),
                 ("terminal.new_tab".to_string(), "Ctrl+N".to_string()),
                 ("terminal.close_tab".to_string(), "Ctrl+W".to_string()),
+                ("sync_channel.open".to_string(), "Ctrl+Shift+M".to_string()),
                 (
                     "terminal.split_horizontal".to_string(),
                     "Ctrl+Shift+Arrowright".to_string()

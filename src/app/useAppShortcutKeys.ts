@@ -15,6 +15,7 @@ interface AppShortcutKeyContext {
 
 interface AppShortcutKeyHandlers {
   onOpenSettings: () => void;
+  onOpenSyncChannel: () => void;
   onAddTerminalTab: (paneId: string) => void;
   onCloseTerminalTab: (paneId: string, paneTabId: string) => void;
   onSplitPane: (direction: PaneSplitDirection) => void;
@@ -48,6 +49,8 @@ export function useAppShortcutKeys(
       const activeHandlers = handlersRef.current;
       if (command.kind === "open_settings") {
         activeHandlers.onOpenSettings();
+      } else if (command.kind === "open_sync_channel") {
+        activeHandlers.onOpenSyncChannel();
       } else if (command.kind === "add_terminal_tab") {
         activeHandlers.onAddTerminalTab(command.paneId);
       } else if (command.kind === "close_terminal_tab") {

@@ -32,4 +32,26 @@ describe("TerminalToolbar", () => {
     expect(closeButton?.querySelector(".lucide-x")).not.toBeNull();
     view.unmount();
   });
+
+  it("shows channel controls only for a channel member and keeps leave separate from close", () => {
+    const onLeaveSyncChannel = vi.fn();
+    const onCloseSyncChannel = vi.fn();
+    const view = render(
+      <TerminalToolbar
+        onSplitPane={vi.fn()}
+        onClosePane={vi.fn()}
+        syncChannelMember
+        onLeaveSyncChannel={onLeaveSyncChannel}
+        onCloseSyncChannel={onCloseSyncChannel}
+      />,
+    );
+
+    (view.container.querySelector('[aria-label="离开同步频道"]') as HTMLButtonElement).click();
+    expect(onLeaveSyncChannel).toHaveBeenCalledTimes(1);
+    expect(onCloseSyncChannel).not.toHaveBeenCalled();
+
+    (view.container.querySelector('[aria-label="关闭同步频道"]') as HTMLButtonElement).click();
+    expect(onCloseSyncChannel).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
 });

@@ -29,6 +29,15 @@ describe("useAppShortcutKeys", () => {
     expect(handlers.onToggleRightTool).toHaveBeenCalledWith("files");
   });
 
+  it("opens the sync channel dialog through the configured shortcut", () => {
+    const handlers = shortcutHandlers();
+    renderShortcutHarness({ bindings: [binding("sync_channel.open", "Ctrl+Shift+M")], handlers });
+
+    dispatchKey({ key: "m", ctrlKey: true, shiftKey: true });
+
+    expect(handlers.onOpenSyncChannel).toHaveBeenCalledTimes(1);
+  });
+
   it("does not dispatch commands that require missing context", () => {
     const handlers = shortcutHandlers();
     renderShortcutHarness({
@@ -183,6 +192,7 @@ function ShortcutHarness({
 function shortcutHandlers(): Parameters<typeof useAppShortcutKeys>[2] {
   return {
     onOpenSettings: vi.fn(),
+    onOpenSyncChannel: vi.fn(),
     onAddTerminalTab: vi.fn(),
     onCloseTerminalTab: vi.fn(),
     onSplitPane: vi.fn(),

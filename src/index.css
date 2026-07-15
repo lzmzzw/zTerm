@@ -474,6 +474,111 @@ button {
   height: min(var(--zt-dialog-height-large), calc(100vh - 96px));
 }
 
+.zt-sync-channel-dialog {
+  max-height: min(560px, calc(100vh - 64px));
+}
+
+.zt-sync-channel-body {
+  min-height: 0;
+  padding: 14px;
+}
+
+.zt-sync-channel-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 300px;
+  height: 100%;
+}
+
+.zt-sync-channel-column {
+  display: grid;
+  grid-template-rows: 34px minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--zt-border-subtle);
+  border-radius: var(--zt-radius-control);
+  background: var(--zt-bg-elevated);
+}
+
+.zt-sync-channel-column > header {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--zt-border-subtle);
+  color: var(--zt-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.zt-sync-channel-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 4px;
+}
+
+.zt-sync-channel-list > p {
+  margin: 0;
+  padding: 24px 12px;
+  color: var(--zt-text-muted);
+  text-align: center;
+  font-size: 12px;
+}
+
+.zt-sync-channel-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 28px;
+  align-items: center;
+  min-height: 48px;
+  padding: 4px 4px 4px 8px;
+  border-radius: var(--zt-radius-control);
+  color: var(--zt-text-primary);
+}
+
+.zt-sync-channel-row:hover {
+  background: var(--zt-bg-hover);
+}
+
+.zt-sync-channel-row > span {
+  display: grid;
+  min-width: 0;
+}
+
+.zt-sync-channel-row strong,
+.zt-sync-channel-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-sync-channel-row strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.zt-sync-channel-row small {
+  color: var(--zt-text-muted);
+  font-size: 11px;
+}
+
+.zt-sync-channel-row > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--zt-radius-control);
+  background: transparent;
+  color: var(--zt-text-secondary);
+}
+
+.zt-sync-channel-row > button:hover {
+  background: var(--zt-bg-hover);
+  color: var(--zt-text-primary);
+}
+
 .zt-dialog-header,
 .zt-dialog-footer {
   display: flex;
@@ -1959,6 +2064,13 @@ button {
 .zt-terminal-toolbar button:hover {
   background: var(--zt-bg-hover);
   color: var(--zt-text-primary);
+}
+
+.zt-terminal-toolbar-separator {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--zt-border-subtle);
 }
 
 .zt-terminal-surface {
@@ -6687,6 +6799,16 @@ button {
 @media (max-width: 760px) {
   body {
     min-width: 0;
+  }
+
+  .zt-sync-channel-dialog {
+    width: calc(100vw - 32px);
+    height: min(640px, calc(100vh - 48px));
+  }
+
+  .zt-sync-channel-columns {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(180px, 1fr) minmax(180px, 1fr);
   }
 
   .zt-workbench {

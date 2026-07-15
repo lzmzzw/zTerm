@@ -3,7 +3,12 @@ import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 
-import { AppTextInputDialog, ConnectionPickerDialog, type ConnectionChoice } from "./AppShellDialogs";
+import {
+  AppTextInputDialog,
+  ConnectionPickerDialog,
+  SyncChannelDialog,
+  type ConnectionChoice,
+} from "./AppShellDialogs";
 import type { SavedSession, SessionGroup } from "../features/sessions/types";
 
 function render(ui: ReactElement) {
@@ -199,6 +204,29 @@ describe("AppShellDialogs", () => {
     click(button(view.container, "选择连接 SSH Prod"));
 
     expect(selected).toEqual([{ kind: "saved_session", session: sshSession }]);
+    view.unmount();
+  });
+
+  it("requires two selected SSH connections before creating a sync channel", () => {
+    const onSubmit = vi.fn();
+    const view = render(
+      <SyncChannelDialog
+        candidates={[
+          { id: "tab-1", runtimeSessionId: "runtime-1", title: "SSH A", host: "10.0.0.1" },
+          { id: "tab-2", runtimeSessionId: "runtime-2", title: "SSH B", host: "10.0.0.2" },
+        ]}
+        initialMemberIds={["tab-1"]}
+        onCancel={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(button(view.container, "创建同步频道").disabled).toBe(true);
+    click(button(view.container, "添加 SSH B"));
+    expect(button(view.container, "创建同步频道").disabled).toBe(false);
+    click(button(view.container, "创建同步频道"));
+
+    expect(onSubmit).toHaveBeenCalledWith(["tab-1", "tab-2"]);
     view.unmount();
   });
 });
