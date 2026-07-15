@@ -20,11 +20,12 @@ export function FileTransferDialog({ language = "zhCN", onClose }: FileTransferD
       ariaLabel="文件传输"
       title={
         <span className="zt-file-transfer-dialog-title">
-          <span>文件传输</span>
-          <label>
-            <span>冲突策略</span>
+          <span className="zt-file-transfer-dialog-heading">文件传输</span>
+          <label className="zt-file-transfer-policy">
+            <span className="zt-file-transfer-policy-label">冲突策略</span>
             <ZtSelect
               ariaLabel="文件传输冲突策略"
+              className="zt-file-transfer-policy-select"
               value={conflictPolicy}
               options={[
                 { value: "overwrite", label: "覆盖" },

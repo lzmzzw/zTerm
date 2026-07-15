@@ -4693,33 +4693,78 @@ button {
   min-width: 0;
 }
 
-.zt-file-transfer-dialog-title > span {
+.zt-file-transfer-dialog-heading {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.zt-file-transfer-dialog-title label {
+.zt-file-transfer-policy {
   position: absolute;
   top: 50%;
   left: 50%;
   z-index: 1;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: var(--zt-text-muted);
+  height: 30px;
+  overflow: hidden;
+  border: 1px solid var(--zt-border);
+  border-radius: var(--zt-radius-control);
+  background: var(--zt-bg-input);
   font-size: var(--zt-font-size-caption);
   font-weight: 400;
   transform: translate(-50%, -50%);
 }
 
-.zt-file-transfer-dialog-title .zt-select-trigger {
-  width: 116px;
-  min-width: 116px;
-  height: 28px;
-  min-height: 28px;
-  padding: 0 26px 0 8px;
+.zt-file-transfer-policy-label {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 10px;
+  border-right: 1px solid var(--zt-border-subtle);
+  color: var(--zt-text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.zt-file-transfer-policy .zt-select-trigger {
+  width: 128px;
+  min-width: 128px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 28px 0 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--zt-text-primary);
   font-size: var(--zt-font-size-ui);
+  box-shadow: none;
+}
+
+.zt-file-transfer-policy .zt-select-trigger:hover,
+.zt-file-transfer-policy .zt-select-trigger[aria-expanded="true"] {
+  border-color: transparent;
+  background: var(--zt-bg-hover);
+  box-shadow: none;
+}
+
+.zt-file-transfer-policy .zt-select-trigger:focus-visible {
+  outline: none;
+  border-color: transparent;
+  box-shadow: inset 0 0 0 2px var(--zt-focus-soft);
+}
+
+@media (max-width: 760px) {
+  .zt-file-transfer-dialog-heading {
+    max-width: calc(100% - 220px);
+  }
+
+  .zt-file-transfer-policy {
+    right: 46px;
+    left: auto;
+    transform: translateY(-50%);
+  }
 }
 
 .zt-file-transfer-dialog .zt-file-transfer-path button,

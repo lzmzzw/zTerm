@@ -25,18 +25,24 @@ describe("file transfer dialog styles", () => {
     expect(styles).toContain("-webkit-backdrop-filter: none");
   });
 
-  it("keeps the conflict-policy selector compact and centered in the dialog title bar", () => {
+  it("presents the conflict policy as a cohesive title-bar control", () => {
     const header = ruleBody(".zt-file-transfer-dialog .zt-dialog-header");
-    const label = ruleBody(".zt-file-transfer-dialog-title label");
-    const selector = ruleBody(".zt-file-transfer-dialog-title .zt-select-trigger");
+    const control = ruleBody(".zt-file-transfer-policy");
+    const label = ruleBody(".zt-file-transfer-policy-label");
+    const selector = ruleBody(".zt-file-transfer-policy .zt-select-trigger");
 
     expect(header).toContain("position: relative");
-    expect(label).toContain("position: absolute");
-    expect(label).toContain("top: 50%");
-    expect(label).toContain("left: 50%");
-    expect(label).toContain("transform: translate(-50%, -50%)");
-    expect(selector).toContain("width: 116px");
-    expect(css).not.toContain(".zt-file-transfer-controls");
+    expect(control).toContain("position: absolute");
+    expect(control).toContain("left: 50%");
+    expect(control).toContain("height: 30px");
+    expect(control).toContain("border: 1px solid var(--zt-border)");
+    expect(control).toContain("background: var(--zt-bg-input)");
+    expect(label).toContain("border-right: 1px solid var(--zt-border-subtle)");
+    expect(label).toContain("color: var(--zt-text-primary)");
+    expect(label).toContain("font-weight: 500");
+    expect(selector).toContain("width: 128px");
+    expect(selector).toContain("border: 0");
+    expect(css).toContain("@media (max-width: 760px)");
   });
 
   it("reserves one third of the panel for expanded transfer tasks and separates their header", () => {
