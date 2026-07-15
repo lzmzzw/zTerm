@@ -2,6 +2,7 @@
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -10,7 +11,6 @@ import {
   Folder,
   FolderKey,
   FolderSync,
-  FolderUp,
   HardDrive,
   RefreshCw,
   Server,
@@ -768,8 +768,8 @@ function EndpointPane({
             if (event.key === "Enter") void onRefresh();
           }}
         />
-        <button type="button" aria-label={`${title}返回上级`} title="返回上级" disabled={!endpointReady} onClick={() => void onParent()}>
-          <FolderUp size={14} aria-hidden="true" />
+        <button type="button" aria-label={`${title}上级目录`} title="上级目录" disabled={!endpointReady} onClick={() => void onParent()}>
+          <ArrowUp size={14} aria-hidden="true" />
         </button>
         <button type="button" aria-label={`${title}刷新`} title="刷新" disabled={!endpointReady || pane.loading} onClick={() => void onRefresh()}>
           <RefreshCw size={14} aria-hidden="true" />

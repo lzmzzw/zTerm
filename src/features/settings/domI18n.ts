@@ -534,6 +534,7 @@ const patterns: Array<[RegExp, (match: RegExpMatchArray) => string]> = [
   [/^(.+) RDP 密码$/, (match) => `${match[1]} RDP Password`],
   [/^(.+)刷新$/, (match) => `${translate(match[1])} Refresh`],
   [/^(.+)返回上级$/, (match) => `${translate(match[1])} Go Up`],
+  [/^(.+)上级目录$/, (match) => `${translate(match[1])} Parent Directory`],
   [/^(.+)隐藏隐藏文件$/, (match) => `${translate(match[1])} Hide Hidden Files`],
   [/^(.+)显示隐藏文件$/, (match) => `${translate(match[1])} Show Hidden Files`],
   [/^收起(.+)详情$/, (match) => `Collapse ${translate(match[1])} Details`],

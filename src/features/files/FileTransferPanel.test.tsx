@@ -582,7 +582,10 @@ describe("FileTransferPanel", () => {
     act(() => useFileTransferStore.getState().setPath("left", "D:\\bundle"));
 
     expect(button(view.container, "左侧本地磁盘").textContent).toContain("D:\\");
-    await click(button(view.container, "左侧返回上级"));
+    const parentButton = button(view.container, "左侧上级目录");
+    expect(parentButton.title).toBe("上级目录");
+    expect(parentButton.querySelector(".lucide-arrow-up")).toBeTruthy();
+    await click(parentButton);
     await flushEffects();
 
     expect(button(view.container, "左侧本地磁盘").textContent).toContain("D:\\");

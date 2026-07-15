@@ -124,12 +124,15 @@ describe("file transfer dialog styles", () => {
     expect(localPathRule).toContain(
       "grid-template-columns: 72px minmax(0, 1fr) repeat(3, 26px)",
     );
+    expect(localPathRule).toContain("padding-left: 0");
     const rootSelectRule = css.slice(
       css.indexOf(".zt-file-transfer-dialog .zt-file-transfer-path .zt-file-transfer-root-select.zt-select-trigger"),
       css.indexOf("}", css.indexOf(".zt-file-transfer-dialog .zt-file-transfer-path .zt-file-transfer-root-select.zt-select-trigger")),
     );
     expect(rootSelectRule).toContain("width: 72px");
     expect(rootSelectRule).toContain("min-width: 72px");
+    expect(rootSelectRule).toContain("justify-content: flex-start");
+    expect(rootSelectRule).toContain("padding-left: 0");
     expect(css).not.toContain(".zt-file-transfer-path:has(.zt-file-transfer-root-select)");
   });
 });
