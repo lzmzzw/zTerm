@@ -93,6 +93,13 @@ or smoke-test environment files. Local AI agent settings, internal project notes
 build output, runtime databases, and temporary credentials are ignored by
 default.
 
+On Windows, RDP files can be signed by setting
+`ZTERM_RDP_SIGNING_CERT_THUMBPRINT` to the 40-character thumbprint of a code
+signing certificate available to the current user. zTerm invokes `rdpsign.exe`
+before starting `mstsc.exe`; missing or invalid configuration and signing
+failures fall back to the existing unsigned RDP launch flow. Restart zTerm after
+changing the environment variable.
+
 ## License
 
 zTerm is licensed under the GNU General Public License version 3.0 only. See

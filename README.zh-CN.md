@@ -82,6 +82,8 @@ git push origin v0.1.0
 
 不要提交真实主机、用户名、密码、API Key、私钥、token 或 smoke 测试环境文件。本地 AI agent 设置、内部项目说明、构建产物、运行时数据库和临时凭据默认会被忽略。
 
+Windows 下可将 `ZTERM_RDP_SIGNING_CERT_THUMBPRINT` 设置为当前用户可用代码签名证书的 40 位 Thumbprint，修改环境变量后需重启 zTerm。zTerm 会在启动 `mstsc.exe` 前调用 `rdpsign.exe`；配置缺失、格式无效或签名失败时保持兼容，继续使用原有未签名 RDP 启动流程。
+
 ## 许可证
 
 zTerm 使用 GNU General Public License version 3.0 only。详见 [LICENSE](LICENSE)。

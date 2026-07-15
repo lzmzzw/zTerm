@@ -1,8 +1,8 @@
 // Author: Liz
-use std::{fs, process::Command};
+use std::{env, fs, path::Path, process::Command};
 
 #[cfg(target_os = "windows")]
-use std::{ffi::c_void, io, ptr};
+use std::{ffi::c_void, io, os::windows::process::CommandExt, ptr};
 use uuid::Uuid;
 
 use crate::{
@@ -10,6 +10,10 @@ use crate::{
     models::session::{SavedSession, SessionType},
     services::credential_service::read_system_secret,
 };
+
+const RDP_SIGNING_CERT_THUMBPRINT_ENV: &str = "ZTERM_RDP_SIGNING_CERT_THUMBPRINT";
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RdpLaunchCommand {
@@ -57,11 +61,34 @@ pub fn launch_mstsc(session: &SavedSession) -> AppResult<()> {
         Uuid::new_v4()
     ));
     fs::write(&file_path, rdp_content)?;
+    try_sign_rdp_file(&file_path);
     Command::new("mstsc.exe")
         .arg(&file_path)
         .spawn()
         .map(|_| ())
         .map_err(|error| AppError::terminal(format!("failed to launch mstsc: {error}")))
+}
+
+fn try_sign_rdp_file(file_path: &Path) -> bool {
+    let configured_thumbprint = env::var(RDP_SIGNING_CERT_THUMBPRINT_ENV).ok();
+    let Some(thumbprint) = normalize_rdp_signing_thumbprint(configured_thumbprint.as_deref())
+    else {
+        return false;
+    };
+
+    let mut command = Command::new("rdpsign.exe");
+    command.args(["/sha256", &thumbprint, "/q"]).arg(file_path);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+    command.status().is_ok_and(|status| status.success())
+}
+
+fn normalize_rdp_signing_thumbprint(configured_thumbprint: Option<&str>) -> Option<String> {
+    let thumbprint = configured_thumbprint?.trim();
+    if thumbprint.len() != 40 || !thumbprint.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(thumbprint.to_ascii_uppercase())
 }
 
 pub fn build_rdp_file_content(session: &SavedSession) -> AppResult<String> {
@@ -284,5 +311,34 @@ fn sanitize_file_token(value: &str) -> String {
         "rdp".to_string()
     } else {
         token.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_rdp_signing_thumbprint;
+
+    #[test]
+    fn rdp_signing_thumbprint_accepts_a_trimmed_sha1_thumbprint() {
+        assert_eq!(
+            normalize_rdp_signing_thumbprint(Some(" bb4b8edc26a071a2bc4b2bed641dee3fae6e9f7b ",)),
+            Some("BB4B8EDC26A071A2BC4B2BED641DEE3FAE6E9F7B".to_string())
+        );
+    }
+
+    #[test]
+    fn rdp_signing_thumbprint_skips_missing_or_invalid_configuration() {
+        assert_eq!(normalize_rdp_signing_thumbprint(None), None);
+        assert_eq!(normalize_rdp_signing_thumbprint(Some("")), None);
+        assert_eq!(
+            normalize_rdp_signing_thumbprint(Some("not-a-thumbprint")),
+            None
+        );
+        assert_eq!(
+            normalize_rdp_signing_thumbprint(Some(
+                "CF697719CB0A2C6BAC01C7E20C185EBCB825F6208AC7CE453FDB91BC9E3EA01F",
+            )),
+            None
+        );
     }
 }
