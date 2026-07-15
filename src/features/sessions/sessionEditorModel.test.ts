@@ -43,7 +43,7 @@ describe("sessionEditorModel", () => {
       height: 900,
       color_depth: 24,
       redirect_clipboard: true,
-      fullscreen: false,
+      fullscreen: true,
     });
     expect(defaultLocalOptions).toEqual({
       profile_id: null,

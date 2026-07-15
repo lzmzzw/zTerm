@@ -7,7 +7,7 @@ export const defaultRdpOptions: RdpOptions = {
   height: 900,
   color_depth: 24,
   redirect_clipboard: true,
-  fullscreen: false,
+  fullscreen: true,
 };
 
 export const defaultLocalOptions: LocalOptions = {

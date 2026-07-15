@@ -65,6 +65,11 @@ export function RdpSessionForm({
                 onReveal={onRevealPassword}
               />
             </label>
+            <ZtSwitch
+              label="剪贴板重定向"
+              checked={options.redirect_clipboard}
+              onChange={(checked) => onOptionsChange({ ...options, redirect_clipboard: checked })}
+            />
           </div>
         </section>
       ) : null}
@@ -72,6 +77,11 @@ export function RdpSessionForm({
         <section className="zt-session-form-section zt-session-form-wide" aria-label="显示属性">
           <div className="zt-session-form-section-title">显示属性</div>
           <div className="zt-session-form-grid zt-session-nested-grid">
+            <ZtSwitch
+              label="全屏"
+              checked={options.fullscreen ?? false}
+              onChange={(checked) => onOptionsChange({ ...options, fullscreen: checked })}
+            />
             <label>
               <span>宽度</span>
               <ZtNumberInput
@@ -80,6 +90,7 @@ export function RdpSessionForm({
                 max={7680}
                 step={10}
                 value={options.width}
+                disabled={options.fullscreen ?? false}
                 onChange={(value) => onOptionsChange({ ...options, width: value })}
               />
             </label>
@@ -91,6 +102,7 @@ export function RdpSessionForm({
                 max={4320}
                 step={10}
                 value={options.height}
+                disabled={options.fullscreen ?? false}
                 onChange={(value) => onOptionsChange({ ...options, height: value })}
               />
             </label>
@@ -108,16 +120,6 @@ export function RdpSessionForm({
                 }
               />
             </label>
-            <ZtSwitch
-              label="全屏"
-              checked={options.fullscreen ?? false}
-              onChange={(checked) => onOptionsChange({ ...options, fullscreen: checked })}
-            />
-            <ZtSwitch
-              label="剪贴板重定向"
-              checked={options.redirect_clipboard}
-              onChange={(checked) => onOptionsChange({ ...options, redirect_clipboard: checked })}
-            />
           </div>
         </section>
       ) : null}

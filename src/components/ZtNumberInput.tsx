@@ -8,10 +8,19 @@ interface ZtNumberInputProps {
   max?: number;
   step?: number;
   ariaLabel: string;
+  disabled?: boolean;
   onChange: (value: number) => void;
 }
 
-export function ZtNumberInput({ value, min = 0, max = 100, step = 1, ariaLabel, onChange }: ZtNumberInputProps) {
+export function ZtNumberInput({
+  value,
+  min = 0,
+  max = 100,
+  step = 1,
+  ariaLabel,
+  disabled = false,
+  onChange,
+}: ZtNumberInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const clamp = useCallback((v: number) => Math.max(min, Math.min(max, v)), [min, max]);
@@ -55,14 +64,27 @@ export function ZtNumberInput({ value, min = 0, max = 100, step = 1, ariaLabel, 
         inputMode="numeric"
         aria-label={ariaLabel}
         value={value ?? ""}
+        disabled={disabled}
         onChange={handleInputChange}
         onKeyDown={handleKeyDown}
       />
       <div className="zt-number-input-buttons">
-        <button type="button" tabIndex={-1} aria-hidden="true" onClick={increment} disabled={value != null && value >= max}>
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-hidden="true"
+          onClick={increment}
+          disabled={disabled || (value != null && value >= max)}
+        >
           <Plus size={14} />
         </button>
-        <button type="button" tabIndex={-1} aria-hidden="true" onClick={decrement} disabled={value != null && value <= min}>
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-hidden="true"
+          onClick={decrement}
+          disabled={disabled || (value != null && value <= min)}
+        >
           <Minus size={14} />
         </button>
       </div>

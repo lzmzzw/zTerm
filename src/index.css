@@ -6133,7 +6133,7 @@ button {
     box-shadow 0.15s ease;
 }
 
-.zt-number-input input:hover {
+.zt-number-input input:hover:not(:disabled) {
   border-color: var(--zt-border-strong);
 }
 
@@ -6141,6 +6141,11 @@ button {
   outline: none;
   border-color: var(--zt-accent);
   box-shadow: 0 0 0 2px var(--zt-focus-soft);
+}
+
+.zt-number-input input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .zt-number-input-buttons {

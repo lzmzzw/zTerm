@@ -638,7 +638,7 @@ describe("SessionTree", () => {
     view.unmount();
   });
 
-  it("shows RDP password, connection properties, and display properties only", async () => {
+  it("places RDP clipboard redirection under connection properties and display settings under display properties", async () => {
     const view = render(<SessionTree groups={groups} sessions={sessions} />);
 
     await sessionMenuAction(view.container, "办公 RDP", "编辑");
@@ -652,15 +652,29 @@ describe("SessionTree", () => {
     expect(dialog(view.container).textContent).toContain("连接属性");
     expect(dialog(view.container).textContent).toContain("显示属性");
     expect(editorFields(view.container).textContent).toContain("密码");
+    expect(editorFields(view.container).textContent).toContain("剪贴板重定向");
     expect(editorFields(view.container).textContent).not.toContain("宽度");
+    expect(editorFields(view.container).textContent).not.toContain("全屏");
     expect(dialog(view.container).textContent).not.toContain("凭据引用");
     expect(input(view.container, "密码").type).toBe("password");
     expect(input(view.container, "密码").placeholder).toBe("******");
     expect(() => button(view.container, "显示密码")).not.toThrow();
+    expect(
+      Array.from(editorFields(view.container).querySelectorAll(".zt-session-nested-grid > label")).map((label) =>
+        (label.querySelector(".zt-switch-label") ?? label.querySelector(":scope > span"))?.textContent?.trim(),
+      ),
+    ).toEqual(["域", "密码", "剪贴板重定向"]);
 
     await click(button(view.container, "显示属性"));
     expect(editorFields(view.container).textContent).toContain("宽度");
+    expect(editorFields(view.container).textContent).toContain("全屏");
     expect(editorFields(view.container).textContent).not.toContain("密码");
+    expect(editorFields(view.container).textContent).not.toContain("剪贴板重定向");
+    expect(
+      Array.from(editorFields(view.container).querySelectorAll(".zt-session-nested-grid > label")).map((label) =>
+        (label.querySelector(".zt-switch-label") ?? label.querySelector(":scope > span"))?.textContent?.trim(),
+      ),
+    ).toEqual(["全屏", "宽度", "高度", "色深"]);
 
     view.unmount();
   });
@@ -757,6 +771,32 @@ describe("SessionTree", () => {
     );
     expect(onSaveSession).not.toHaveBeenCalledWith(expect.objectContaining({ credential_ref: secret }));
     expect(view.container.textContent).not.toContain(secret);
+
+    view.unmount();
+  });
+
+  it("enables fullscreen by default for new RDP sessions and disables custom dimensions until it is turned off", async () => {
+    const view = render(<SessionTree groups={[]} sessions={[]} />);
+
+    await contextMenu(view.container.querySelector(".zt-session-tree") as HTMLElement);
+    await click(button(view.container, "添加连接"));
+    await click(button(view.container, "RDP"));
+    await click(button(view.container, "显示属性"));
+
+    const fullscreen = editorFields(view.container).querySelector<HTMLInputElement>('[role="switch"]');
+    expect(fullscreen?.closest("label")?.textContent).toContain("全屏");
+    expect(fullscreen?.checked).toBe(true);
+    expect(input(view.container, "宽度").disabled).toBe(true);
+    expect(input(view.container, "高度").disabled).toBe(true);
+    expect(
+      Array.from(editorFields(view.container).querySelectorAll<HTMLButtonElement>(".zt-number-input-buttons button")).every(
+        (control) => control.disabled,
+      ),
+    ).toBe(true);
+
+    await click(fullscreen as HTMLInputElement);
+    expect(input(view.container, "宽度").disabled).toBe(false);
+    expect(input(view.container, "高度").disabled).toBe(false);
 
     view.unmount();
   });
