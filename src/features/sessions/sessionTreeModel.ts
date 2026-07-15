@@ -49,7 +49,7 @@ export function buildSessionTreeModel({
     siblingGroups.sort(compareNamedItems);
   }
   for (const groupSessions of sessionsByGroupId.values()) {
-    groupSessions.sort(compareNamedItems);
+    groupSessions.sort(compareSessions);
   }
 
   function buildGroupNodes(parentId: string | null, ancestors: Set<string>): SessionGroupTreeNode[] {
@@ -75,6 +75,28 @@ export function buildSessionTreeModel({
 
 function compareNamedItems(left: { id: string; name: string }, right: { id: string; name: string }) {
   return nameCollator.compare(left.name, right.name) || nameCollator.compare(left.id, right.id);
+}
+
+function compareSessions(left: SavedSession, right: SavedSession) {
+  const leftAddress = extractIpv4Address(left.name);
+  const rightAddress = extractIpv4Address(right.name);
+  if (leftAddress && rightAddress) {
+    for (let index = 0; index < leftAddress.length; index += 1) {
+      const difference = leftAddress[index] - rightAddress[index];
+      if (difference !== 0) return difference;
+    }
+  }
+  if (leftAddress || rightAddress) return leftAddress ? -1 : 1;
+  return compareNamedItems(left, right);
+}
+
+function extractIpv4Address(name: string): number[] | null {
+  const candidates = name.matchAll(/(^|[^\d.])((?:\d{1,3}\.){3}\d{1,3})(?![\d.])/g);
+  for (const candidate of candidates) {
+    const octets = candidate[2].split(".").map(Number);
+    if (octets.every((octet) => octet <= 255)) return octets;
+  }
+  return null;
 }
 
 export function buildSessionGroupDraft({

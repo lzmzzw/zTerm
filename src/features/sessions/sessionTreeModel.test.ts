@@ -69,6 +69,40 @@ describe("sessionTreeModel", () => {
     expect(JSON.stringify(model)).not.toContain("orphan");
   });
 
+  it("sorts session names containing IPv4 addresses by address octets", () => {
+    const model = buildSessionTreeModel({
+      groups: [],
+      sessions: [
+        session({ id: "session-40-198", name: "z-host-172.16.40.198" }),
+        session({ id: "session-41-20-b", name: "a-host-172.16.41.20-b" }),
+        session({ id: "session-41-20-a", name: "a-host-172.16.41.20-a" }),
+      ],
+    });
+
+    expect(model.rootSessions.map((item) => item.id)).toEqual([
+      "session-40-198",
+      "session-41-20-a",
+      "session-41-20-b",
+    ]);
+  });
+
+  it("falls back to natural name sorting when an IPv4 address is invalid", () => {
+    const model = buildSessionTreeModel({
+      groups: [],
+      sessions: [
+        session({ id: "session-999", name: "invalid-172.16.41.999" }),
+        session({ id: "session-named", name: "Named session" }),
+        session({ id: "session-2", name: "invalid-172.16.41.2" }),
+      ],
+    });
+
+    expect(model.rootSessions.map((item) => item.id)).toEqual([
+      "session-2",
+      "session-999",
+      "session-named",
+    ]);
+  });
+
   it("reports an empty model only when both groups and sessions are empty", () => {
     expect(buildSessionTreeModel({ groups: [], sessions: [] }).isEmpty).toBe(true);
     expect(buildSessionTreeModel({ groups: [], sessions: [session({ id: "root" })] }).isEmpty).toBe(false);
