@@ -8,6 +8,15 @@ function ruleBody(selector: string) {
 }
 
 describe("file transfer dialog styles", () => {
+  it("scales with the application viewport while preserving safe margins", () => {
+    const styles = ruleBody(".zt-file-transfer-dialog");
+
+    expect(styles).toContain("width: min(82vw, calc(100vw - 96px))");
+    expect(styles).toContain("height: min(87vh, calc(100vh - 96px))");
+    expect(styles).not.toContain("1180px");
+    expect(styles).not.toContain("780px");
+  });
+
   it("uses an opaque surface so the terminal cannot show through", () => {
     const styles = ruleBody(".zt-file-transfer-dialog");
 

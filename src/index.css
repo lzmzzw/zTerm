@@ -2788,8 +2788,8 @@ button {
 }
 
 .zt-file-transfer-dialog {
-  width: min(1180px, calc(100vw - 96px));
-  height: min(780px, calc(100vh - 96px));
+  width: min(82vw, calc(100vw - 96px));
+  height: min(87vh, calc(100vh - 96px));
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr);
   background: var(--zt-bg-surface);
