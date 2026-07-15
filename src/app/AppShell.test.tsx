@@ -1346,7 +1346,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("hides transient SSH containers and limits tunnels for single-channel external SSH", async () => {
+  it("shows SSH tools and limits tunnel editing for single-channel external SSH", async () => {
     storeMocks.pendingExternalLaunches = [
       {
         id: "external:launch-1",
@@ -1390,7 +1390,7 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).toBe(null);
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).not.toBe(null);
     expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).not.toBe(null);
     expect(storeMocks.listSshContainers).not.toHaveBeenCalled();
 
@@ -1583,7 +1583,7 @@ describe("AppShell", () => {
 
     expect(view.container.querySelector('[aria-label="左侧管理"]')).not.toBe(null);
     expect(view.container.querySelector('[aria-label="左侧管理切换"]')).not.toBe(null);
-    expect(leftRailLabels).toEqual(["工作区", "会话", "文件传输", "模型", "打开设置"]);
+    expect(leftRailLabels).toEqual(["会话", "工作区", "模型", "文件传输", "打开设置"]);
     expect(view.container.querySelector('[aria-label="工作区管理"]')).toBe(null);
     expect(view.container.querySelector('[aria-label="会话管理"]')).toBe(null);
     expect(view.container.querySelector('[aria-label="会话树"]')).toBe(null);
@@ -3466,6 +3466,15 @@ describe("AppShell", () => {
   });
 
   it("refreshes right-side history and command groups for the active saved session", async () => {
+    storeMocks.terminalState.runtimes = {
+      "runtime-1": {
+        runtime_session_id: "runtime-1",
+        saved_session_id: "session-1",
+        history_scope_kind: "saved_session",
+        history_scope_id: "session-1",
+        kind: "ssh",
+      },
+    };
     storeMocks.workspaceState.tabs = [
       {
         id: "tab-1",
@@ -3550,6 +3559,15 @@ describe("AppShell", () => {
   });
 
   it("refreshes command history when the active terminal receives input", async () => {
+    storeMocks.terminalState.runtimes = {
+      "runtime-1": {
+        runtime_session_id: "runtime-1",
+        saved_session_id: "session-1",
+        history_scope_kind: "saved_session",
+        history_scope_id: "session-1",
+        kind: "ssh",
+      },
+    };
     storeMocks.workspaceState.tabs = [
       {
         id: "tab-1",
@@ -3620,6 +3638,22 @@ describe("AppShell", () => {
   });
 
   it("refreshes history for the ssh connection bound to the active terminal tab", async () => {
+    storeMocks.terminalState.runtimes = {
+      "runtime-a": {
+        runtime_session_id: "runtime-a",
+        saved_session_id: "session-a",
+        history_scope_kind: "saved_session",
+        history_scope_id: "session-a",
+        kind: "ssh",
+      },
+      "runtime-b": {
+        runtime_session_id: "runtime-b",
+        saved_session_id: "session-b",
+        history_scope_kind: "saved_session",
+        history_scope_id: "session-b",
+        kind: "ssh",
+      },
+    };
     storeMocks.workspaceState.tabs = [
       {
         id: "tab-1",
@@ -3770,7 +3804,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("does not use an RDP saved session as a history fallback when no scope exists", async () => {
+  it("hides history for an active RDP placeholder", () => {
     storeMocks.sessionState.sessions = [
       {
         id: "rdp-1",
@@ -3824,22 +3858,8 @@ describe("AppShell", () => {
       },
     };
     const view = render(<AppShell />);
-    const historyButton = view.container.querySelector('.zt-tool-rail [aria-label="历史"]') as HTMLButtonElement;
-
-    await act(async () => {
-      historyButton.click();
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.searchHistory).toHaveBeenLastCalledWith({
-      query: "",
-      scopeKind: null,
-      scopeId: null,
-      deduplicate: true,
-    });
-    expect(storeMocks.loadCommandGroups).toHaveBeenLastCalledWith(null, null);
-    expect(storeMocks.historyPanelProps?.historyScopeKind).toBe(null);
-    expect(storeMocks.historyPanelProps?.historyScopeId).toBe(null);
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="历史"]')).toBe(null);
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SFTP 文件"]')).toBe(null);
 
     view.unmount();
   });
@@ -3908,6 +3928,11 @@ describe("AppShell", () => {
   it("opens resource monitor for the local machine without an active connection", async () => {
     const view = render(<AppShell />);
     const monitorButton = view.container.querySelector('.zt-tool-rail [aria-label="资源监控"]') as HTMLButtonElement;
+    const rightRailLabels = Array.from(view.container.querySelectorAll(".zt-tool-rail button")).map((item) =>
+      item.getAttribute("aria-label"),
+    );
+
+    expect(rightRailLabels).toEqual(["资源监控", "Agent"]);
 
     await act(async () => {
       monitorButton.click();
@@ -3959,6 +3984,11 @@ describe("AppShell", () => {
     };
     const view = render(<AppShell />);
     const monitorButton = view.container.querySelector('.zt-tool-rail [aria-label="资源监控"]') as HTMLButtonElement;
+    const rightRailLabels = Array.from(view.container.querySelectorAll(".zt-tool-rail button")).map((item) =>
+      item.getAttribute("aria-label"),
+    );
+
+    expect(rightRailLabels).toEqual(["资源监控", "历史", "Agent"]);
 
     await act(async () => {
       monitorButton.click();
@@ -3970,7 +4000,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("shows the tunnel tool only when the active SSH saved session has tunnels", async () => {
+  it("shows SSH tools while an opened SSH tab is active, regardless of saved tunnel configuration", async () => {
     storeMocks.sessionState.sessions = [
       {
         id: "session-1",
@@ -4094,8 +4124,7 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).toBe(null);
-    expect(view.container.querySelector(".zt-workbench")?.classList.contains("zt-workbench-right-collapsed")).toBe(true);
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).not.toBe(null);
 
     view.unmount();
   });
@@ -4208,7 +4237,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("hides the container tool when the active SSH session has not enabled containers", () => {
+  it("shows the container tool while an opened SSH tab is active even when containers are not enabled", () => {
     storeMocks.sessionState.sessions = [
       {
         id: "session-1",
@@ -4261,7 +4290,7 @@ describe("AppShell", () => {
 
     const view = render(<AppShell />);
 
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).toBe(null);
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).not.toBe(null);
 
     view.unmount();
   });

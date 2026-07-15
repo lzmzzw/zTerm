@@ -2,8 +2,9 @@
 import type { I18nKey } from "../features/settings/i18n";
 
 export type RightTool = "agent" | "files" | "history" | "monitor" | "tunnels" | "containers";
+export type ActiveConnectionKind = "none" | "local" | "ssh";
 
-export const rightToolRailOrder: RightTool[] = ["files", "containers", "tunnels", "history", "monitor", "agent"];
+export const rightToolRailOrder: RightTool[] = ["monitor", "history", "files", "containers", "tunnels", "agent"];
 
 const rightToolLabelKeys: Record<RightTool, I18nKey> = {
   agent: "agent",
@@ -22,6 +23,14 @@ const rightToolShortcutActions = {
 
 export function rightToolLabelKey(tool: RightTool): I18nKey {
   return rightToolLabelKeys[tool];
+}
+
+export function visibleRightTools(connectionKind: ActiveConnectionKind): RightTool[] {
+  return rightToolRailOrder.filter((tool) => {
+    if (tool === "monitor" || tool === "agent") return true;
+    if (tool === "history") return connectionKind !== "none";
+    return connectionKind === "ssh";
+  });
 }
 
 export function rightToolFromShortcutActionId(actionId: string): RightTool | null {

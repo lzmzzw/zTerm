@@ -16,7 +16,7 @@ import { TitleBar } from "./TitleBar";
 import { WorkspaceStage } from "./WorkspaceStage";
 import { createRemoteFileActions } from "./remoteFileActions";
 import { createTerminalActions } from "./terminalActions";
-import type { RightTool } from "./rightTools";
+import { visibleRightTools, type ActiveConnectionKind, type RightTool } from "./rightTools";
 import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
 import { ZtCenteredPageLayout, ZtConfirmDialog, ZtModalOverlay, ZtSurfaceFrame } from "../components/ZtUi";
@@ -532,6 +532,18 @@ export function AppShell() {
   const activeRuntimeInfo = useTerminalStore((state) =>
     activeRuntimeSessionId ? (state.runtimes[activeRuntimeSessionId] ?? null) : null,
   );
+  const activeConnectionKind: ActiveConnectionKind = (() => {
+    if (!activeRuntimeSessionId || activePaneTab?.connection_source === "ssh_container") return "none";
+    if (activeExternalSshSession || activeSavedSession?.type === "ssh" || activeRuntimeInfo?.kind === "ssh") return "ssh";
+    if (
+      activeSavedSession?.type === "local" ||
+      activePaneTab?.connection_source === "default_local" ||
+      activeRuntimeInfo?.kind === "local"
+    ) {
+      return "local";
+    }
+    return "none";
+  })();
   const activeRuntimeInputSerial = useTerminalStore((state) =>
     activeTool === "history" && activeRuntimeSessionId
       ? (state.inputSerialByRuntime[activeRuntimeSessionId] ?? 0)
@@ -699,16 +711,10 @@ export function AppShell() {
   }, [activeExternalSshSession]);
 
   useEffect(() => {
-    if (activeTool === "tunnels" && activeSshTunnels.length === 0 && !activeExternalSshSession) {
+    if (activeTool && !visibleRightTools(activeConnectionKind).includes(activeTool)) {
       setActiveTool(null);
     }
-  }, [activeExternalSshSession, activeSshTunnels.length, activeTool]);
-
-  useEffect(() => {
-    if (activeTool === "containers" && !activeSshContainersEnabled) {
-      setActiveTool(null);
-    }
-  }, [activeSshContainersEnabled, activeTool]);
+  }, [activeConnectionKind, activeTool]);
 
   useEffect(() => {
     if (activeTool !== "containers") return undefined;
@@ -1557,28 +1563,29 @@ export function AppShell() {
       >
         <nav className="zt-left-rail" aria-label="左侧管理切换">
           <ToolButton
-            label="工作区"
-            active={activeLeftTool === "workspace"}
-            icon={<PanelsTopLeft size={16} aria-hidden="true" />}
-            onClick={() => toggleLeftTool("workspace")}
-          />
-          <ToolButton
             label="会话"
             active={activeLeftTool === "sessions"}
             icon={<Terminal size={16} aria-hidden="true" />}
             onClick={() => toggleLeftTool("sessions")}
           />
           <ToolButton
-            label="文件传输"
-            active={fileTransferDialogOpen}
-            icon={<ArrowLeftRight size={16} aria-hidden="true" />}
-            onClick={() => setFileTransferDialogOpen((current) => !current)}
+            label="工作区"
+            active={activeLeftTool === "workspace"}
+            icon={<PanelsTopLeft size={16} aria-hidden="true" />}
+            onClick={() => toggleLeftTool("workspace")}
           />
           <ToolButton
             label="模型"
             active={activeLeftTool === "models"}
             icon={<Bot size={16} aria-hidden="true" />}
             onClick={() => toggleLeftTool("models")}
+          />
+          <ToolButton
+            label="文件传输"
+            active={fileTransferDialogOpen}
+            className="zt-left-rail-transfer"
+            icon={<ArrowLeftRight size={16} aria-hidden="true" />}
+            onClick={() => setFileTransferDialogOpen((current) => !current)}
           />
           <ToolButton
             label="打开设置"
@@ -1769,6 +1776,7 @@ export function AppShell() {
 
       <RightToolsPanel
         activeTool={activeTool}
+        activeConnectionKind={activeConnectionKind}
         agent={{
           activeRuntimeSessionId,
           activePaneId: activeTab?.active_pane_id ?? null,

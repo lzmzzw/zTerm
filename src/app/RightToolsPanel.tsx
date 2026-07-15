@@ -32,7 +32,7 @@ import type { SshContainerInfo } from "../features/terminal/sshContainerApi";
 import { t } from "../features/settings/i18n";
 import { ZtSelect } from "../components/ZtSelect";
 import { PanelHeader, ToolButton } from "./ShellControls";
-import { rightToolLabelKey, rightToolRailOrder, type RightTool } from "./rightTools";
+import { rightToolLabelKey, visibleRightTools, type ActiveConnectionKind, type RightTool } from "./rightTools";
 
 const rightToolRailIcons: Record<RightTool, LucideIcon> = {
   agent: MessageSquareMore,
@@ -45,6 +45,7 @@ const rightToolRailIcons: Record<RightTool, LucideIcon> = {
 
 interface RightToolsPanelProps {
   activeTool: RightTool | null;
+  activeConnectionKind: ActiveConnectionKind;
   agent: {
     activeRuntimeSessionId: string | null;
     activePaneId: string | null;
@@ -153,6 +154,7 @@ interface RightToolsPanelProps {
 
 export function RightToolsPanel({
   activeTool,
+  activeConnectionKind,
   agent,
   files,
   history,
@@ -164,11 +166,7 @@ export function RightToolsPanel({
   onActiveToolChange,
 }: RightToolsPanelProps) {
   const monitorSnapshot = useServerInfoSnapshot(monitor.target?.id ?? null, activeTool === "monitor");
-  const visibleTools = rightToolRailOrder.filter(
-    (tool) =>
-      (tool !== "tunnels" || tunnels.items.length > 0 || tunnels.editable) &&
-      (tool !== "containers" || containers.enabled),
-  );
+  const visibleTools = visibleRightTools(activeConnectionKind);
 
   return (
     <aside
