@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 
 import { AppTextInputDialog, ConnectionPickerDialog, type ConnectionChoice } from "./AppShellDialogs";
-import type { SavedSession } from "../features/sessions/types";
+import type { SavedSession, SessionGroup } from "../features/sessions/types";
 
 function render(ui: ReactElement) {
   const container = document.createElement("div");
@@ -76,6 +76,19 @@ function session(overrides: Partial<SavedSession>): SavedSession {
   };
 }
 
+function group(overrides: Partial<SessionGroup>): SessionGroup {
+  return {
+    id: overrides.id ?? "group",
+    parent_id: overrides.parent_id ?? null,
+    name: overrides.name ?? "Group",
+    expanded: overrides.expanded ?? true,
+    sort_order: overrides.sort_order ?? 0,
+    created_at_ms: 1,
+    updated_at_ms: 1,
+    ...overrides,
+  };
+}
+
 describe("AppShellDialogs", () => {
   it("trims text input before submit and rejects blank values", () => {
     const onSubmit = vi.fn();
@@ -104,13 +117,20 @@ describe("AppShellDialogs", () => {
     view.unmount();
   });
 
-  it("sorts saved sessions by sort order then name", () => {
+  it("renders the complete grouped session tree using session-list ordering", () => {
     const view = render(
       <ConnectionPickerDialog
+        groups={[
+          group({ id: "group-10", name: "Group 10" }),
+          group({ id: "group-2", name: "Group 2" }),
+          group({ id: "group-child", parent_id: "group-10", name: "Child" }),
+          group({ id: "group-empty", name: "Group 30 Empty" }),
+        ]}
         sessions={[
-          session({ id: "zeta", name: "Zeta", sort_order: 2, type: "ssh" }),
-          session({ id: "beta", name: "Beta", sort_order: 1, type: "rdp" }),
-          session({ id: "alpha", name: "Alpha", sort_order: 1, type: "local" }),
+          session({ id: "session-198", name: "172.16.40.198", group_id: "group-10", type: "ssh" }),
+          session({ id: "session-20", name: "172.16.40.20", group_id: "group-10", type: "rdp" }),
+          session({ id: "session-child", name: "Child local", group_id: "group-child", type: "local" }),
+          session({ id: "session-root", name: "Root SSH", group_id: null, type: "ssh" }),
         ]}
         opening={false}
         error={null}
@@ -119,24 +139,27 @@ describe("AppShellDialogs", () => {
       />,
     );
 
-    expect(Array.from(view.container.querySelectorAll(".zt-connection-choice strong")).map((node) => node.textContent)).toEqual([
+    expect(Array.from(view.container.querySelectorAll(".zt-session-picker-row")).map((node) => node.textContent)).toEqual([
       "默认本地终端",
-      "Alpha",
-      "Beta",
-      "Zeta",
+      "Group 2",
+      "Group 10",
+      "172.16.40.20",
+      "172.16.40.198",
+      "Child",
+      "Child local",
+      "Group 30 Empty",
+      "未分组",
+      "Root SSH",
     ]);
-    expect(Array.from(view.container.querySelectorAll(".zt-connection-choice span")).map((node) => node.textContent)).toEqual([
-      "Local",
-      "Local",
-      "RDP",
-      "SSH",
-    ]);
+    expect(view.container.querySelector('[data-session-tree-depth="2"]')?.textContent).toBe("Child local");
+    expect(view.container.querySelector('[aria-label="选择连接 Child local"]')?.getAttribute("aria-level")).toBe("3");
     view.unmount();
   });
 
   it("disables cancel and connection choices while opening", () => {
     const view = render(
       <ConnectionPickerDialog
+        groups={[]}
         sessions={[session({ id: "ssh", name: "SSH Prod", sort_order: 0 })]}
         opening={true}
         error="正在打开连接"
@@ -158,6 +181,7 @@ describe("AppShellDialogs", () => {
     const sshSession = session({ id: "ssh", name: "SSH Prod", sort_order: 0 });
     const view = render(
       <ConnectionPickerDialog
+        groups={[]}
         sessions={[sshSession]}
         opening={false}
         error={null}

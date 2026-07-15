@@ -215,6 +215,19 @@ describe("split pane css direction mapping", () => {
     expect(sessionButtonStyles).toContain("min-height: 28px");
   });
 
+  it("uses the compact session tree rhythm in connection pickers", () => {
+    const groupStyles = ruleBodiesForSelector(".zt-session-picker-group");
+    const optionStyles = ruleBodiesForSelector(".zt-session-picker-option");
+    const selectGroupStyles = ruleBodiesForSelector(".zt-select-tree-group");
+    const selectOptionStyles = ruleBodiesForSelector(".zt-select-option.zt-select-tree-option");
+
+    expect(groupStyles).toContain("min-height: 26px");
+    expect(optionStyles).toContain("min-height: 28px");
+    expect(selectGroupStyles).toContain("min-height: 26px");
+    expect(selectOptionStyles).toContain("min-height: 28px");
+    expect(selectOptionStyles).toContain("padding-left: calc(6px + var(--zt-session-tree-depth) * 12px)");
+  });
+
   it("keeps removed history toolbar icon button styles absent", () => {
     expect(ruleBodiesForSelector(".zt-history-toolbar button[aria-label]")).toBe("");
     expect(ruleBodiesForSelector(".zt-history-toolbar .zt-history-icon-button")).toBe("");

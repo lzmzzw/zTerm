@@ -1,8 +1,12 @@
 // Author: Liz
 
+import { ChevronDown, Folder, Monitor, Server, Terminal } from "lucide-react";
+import type { CSSProperties } from "react";
+
 import { ZtButton, ZtDialog, ZtPromptDialog } from "../components/ZtUi";
 import type { TransferConflict, TransferConflictPolicy } from "../features/files/fileStore";
-import type { SavedSession } from "../features/sessions/types";
+import { buildSessionTreeListItems } from "../features/sessions/sessionTreeModel";
+import type { SavedSession, SessionGroup } from "../features/sessions/types";
 
 export type ConnectionChoice =
   | { kind: "default_local" }
@@ -39,21 +43,21 @@ export function AppTextInputDialog({
 }
 
 export function ConnectionPickerDialog({
+  groups,
   sessions,
   opening,
   error,
   onCancel,
   onSelect,
 }: {
+  groups: SessionGroup[];
   sessions: SavedSession[];
   opening: boolean;
   error: string | null;
   onCancel: () => void;
   onSelect: (choice: ConnectionChoice) => void;
 }) {
-  const sortedSessions = [...sessions].sort(
-    (left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name),
-  );
+  const treeItems = buildSessionTreeListItems({ groups, sessions });
 
   return (
     <ZtDialog
@@ -70,29 +74,62 @@ export function ConnectionPickerDialog({
         </ZtButton>
       }
     >
-      <button
-        type="button"
-        className="zt-connection-choice"
-        disabled={opening}
-        aria-label="选择默认本地终端"
-        onClick={() => onSelect({ kind: "default_local" })}
-      >
-        <strong>默认本地终端</strong>
-        <span>Local</span>
-      </button>
-      {sortedSessions.map((session) => (
+      <div className="zt-session-picker-tree" role="tree" aria-label="可用连接">
         <button
           type="button"
-          key={session.id}
-          className="zt-connection-choice"
+          role="treeitem"
+          className="zt-session-picker-row zt-session-picker-option"
           disabled={opening}
-          aria-label={`选择连接 ${session.name}`}
-          onClick={() => onSelect({ kind: "saved_session", session })}
+          aria-label="选择默认本地终端"
+          aria-level={1}
+          data-session-tree-depth="0"
+          style={{ "--zt-session-tree-depth": 0 } as CSSProperties}
+          onClick={() => onSelect({ kind: "default_local" })}
         >
-          <strong>{session.name}</strong>
-          <span>{sessionTypeLabel(session.type)}</span>
+          <Terminal size={14} aria-hidden="true" />
+          <span>默认本地终端</span>
         </button>
-      ))}
+        {treeItems.map((item) => {
+          const depthStyle = { "--zt-session-tree-depth": item.depth } as CSSProperties;
+          if (item.kind === "group") {
+            return (
+              <div
+                key={item.key}
+                role="treeitem"
+                aria-expanded="true"
+                aria-level={item.depth + 1}
+                className="zt-session-picker-row zt-session-picker-group"
+                data-session-tree-depth={item.depth}
+                style={depthStyle}
+              >
+                <Folder size={14} aria-hidden="true" />
+                <span>{item.name}</span>
+                {item.groupId ? (
+                  <ChevronDown className="zt-session-picker-indicator" size={14} aria-hidden="true" />
+                ) : null}
+              </div>
+            );
+          }
+          const Icon = item.session.type === "rdp" ? Monitor : item.session.type === "local" ? Terminal : Server;
+          return (
+            <button
+              type="button"
+              role="treeitem"
+              key={item.key}
+              className="zt-session-picker-row zt-session-picker-option"
+              disabled={opening}
+              aria-label={`选择连接 ${item.session.name}`}
+              aria-level={item.depth + 1}
+              data-session-tree-depth={item.depth}
+              style={depthStyle}
+              onClick={() => onSelect({ kind: "saved_session", session: item.session })}
+            >
+              <Icon size={14} aria-hidden="true" />
+              <span>{item.session.name}</span>
+            </button>
+          );
+        })}
+      </div>
       {error ? <p className="zt-session-error">{error}</p> : null}
     </ZtDialog>
   );
@@ -140,15 +177,4 @@ export function AppTransferConflictDialog({
       </ul>
     </ZtDialog>
   );
-}
-
-function sessionTypeLabel(type: SavedSession["type"]) {
-  switch (type) {
-    case "ssh":
-      return "SSH";
-    case "local":
-      return "Local";
-    case "rdp":
-      return "RDP";
-  }
 }

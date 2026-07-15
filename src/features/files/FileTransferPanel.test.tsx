@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { FileEntry, TransferTask } from "./fileStore";
 import { useFileTransferStore } from "./fileTransferStore";
 import { useSessionStore } from "../sessions/sessionStore";
-import type { SavedSession } from "../sessions/types";
+import type { SavedSession, SessionGroup } from "../sessions/types";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const listenMock = vi.hoisted(() => vi.fn(async () => vi.fn()));
@@ -139,6 +139,19 @@ function sshSession(): SavedSession {
     ssh_options: null,
     rdp_options: null,
     local_options: null,
+  };
+}
+
+function sessionGroup(overrides: Partial<SessionGroup>): SessionGroup {
+  return {
+    id: overrides.id ?? "group",
+    parent_id: overrides.parent_id ?? null,
+    name: overrides.name ?? "Group",
+    expanded: true,
+    sort_order: 0,
+    created_at_ms: 1,
+    updated_at_ms: 1,
+    ...overrides,
   };
 }
 
@@ -346,6 +359,44 @@ describe("FileTransferPanel", () => {
       kind: "file",
       conflictPolicy: "overwrite",
     });
+
+    view.unmount();
+  });
+
+  it("shows an ordered SSH-only connection tree and removes empty groups from endpoint selectors", async () => {
+    const baseSsh = sshSession();
+    const groups = [
+      sessionGroup({ id: "parent", name: "Parent" }),
+      sessionGroup({ id: "ssh-group", parent_id: "parent", name: "SSH Group" }),
+      sessionGroup({ id: "rdp-group", name: "RDP Only" }),
+    ];
+    const sessions = [
+      { ...baseSsh, id: "ssh-198", name: "z-host-172.16.40.198", group_id: "ssh-group" },
+      { ...baseSsh, id: "ssh-20", name: "a-host-172.16.40.20", group_id: "ssh-group" },
+      { ...baseSsh, id: "rdp", name: "RDP Connection", group_id: "rdp-group", type: "rdp" as const },
+    ];
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups, sessions });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list" || command === "file_transfer_list_endpoint") return Promise.resolve([]);
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+    await click(view.container.querySelector('[aria-label="右侧端点"]') as HTMLElement);
+
+    expect(Array.from(document.body.querySelectorAll(".zt-select-tree-row")).map((node) => node.textContent)).toEqual([
+      "本机",
+      "Parent",
+      "SSH Group",
+      "a-host-172.16.40.20",
+      "z-host-172.16.40.198",
+    ]);
+    expect(document.body.textContent).not.toContain("RDP Only");
+    expect(document.body.textContent).not.toContain("RDP Connection");
 
     view.unmount();
   });

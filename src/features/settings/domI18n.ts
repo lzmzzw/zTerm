@@ -226,6 +226,7 @@ const exact: Record<string, string> = {
   "搜索": "Search",
   "没有匹配项": "No matches",
   "选择连接": "Select Connection",
+  "可用连接": "Available Connections",
   "关闭选择连接": "Close Connection Picker",
   "取消选择连接": "Cancel Connection Picker",
   "选择默认本地终端": "Select Default Local Terminal",

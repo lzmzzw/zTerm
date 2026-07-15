@@ -15,6 +15,10 @@ interface SessionTreeModel {
   isEmpty: boolean;
 }
 
+export type SessionTreeListItem =
+  | { kind: "group"; key: string; groupId: string | null; name: string; depth: number }
+  | { kind: "session"; key: string; session: SavedSession; depth: number };
+
 export function buildSessionTreeModel({
   groups,
   sessions,
@@ -97,6 +101,55 @@ function extractIpv4Address(name: string): number[] | null {
     if (octets.every((octet) => octet <= 255)) return octets;
   }
   return null;
+}
+
+export function buildSessionTreeListItems({
+  groups,
+  sessions,
+  hideEmptyGroups = false,
+}: {
+  groups: SessionGroup[];
+  sessions: SavedSession[];
+  hideEmptyGroups?: boolean;
+}): SessionTreeListItem[] {
+  const model = buildSessionTreeModel({ groups, sessions });
+
+  function flattenGroupNodes(nodes: SessionGroupTreeNode[], depth: number): SessionTreeListItem[] {
+    return nodes.flatMap((node) => {
+      const childItems = flattenGroupNodes(node.groups, depth + 1);
+      if (hideEmptyGroups && node.sessions.length === 0 && childItems.length === 0) return [];
+      return [
+        {
+          kind: "group" as const,
+          key: `group:${node.group.id}`,
+          groupId: node.group.id,
+          name: node.group.name,
+          depth,
+        },
+        ...node.sessions.map((session) => ({
+          kind: "session" as const,
+          key: `session:${session.id}`,
+          session,
+          depth: depth + 1,
+        })),
+        ...childItems,
+      ];
+    });
+  }
+
+  const items = flattenGroupNodes(model.groups, 0);
+  if (model.rootSessions.length > 0) {
+    items.push(
+      { kind: "group", key: "group:__ungrouped__", groupId: null, name: "未分组", depth: 0 },
+      ...model.rootSessions.map((session) => ({
+        kind: "session" as const,
+        key: `session:${session.id}`,
+        session,
+        depth: 1,
+      })),
+    );
+  }
+  return items;
 }
 
 export function buildSessionGroupDraft({

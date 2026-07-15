@@ -1,7 +1,13 @@
 // Author: Liz
 import { describe, expect, it } from "vitest";
 
-import { buildCopiedSessionDraft, buildSavedSessionDraft, buildSessionGroupDraft, buildSessionTreeModel } from "./sessionTreeModel";
+import {
+  buildCopiedSessionDraft,
+  buildSavedSessionDraft,
+  buildSessionGroupDraft,
+  buildSessionTreeListItems,
+  buildSessionTreeModel,
+} from "./sessionTreeModel";
 import type { SavedSession, SessionGroup } from "./types";
 
 function group(overrides: Partial<SessionGroup>): SessionGroup {
@@ -106,6 +112,28 @@ describe("sessionTreeModel", () => {
   it("reports an empty model only when both groups and sessions are empty", () => {
     expect(buildSessionTreeModel({ groups: [], sessions: [] }).isEmpty).toBe(true);
     expect(buildSessionTreeModel({ groups: [], sessions: [session({ id: "root" })] }).isEmpty).toBe(false);
+  });
+
+  it("builds ordered selectable tree items and removes groups emptied by session filtering", () => {
+    const groups = [
+      group({ id: "group-10", name: "Group 10" }),
+      group({ id: "group-2", name: "Group 2" }),
+      group({ id: "group-child", parent_id: "group-10", name: "Child" }),
+      group({ id: "group-empty", name: "Empty" }),
+    ];
+    const sshSessions = [
+      session({ id: "ssh-198", name: "z-host-172.16.40.198", group_id: "group-child" }),
+      session({ id: "ssh-20", name: "a-host-172.16.40.20", group_id: "group-child" }),
+    ];
+
+    const items = buildSessionTreeListItems({ groups, sessions: sshSessions, hideEmptyGroups: true });
+
+    expect(items.map((item) => `${item.kind}:${item.kind === "group" ? item.groupId : item.session.id}:${item.depth}`)).toEqual([
+      "group:group-10:0",
+      "group:group-child:1",
+      "session:ssh-20:2",
+      "session:ssh-198:2",
+    ]);
   });
 
   it("builds group drafts using current edit and create defaults", () => {

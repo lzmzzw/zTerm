@@ -179,4 +179,28 @@ describe("ZtSelect", () => {
 
     expect(document.querySelector('[role="listbox"]')).toBeNull();
   });
+
+  it("renders tree groups and skips them during keyboard selection", async () => {
+    const onChange = vi.fn();
+    render(
+      <ZtSelect
+        ariaLabel="选择端点"
+        value="local"
+        tree
+        options={[
+          { value: "local", label: "本机", depth: 0 },
+          { value: "group:prod", label: "生产环境", kind: "group", disabled: true, depth: 0 },
+          { value: "ssh:prod", label: "生产 SSH", depth: 1 },
+        ]}
+        onChange={onChange}
+      />,
+    );
+
+    await keyDown(trigger("选择端点"), "Enter");
+    expect(document.querySelector(".zt-select-tree-group")?.textContent).toBe("生产环境");
+    await keyDown(trigger("选择端点"), "ArrowDown");
+    await keyDown(trigger("选择端点"), "Enter");
+
+    expect(onChange).toHaveBeenCalledWith("ssh:prod");
+  });
 });

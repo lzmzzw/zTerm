@@ -1726,6 +1726,7 @@ export function AppShell() {
 
       {connectionDialogTarget ? (
         <ConnectionPickerDialog
+          groups={groups}
           sessions={sessions}
           opening={connectionOpening}
           error={connectionDialogError}

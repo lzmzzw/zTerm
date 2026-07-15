@@ -1,14 +1,18 @@
 // Author: Liz
-import { type CSSProperties, type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { ZtFloatingSurface } from "./ZtUi";
 
-interface ZtSelectOption {
+export interface ZtSelectOption {
   value: string;
   label: string;
   description?: string;
   disabled?: boolean;
+  kind?: "option" | "group";
+  depth?: number;
+  icon?: ReactNode;
+  trailing?: ReactNode;
 }
 
 interface ZtSelectProps {
@@ -20,6 +24,7 @@ interface ZtSelectProps {
   disabled?: boolean;
   searchable?: boolean;
   className?: string;
+  tree?: boolean;
 }
 
 const SEARCH_THRESHOLD = 6;
@@ -33,6 +38,7 @@ export function ZtSelect({
   disabled = false,
   searchable = false,
   className,
+  tree = false,
 }: ZtSelectProps) {
   const id = useId();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -204,7 +210,11 @@ export function ZtSelect({
       </button>
       {open
         ? createPortal(
-            <ZtFloatingSurface ref={panelRef} className="zt-select-popover" style={panelStyle}>
+            <ZtFloatingSurface
+              ref={panelRef}
+              className={tree ? "zt-select-popover zt-select-tree-popover" : "zt-select-popover"}
+              style={panelStyle}
+            >
               {showSearch ? (
                 <div className="zt-select-search-wrap">
                   <input
@@ -221,6 +231,21 @@ export function ZtSelect({
               <div id={`${id}-listbox`} className="zt-select-list" role="listbox" aria-label={ariaLabel}>
                 {filteredOptions.length > 0 ? (
                   filteredOptions.map((option, index) => {
+                    const depthStyle = { "--zt-session-tree-depth": option.depth ?? 0 } as CSSProperties;
+                    if (option.kind === "group") {
+                      return (
+                        <div
+                          key={option.value}
+                          className="zt-select-tree-row zt-select-tree-group"
+                          data-session-tree-depth={option.depth ?? 0}
+                          style={depthStyle}
+                        >
+                          {option.icon ? <span className="zt-select-tree-icon">{option.icon}</span> : null}
+                          <span className="zt-select-option-label">{option.label}</span>
+                          {option.trailing ? <span className="zt-select-tree-trailing">{option.trailing}</span> : null}
+                        </div>
+                      );
+                    }
                     const selected = option.value === value;
                     const active = index === activeIndex;
                     return (
@@ -234,6 +259,7 @@ export function ZtSelect({
                         disabled={option.disabled}
                         className={[
                           "zt-select-option",
+                          tree ? "zt-select-tree-row zt-select-tree-option" : "",
                           selected ? "is-selected" : "",
                           active ? "is-active" : "",
                         ]
@@ -241,7 +267,10 @@ export function ZtSelect({
                           .join(" ")}
                         onMouseEnter={() => setActiveIndex(index)}
                         onClick={() => selectOption(option)}
+                        data-session-tree-depth={option.depth ?? 0}
+                        style={tree ? depthStyle : undefined}
                       >
+                        {option.icon ? <span className="zt-select-tree-icon">{option.icon}</span> : null}
                         <span className="zt-select-option-label">{option.label}</span>
                         {option.description ? <span className="zt-select-option-description">{option.description}</span> : null}
                       </button>

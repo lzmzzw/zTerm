@@ -1,5 +1,16 @@
 // Author: Liz
-import { ArrowLeft, ArrowRight, Eye, EyeOff, FolderUp, RefreshCw } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ChevronDown,
+  Eye,
+  EyeOff,
+  Folder,
+  FolderUp,
+  HardDrive,
+  RefreshCw,
+  Server,
+} from "lucide-react";
 import { type CSSProperties, type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
@@ -9,7 +20,7 @@ import { ZtConfirmDialog, ZtContextMenu, ZtPromptDialog } from "../../components
 import { formatBytes } from "../../lib/byteFormatters";
 import type { AppLanguage } from "../settings/settingsStore";
 import { useSessionStore } from "../sessions/sessionStore";
-import type { SavedSession } from "../sessions/types";
+import { buildSessionTreeListItems, type SessionTreeListItem } from "../sessions/sessionTreeModel";
 import { TransferPanel } from "./TransferPanel";
 import type { FileEntry, TransferEndpoint, TransferKind } from "./fileStore";
 import {
@@ -63,13 +74,26 @@ const MIN_TRANSFER_DOCK_HEIGHT = 120;
 const POINTER_DRAG_THRESHOLD = 6;
 
 export function FileTransferPanel({ language: _language = "zhCN" }: FileTransferPanelProps) {
-  const { sessions, loadSessions } = useSessionStore(
+  const { groups, sessions, loadSessions } = useSessionStore(
     useShallow((state) => ({
+      groups: state.groups,
       sessions: state.sessions,
       loadSessions: state.loadSessions,
     })),
   );
-  const sshSessions = useMemo(() => sessions.filter((session) => session.type === "ssh"), [sessions]);
+  const sshSessionTreeItems = useMemo(
+    () =>
+      buildSessionTreeListItems({
+        groups,
+        sessions: sessions.filter((session) => session.type === "ssh"),
+        hideEmptyGroups: true,
+      }),
+    [groups, sessions],
+  );
+  const orderedSshSessions = useMemo(
+    () => sshSessionTreeItems.flatMap((item) => (item.kind === "session" ? [item.session] : [])),
+    [sshSessionTreeItems],
+  );
   const {
     left,
     right,
@@ -177,10 +201,10 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   }, [defaultLocalPath, left.endpoint.path, loadDefaultLocalPath, loadEndpoint]);
 
   useEffect(() => {
-    if (right.endpoint.kind !== "ssh" || right.endpoint.saved_session_id || sshSessions.length === 0) return;
-    setEndpoint("right", { kind: "ssh", saved_session_id: sshSessions[0].id, path: "/" });
+    if (right.endpoint.kind !== "ssh" || right.endpoint.saved_session_id || orderedSshSessions.length === 0) return;
+    setEndpoint("right", { kind: "ssh", saved_session_id: orderedSshSessions[0].id, path: "/" });
     void Promise.resolve().then(() => loadEndpoint("right"));
-  }, [loadEndpoint, right.endpoint.kind, right.endpoint.saved_session_id, setEndpoint, sshSessions]);
+  }, [loadEndpoint, orderedSshSessions, right.endpoint.kind, right.endpoint.saved_session_id, setEndpoint]);
 
   useEffect(() => {
     if (!contextMenu) return undefined;
@@ -328,7 +352,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           side="left"
           title="左侧"
           pane={left}
-          sshSessions={sshSessions}
+          sessionTreeItems={sshSessionTreeItems}
           defaultLocalPath={defaultLocalPath}
           localRoots={localRoots}
           showHidden={showHidden.left}
@@ -379,7 +403,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           side="right"
           title="右侧"
           pane={right}
-          sshSessions={sshSessions}
+          sessionTreeItems={sshSessionTreeItems}
           defaultLocalPath={defaultLocalPath}
           localRoots={localRoots}
           showHidden={showHidden.right}
@@ -519,7 +543,7 @@ function EndpointPane({
   side,
   title,
   pane,
-  sshSessions,
+  sessionTreeItems,
   defaultLocalPath,
   localRoots,
   showHidden,
@@ -546,7 +570,7 @@ function EndpointPane({
     loading: boolean;
     error: string | null;
   };
-  sshSessions: SavedSession[];
+  sessionTreeItems: SessionTreeListItem[];
   defaultLocalPath: string;
   localRoots: string[];
   showHidden: boolean;
@@ -566,8 +590,25 @@ function EndpointPane({
 }) {
   const endpointValue = pane.endpoint.kind === "local" ? "local" : `ssh:${pane.endpoint.saved_session_id ?? ""}`;
   const endpointOptions = [
-    { value: "local", label: "本机" },
-    ...sshSessions.map((session) => ({ value: `ssh:${session.id}`, label: session.name })),
+    { value: "local", label: "本机", depth: 0, icon: <HardDrive size={14} aria-hidden="true" /> },
+    ...sessionTreeItems.map((item) =>
+      item.kind === "group"
+        ? {
+            value: item.key,
+            label: item.name,
+            kind: "group" as const,
+            disabled: true,
+            depth: item.depth,
+            icon: <Folder size={14} aria-hidden="true" />,
+            trailing: item.groupId ? <ChevronDown size={14} aria-hidden="true" /> : undefined,
+          }
+        : {
+            value: `ssh:${item.session.id}`,
+            label: item.session.name,
+            depth: item.depth,
+            icon: <Server size={14} aria-hidden="true" />,
+          },
+    ),
   ];
   const visibleEntries = showHidden ? pane.entries : pane.entries.filter((entry) => !entry.name.startsWith("."));
   const endpointReady = pane.endpoint.kind === "local" || Boolean(pane.endpoint.saved_session_id);
@@ -589,6 +630,7 @@ function EndpointPane({
           ariaLabel={`${title}端点`}
           value={endpointValue}
           options={endpointOptions}
+          tree
           onChange={(value) => {
             if (value === "local") {
               onEndpointChange({ kind: "local", saved_session_id: null, path: defaultLocalPath });
