@@ -111,6 +111,14 @@ export interface McpServerStatus {
   token?: string | null;
 }
 
+export interface McpToolDefinition {
+  id: string;
+  title: string;
+  description: string;
+  risk_level: "low" | "medium" | "high" | "critical";
+  requires_confirmation: boolean;
+}
+
 export interface TerminalProfile {
   id: string;
   name: string;

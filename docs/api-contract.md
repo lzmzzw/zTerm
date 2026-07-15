@@ -40,6 +40,8 @@
 
 `AppSettings.mcp` 为 `{ enabled, port? }`，旧设置缺字段时默认 `{ enabled: false, port: null }`。MCP token 是运行期 secret，只通过 `McpServerStatus.token` 返回给本地设置页复制或轮换，不写入 SQLite settings JSON。`McpServerStatus` 为 `{ enabled, endpoint?, token? }`，关闭时 `endpoint/token=null`。
 
+MCP 设置页的工具详情默认折叠，首次展开时通过现有只读命令 `ai_tool_registry_list` 读取 MCP 与内置 AI 共用的完整工具注册表；结果按工具 ID 命名空间分组展示，并缓存到本次设置页会话。加载过程提供 loading、空清单、失败和重试状态，不读取或展示 MCP Bearer token 之外的 secret。
+
 ## Terminal Profiles
 
 | Command | 入参 | 返回 | 说明 |

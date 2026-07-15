@@ -88,8 +88,12 @@ async fn mcp_http_handler_supports_initialize_tools_list_and_pending_tool_call()
         .iter()
         .filter_map(|tool| tool["name"].as_str())
         .collect::<Vec<_>>();
-    assert!(tool_names.contains(&"sessions.list"));
-    assert!(tool_names.contains(&"workspace.save"));
+    let expected_tool_names = tools
+        .definitions()
+        .into_iter()
+        .map(|tool| tool.id)
+        .collect::<Vec<_>>();
+    assert_eq!(tool_names, expected_tool_names);
 
     let call = handle_http_request(
         store,

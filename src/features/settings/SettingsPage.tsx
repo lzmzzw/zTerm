@@ -1,9 +1,10 @@
 // Author: Liz
+import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
-import { Copy, ExternalLink, Info, Hash, KeyRound, Power, Scale, GitBranch, RefreshCw, Search, Star, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, ExternalLink, Info, Hash, KeyRound, Power, Scale, GitBranch, RefreshCw, Search, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import packageJson from "../../../package.json";
@@ -28,6 +29,7 @@ import type {
   AppSettings,
   AppTheme,
   McpServerStatus,
+  McpToolDefinition,
   SettingsSection,
   ShortcutBinding,
   ShortcutDefinition,
@@ -50,6 +52,7 @@ interface SettingsPageProps {
   mcpStatus?: McpServerStatus;
   onSetMcpEnabled?: (enabled: boolean, port?: number | null) => Promise<McpServerStatus> | McpServerStatus;
   onRotateMcpToken?: () => Promise<McpServerStatus> | McpServerStatus;
+  onLoadMcpTools?: () => Promise<McpToolDefinition[]> | McpToolDefinition[];
 }
 
 export function SettingsPage({
@@ -66,6 +69,7 @@ export function SettingsPage({
   mcpStatus = { enabled: false, endpoint: null, token: null },
   onSetMcpEnabled = async () => ({ enabled: false, endpoint: null, token: null }),
   onRotateMcpToken = async () => ({ enabled: false, endpoint: null, token: null }),
+  onLoadMcpTools = () => invoke<McpToolDefinition[]>("ai_tool_registry_list"),
 }: SettingsPageProps) {
   const [tab, setTab] = useState<SettingsTab>("general");
   const [draft, setDraft] = useState<AppSettings>(settings ?? fallbackSettings);
@@ -151,6 +155,7 @@ export function SettingsPage({
               loading={loading}
               onSetEnabled={onSetMcpEnabled}
               onRotateToken={onRotateMcpToken}
+              onLoadTools={onLoadMcpTools}
             />
           ) : null}
           {tab === "about" ? (
@@ -168,14 +173,21 @@ function McpSettings({
   loading,
   onSetEnabled,
   onRotateToken,
+  onLoadTools,
 }: {
   status: McpServerStatus;
   language: AppLanguage;
   loading: boolean;
   onSetEnabled: (enabled: boolean, port?: number | null) => Promise<McpServerStatus> | McpServerStatus;
   onRotateToken: () => Promise<McpServerStatus> | McpServerStatus;
+  onLoadTools: () => Promise<McpToolDefinition[]> | McpToolDefinition[];
 }) {
   const [localStatus, setLocalStatus] = useState<string | null>(null);
+  const [toolsExpanded, setToolsExpanded] = useState(false);
+  const [tools, setTools] = useState<McpToolDefinition[] | null>(null);
+  const [toolsLoading, setToolsLoading] = useState(false);
+  const [toolsError, setToolsError] = useState<string | null>(null);
+  const toolGroups = useMemo(() => groupMcpTools(tools ?? []), [tools]);
 
   async function setEnabled(enabled: boolean) {
     await onSetEnabled(enabled, null);
@@ -193,8 +205,26 @@ function McpSettings({
     setLocalStatus(message);
   }
 
+  async function loadTools() {
+    setToolsLoading(true);
+    setToolsError(null);
+    try {
+      setTools(await onLoadTools());
+    } catch (error) {
+      setToolsError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setToolsLoading(false);
+    }
+  }
+
+  function toggleTools() {
+    const nextExpanded = !toolsExpanded;
+    setToolsExpanded(nextExpanded);
+    if (nextExpanded && tools === null && !toolsLoading) void loadTools();
+  }
+
   return (
-    <section className="zt-settings-section" aria-label={t(language, "mcpLocalService")}>
+    <section className="zt-settings-section zt-mcp-settings-section" aria-label={t(language, "mcpLocalService")}>
       <div className="zt-settings-actions">
         <button type="button" disabled={loading} onClick={() => void setEnabled(!status.enabled)}>
           <Power size={14} aria-hidden="true" />
@@ -241,8 +271,94 @@ function McpSettings({
           </button>
         </div>
       </div>
+      <div className="zt-mcp-tools-panel">
+        <button
+          type="button"
+          className="zt-mcp-tools-toggle"
+          aria-expanded={toolsExpanded}
+          aria-controls="zt-mcp-tools-details"
+          onClick={toggleTools}
+        >
+          {toolsExpanded ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
+          <strong>{t(language, "mcpToolDetails")}</strong>
+          <span>{tools ? t(language, "mcpToolCount", { count: tools.length }) : null}</span>
+        </button>
+        {toolsExpanded ? (
+          <div id="zt-mcp-tools-details" className="zt-mcp-tools-details">
+            {toolsLoading ? <div className="zt-mcp-tools-message">{t(language, "mcpToolsLoading")}</div> : null}
+            {toolsError ? (
+              <div className="zt-mcp-tools-message is-error">
+                <span>{t(language, "mcpToolsLoadFailed", { message: toolsError })}</span>
+                <button type="button" onClick={() => void loadTools()}>{t(language, "mcpToolsRetry")}</button>
+              </div>
+            ) : null}
+            {!toolsLoading && !toolsError && tools?.length === 0 ? (
+              <div className="zt-mcp-tools-message">{t(language, "mcpToolsEmpty")}</div>
+            ) : null}
+            {!toolsLoading && !toolsError
+              ? toolGroups.map((group) => (
+                  <section key={group.key} className="zt-mcp-tool-group" aria-label={mcpToolGroupLabel(language, group.key)}>
+                    <h3>{mcpToolGroupLabel(language, group.key)} ({group.tools.length})</h3>
+                    <div className="zt-mcp-tool-list">
+                      {group.tools.map((tool) => (
+                        <div key={tool.id} className="zt-mcp-tool-item">
+                          <div>
+                            <strong>{tool.title}</strong>
+                            <code>{tool.id}</code>
+                          </div>
+                          <p>{tool.description}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ))
+              : null}
+          </div>
+        ) : null}
+      </div>
     </section>
   );
+}
+
+interface McpToolGroup {
+  key: string;
+  tools: McpToolDefinition[];
+}
+
+function groupMcpTools(tools: McpToolDefinition[]): McpToolGroup[] {
+  const groups = new Map<string, McpToolDefinition[]>();
+  for (const tool of tools) {
+    const key = mcpToolGroupKey(tool.id.split(".", 1)[0] || "other");
+    const group = groups.get(key) ?? [];
+    group.push(tool);
+    groups.set(key, group);
+  }
+  return Array.from(groups, ([key, groupTools]) => ({ key, tools: groupTools }));
+}
+
+function mcpToolGroupKey(namespace: string) {
+  if (namespace === "terminal_profile" || namespace === "ssh_container") return "terminal";
+  if (namespace === "session_groups") return "sessions";
+  return namespace;
+}
+
+function mcpToolGroupLabel(language: AppLanguage, key: string) {
+  const labelKeys = {
+    terminal: "mcpToolGroupTerminal",
+    terminal_profile: "mcpToolGroupTerminal",
+    workspace: "mcpToolGroupWorkspace",
+    settings: "mcpToolGroupSettings",
+    llm_provider: "mcpToolGroupModels",
+    sessions: "mcpToolGroupSessions",
+    session_groups: "mcpToolGroupSessions",
+    sftp: "mcpToolGroupFiles",
+    history: "mcpToolGroupHistory",
+    transfer: "mcpToolGroupTransfers",
+    server_info: "mcpToolGroupMonitor",
+    ssh_container: "mcpToolGroupTerminal",
+    zterm: "mcpToolGroupZterm",
+  } as const;
+  return t(language, labelKeys[key as keyof typeof labelKeys] ?? "mcpToolGroupOther");
 }
 
 function GeneralSettings({

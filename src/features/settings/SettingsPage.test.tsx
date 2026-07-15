@@ -358,6 +358,103 @@ describe("SettingsPage", () => {
     view.unmount();
   });
 
+  it("keeps MCP tool details collapsed and groups every tool after expansion", async () => {
+    const onLoadMcpTools = vi.fn().mockResolvedValue([
+      {
+        id: "terminal.list",
+        title: "列出终端",
+        description: "读取当前终端运行态摘要",
+        risk_level: "low",
+        requires_confirmation: false,
+      },
+      {
+        id: "terminal.write",
+        title: "写入终端",
+        description: "向指定运行终端写入输入",
+        risk_level: "high",
+        requires_confirmation: true,
+      },
+      {
+        id: "workspace.list",
+        title: "列出工作区",
+        description: "读取已保存工作区列表",
+        risk_level: "low",
+        requires_confirmation: false,
+      },
+    ]);
+    const view = render(
+      <SettingsPage
+        settings={baseSettings}
+        terminalProfiles={[]}
+        shortcutDefinitions={shortcuts}
+        loading={false}
+        error={null}
+        onClose={vi.fn()}
+        onSaveSettings={vi.fn()}
+        onResetSettings={vi.fn()}
+        onDetectTerminalProfiles={vi.fn()}
+        onSetDefaultTerminalProfile={vi.fn()}
+        onLoadMcpTools={onLoadMcpTools}
+      />,
+    );
+
+    await click(button(view.container, "MCP"));
+    const detailsButton = button(view.container, "工具详情");
+    expect(detailsButton.getAttribute("aria-expanded")).toBe("false");
+    expect(onLoadMcpTools).not.toHaveBeenCalled();
+    expect(view.container.textContent).not.toContain("terminal.list");
+
+    await click(detailsButton);
+    await flushAsyncUpdates();
+
+    expect(detailsButton.getAttribute("aria-expanded")).toBe("true");
+    expect(onLoadMcpTools).toHaveBeenCalledTimes(1);
+    expect(view.container.textContent).toContain("终端 (2)");
+    expect(view.container.textContent).toContain("工作区 (1)");
+    expect(view.container.textContent).toContain("terminal.list");
+    expect(view.container.textContent).toContain("terminal.write");
+    expect(view.container.textContent).toContain("workspace.list");
+
+    await click(detailsButton);
+    await click(detailsButton);
+    expect(onLoadMcpTools).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+  });
+
+  it("allows retrying a failed MCP tool load and then shows the empty state", async () => {
+    const onLoadMcpTools = vi.fn()
+      .mockRejectedValueOnce(new Error("registry unavailable"))
+      .mockResolvedValueOnce([]);
+    const view = render(
+      <SettingsPage
+        settings={baseSettings}
+        terminalProfiles={[]}
+        shortcutDefinitions={shortcuts}
+        loading={false}
+        error={null}
+        onClose={vi.fn()}
+        onSaveSettings={vi.fn()}
+        onResetSettings={vi.fn()}
+        onDetectTerminalProfiles={vi.fn()}
+        onSetDefaultTerminalProfile={vi.fn()}
+        onLoadMcpTools={onLoadMcpTools}
+      />,
+    );
+
+    await click(button(view.container, "MCP"));
+    await click(button(view.container, "工具详情"));
+    await flushAsyncUpdates();
+    expect(view.container.textContent).toContain("工具清单加载失败：registry unavailable");
+
+    await click(button(view.container, "重试"));
+    await flushAsyncUpdates();
+    expect(onLoadMcpTools).toHaveBeenCalledTimes(2);
+    expect(view.container.textContent).toContain("当前 MCP 未提供工具");
+
+    view.unmount();
+  });
+
   it("renders the about page as single-line facts and opens GitHub through the system browser", async () => {
     const view = render(
       <SettingsPage
