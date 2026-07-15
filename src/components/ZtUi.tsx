@@ -2,6 +2,7 @@
 import {
   Check,
   ChevronDown,
+  CircleAlert,
   Minus,
   Plus,
   RefreshCw,
@@ -30,6 +31,15 @@ export const ztIconSizes = {
   default: 16,
   large: 18,
 } as const;
+
+export function ZtInlineError({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={["zt-inline-error", className].filter(Boolean).join(" ")} role="alert">
+      <CircleAlert size={16} aria-hidden="true" />
+      <span>{children}</span>
+    </div>
+  );
+}
 
 const iconMap = {
   check: Check,

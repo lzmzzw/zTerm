@@ -19,7 +19,7 @@ import { createPortal } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
 
 import { ZtSelect } from "../../components/ZtSelect";
-import { ZtConfirmDialog, ZtContextMenu, ZtPromptDialog } from "../../components/ZtUi";
+import { ZtConfirmDialog, ZtContextMenu, ZtInlineError, ZtPromptDialog } from "../../components/ZtUi";
 import { formatBytes } from "../../lib/byteFormatters";
 import type { AppLanguage } from "../settings/settingsStore";
 import { useSessionStore } from "../sessions/sessionStore";
@@ -453,7 +453,9 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
         />
       </div>
       <div className="zt-file-transfer-operation-status">
-        {transferError ? <div className="zt-terminal-error">{transferError}</div> : null}
+        {transferError ? (
+          <ZtInlineError className="zt-file-transfer-error">{transferError}</ZtInlineError>
+        ) : null}
         {transferLoading ? <div className="zt-empty-line">传输任务加载中</div> : null}
       </div>
       <TransferPanel
@@ -728,7 +730,7 @@ function EndpointPane({
       </div>
       <div className="zt-file-transfer-pane-status">
         {!endpointReady ? <div className="zt-empty-line">请选择远程连接或本机端点</div> : null}
-        {pane.error ? <div className="zt-terminal-error">{pane.error}</div> : null}
+        {pane.error ? <ZtInlineError className="zt-file-transfer-pane-error">{pane.error}</ZtInlineError> : null}
         {pane.loading ? <div className="zt-empty-line">加载中</div> : null}
         {endpointReady && !pane.loading && visibleEntries.length === 0 ? <div className="zt-empty-line">暂无文件</div> : null}
       </div>

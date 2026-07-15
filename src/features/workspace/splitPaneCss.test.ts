@@ -47,6 +47,15 @@ describe("split pane css direction mapping", () => {
     expect(mainStyles).toContain("padding: 0 0 6px");
   });
 
+  it("reserves a layout row for workspace errors instead of covering terminal content", () => {
+    const mainWithError = ruleBody(".zt-main-with-error");
+    const stageWithError = ruleBody(".zt-main-with-error .zt-workspace-stage");
+
+    expect(mainWithError).toContain("grid-template-rows: auto minmax(0, 1fr)");
+    expect(stageWithError).toContain("position: relative");
+    expect(stageWithError).toContain("grid-row: 2");
+  });
+
   it("removes inactive workspace layers from the compositor while keeping the active layer visible", () => {
     const layerStyles = ruleBodiesForSelector(".zt-workspace-stage-layer");
     const activeLayerStyles = ruleBodiesForSelector(".zt-workspace-stage-layer.active");

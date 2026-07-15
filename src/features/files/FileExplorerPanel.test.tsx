@@ -80,6 +80,36 @@ const entries: FileEntry[] = [
 ];
 
 describe("FileExplorerPanel", () => {
+  it("renders remote file errors as an inline alert", () => {
+    const view = render(
+      <FileExplorerPanel
+        savedSessionId="session-1"
+        path="/home/ops"
+        entries={[]}
+        selectedPaths={[]}
+        loading={false}
+        error="SFTP 目录读取失败"
+        onPathChange={vi.fn()}
+        onSelect={vi.fn()}
+        onRefresh={vi.fn()}
+        onParent={vi.fn()}
+        onMkdir={vi.fn()}
+        onUpload={vi.fn()}
+        onUploadDropped={vi.fn()}
+        onDownload={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    const alert = view.container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("SFTP 目录读取失败");
+    expect(alert?.classList.contains("zt-inline-error")).toBe(true);
+    expect(alert?.classList.contains("zt-terminal-error")).toBe(false);
+
+    view.unmount();
+  });
+
   it("renders path actions and dispatches file operations", async () => {
     const onRefresh = vi.fn();
     const onParent = vi.fn();

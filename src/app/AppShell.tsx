@@ -20,7 +20,7 @@ import { openSavedSessionTarget } from "./savedSessionActions";
 import { visibleRightTools, type ActiveConnectionKind, type RightTool } from "./rightTools";
 import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
-import { ZtCenteredPageLayout, ZtConfirmDialog, ZtModalOverlay, ZtSurfaceFrame } from "../components/ZtUi";
+import { ZtCenteredPageLayout, ZtConfirmDialog, ZtInlineError, ZtModalOverlay, ZtSurfaceFrame } from "../components/ZtUi";
 import { setAiAffectedDomainsHandler, useAiStore } from "../features/ai/aiStore";
 import { buildAiTerminalContext } from "../features/ai/aiTerminalContextModel";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
@@ -1913,8 +1913,8 @@ export function AppShell() {
         />
       ) : null}
 
-      <main className="zt-main">
-        {terminalError ? <div className="zt-terminal-error">{terminalError}</div> : null}
+      <main className={terminalError ? "zt-main zt-main-with-error" : "zt-main"}>
+        {terminalError ? <ZtInlineError className="zt-main-error">{terminalError}</ZtInlineError> : null}
         <WorkspaceStage
           onActivatePane={setActivePane}
           onAddPaneTab={handleRequestPaneConnection}

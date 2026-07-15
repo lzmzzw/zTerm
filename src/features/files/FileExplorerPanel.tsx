@@ -7,7 +7,7 @@ import type { FileEntry } from "./fileStore";
 import type { FileSelectionEvent } from "./fileSelectionModel";
 import { resolveFileDragDropEvent } from "./fileDragDropModel";
 import { formatFileModifiedTime, resolveFileIcon } from "./fileExplorerPresentation";
-import { ZtContextMenu } from "../../components/ZtUi";
+import { ZtContextMenu, ZtInlineError } from "../../components/ZtUi";
 import { formatBytes } from "../../lib/byteFormatters";
 
 interface FileExplorerPanelProps {
@@ -150,7 +150,7 @@ export function FileExplorerPanel({
         onDelete={requestDelete}
       />
       {disabled ? <div className="zt-empty-line">打开 SSH 会话后显示远程文件</div> : null}
-      {error ? <div className="zt-terminal-error">{error}</div> : null}
+      {error ? <ZtInlineError className="zt-file-panel-error">{error}</ZtInlineError> : null}
       {loading ? <div className="zt-empty-line">加载中</div> : null}
       {!disabled && !loading && visibleEntries.length === 0 ? <div className="zt-empty-line">暂无文件</div> : null}
       <div className="zt-file-list" role="list" aria-label="远程文件列表">

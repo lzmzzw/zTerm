@@ -210,6 +210,27 @@ describe("FileTransferPanel", () => {
     view.unmount();
   });
 
+  it("renders transfer failures as an inline dialog alert without the global terminal overlay style", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list" || command === "file_transfer_list_endpoint") return Promise.resolve([]);
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    act(() => useFileTransferStore.setState({ transferError: "文件传输操作失败" }));
+
+    const alert = view.container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain("文件传输操作失败");
+    expect(alert?.classList.contains("zt-file-transfer-error")).toBe(true);
+    expect(alert?.classList.contains("zt-terminal-error")).toBe(false);
+
+    view.unmount();
+  });
+
   it("renames and deletes a local endpoint entry from its context menu", async () => {
     const localFile = fileEntry("C:/Users/Ops/bundle.zip");
     invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {

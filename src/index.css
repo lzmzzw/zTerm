@@ -1209,11 +1209,6 @@ button {
   overflow: auto;
 }
 
-.zt-tool-panel .zt-terminal-error {
-  position: static;
-  margin: 6px 8px;
-}
-
 .zt-tunnel-panel {
   min-height: 0;
   display: grid;
@@ -1677,18 +1672,45 @@ button {
   background: var(--zt-bg-main);
 }
 
-.zt-terminal-error {
-  position: absolute;
-  top: 42px;
-  left: 12px;
-  right: 12px;
-  z-index: 5;
-  padding: 7px 10px;
+.zt-inline-error {
+  position: static;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 9px;
   border: 1px solid var(--zt-danger-border);
   border-radius: var(--zt-radius-control);
   background: var(--zt-danger-bg);
   color: var(--zt-danger);
   font-size: var(--zt-font-size-ui);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.zt-inline-error svg {
+  margin-top: 1px;
+}
+
+.zt-inline-error span {
+  min-width: 0;
+}
+
+.zt-main-with-error {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.zt-main-with-error .zt-workspace-stage {
+  position: relative;
+  grid-row: 2;
+  inset: auto;
+}
+
+.zt-main-error {
+  max-height: 72px;
+  margin: 6px 8px 0;
+  overflow: auto;
 }
 
 .zt-workspace-stage {
@@ -2800,6 +2822,24 @@ button {
 .zt-file-transfer-operation-status,
 .zt-file-transfer-pane-status {
   min-height: 0;
+}
+
+.zt-file-transfer-operation-status {
+  min-width: 0;
+  background: var(--zt-bg-surface);
+}
+
+.zt-file-transfer-error {
+  max-height: 72px;
+  margin: 6px 10px;
+  overflow: auto;
+}
+
+.zt-file-transfer-pane-error,
+.zt-file-panel-error {
+  max-height: 64px;
+  margin: 5px 8px;
+  overflow: auto;
 }
 
 .zt-file-transfer-pane {

@@ -44,6 +44,16 @@ describe("file transfer dialog styles", () => {
     expect(ruleBody(".zt-file-transfer-pane")).toContain("grid-template-rows: 36px 34px auto minmax(0, 1fr)");
   });
 
+  it("keeps transfer errors in the dialog flow instead of overlaying adjacent content", () => {
+    const styles = ruleBody(".zt-inline-error");
+
+    expect(styles).toContain("display: grid");
+    expect(styles).toContain("position: static");
+    expect(styles).toContain("overflow-wrap: anywhere");
+    expect(styles).not.toContain("position: absolute");
+    expect(ruleBody(".zt-file-transfer-error")).toContain("max-height: 72px");
+  });
+
   it("centers a compact endpoint selector across the header without a visible side label", () => {
     expect(ruleBody(".zt-file-transfer-pane-header")).toContain("display: flex");
     expect(ruleBody(".zt-file-transfer-pane-header")).toContain("align-items: center");
