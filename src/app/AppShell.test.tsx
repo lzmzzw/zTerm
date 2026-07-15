@@ -1215,7 +1215,7 @@ describe("AppShell", () => {
         last_used_at_ms: null,
       },
     ];
-    Object.assign(storeMocks.workspaceState.tabs[0].root, {
+    Object.assign(storeMocks.workspaceState.tabs[0].root as Record<string, unknown>, {
       runtime_session_id: "runtime-ssh",
       saved_session_id: "ssh-1",
       terminal_tabs: [
@@ -1255,7 +1255,7 @@ describe("AppShell", () => {
         local_options: { working_directory: "D:\\workspace\\zterm" },
       },
     ];
-    Object.assign(storeMocks.workspaceState.tabs[0].root, {
+    Object.assign(storeMocks.workspaceState.tabs[0].root as Record<string, unknown>, {
       runtime_session_id: "runtime-local",
       saved_session_id: "local-1",
       terminal_tabs: [

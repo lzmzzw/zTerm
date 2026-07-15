@@ -1006,6 +1006,7 @@ button {
 }
 
 .zt-titlebar {
+  position: relative;
   grid-column: 1 / 4;
   display: grid;
   grid-template-columns: 40px minmax(40px, 1fr) 118px;
@@ -1435,6 +1436,20 @@ button {
 .zt-left-rail-transfer,
 .zt-tool-rail-agent {
   margin-top: auto;
+}
+
+.zt-titlebar-center {
+  position: absolute;
+  left: 50%;
+  max-width: calc(100vw - 320px);
+  overflow: hidden;
+  color: var(--zt-text-secondary);
+  font-size: var(--zt-font-size-ui);
+  line-height: 30px;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  transform: translateX(-50%);
+  white-space: nowrap;
 }
 
 .zt-panel-header {

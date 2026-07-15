@@ -545,6 +545,13 @@ export function AppShell() {
       ? activeSavedSession.ssh_options?.container?.enabled === true
       : activeExternalSshOptions?.container?.enabled === true && !activeExternalSshSingleChannel;
   const activeRuntimeSessionId = activePaneTab?.runtime_session_id ?? null;
+  const titleBarCenterContent = activeRuntimeSessionId
+    ? activeSavedSession?.type === "ssh"
+      ? activeSavedSession.host.trim() || null
+      : activeSavedSession?.type === "local"
+        ? activeSavedSession.local_options?.working_directory?.trim() || null
+        : activeExternalSshSession?.host.trim() || null
+    : null;
   const bindTerminalEvents = useTerminalStore((state) => state.bindTerminalEvents);
   const openTerminal = useTerminalStore((state) => state.openTerminal);
   const openSshContainerTerminal = useTerminalStore((state) => state.openSshContainerTerminal);
@@ -1668,7 +1675,7 @@ export function AppShell() {
 
   return (
     <div className={workbenchClassName} onContextMenu={(event) => event.preventDefault()}>
-      <TitleBar />
+      <TitleBar centerContent={titleBarCenterContent} />
 
       <aside
         className={

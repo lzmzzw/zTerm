@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import type { MouseEvent } from "react";
 import zTermLogoUrl from "../assets/zterm-logo.svg";
 
-export function TitleBar() {
+export function TitleBar({ centerContent = null }: { centerContent?: string | null }) {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -45,6 +45,11 @@ export function TitleBar() {
         <img className="zt-titlebar-logo" src={zTermLogoUrl} alt="zTerm" />
       </div>
       <div className="zt-titlebar-drag-region" data-tauri-drag-region onMouseDown={startWindowDrag} />
+      {centerContent ? (
+        <div className="zt-titlebar-center" title={centerContent}>
+          {centerContent}
+        </div>
+      ) : null}
       <div className="zt-window-actions" aria-label="窗口操作">
         <button
           type="button"
