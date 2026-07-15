@@ -354,7 +354,7 @@ fn valid_b64_gateway_username(username: &str) -> bool {
     };
     let mut normalized_payload = payload.trim().replace('-', "+").replace('_', "/");
     let padding = (4 - (normalized_payload.len() % 4)) % 4;
-    normalized_payload.extend(std::iter::repeat('=').take(padding));
+    normalized_payload.extend(std::iter::repeat_n('=', padding));
     let Ok(decoded) = general_purpose::STANDARD.decode(normalized_payload) else {
         return false;
     };

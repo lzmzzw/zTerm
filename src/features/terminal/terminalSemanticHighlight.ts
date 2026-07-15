@@ -103,14 +103,13 @@ export function createTerminalSemanticHighlighter(
   palette: TerminalSemanticPalette,
   linePalette: TerminalLineHighlightPalette = DIGE_BLACK_LINE_HIGHLIGHT_PALETTE,
 ): TerminalSemanticHighlighter {
-  const highlightedLines: HighlightedTerminalLine[] = [];
+  const highlightedLines = new Map<number, HighlightedTerminalLine>();
   const writeDisposable = terminal.onWriteParsed(() => refresh());
   const scrollDisposable = terminal.onScroll(() => refresh());
   const cursorDisposable = terminal.onCursorMove(() => refresh());
 
   function refresh() {
     const buffer = terminal.buffer.active;
-    pruneDisposedLines(highlightedLines);
     if (buffer.type !== "normal") {
       clear();
       return;
@@ -118,6 +117,7 @@ export function createTerminalSemanticHighlighter(
 
     const firstLine = Math.max(0, buffer.viewportY);
     const lastLine = Math.min(buffer.length, firstLine + terminal.rows);
+    retainVisibleLines(highlightedLines, firstLine, lastLine);
     const cursorLine = buffer.baseY + buffer.cursorY;
     for (let lineIndex = firstLine; lineIndex < lastLine; lineIndex += 1) {
       const bufferLine = buffer.getLine(lineIndex);
@@ -129,10 +129,10 @@ export function createTerminalSemanticHighlighter(
         : highlights.some((highlight) => highlight.role === "prompt")
           ? linePalette.commandLineBackground
           : undefined;
-      const existing = highlightedLines.find((entry) => entry.marker.line === lineIndex);
+      const existing = highlightedLines.get(lineIndex);
       const signature = `${line.signature}\u0000${backgroundColor ?? ""}`;
       if (existing?.signature === signature) continue;
-      if (existing) disposeHighlightedLine(highlightedLines, existing);
+      if (existing) disposeHighlightedLine(highlightedLines, lineIndex, existing);
 
       if (!backgroundColor && highlights.length === 0) continue;
       const marker = terminal.registerMarker(lineIndex - cursorLine);
@@ -168,15 +168,13 @@ export function createTerminalSemanticHighlighter(
         marker.dispose();
         continue;
       }
-      highlightedLines.push({ decorations, marker, signature });
+      highlightedLines.set(lineIndex, { decorations, marker, signature });
     }
   }
 
   function clear() {
-    for (const line of highlightedLines.splice(0)) {
-      line.decorations.forEach((decoration) => decoration.dispose());
-      line.marker.dispose();
-    }
+    for (const line of highlightedLines.values()) disposeLine(line);
+    highlightedLines.clear();
   }
 
   return {
@@ -259,17 +257,36 @@ function mergeDecorationRanges(ranges: Array<{ color: string; width: number; x: 
   return merged;
 }
 
-function pruneDisposedLines(lines: HighlightedTerminalLine[]) {
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (lines[index].marker.isDisposed) lines.splice(index, 1);
+function retainVisibleLines(
+  lines: Map<number, HighlightedTerminalLine>,
+  firstLine: number,
+  lastLine: number,
+) {
+  const retained = new Map<number, HighlightedTerminalLine>();
+  for (const line of lines.values()) {
+    const lineIndex = line.marker.line;
+    if (line.marker.isDisposed || lineIndex < firstLine || lineIndex >= lastLine) {
+      disposeLine(line);
+      continue;
+    }
+    retained.set(lineIndex, line);
   }
+  lines.clear();
+  for (const [lineIndex, line] of retained) lines.set(lineIndex, line);
 }
 
-function disposeHighlightedLine(lines: HighlightedTerminalLine[], line: HighlightedTerminalLine) {
+function disposeHighlightedLine(
+  lines: Map<number, HighlightedTerminalLine>,
+  lineIndex: number,
+  line: HighlightedTerminalLine,
+) {
+  disposeLine(line);
+  lines.delete(lineIndex);
+}
+
+function disposeLine(line: HighlightedTerminalLine) {
   line.decorations.forEach((decoration) => decoration.dispose());
   line.marker.dispose();
-  const index = lines.indexOf(line);
-  if (index >= 0) lines.splice(index, 1);
 }
 
 const MONTH = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)";

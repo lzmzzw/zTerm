@@ -3,58 +3,38 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AppLanguage {
     #[serde(rename = "zhCN")]
+    #[default]
     ZhCn,
     #[serde(rename = "enUS")]
     EnUs,
 }
 
-impl Default for AppLanguage {
-    fn default() -> Self {
-        Self::ZhCn
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AppTheme {
+    #[default]
     Dark,
     Light,
     System,
 }
 
-impl Default for AppTheme {
-    fn default() -> Self {
-        Self::Dark
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkspaceRestoreStrategy {
+    #[default]
     VisibleFirst,
     ConnectAll,
     LayoutOnly,
 }
 
-impl Default for WorkspaceRestoreStrategy {
-    fn default() -> Self {
-        Self::VisibleFirst
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ShortcutScope {
+    #[default]
     App,
-}
-
-impl Default for ShortcutScope {
-    fn default() -> Self {
-        Self::App
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,21 +44,12 @@ pub enum SettingsSection {
     Shortcuts,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpSettings {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
     pub port: Option<u16>,
-}
-
-impl Default for McpSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            port: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

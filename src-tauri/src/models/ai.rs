@@ -11,18 +11,13 @@ pub enum RiskLevel {
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AiApprovalMode {
     RequestApproval,
+    #[default]
     Safe,
     FullAccess,
-}
-
-impl Default for AiApprovalMode {
-    fn default() -> Self {
-        Self::Safe
-    }
 }
 
 impl AiApprovalMode {

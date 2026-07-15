@@ -68,24 +68,13 @@ enum AiChatResponseSource {
     StreamPrompt(String),
 }
 
+#[derive(Default)]
 struct ToolLoopResult {
     last_message: String,
     pending_invocations: Vec<AiToolPendingInvocation>,
     executed_invocations: Vec<AiToolAuditRecord>,
     tool_result_summaries: Vec<String>,
     final_message_from_model: bool,
-}
-
-impl Default for ToolLoopResult {
-    fn default() -> Self {
-        Self {
-            last_message: String::new(),
-            pending_invocations: Vec::new(),
-            executed_invocations: Vec::new(),
-            tool_result_summaries: Vec::new(),
-            final_message_from_model: false,
-        }
-    }
 }
 
 impl AiChatService {
@@ -99,7 +88,7 @@ impl AiChatService {
         let message = required_text("AI 消息", &request.message)?;
         let provider = select_enabled_provider(credentials)?;
         let api_key = provider_api_key(credentials, provider.kind, &provider.api_key_ref)?;
-        let conversation_service = AiConversationService::default();
+        let conversation_service = AiConversationService;
         let (conversation_id, approval_mode) =
             ensure_conversation(store, &conversation_service, &request)?;
         let provider_messages =
@@ -191,7 +180,7 @@ impl AiChatService {
         let message = required_text("AI 消息", &request.message)?;
         let provider = select_enabled_provider(credentials)?;
         let api_key = provider_api_key(credentials, provider.kind, &provider.api_key_ref)?;
-        let conversation_service = AiConversationService::default();
+        let conversation_service = AiConversationService;
         let (conversation_id, approval_mode) =
             ensure_conversation(store, &conversation_service, &request)?;
         let provider_messages =
@@ -305,7 +294,7 @@ impl AiChatService {
             }
         };
 
-        AiConversationService::default().append_message(
+        AiConversationService.append_message(
             store.as_ref(),
             AiConversationMessageAppendRequest {
                 conversation_id: work.conversation_id,
@@ -1034,7 +1023,7 @@ curl --request POST \
     "chat_template_kwargs": {"enable_thinking": false}
   }'"#;
 
-        let response = AiChatService::default()
+        let response = AiChatService
             .chat_with_provider(
                 store.as_ref(),
                 &credentials,

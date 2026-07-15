@@ -163,6 +163,21 @@ describe("createTerminalSemanticHighlighter", () => {
     expect(fake.decorations.some((decoration) => decoration.dispose.mock.calls.length > 0)).toBe(true);
   });
 
+  it("releases decorations after their lines leave the viewport", () => {
+    const fake = fakeTerminal(["root@host:~# ls", "success", "plain output", "plain output"]);
+    const highlighter = createTerminalSemanticHighlighter(fake.terminal, DIGE_BLACK_SEMANTIC_PALETTE);
+    (fake.terminal as unknown as { rows: number }).rows = 2;
+
+    highlighter.refresh();
+    expect(fake.markers.some((marker) => !marker.isDisposed)).toBe(true);
+
+    (fake.terminal.buffer.active as { viewportY: number }).viewportY = 2;
+    highlighter.refresh();
+
+    expect(fake.decorations.every((decoration) => decoration.dispose.mock.calls.length > 0)).toBe(true);
+    expect(fake.markers.every((marker) => marker.isDisposed)).toBe(true);
+  });
+
   it("skips alternate-screen applications and disposes normal-buffer decorations", () => {
     const fake = fakeTerminal("success 42");
     const highlighter = createTerminalSemanticHighlighter(fake.terminal, DIGE_BLACK_SEMANTIC_PALETTE);

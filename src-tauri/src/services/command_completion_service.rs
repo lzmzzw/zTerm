@@ -558,9 +558,7 @@ fn command_segment_start(prefix: &str) -> usize {
             escaped = true;
             continue;
         }
-        if matches!(character, '|' | ';') {
-            segment_start = index + 1;
-        } else if character == '&' {
+        if matches!(character, '|' | ';' | '&') {
             segment_start = index + 1;
         }
     }

@@ -86,7 +86,7 @@ fn tool_catalog_exposes_workspace_snapshots_without_workspace_close() {
 #[test]
 fn conversation_service_persists_conversation_and_messages() {
     let store = SqliteStore::open_in_memory().expect("store should open");
-    let service = AiConversationService::default();
+    let service = AiConversationService;
 
     let conversation = service
         .create(
@@ -130,7 +130,7 @@ fn conversation_service_persists_conversation_and_messages() {
 #[test]
 fn conversation_service_redacts_user_message_secrets_before_persisting_history() {
     let store = SqliteStore::open_in_memory().expect("store should open");
-    let service = AiConversationService::default();
+    let service = AiConversationService;
     let conversation = service
         .create(
             &store,
@@ -270,7 +270,7 @@ fn tool_service_rejects_without_executing() {
 #[test]
 fn tool_service_safe_mode_auto_executes_low_risk_terminal_write_with_readback() {
     let store = SqliteStore::open_in_memory().expect("store should open");
-    let conversation = AiConversationService::default()
+    let conversation = AiConversationService
         .create(
             &store,
             AiConversationCreateRequest {
@@ -306,7 +306,7 @@ fn tool_service_safe_mode_auto_executes_low_risk_terminal_write_with_readback() 
         vec![("runtime-1".to_string(), "pwd\r".to_string())]
     );
 
-    let loaded = AiConversationService::default()
+    let loaded = AiConversationService
         .get(&store, &conversation.id)
         .expect("conversation should load");
     assert!(loaded
@@ -319,7 +319,7 @@ fn tool_service_safe_mode_auto_executes_low_risk_terminal_write_with_readback() 
 #[test]
 fn tool_service_terminal_write_result_summary_is_readable() {
     let store = SqliteStore::open_in_memory().expect("store should open");
-    let conversation = AiConversationService::default()
+    let conversation = AiConversationService
         .create(
             &store,
             AiConversationCreateRequest {
@@ -351,7 +351,7 @@ fn tool_service_terminal_write_result_summary_is_readable() {
     assert!(!summary.contains("?2004"));
     assert!(!summary.contains("user@host"));
 
-    let loaded = AiConversationService::default()
+    let loaded = AiConversationService
         .get(&store, &conversation.id)
         .expect("conversation should load");
     let tool_message = loaded
@@ -787,7 +787,7 @@ fn tool_service_session_save_stores_ai_supplied_password_without_persisting_plai
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
     let secrets = Arc::new(MemorySecretStore::default());
     let credential_service = CredentialService::with_secret_store(store.clone(), secrets);
-    let conversation = AiConversationService::default()
+    let conversation = AiConversationService
         .create(
             store.as_ref(),
             AiConversationCreateRequest {
@@ -891,7 +891,7 @@ fn tool_service_session_save_stores_ai_supplied_password_without_persisting_plai
     assert_ne!(credential.id, password);
     assert!(!credential.name.contains(password));
 
-    let loaded = AiConversationService::default()
+    let loaded = AiConversationService
         .get(store.as_ref(), &conversation.id)
         .expect("conversation should load");
     let serialized_messages =
