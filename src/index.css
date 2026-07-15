@@ -2338,8 +2338,7 @@ button {
   white-space: nowrap;
 }
 
-.zt-history-group button,
-.zt-history-group-item button {
+.zt-history-group button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2350,8 +2349,7 @@ button {
   color: var(--zt-text-secondary);
 }
 
-.zt-history-group button:hover,
-.zt-history-group-item button:hover {
+.zt-history-group button:hover {
   background: var(--zt-bg-hover);
   color: var(--zt-text-primary);
 }
@@ -2364,7 +2362,7 @@ button {
 
 .zt-history-group-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 4px;
   min-width: 0;

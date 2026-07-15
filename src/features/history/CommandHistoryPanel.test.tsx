@@ -446,15 +446,14 @@ describe("CommandHistoryPanel", () => {
     view.unmount();
   });
 
-  it("uses a distinct batch icon to send every command and keeps only item send buttons", async () => {
+  it("uses a play icon to send every command and removes item action buttons", async () => {
     const onSend = vi.fn();
     const view = renderPanel({ activeView: "groups", commandGroups: groups, onSend });
 
     const sendAll = button(view.container, "发送全部 巡检");
-    const sendItem = button(view.container, "发送 uptime");
-    expect(sendAll.querySelector(".lucide-fast-forward")).not.toBeNull();
-    expect(sendAll.querySelector(".lucide-play")).toBeNull();
-    expect(sendItem.querySelector(".lucide-play")).not.toBeNull();
+    expect(sendAll.querySelector(".lucide-play")).not.toBeNull();
+    expect(sendAll.querySelector(".lucide-fast-forward")).toBeNull();
+    expect(buttonExists(view.container, "发送 uptime")).toBe(false);
     expect(buttonExists(view.container, "复制 巡检")).toBe(false);
     expect(buttonExists(view.container, "编辑 巡检")).toBe(false);
     expect(buttonExists(view.container, "删除 巡检")).toBe(false);
@@ -466,9 +465,10 @@ describe("CommandHistoryPanel", () => {
     view.unmount();
   });
 
-  it("copies command groups and individual commands from their context menus", async () => {
+  it("copies groups and copies or sends individual commands from context menus", async () => {
     const onCopy = vi.fn();
-    const view = renderPanel({ activeView: "groups", commandGroups: groups, onCopy });
+    const onSend = vi.fn();
+    const view = renderPanel({ activeView: "groups", commandGroups: groups, onCopy, onSend });
 
     await contextMenu(commandGroup(view.container, "巡检"));
     expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
@@ -482,9 +482,14 @@ describe("CommandHistoryPanel", () => {
     await contextMenu(commandGroupItem(view.container, "uptime"));
     expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
       "复制",
+      "发送",
     ]);
     await click(button(view.container, "复制"));
     expect(onCopy).toHaveBeenLastCalledWith("uptime");
+
+    await contextMenu(commandGroupItem(view.container, "uptime"));
+    await click(button(view.container, "发送"));
+    expect(onSend).toHaveBeenCalledWith("uptime");
 
     view.unmount();
   });

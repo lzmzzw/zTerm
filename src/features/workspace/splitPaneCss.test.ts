@@ -206,13 +206,13 @@ describe("split pane css direction mapping", () => {
     expect(ruleBodiesForSelector(".zt-history-toolbar .zt-history-icon-button")).toBe("");
   });
 
-  it("keeps one action column in command group headers and items", () => {
+  it("keeps one group action column and no item action column", () => {
     expect(ruleBodiesForSelector(".zt-history-group header")).toContain(
       "grid-template-columns: minmax(0, 1fr) 28px",
     );
-    expect(ruleBodiesForSelector(".zt-history-group-item")).toContain(
-      "grid-template-columns: minmax(0, 1fr) 28px",
-    );
+    const itemStyles = ruleBodiesForSelector(".zt-history-group-item");
+    expect(itemStyles).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(itemStyles).not.toContain("28px");
   });
 
   it("keeps history and command group toolbars at the same height", () => {

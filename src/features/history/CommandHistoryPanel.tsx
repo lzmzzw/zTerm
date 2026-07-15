@@ -1,5 +1,5 @@
 // Author: Liz
-import { FastForward, Play, Plus, Search } from "lucide-react";
+import { Play, Plus, Search } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 
@@ -487,7 +487,7 @@ function CommandGroupView({
                     title={`${t(language, "sendAllPrefix")} ${group.name}`}
                     onClick={() => sendGroup(group)}
                   >
-                    <FastForward size={14} aria-hidden="true" />
+                    <Play size={14} aria-hidden="true" />
                   </button>
                 </header>
                 <div className="zt-history-group-items">
@@ -498,9 +498,6 @@ function CommandGroupView({
                       onContextMenu={(event) => openItemMenu(event, item.command)}
                     >
                       <code>{item.command}</code>
-                      <button type="button" aria-label={`${t(language, "sendPrefix")} ${item.command}`} onClick={() => onSend(item.command)}>
-                        <Play size={14} aria-hidden="true" />
-                      </button>
                     </div>
                   ))}
                 </div>
@@ -549,7 +546,18 @@ function CommandGroupView({
                 {t(language, "deletePrefix")}
               </button>
             </>
-          ) : null}
+          ) : (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onSend(actionMenu.command);
+                setActionMenu(null);
+              }}
+            >
+              {t(language, "sendPrefix")}
+            </button>
+          )}
         </ZtContextMenu>
       ) : null}
     </>
