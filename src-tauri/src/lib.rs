@@ -257,6 +257,16 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
                 error
             });
     }
+    if let Err(error) = tauri::async_runtime::block_on(commands::mcp::start_mcp_if_enabled(
+        state.storage(),
+        state.ai_tool_service(),
+        state.mcp_service(),
+    )) {
+        eprintln!(
+            "MCP autostart failed: {}",
+            security::redaction::redact_sensitive(&error.to_string())
+        );
+    }
     app.manage(state);
     drop(early_args);
     Ok(())

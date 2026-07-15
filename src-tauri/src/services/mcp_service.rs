@@ -1,6 +1,7 @@
 // Author: Liz
 use std::{
     collections::HashMap,
+    env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{Arc, Mutex},
 };
@@ -17,14 +18,20 @@ use uuid::Uuid;
 use crate::{
     error::{AppError, AppResult},
     models::ai::{AiApprovalMode, AiToolAuditRecord, AiToolPrepareRequest, RiskLevel},
-    services::ai_tool_service::AiToolService,
+    services::{
+        ai_tool_service::AiToolService,
+        credential_service::{SecretStore, SystemSecretStore},
+    },
     storage::sqlite::SqliteStore,
 };
 
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const MCP_PATH: &str = "/mcp";
+const MCP_TOKEN_ENV_VAR: &str = "ZTERM_MCP_TOKEN";
+const MCP_TOKEN_SECRET_REF: &str = "mcp:bearer-token";
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const MAX_HTTP_BODY_BYTES: usize = 1024 * 1024;
+pub const DEFAULT_MCP_PORT: u16 = 9419;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpServerStatus {
@@ -50,9 +57,9 @@ struct McpContext {
     token: Arc<Mutex<String>>,
 }
 
-#[derive(Default)]
 pub struct McpService {
     runtime: Mutex<Option<McpRuntime>>,
+    secret_store: Arc<dyn SecretStore>,
 }
 
 struct McpRuntime {
@@ -77,6 +84,13 @@ pub struct McpHttpResponse {
 }
 
 impl McpService {
+    pub fn with_secret_store(secret_store: Arc<dyn SecretStore>) -> Self {
+        Self {
+            runtime: Mutex::new(None),
+            secret_store,
+        }
+    }
+
     pub async fn start(
         &self,
         storage: Arc<SqliteStore>,
@@ -87,7 +101,8 @@ impl McpService {
             return Ok(status);
         }
 
-        let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port.unwrap_or(0));
+        let token_value = self.load_or_create_token()?;
+        let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), configured_mcp_port(port));
         let listener = TcpListener::bind(bind_addr)
             .await
             .map_err(|error| AppError::ai(format!("MCP 服务绑定失败: {error}")))?;
@@ -95,7 +110,7 @@ impl McpService {
             .local_addr()
             .map_err(|error| AppError::ai(format!("MCP 服务地址读取失败: {error}")))?;
         let endpoint = format!("http://127.0.0.1:{}{MCP_PATH}", local_addr.port());
-        let token = Arc::new(Mutex::new(generate_token()));
+        let token = Arc::new(Mutex::new(token_value.clone()));
         let context = McpContext {
             storage,
             tools,
@@ -122,10 +137,6 @@ impl McpService {
             }
         });
 
-        let token_value = token
-            .lock()
-            .map_err(|_| AppError::ai("MCP token lock was poisoned"))?
-            .clone();
         let status = McpServerStatus {
             enabled: true,
             endpoint: Some(endpoint.clone()),
@@ -173,6 +184,7 @@ impl McpService {
             });
         };
         let token = generate_token();
+        self.secret_store.set_secret(MCP_TOKEN_SECRET_REF, &token)?;
         *runtime
             .token
             .lock()
@@ -184,6 +196,22 @@ impl McpService {
         })
     }
 
+    fn load_or_create_token(&self) -> AppResult<String> {
+        match self.secret_store.get_secret(MCP_TOKEN_SECRET_REF) {
+            Ok(token) if !token.trim().is_empty() => Ok(token),
+            Ok(_) | Err(AppError::NotFound(_)) => {
+                let token = env::var(MCP_TOKEN_ENV_VAR)
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(generate_token);
+                self.secret_store.set_secret(MCP_TOKEN_SECRET_REF, &token)?;
+                Ok(token)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn status(&self) -> Option<McpServerStatus> {
         let guard = self.runtime.lock().ok()?;
         let runtime = guard.as_ref()?;
@@ -193,6 +221,12 @@ impl McpService {
             endpoint: Some(runtime.endpoint.clone()),
             token: Some(token),
         })
+    }
+}
+
+impl Default for McpService {
+    fn default() -> Self {
+        Self::with_secret_store(Arc::new(SystemSecretStore))
     }
 }
 
@@ -810,4 +844,19 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 
 fn generate_token() -> String {
     Uuid::new_v4().simple().to_string()
+}
+
+fn configured_mcp_port(port: Option<u16>) -> u16 {
+    port.unwrap_or(DEFAULT_MCP_PORT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{configured_mcp_port, DEFAULT_MCP_PORT};
+
+    #[test]
+    fn missing_mcp_port_uses_stable_default_and_explicit_zero_stays_ephemeral() {
+        assert_eq!(configured_mcp_port(None), DEFAULT_MCP_PORT);
+        assert_eq!(configured_mcp_port(Some(0)), 0);
+    }
 }

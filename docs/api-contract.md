@@ -39,7 +39,7 @@
 
 `AppSettings.workspace_restore_strategy` 支持 `visible_first`、`connect_all`、`layout_only`，旧设置 JSON 缺字段时默认 `visible_first`。`visible_first` 先显示布局，再优先恢复当前可见 pane/tab；`connect_all` 显示布局后尽快低并发连接全部标签；`layout_only` 只恢复布局和 queued 状态，不自动打开终端。`settings_get` 和 `settings_reset` 返回的 `AppSettings.shortcuts` 会合并当前 `shortcut_registry_list` 中缺失的动作，调用方应以返回值作为 UI 展示和后续保存的有效配置。
 
-`AppSettings.mcp` 为 `{ enabled, port? }`，旧设置缺字段时默认 `{ enabled: false, port: null }`。MCP token 是运行期 secret，只通过 `McpServerStatus.token` 返回给本地设置页复制或轮换，不写入 SQLite settings JSON。`McpServerStatus` 为 `{ enabled, endpoint?, token? }`，关闭时 `endpoint/token=null`。
+`AppSettings.mcp` 为 `{ enabled, port? }`，旧设置缺字段时默认 `{ enabled: false, port: null }`；`port=null` 使用稳定默认端口 `9419`。启用状态会在 zTerm 启动时恢复监听，不依赖打开设置页。MCP token 只写入 OS keyring，不写入 SQLite settings JSON；首次升级且 keyring 尚无 MCP token 时可从 `ZTERM_MCP_TOKEN` 环境变量迁移，之后以 keyring 为准。token 只通过 `McpServerStatus.token` 返回给本地设置页复制或轮换。`McpServerStatus` 为 `{ enabled, endpoint?, token? }`，关闭时 `endpoint/token=null`。
 
 MCP 设置页的工具详情默认折叠，首次展开时通过只读命令 `mcp_tool_catalog_list` 读取 MCP 专用 allowlist；结果按工具 ID 命名空间分组展示，并缓存到本次设置页会话。加载过程提供 loading、空清单、失败和重试状态，不读取或展示 MCP Bearer token 之外的 secret。
 
@@ -207,7 +207,7 @@ AI 工具注册表只暴露 zTerm 已有能力：`terminal.list/read/write/open/
 
 自动或人工批准执行后写入 `ai_tool_audits`，记录 `affected_domains` 供前端按域刷新 Session、Model、Workspace、Terminal、History、Transfer 等状态。`terminal.write` 会等待终端输出短暂稳定并把回读摘要写入 tool message；会话/分组、Provider、工作区定义、终端 profile、传输控制、历史、服务器资源快照、SSH 容器列表和部分 SFTP 文件操作复用现有 storage/service 入口。前端运行态动作通过 `zterm:tool-action` 事件执行，例如打开工具面板、恢复工作区、分屏、聚焦 pane、打开会话和 SFTP 上传下载；后端只负责审批、审计和事件分发。
 
-本机 MCP v1 采用 MCP 2025-11-25 Streamable HTTP，endpoint 固定为 `http://127.0.0.1:<port>/mcp`，默认关闭，不提供 stdio sidecar。服务验证 `Authorization: Bearer <token>` 和 `Origin`，仅允许无 Origin 或 localhost/127.0.0.1/::1/`tauri://localhost`。当前 JSON-RPC 支持 `initialize`、`tools/list`、`tools/call`。MCP 使用独立 allowlist，只开放 `sessions.list/save`、`terminal.list/open/read/write/close`、`ssh.execute`、`llm_provider.list/save`；目录外工具即使按名称调用也返回 `-32601`。所有工具提供非空 input schema，未知参数返回 `-32602`。读取和保存操作通过 `structuredContent.result` 返回脱敏结构，不返回 `credential_ref`、`api_key_ref` 或 secret。
+本机 MCP v1 采用 MCP 2025-11-25 Streamable HTTP，endpoint 固定为 `http://127.0.0.1:<port>/mcp`，默认端口为 `9419`，默认关闭，不提供 stdio sidecar；用户启用后会随 zTerm 启动自动监听。服务验证 `Authorization: Bearer <token>` 和 `Origin`，仅允许无 Origin 或 localhost/127.0.0.1/::1/`tauri://localhost`。当前 JSON-RPC 支持 `initialize`、`tools/list`、`tools/call`。MCP 使用独立 allowlist，只开放 `sessions.list/save`、`terminal.list/open/read/write/close`、`ssh.execute`、`llm_provider.list/save`；目录外工具即使按名称调用也返回 `-32601`。所有工具提供非空 input schema，未知参数返回 `-32602`。读取和保存操作通过 `structuredContent.result` 返回脱敏结构，不返回 `credential_ref`、`api_key_ref` 或 secret。
 
 `ssh.execute` 输入 `saved_session_id` 和 `script`，通过 zTerm 保存连接复用密码、密钥、SSH Agent、跳板机和 SSH 连接缓存，返回 stdout、stderr、exit code、截断标记和耗时。`terminal.open` 在前端打开保存连接，调用方随后使用 `terminal.list(saved_session_id)` 获取 runtime ID，再通过 `terminal.read/write/close` 操作。`sessions.save.reuse_auth_from_session_id` 可复用另一连接的认证引用而不向 MCP 暴露引用；密码型新连接和需要 API Key 的模型会创建 pending，并通过 `zterm:tool-pending` 让 zTerm Agent 面板刷新本地 secret 输入。MCP 参数递归拒绝 password、token、API Key、private key 等明文 secret。
 

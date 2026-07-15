@@ -4,17 +4,23 @@ use std::sync::Arc;
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 use zterm_lib::{
+    commands::mcp::start_mcp_if_enabled,
     error::AppResult,
     models::{
         session::{AuthMode, SavedSessionDraft, SessionType},
+        settings::McpSettings,
         terminal::{RuntimeSessionInfo, RuntimeSessionKind},
     },
     services::{
         ai_tool_service::{AiToolCommandWriter, AiToolService},
         credential_service::{CredentialService, MemorySecretStore},
-        mcp_service::{handle_http_request, McpHttpRequest, McpService},
+        mcp_service::{handle_http_request, McpHttpRequest, McpService, DEFAULT_MCP_PORT},
     },
-    storage::{sessions::save_session, sqlite::SqliteStore},
+    storage::{
+        sessions::save_session,
+        settings::{get_app_settings, save_app_settings},
+        sqlite::SqliteStore,
+    },
 };
 
 #[derive(Default)]
@@ -185,7 +191,7 @@ async fn mcp_http_handler_supports_initialize_tools_list_and_pending_tool_call()
 async fn mcp_service_binds_localhost_and_serves_json_rpc() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
     let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
-    let service = McpService::default();
+    let service = McpService::with_secret_store(Arc::new(MemorySecretStore::default()));
     let status = service
         .start(store, tools, Some(0))
         .await
@@ -210,6 +216,77 @@ async fn mcp_service_binds_localhost_and_serves_json_rpc() {
         .iter()
         .any(|tool| tool["name"] == "ssh.execute"));
 
+    service.stop().expect("service should stop");
+}
+
+#[test]
+fn mcp_default_port_is_stable_for_external_client_configuration() {
+    assert_eq!(DEFAULT_MCP_PORT, 9419);
+}
+
+#[tokio::test]
+async fn mcp_token_is_reused_and_rotation_persists_across_service_instances() {
+    let secrets = Arc::new(MemorySecretStore::default());
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+
+    let first_service = McpService::with_secret_store(secrets.clone());
+    let first_status = first_service
+        .start(Arc::clone(&store), tools.clone(), Some(0))
+        .await
+        .expect("first MCP service should start");
+    let first_token = first_status.token.expect("first token");
+    first_service.stop().expect("first service should stop");
+
+    let second_service = McpService::with_secret_store(secrets.clone());
+    let second_status = second_service
+        .start(Arc::clone(&store), tools.clone(), Some(0))
+        .await
+        .expect("second MCP service should start");
+    assert_eq!(second_status.token.as_deref(), Some(first_token.as_str()));
+    let rotated_token = second_service
+        .rotate_token()
+        .expect("token rotation should succeed")
+        .token
+        .expect("rotated token");
+    assert_ne!(rotated_token, first_token);
+    second_service.stop().expect("second service should stop");
+
+    let third_service = McpService::with_secret_store(secrets);
+    let third_status = third_service
+        .start(store, tools, Some(0))
+        .await
+        .expect("third MCP service should start");
+    assert_eq!(third_status.token.as_deref(), Some(rotated_token.as_str()));
+    third_service.stop().expect("third service should stop");
+}
+
+#[tokio::test]
+async fn enabled_mcp_setting_starts_listener_without_opening_settings_page() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let mut settings = get_app_settings(store.as_ref()).expect("settings should load");
+    let reserved = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("port should reserve");
+    let port = reserved.local_addr().expect("local address").port();
+    drop(reserved);
+    settings.mcp = McpSettings {
+        enabled: true,
+        port: Some(port),
+    };
+    save_app_settings(store.as_ref(), settings).expect("settings should save");
+
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+    let service = Arc::new(McpService::with_secret_store(Arc::new(
+        MemorySecretStore::default(),
+    )));
+    let status = start_mcp_if_enabled(Arc::clone(&store), tools, Arc::clone(&service))
+        .await
+        .expect("enabled MCP should start");
+
+    assert!(status.enabled);
+    assert_eq!(
+        status.endpoint.as_deref(),
+        Some(format!("http://127.0.0.1:{port}/mcp").as_str())
+    );
     service.stop().expect("service should stop");
 }
 
