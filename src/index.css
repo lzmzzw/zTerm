@@ -1471,6 +1471,13 @@ button {
   color: var(--zt-text-primary);
 }
 
+.zt-panel-header-action .zt-tunnel-add-button {
+  width: auto;
+  gap: 5px;
+  padding: 0 7px;
+  white-space: nowrap;
+}
+
 .zt-workspace-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);

@@ -8,6 +8,7 @@ import { AppShell } from "./AppShell";
 const storeMocks = vi.hoisted(() => ({
   noop: vi.fn(),
   asyncNoop: vi.fn().mockResolvedValue(undefined),
+  saveSession: vi.fn().mockResolvedValue(undefined),
   bindEvents: vi.fn().mockResolvedValue(() => undefined),
   addPaneTab: vi.fn(),
   addPaneTabAfter: vi.fn(),
@@ -193,7 +194,7 @@ const storeMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./TitleBar", () => ({
-  TitleBar: () => <header aria-label="标题栏" />,
+  TitleBar: ({ centerContent }: { centerContent?: string | null }) => <header aria-label="标题栏">{centerContent}</header>,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -414,7 +415,7 @@ vi.mock("../features/sessions/sessionStore", () => {
     error: null,
     loadSessions: storeMocks.asyncNoop,
     saveGroup: storeMocks.asyncNoop,
-    saveSession: storeMocks.asyncNoop,
+    saveSession: storeMocks.saveSession,
     testSession: storeMocks.asyncNoop,
     deleteGroup: storeMocks.asyncNoop,
     deleteSession: storeMocks.asyncNoop,
@@ -1192,6 +1193,85 @@ describe("AppShell", () => {
         },
       ],
     });
+  });
+
+  it("shows the active SSH host in the titlebar", () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "ssh-1",
+        name: "生产机",
+        type: "ssh",
+        group_id: null,
+        host: "10.20.30.40",
+        port: 22,
+        username: "root",
+        auth_mode: "none",
+        credential_ref: null,
+        description: null,
+        tags: [],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        last_used_at_ms: null,
+      },
+    ];
+    Object.assign(storeMocks.workspaceState.tabs[0].root, {
+      runtime_session_id: "runtime-ssh",
+      saved_session_id: "ssh-1",
+      terminal_tabs: [
+        {
+          id: "pane-1-tab-1",
+          title: "生产机",
+          runtime_session_id: "runtime-ssh",
+          saved_session_id: "ssh-1",
+        },
+      ],
+    });
+
+    const view = render(<AppShell />);
+
+    expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("10.20.30.40");
+    view.unmount();
+  });
+
+  it("shows the configured working directory for the active local terminal", () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "local-1",
+        name: "项目终端",
+        type: "local",
+        group_id: null,
+        host: "localhost",
+        port: 1,
+        username: "",
+        auth_mode: "none",
+        credential_ref: null,
+        description: null,
+        tags: [],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        last_used_at_ms: null,
+        local_options: { working_directory: "D:\\workspace\\zterm" },
+      },
+    ];
+    Object.assign(storeMocks.workspaceState.tabs[0].root, {
+      runtime_session_id: "runtime-local",
+      saved_session_id: "local-1",
+      terminal_tabs: [
+        {
+          id: "pane-1-tab-1",
+          title: "项目终端",
+          runtime_session_id: "runtime-local",
+          saved_session_id: "local-1",
+        },
+      ],
+    });
+
+    const view = render(<AppShell />);
+
+    expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("D:\\workspace\\zterm");
+    view.unmount();
   });
 
   it("opens a pending external SSH launch and automatically loads SFTP files", async () => {
@@ -4125,6 +4205,192 @@ describe("AppShell", () => {
     });
 
     expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).not.toBe(null);
+
+    view.unmount();
+  });
+
+  it("creates a tunnel for the active saved SSH session", async () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "session-1",
+        name: "开发机 A",
+        host: "172.16.41.180",
+        port: 22,
+        username: "ubuntu",
+        type: "ssh",
+        auth_mode: "none",
+        credential_ref: null,
+        description: null,
+        group_id: null,
+        tags: [],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        last_used_at_ms: null,
+        ssh_options: { tunnels: [] },
+      },
+    ];
+    storeMocks.workspaceState.tabs[0].root = {
+      kind: "leaf",
+      id: "pane-1",
+      title: "开发机 A",
+      runtime_session_id: "runtime-1",
+      saved_session_id: "session-1",
+      active_terminal_tab_id: "pane-1-tab-1",
+      terminal_tabs: [
+        {
+          id: "pane-1-tab-1",
+          title: "开发机 A",
+          runtime_session_id: "runtime-1",
+          saved_session_id: "session-1",
+          connection_source: "saved_session",
+        },
+      ],
+    };
+    const view = render(<AppShell />);
+
+    await clickButton(view.container, "SSH 隧道");
+    await clickButton(view.container, "新增隧道");
+
+    expect(view.container.querySelector('[role="dialog"][aria-label="新增 SSH 隧道"]')).not.toBe(null);
+    await clickButton(view.container, "SOCKS / 高级");
+    expect(input(view.container, "SOCKS 监听端口")).not.toBe(null);
+    await clickButton(view.container, "访问主机服务");
+    expect(input(view.container, "主机目标端口")).not.toBe(null);
+    change(input(view.container, "隧道名称"), "管理后台");
+    change(input(view.container, "主机目标端口"), "8080");
+    change(input(view.container, "本机监听端口"), "18080");
+    await clickButton(view.container, "保存隧道");
+
+    expect(storeMocks.saveSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: "session-1",
+        ssh_options: expect.objectContaining({
+          tunnels: [
+            expect.objectContaining({
+              name: "管理后台",
+              kind: "local",
+              local_port: 18080,
+              remote_port: 8080,
+            }),
+          ],
+        }),
+      }),
+    );
+    expect(view.container.querySelector('[role="dialog"][aria-label="新增 SSH 隧道"]')).toBe(null);
+
+    view.unmount();
+  });
+
+  it("reconnects from the SSH title context menu and edits or deletes a selected tunnel", async () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "session-1",
+        name: "开发机 A",
+        host: "172.16.41.180",
+        port: 22,
+        username: "ubuntu",
+        type: "ssh",
+        auth_mode: "none",
+        credential_ref: null,
+        description: null,
+        group_id: null,
+        tags: [],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        last_used_at_ms: null,
+        ssh_options: {
+          tunnels: [
+            {
+              mode: "host_service",
+              kind: "local",
+              name: "管理后台",
+              auto_open: true,
+              bind_address: "127.0.0.1",
+              local_port: 18080,
+              remote_host: "172.16.41.180",
+              remote_port: 8080,
+            },
+          ],
+        },
+      },
+    ];
+    storeMocks.workspaceState.tabs[0].root = {
+      kind: "leaf",
+      id: "pane-1",
+      title: "开发机 A",
+      runtime_session_id: "runtime-1",
+      saved_session_id: "session-1",
+      active_terminal_tab_id: "pane-1-tab-1",
+      terminal_tabs: [
+        {
+          id: "pane-1-tab-1",
+          title: "开发机 A",
+          runtime_session_id: "runtime-1",
+          saved_session_id: "session-1",
+          connection_source: "saved_session",
+        },
+      ],
+    };
+    const view = render(<AppShell />);
+    await clickButton(view.container, "SSH 隧道");
+
+    await act(async () => {
+      view.container
+        .querySelector(".zt-tunnel-target")
+        ?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 120, clientY: 80 }));
+      await Promise.resolve();
+    });
+    await clickButton(view.container, "重连");
+
+    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-1", { releaseExternalSession: true });
+    expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1");
+    expect(storeMocks.closeTerminal.mock.invocationCallOrder[0]).toBeLessThan(
+      storeMocks.openTerminal.mock.invocationCallOrder[0],
+    );
+
+    await act(async () => {
+      view.container
+        .querySelector('[role="listitem"][aria-label="管理后台"]')
+        ?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 140, clientY: 160 }));
+      await Promise.resolve();
+    });
+    await clickButton(view.container, "编辑");
+    change(input(view.container, "隧道名称"), "管理后台新");
+    await clickButton(view.container, "保存隧道");
+
+    expect(storeMocks.saveSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: "session-1",
+        ssh_options: expect.objectContaining({
+          tunnels: [expect.objectContaining({ name: "管理后台新", local_port: 18080 })],
+        }),
+      }),
+    );
+
+    await act(async () => {
+      view.container
+        .querySelector('[role="listitem"][aria-label="管理后台"]')
+        ?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 140, clientY: 160 }));
+      await Promise.resolve();
+    });
+    await clickButton(view.container, "删除");
+    expect(view.container.querySelector('[role="dialog"][aria-label="删除 SSH 隧道"]')).not.toBe(null);
+    await act(async () => {
+      const confirmDeleteButton = Array.from(view.container.querySelectorAll("button")).find(
+        (item) => item.textContent?.trim() === "确认删除",
+      );
+      (confirmDeleteButton as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.saveSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: "session-1",
+        ssh_options: expect.objectContaining({ tunnels: [] }),
+      }),
+    );
 
     view.unmount();
   });

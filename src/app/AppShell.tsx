@@ -31,9 +31,10 @@ import { ModelManagerPanel } from "../features/models/ModelManagerPanel";
 import { LOCAL_SERVER_INFO_TARGET_ID } from "../features/monitor/serverInfoApi";
 import { SessionTree } from "../features/sessions/SessionTree";
 import { SessionGroupDialog } from "../features/sessions/SessionTreeDialogs";
+import { emptySshTunnel, sshTunnelMode } from "../features/sessions/sshSessionModel";
 import { useSessionStore } from "../features/sessions/sessionStore";
 import { SshTunnelsSection } from "../features/sessions/SshTunnelsSection";
-import type { SshOptions, SshTunnelMode } from "../features/sessions/types";
+import type { SavedSession, SavedSessionDraft, SshOptions, SshTunnel, SshTunnelMode } from "../features/sessions/types";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { applyAppSettings } from "../features/settings/applyAppSettings";
 import { useDomI18n } from "../features/settings/domI18n";
@@ -161,6 +162,27 @@ const EMPTY_WORKSPACE_SIDEBAR_STATE = {
   workspaceDefinitions: {} as Record<string, WorkspaceDefinition>,
 };
 
+type ActiveSshTunnelTarget = {
+  sessionId: string;
+  savedSession: SavedSession | null;
+  baseOptions: SshOptions;
+  host: string;
+  hostServiceTargetHost: string;
+  external: boolean;
+  singleChannel: boolean;
+};
+
+type SshTunnelEditorState = ActiveSshTunnelTarget & {
+  mode: "create" | "edit";
+  index: number | null;
+  tunnel: SshTunnel;
+};
+
+type PendingSshTunnelDelete = ActiveSshTunnelTarget & {
+  index: number;
+  tunnel: SshTunnel;
+};
+
 function readString(value: Record<string, unknown>, key: string) {
   const item = value[key];
   return typeof item === "string" && item.trim() ? item.trim() : null;
@@ -267,7 +289,9 @@ export function AppShell() {
   const [connectionOpening, setConnectionOpening] = useState(false);
   const [externalSshOptionsById, setExternalSshOptionsById] = useState<Record<string, SshOptions>>({});
   const [externalSshTunnelEditor, setExternalSshTunnelEditor] = useState<string | null>(null);
-  const [externalSshTunnelNeedsReconnect, setExternalSshTunnelNeedsReconnect] = useState<Record<string, boolean>>({});
+  const [sshTunnelEditor, setSshTunnelEditor] = useState<SshTunnelEditorState | null>(null);
+  const [pendingSshTunnelDelete, setPendingSshTunnelDelete] = useState<PendingSshTunnelDelete | null>(null);
+  const [sshTunnelNeedsReconnectBySessionId, setSshTunnelNeedsReconnectBySessionId] = useState<Record<string, boolean>>({});
   const restoringWorkspaceIdsRef = useRef<Set<string>>(new Set());
   const workspaceRestoreEpochRef = useRef(0);
   const processedExternalLaunchIdsRef = useRef<Set<string>>(new Set());
@@ -1335,14 +1359,107 @@ export function AppShell() {
     try {
       const savedOptions = await updateExternalSshOptions(sessionId, options);
       setExternalSshOptionsById((current) => ({ ...current, [sessionId]: savedOptions }));
-      setExternalSshTunnelNeedsReconnect((current) => ({ ...current, [sessionId]: true }));
+      setSshTunnelNeedsReconnectBySessionId((current) => ({ ...current, [sessionId]: true }));
       setExternalSshTunnelEditor(null);
     } catch (error) {
       setTerminalError(fallbackOnlyErrorMessage(error, "保存临时 SSH 隧道失败"));
     }
   }
 
-  function reconnectActiveExternalSsh() {
+  function activeSshTunnelTarget(): ActiveSshTunnelTarget | null {
+    if (!activeSshSessionId) return null;
+    if (activeSavedSession?.type === "ssh") {
+      return {
+        sessionId: activeSavedSession.id,
+        savedSession: activeSavedSession,
+        baseOptions: activeSavedSession.ssh_options ?? {},
+        host: activeSavedSession.host,
+        hostServiceTargetHost: activeSavedSession.host,
+        external: false,
+        singleChannel: false,
+      };
+    }
+    if (activeExternalSshSession) {
+      return {
+        sessionId: activeExternalSshSession.id,
+        savedSession: null,
+        baseOptions: activeExternalSshOptions ?? DEFAULT_EXTERNAL_SSH_OPTIONS,
+        host: activeExternalSshSession.host,
+        hostServiceTargetHost: externalSshHostServiceTarget(activeExternalSshSession),
+        external: true,
+        singleChannel: activeExternalSshSingleChannel,
+      };
+    }
+    return null;
+  }
+
+  function openActiveSshTunnelEditor(mode: "create" | "edit", index: number | null = null) {
+    const target = activeSshTunnelTarget();
+    if (!target) return;
+    const tunnels = target.baseOptions.tunnels ?? [];
+    const selectedTunnel = mode === "edit" && index !== null ? tunnels[index] : null;
+    if (mode === "edit" && !selectedTunnel) return;
+    const initialTunnel = selectedTunnel ?? {
+      ...emptySshTunnel("host_service"),
+      remote_host: target.hostServiceTargetHost,
+    };
+    setSshTunnelEditor({
+      ...target,
+      mode,
+      index: mode === "edit" ? index : null,
+      tunnel: initialTunnel,
+    });
+  }
+
+  function requestDeleteActiveSshTunnel(index: number) {
+    const target = activeSshTunnelTarget();
+    const tunnel = target?.baseOptions.tunnels?.[index];
+    if (!target || !tunnel) return;
+    setPendingSshTunnelDelete({ ...target, index, tunnel });
+  }
+
+  async function persistSshTunnelChanges(target: ActiveSshTunnelTarget, tunnels: SshTunnel[]) {
+    const options = { ...target.baseOptions, tunnels };
+    if (target.external) {
+      const savedOptions = await updateExternalSshOptions(target.sessionId, options);
+      setExternalSshOptionsById((current) => ({ ...current, [target.sessionId]: savedOptions }));
+    } else {
+      if (!target.savedSession) throw new Error("SSH 会话不存在");
+      await saveSession(savedSessionDraftWithSshOptions(target.savedSession, options));
+    }
+    setSshTunnelNeedsReconnectBySessionId((current) => ({ ...current, [target.sessionId]: true }));
+  }
+
+  async function saveSshTunnel(tunnel: SshTunnel) {
+    const editor = sshTunnelEditor;
+    if (!editor) return;
+    const tunnels = [...(editor.baseOptions.tunnels ?? [])];
+    if (editor.mode === "create") {
+      tunnels.push(tunnel);
+    } else if (editor.index !== null) {
+      tunnels[editor.index] = tunnel;
+    }
+    try {
+      await persistSshTunnelChanges(editor, tunnels);
+      setSshTunnelEditor(null);
+    } catch (error) {
+      setTerminalError(fallbackOnlyErrorMessage(error, "保存 SSH 隧道失败"));
+    }
+  }
+
+  async function confirmDeleteSshTunnel() {
+    const pending = pendingSshTunnelDelete;
+    if (!pending) return;
+    try {
+      const tunnels = (pending.baseOptions.tunnels ?? []).filter((_, index) => index !== pending.index);
+      await persistSshTunnelChanges(pending, tunnels);
+      setPendingSshTunnelDelete(null);
+    } catch (error) {
+      setTerminalError(fallbackOnlyErrorMessage(error, "删除 SSH 隧道失败"));
+    }
+  }
+
+  function reconnectActiveSsh() {
     if (!activePaneTab?.runtime_session_id || !activePaneTab.saved_session_id) return;
     void terminalActions.reconnectTerminal(
       activeTab?.active_pane_id ?? "",
@@ -1350,7 +1467,7 @@ export function AppShell() {
       activePaneTab.saved_session_id,
       activePaneTab.runtime_session_id,
     );
-    setExternalSshTunnelNeedsReconnect((current) => ({
+    setSshTunnelNeedsReconnectBySessionId((current) => ({
       ...current,
       [activePaneTab.saved_session_id as string]: false,
     }));
@@ -1754,6 +1871,26 @@ export function AppShell() {
         />
       ) : null}
 
+      {sshTunnelEditor ? (
+        <SshTunnelEditorDialog
+          key={`${sshTunnelEditor.sessionId}-${sshTunnelEditor.mode}-${sshTunnelEditor.index ?? "new"}`}
+          editor={sshTunnelEditor}
+          onCancel={() => setSshTunnelEditor(null)}
+          onSave={(tunnel) => void saveSshTunnel(tunnel)}
+        />
+      ) : null}
+
+      {pendingSshTunnelDelete ? (
+        <ZtConfirmDialog
+          title="删除 SSH 隧道"
+          message={`确认删除隧道“${pendingSshTunnelDelete.tunnel.name?.trim() || `SSH 隧道 ${pendingSshTunnelDelete.index + 1}`}”？`}
+          confirmLabel="确认删除"
+          danger
+          onCancel={() => setPendingSshTunnelDelete(null)}
+          onConfirm={() => void confirmDeleteSshTunnel()}
+        />
+      ) : null}
+
       <main className="zt-main">
         {terminalError ? <div className="zt-terminal-error">{terminalError}</div> : null}
         <WorkspaceStage
@@ -1907,8 +2044,10 @@ export function AppShell() {
           onRuntimeChange: changeExternalContainerRuntime,
         }}
         tunnels={{
+          canManage: Boolean(activeSshSessionId),
+          canCreate: !activeExternalSshSingleChannel || activeSshTunnels.length === 0,
           editable: Boolean(activeExternalSshSession),
-          needsReconnect: activeExternalSshSession ? Boolean(externalSshTunnelNeedsReconnect[activeExternalSshSession.id]) : false,
+          needsReconnect: activeSshSessionId ? Boolean(sshTunnelNeedsReconnectBySessionId[activeSshSessionId]) : false,
           sessionName: activeSavedSession?.type === "ssh" ? activeSavedSession.name : activeExternalSshSession?.name ?? null,
           target: activeSavedSession?.type === "ssh"
             ? `${activeSavedSession.username}@${activeSavedSession.host}:${activeSavedSession.port}`
@@ -1919,7 +2058,10 @@ export function AppShell() {
           onEdit: () => {
             if (activeExternalSshSession) setExternalSshTunnelEditor(activeExternalSshSession.id);
           },
-          onReconnect: reconnectActiveExternalSsh,
+          onCreate: () => openActiveSshTunnelEditor("create"),
+          onDeleteTunnel: requestDeleteActiveSshTunnel,
+          onEditTunnel: (index) => openActiveSshTunnelEditor("edit", index),
+          onReconnect: reconnectActiveSsh,
         }}
         transfers={{
           tasks: transfers,
@@ -1998,4 +2140,84 @@ function ExternalSshTunnelEditorDialog({
       </ZtSurfaceFrame>
     </ZtModalOverlay>
   );
+}
+
+function SshTunnelEditorDialog({
+  editor,
+  onCancel,
+  onSave,
+}: {
+  editor: SshTunnelEditorState;
+  onCancel: () => void;
+  onSave: (tunnel: SshTunnel) => void;
+}) {
+  const [sshOptions, setSshOptions] = useState<SshOptions>({ ...editor.baseOptions, tunnels: [editor.tunnel] });
+  const [tunnelMode, setTunnelMode] = useState<SshTunnelMode>(sshTunnelMode(editor.tunnel));
+  const tunnel = sshOptions.tunnels?.[0] ?? null;
+  const title = editor.mode === "create" ? "新增 SSH 隧道" : "编辑 SSH 隧道";
+
+  return (
+    <ZtModalOverlay className="zt-session-modal-backdrop">
+      <ZtSurfaceFrame
+        className="zt-session-dialog zt-session-editor-dialog zt-transient-tunnel-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        <header>
+          <strong>{title}</strong>
+          <button type="button" aria-label={`关闭${title}`} onClick={onCancel}>
+            ×
+          </button>
+        </header>
+        <div className="zt-session-editor-body zt-transient-tunnel-body">
+          <div className="zt-session-editor-fields zt-transient-tunnel-fields">
+            <SshTunnelsSection
+              sshOptions={sshOptions}
+              host={editor.host}
+              hostServiceTargetHost={editor.hostServiceTargetHost}
+              hostServiceTargetEditable={editor.external}
+              maxTunnels={1}
+              allowedModes={editor.singleChannel ? ["host_service"] : undefined}
+              singleTunnelEditor
+              newTunnelMode={tunnelMode}
+              onNewTunnelModeChange={setTunnelMode}
+              onSshOptionsChange={setSshOptions}
+            />
+          </div>
+        </div>
+        <div className="zt-session-editor-messages">
+          <p className="zt-settings-status">隧道配置将在当前 SSH 连接重连后生效。</p>
+        </div>
+        <footer>
+          <button type="button" onClick={onCancel}>
+            取消
+          </button>
+          <button type="button" aria-label="保存隧道" disabled={!tunnel} onClick={() => tunnel && onSave(tunnel)}>
+            保存隧道
+          </button>
+        </footer>
+      </ZtSurfaceFrame>
+    </ZtModalOverlay>
+  );
+}
+
+function savedSessionDraftWithSshOptions(session: SavedSession, sshOptions: SshOptions): SavedSessionDraft {
+  return {
+    id: session.id,
+    name: session.name,
+    type: session.type,
+    group_id: session.group_id,
+    host: session.host,
+    port: session.port,
+    username: session.username,
+    auth_mode: session.auth_mode,
+    credential_ref: session.credential_ref,
+    description: session.description,
+    tags: session.tags,
+    sort_order: session.sort_order,
+    ssh_options: sshOptions,
+    rdp_options: session.rdp_options,
+    local_options: session.local_options,
+  };
 }

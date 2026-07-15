@@ -1,7 +1,7 @@
 // Author: Liz
 import { Plus } from "lucide-react";
 
-import { emptySshTunnel as emptyTunnel } from "./sshSessionModel";
+import { applySshTunnelMode, emptySshTunnel as emptyTunnel, sshTunnelMode } from "./sshSessionModel";
 import { SshTunnelCard, tunnelModes } from "./SshTunnelCard";
 import type { SshOptions, SshTunnel, SshTunnelMode } from "./types";
 
@@ -13,6 +13,7 @@ interface SshTunnelsSectionProps {
   maxTunnels?: number;
   maxTunnelsMessage?: string;
   allowedModes?: SshTunnelMode[];
+  singleTunnelEditor?: boolean;
   newTunnelMode: SshTunnelMode;
   onNewTunnelModeChange: (mode: SshTunnelMode) => void;
   onSshOptionsChange: (options: SshOptions) => void;
@@ -26,6 +27,7 @@ export function SshTunnelsSection({
   maxTunnels,
   maxTunnelsMessage,
   allowedModes,
+  singleTunnelEditor = false,
   newTunnelMode,
   onNewTunnelModeChange,
   onSshOptionsChange,
@@ -37,26 +39,29 @@ export function SshTunnelsSection({
     ? tunnelModes.filter((mode) => allowedModes.includes(mode.value))
     : tunnelModes;
   const tunnelLimitReached = maxTunnels !== undefined && tunnels.length >= maxTunnels;
+  const selectedMode = singleTunnelEditor && tunnels[0] ? sshTunnelMode(tunnels[0]) : newTunnelMode;
 
   return (
     <div className="zt-session-form-wide zt-ssh-tunnel-editor" aria-label="隧道">
       <div className="zt-ssh-tunnel-header">
         <span>隧道</span>
-        <button
-          type="button"
-          aria-label="添加隧道"
-          disabled={tunnelLimitReached}
-          title={tunnelLimitReached ? (maxTunnelsMessage ?? `最多只能配置 ${maxTunnels} 条隧道`) : undefined}
-          onClick={() =>
-            onSshOptionsChange({
-              ...sshOptions,
-              tunnels: [...tunnels, emptyTunnelForHost(newTunnelMode, normalizedHostServiceTargetHost)],
-            })
-          }
-        >
-          <Plus size={14} aria-hidden="true" />
-          添加隧道
-        </button>
+        {!singleTunnelEditor ? (
+          <button
+            type="button"
+            aria-label="添加隧道"
+            disabled={tunnelLimitReached}
+            title={tunnelLimitReached ? (maxTunnelsMessage ?? `最多只能配置 ${maxTunnels} 条隧道`) : undefined}
+            onClick={() =>
+              onSshOptionsChange({
+                ...sshOptions,
+                tunnels: [...tunnels, emptyTunnelForHost(newTunnelMode, normalizedHostServiceTargetHost)],
+              })
+            }
+          >
+            <Plus size={14} aria-hidden="true" />
+            添加隧道
+          </button>
+        ) : null}
       </div>
       <div className="zt-ssh-tunnel-mode-grid" role="group" aria-label="隧道用途">
         {visibleTunnelModes.map((mode) => (
@@ -64,8 +69,16 @@ export function SshTunnelsSection({
             key={mode.value}
             type="button"
             aria-label={mode.title}
-            aria-pressed={newTunnelMode === mode.value}
-            onClick={() => onNewTunnelModeChange(mode.value)}
+            aria-pressed={selectedMode === mode.value}
+            onClick={() => {
+              onNewTunnelModeChange(mode.value);
+              if (singleTunnelEditor && tunnels[0]) {
+                onSshOptionsChange({
+                  ...sshOptions,
+                  tunnels: [applySshTunnelMode(tunnels[0], mode.value)],
+                });
+              }
+            }}
           >
             <span>
               <strong>{mode.title}</strong>

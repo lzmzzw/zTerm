@@ -1,5 +1,6 @@
 // Author: Liz
-import { Activity, Box, Cable, Clock3, Folder, LogIn, MessageSquareMore, RefreshCw, type LucideIcon } from "lucide-react";
+import { Activity, Box, Cable, Clock3, Folder, LogIn, MessageSquareMore, Plus, RefreshCw, type LucideIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { AiPanel } from "../features/ai/AiPanel";
 import type {
@@ -31,6 +32,7 @@ import type { AppLanguage } from "../features/settings/settingsStore";
 import type { SshContainerInfo } from "../features/terminal/sshContainerApi";
 import { t } from "../features/settings/i18n";
 import { ZtSelect } from "../components/ZtSelect";
+import { ZtContextMenu } from "../components/ZtUi";
 import { PanelHeader, ToolButton } from "./ShellControls";
 import { rightToolLabelKey, visibleRightTools, type ActiveConnectionKind, type RightTool } from "./rightTools";
 
@@ -132,12 +134,17 @@ interface RightToolsPanelProps {
     onRuntimeChange: (runtime: string) => Promise<void> | void;
   };
   tunnels: {
+    canManage: boolean;
+    canCreate: boolean;
     editable: boolean;
     needsReconnect: boolean;
     sessionName: string | null;
     target: string | null;
     items: SshTunnel[];
     onEdit: () => void;
+    onCreate: () => void;
+    onDeleteTunnel: (index: number) => void;
+    onEditTunnel: (index: number) => void;
     onReconnect: () => void;
   };
   transfers: {
@@ -315,7 +322,24 @@ export function RightToolsPanel({
 
           {activeTool === "tunnels" ? (
             <>
-              <PanelHeader title={t(language, "sshTunnels")} />
+              <PanelHeader
+                title={t(language, "sshTunnels")}
+                action={
+                  tunnels.canManage ? (
+                    <button
+                      type="button"
+                      className="zt-tunnel-add-button"
+                      aria-label="新增隧道"
+                      title={tunnels.canCreate ? "新增隧道" : "当前 SSH 连接最多只能配置一条隧道"}
+                      disabled={!tunnels.canCreate}
+                      onClick={tunnels.onCreate}
+                    >
+                      <Plus size={14} aria-hidden="true" />
+                      新增隧道
+                    </button>
+                  ) : undefined
+                }
+              />
               <SshTunnelListPanel
                 sessionName={tunnels.sessionName}
                 target={tunnels.target}
@@ -323,6 +347,8 @@ export function RightToolsPanel({
                 editable={tunnels.editable}
                 needsReconnect={tunnels.needsReconnect}
                 onEdit={tunnels.onEdit}
+                onDeleteTunnel={tunnels.onDeleteTunnel}
+                onEditTunnel={tunnels.onEditTunnel}
                 onReconnect={tunnels.onReconnect}
               />
             </>
@@ -476,6 +502,8 @@ function SshTunnelListPanel({
   editable,
   needsReconnect,
   onEdit,
+  onDeleteTunnel,
+  onEditTunnel,
   onReconnect,
 }: {
   sessionName: string | null;
@@ -484,11 +512,32 @@ function SshTunnelListPanel({
   editable: boolean;
   needsReconnect: boolean;
   onEdit: () => void;
+  onDeleteTunnel: (index: number) => void;
+  onEditTunnel: (index: number) => void;
   onReconnect: () => void;
 }) {
+  const [contextMenu, setContextMenu] = useState<
+    | { kind: "target"; x: number; y: number }
+    | { kind: "tunnel"; index: number; x: number; y: number }
+    | null
+  >(null);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+    const closeMenu = () => setContextMenu(null);
+    window.addEventListener("click", closeMenu);
+    return () => window.removeEventListener("click", closeMenu);
+  }, [contextMenu]);
+
   return (
     <div className={editable ? "zt-tunnel-panel zt-transient-tunnel-panel" : "zt-tunnel-panel"}>
-      <div className="zt-tunnel-target">
+      <div
+        className="zt-tunnel-target"
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setContextMenu({ kind: "target", x: event.clientX, y: event.clientY });
+        }}
+      >
         <strong>{sessionName ?? "当前 SSH 连接"}</strong>
         {target ? <span>{target}</span> : null}
       </div>
@@ -515,7 +564,17 @@ function SshTunnelListPanel({
           const modeInfo = tunnelModes.find((item) => item.value === mode);
           const title = tunnel.name?.trim() || `${modeInfo?.title ?? "SSH 隧道"} ${index + 1}`;
           return (
-            <section className="zt-tunnel-list-item" role="listitem" aria-label={title} key={`${title}-${index}`}>
+            <section
+              className="zt-tunnel-list-item"
+              role="listitem"
+              aria-label={title}
+              key={`${title}-${index}`}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setContextMenu({ kind: "tunnel", index, x: event.clientX, y: event.clientY });
+              }}
+            >
               <header>
                 <strong>{title}</strong>
                 <code>{modeInfo?.command ?? tunnel.kind}</code>
@@ -547,6 +606,30 @@ function SshTunnelListPanel({
           );
         })}
       </div>
+      {contextMenu ? (
+        <ZtContextMenu className="zt-context-menu" role="menu" x={contextMenu.x} y={contextMenu.y}>
+          {contextMenu.kind === "target" ? (
+            <button type="button" role="menuitem" aria-label="重连" onClick={onReconnect}>
+              重连
+            </button>
+          ) : (
+            <>
+              <button type="button" role="menuitem" aria-label="编辑" onClick={() => onEditTunnel(contextMenu.index)}>
+                编辑
+              </button>
+              <button
+                type="button"
+                className="zt-delete-button"
+                role="menuitem"
+                aria-label="删除"
+                onClick={() => onDeleteTunnel(contextMenu.index)}
+              >
+                删除
+              </button>
+            </>
+          )}
+        </ZtContextMenu>
+      ) : null}
     </div>
   );
 }

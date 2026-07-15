@@ -131,6 +131,17 @@ describe("TitleBar", () => {
     view.unmount();
   });
 
+  it("renders active connection context in the center and omits it when unavailable", () => {
+    const sshView = render(<TitleBar centerContent="192.168.10.24" />);
+
+    expect(sshView.container.querySelector(".zt-titlebar-center")?.textContent).toBe("192.168.10.24");
+    sshView.unmount();
+
+    const emptyView = render(<TitleBar centerContent={null} />);
+    expect(emptyView.container.querySelector(".zt-titlebar-center")).toBeNull();
+    emptyView.unmount();
+  });
+
   it("does not render sidebar, settings, or search controls in the titlebar", () => {
     const view = render(<TitleBar />);
 

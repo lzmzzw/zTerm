@@ -106,6 +106,12 @@ describe("global dark theme colors", () => {
     expect(ruleBodiesForSelector(".zt-model-panel")).toContain("height: 100%");
   });
 
+  it("lets the tunnel add action fit its icon and text", () => {
+    const body = ruleBodiesForSelector(".zt-panel-header-action .zt-tunnel-add-button");
+    expect(body).toContain("width: auto");
+    expect(body).toContain("white-space: nowrap");
+  });
+
   it("keeps session tree rows compact instead of stretching empty space between groups", () => {
     expect(ruleBodiesForSelector(".zt-session-tree")).toContain("align-content: start");
     expect(ruleBodiesForSelector(".zt-session-nodes")).toContain("align-content: start");
