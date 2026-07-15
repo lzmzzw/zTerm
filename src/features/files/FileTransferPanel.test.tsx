@@ -211,6 +211,34 @@ describe("FileTransferPanel", () => {
     view.unmount();
   });
 
+  it("selects all visible files in the focused transfer list with ctrl+a", async () => {
+    const leftEntries = [fileEntry("C:/Users/Ops/a.txt"), fileEntry("C:/Users/Ops/b.txt")];
+    useFileTransferStore.setState((state) => ({
+      left: { ...state.left, endpoint: { kind: "local", saved_session_id: null, path: "C:/Users/Ops" }, entries: leftEntries },
+    }));
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list") return Promise.resolve([]);
+      if (command === "file_transfer_list_endpoint") return Promise.resolve(leftEntries);
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+    const list = view.container.querySelector('[aria-label="左侧文件列表"]') as HTMLElement;
+    const event = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
+
+    await act(async () => {
+      list.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(useFileTransferStore.getState().left.selectedPaths).toEqual(leftEntries.map((entry) => entry.path));
+    view.unmount();
+  });
+
   it("renders transfer failures as an inline dialog alert without the global terminal overlay style", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);

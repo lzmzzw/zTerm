@@ -36,6 +36,11 @@ export function useAppShortcutKeys(
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented) return;
+      if (isSelectAllShortcut(event)) {
+        if (!isEditableTarget(event.target)) event.preventDefault();
+        return;
+      }
       const matched = bindingsRef.current.find((binding) => shortcutMatches(event, binding.accelerator));
       if (!matched) return;
       event.preventDefault();
@@ -57,4 +62,19 @@ export function useAppShortcutKeys(
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+}
+
+function isSelectAllShortcut(event: KeyboardEvent) {
+  return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "a";
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;
+  if (target instanceof HTMLInputElement) {
+    return !["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"].includes(
+      target.type,
+    );
+  }
+  return target.isContentEditable || Boolean(target.closest('[contenteditable="true"]'));
 }

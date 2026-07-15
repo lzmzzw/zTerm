@@ -359,6 +359,7 @@ export function AppShell() {
   const {
     setPath: setFilePath,
     selectPath,
+    selectPaths,
     clearFiles,
     listFiles,
     mkdir,
@@ -379,6 +380,7 @@ export function AppShell() {
     useShallow((state) => ({
       setPath: state.setPath,
       selectPath: state.selectPath,
+      selectPaths: state.selectPaths,
       clearFiles: state.clearFiles,
       listFiles: state.listFiles,
       mkdir: state.mkdir,
@@ -1980,6 +1982,7 @@ export function AppShell() {
           onRefresh: () => remoteFileActions.refreshFiles(),
           onRename: remoteFileActions.renameRemotePath,
           onSelect: selectPath,
+          onSelectAll: selectPaths,
           onUpload: remoteFileActions.uploadPath,
           onUploadDropped: remoteFileActions.uploadLocalPaths,
         }}

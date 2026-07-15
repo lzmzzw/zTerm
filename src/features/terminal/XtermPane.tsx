@@ -291,6 +291,13 @@ export function XtermPane({
       fontWeight: 350,
       theme: resolveTerminalTheme(),
     });
+    terminal.attachCustomKeyEventHandler((event) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "a") {
+        terminal.selectAll();
+        return false;
+      }
+      return true;
+    });
     const fitAddon = new FitAddon();
     const searchAddon = new SearchAddon();
     terminal.loadAddon(fitAddon);

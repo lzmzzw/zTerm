@@ -16,6 +16,7 @@ const terminalMock = vi.hoisted(() => {
   }
 
   interface MockTerminalInstance {
+    attachCustomKeyEventHandler: ReturnType<typeof vi.fn>;
     buffer: {
       active: {
         baseY: number;
@@ -57,7 +58,9 @@ const terminalMock = vi.hoisted(() => {
     renderListener?: () => void;
     resizeListener?: (size: { cols: number; rows: number }) => void;
     rows: number;
+    selectAll: ReturnType<typeof vi.fn>;
     bufferLines: Map<number, string>;
+    customKeyEventHandler?: (event: KeyboardEvent) => boolean;
     scrollListener?: () => void;
     write: ReturnType<typeof vi.fn>;
     writeParsedListener?: () => void;
@@ -68,6 +71,9 @@ const terminalMock = vi.hoisted(() => {
   const Terminal = vi.fn(function (this: unknown, options: unknown) {
     const loadAddon = vi.fn();
     const instance: MockTerminalInstance = {
+      attachCustomKeyEventHandler: vi.fn((handler: (event: KeyboardEvent) => boolean) => {
+        instance.customKeyEventHandler = handler;
+      }),
       buffer: {
         active: {
           baseY: 0,
@@ -157,6 +163,7 @@ const terminalMock = vi.hoisted(() => {
         return marker;
       }),
       rows: 10,
+      selectAll: vi.fn(),
       write: vi.fn((_data: string, callback?: () => void) => callback?.()),
     };
     instances.push(instance);
@@ -877,6 +884,16 @@ describe("XtermPane", () => {
 
     expect(onReconnect).toHaveBeenCalledTimes(1);
     expect(onDisconnect).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("selects all terminal content with ctrl+a", async () => {
+    const view = render(<XtermPane data="" />);
+    const event = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
+    const terminal = terminalMock.instances[0];
+
+    expect(terminal.customKeyEventHandler?.(event)).toBe(false);
+    expect(terminal.selectAll).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 

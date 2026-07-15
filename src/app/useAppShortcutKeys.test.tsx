@@ -60,6 +60,41 @@ describe("useAppShortcutKeys", () => {
     expect(handlers.onOpenSettings).not.toHaveBeenCalled();
   });
 
+  it("prevents ctrl+a page selection outside editable controls", () => {
+    const handlers = shortcutHandlers();
+    renderShortcutHarness({ bindings: [binding("settings.open", "Ctrl+A")], handlers });
+    const panel = document.createElement("section");
+    document.body.appendChild(panel);
+
+    const event = dispatchKey({ key: "a", ctrlKey: true, target: panel });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(handlers.onOpenSettings).not.toHaveBeenCalled();
+    panel.remove();
+  });
+
+  it("keeps ctrl+a available for editable controls and locally handled selection regions", () => {
+    renderShortcutHarness({ bindings: [], handlers: shortcutHandlers() });
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+
+    const inputEvent = dispatchKey({ key: "a", ctrlKey: true, target: input });
+    const localEvent = new KeyboardEvent("keydown", {
+      key: "a",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    localEvent.preventDefault();
+    const localPreventDefault = vi.spyOn(localEvent, "preventDefault");
+    window.dispatchEvent(localEvent);
+
+    expect(inputEvent.defaultPrevented).toBe(false);
+    expect(localEvent.defaultPrevented).toBe(true);
+    expect(localPreventDefault).not.toHaveBeenCalled();
+    input.remove();
+  });
+
   it("keeps one keydown listener while reading latest handlers after rerender", () => {
     const addSpy = vi.spyOn(window, "addEventListener");
     const removeSpy = vi.spyOn(window, "removeEventListener");
@@ -169,12 +204,14 @@ function dispatchKey({
   shiftKey = false,
   altKey = false,
   metaKey = false,
+  target = window,
 }: {
   key: string;
   ctrlKey?: boolean;
   shiftKey?: boolean;
   altKey?: boolean;
   metaKey?: boolean;
+  target?: Window | HTMLElement;
 }) {
   const event = new KeyboardEvent("keydown", {
     key,
@@ -185,7 +222,7 @@ function dispatchKey({
     bubbles: true,
     cancelable: true,
   });
-  window.dispatchEvent(event);
+  target.dispatchEvent(event);
   return event;
 }
 

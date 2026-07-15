@@ -49,6 +49,7 @@ interface FileTransferState {
   setPath: (side: FileTransferSide, path: string) => void;
   prepareForSession: (savedSessionId: string, remotePath?: string) => Promise<void>;
   selectPath: (side: FileTransferSide, path: string | null, event?: FileSelectionEvent) => void;
+  selectPaths: (side: FileTransferSide, paths: string[]) => void;
   loadEndpoint: (side: FileTransferSide) => Promise<void>;
   renameEndpoint: (side: FileTransferSide, from: string, to: string) => Promise<void>;
   deleteEndpoint: (side: FileTransferSide, paths: string[], recursive: boolean) => Promise<void>;
@@ -154,6 +155,9 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     const pane = get()[side];
     const selectedPaths = nextSelectedFilePaths(pane.entries, pane.selectedPaths, pane.selectionAnchorPath, path, event);
     updatePane(set, side, { selectedPaths, selectionAnchorPath: event?.shiftKey ? pane.selectionAnchorPath : path });
+  },
+  selectPaths(side, paths) {
+    updatePane(set, side, { selectedPaths: paths, selectionAnchorPath: paths.at(-1) ?? null });
   },
   async loadEndpoint(side) {
     const requestId = nextPaneRequestId(side);

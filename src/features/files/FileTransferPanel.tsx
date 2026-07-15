@@ -124,6 +124,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     setEndpoint,
     setPath,
     selectPath,
+    selectPaths,
     loadEndpoint,
     renameEndpoint,
     deleteEndpoint,
@@ -154,6 +155,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       setEndpoint: state.setEndpoint,
       setPath: state.setPath,
       selectPath: state.selectPath,
+      selectPaths: state.selectPaths,
       loadEndpoint: state.loadEndpoint,
       renameEndpoint: state.renameEndpoint,
       deleteEndpoint: state.deleteEndpoint,
@@ -396,6 +398,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
             void Promise.resolve().then(() => loadEndpoint("left"));
           }}
           onSelect={(path, event) => selectPath("left", path, event)}
+          onSelectAll={(paths) => selectPaths("left", paths)}
           onOpenDirectory={(path) => {
             setPath("left", path);
             void Promise.resolve().then(() => loadEndpoint("left"));
@@ -449,6 +452,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
             void Promise.resolve().then(() => loadEndpoint("right"));
           }}
           onSelect={(path, event) => selectPath("right", path, event)}
+          onSelectAll={(paths) => selectPaths("right", paths)}
           onOpenDirectory={(path) => {
             setPath("right", path);
             void Promise.resolve().then(() => loadEndpoint("right"));
@@ -587,6 +591,7 @@ function EndpointPane({
   onRefresh,
   onParent,
   onSelect,
+  onSelectAll,
   onOpenDirectory,
   onPointerDragStart,
   onPointerDragMove,
@@ -616,6 +621,7 @@ function EndpointPane({
   onRefresh: () => Promise<void> | void;
   onParent: () => Promise<void> | void;
   onSelect: (path: string | null, event?: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => void;
+  onSelectAll: (paths: string[]) => void;
   onOpenDirectory: (path: string) => Promise<void> | void;
   onPointerDragStart: (entry: FileEntry, clientX: number, clientY: number) => void;
   onPointerDragMove: (clientX: number, clientY: number) => boolean;
@@ -808,7 +814,16 @@ function EndpointPane({
         />
         <FileColumnHeader label="最近修改" sortKey="modified" sort={sort} numeric onSort={toggleSort} />
       </div>
-      <div className="zt-file-transfer-list" role="list" aria-label={`${title}文件列表`}>
+      <div
+        className="zt-file-transfer-list"
+        role="list"
+        aria-label={`${title}文件列表`}
+        onKeyDown={(event) => {
+          if ((!event.ctrlKey && !event.metaKey) || event.altKey || event.key.toLowerCase() !== "a") return;
+          event.preventDefault();
+          onSelectAll(sortedEntries.map((entry) => entry.path));
+        }}
+      >
         {sortedEntries.map((entry) => (
           <button
             key={entry.path}

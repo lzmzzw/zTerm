@@ -19,6 +19,7 @@ interface FileExplorerPanelProps {
   error: string | null;
   onPathChange: (path: string) => void;
   onSelect: (path: string | null, event?: FileSelectionEvent, orderedEntries?: FileEntry[]) => void;
+  onSelectAll: (paths: string[]) => void;
   onRefresh: () => Promise<void> | void;
   onParent: () => Promise<void> | void;
   onMkdir: () => Promise<void> | void;
@@ -39,6 +40,7 @@ export function FileExplorerPanel({
   error,
   onPathChange,
   onSelect,
+  onSelectAll,
   onRefresh,
   onParent,
   onMkdir,
@@ -153,7 +155,16 @@ export function FileExplorerPanel({
       {error ? <ZtInlineError className="zt-file-panel-error">{error}</ZtInlineError> : null}
       {loading ? <div className="zt-empty-line">加载中</div> : null}
       {!disabled && !loading && visibleEntries.length === 0 ? <div className="zt-empty-line">暂无文件</div> : null}
-      <div className="zt-file-list" role="list" aria-label="远程文件列表">
+      <div
+        className="zt-file-list"
+        role="list"
+        aria-label="远程文件列表"
+        onKeyDown={(event) => {
+          if ((!event.ctrlKey && !event.metaKey) || event.altKey || event.key.toLowerCase() !== "a") return;
+          event.preventDefault();
+          onSelectAll(visibleEntries.map((entry) => entry.path));
+        }}
+      >
         {visibleEntries.map((entry) => (
           <button
             type="button"

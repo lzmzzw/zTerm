@@ -91,6 +91,7 @@ describe("FileExplorerPanel", () => {
         error="SFTP 目录读取失败"
         onPathChange={vi.fn()}
         onSelect={vi.fn()}
+        onSelectAll={vi.fn()}
         onRefresh={vi.fn()}
         onParent={vi.fn()}
         onMkdir={vi.fn()}
@@ -128,6 +129,7 @@ describe("FileExplorerPanel", () => {
         error={null}
         onPathChange={vi.fn()}
         onSelect={vi.fn()}
+        onSelectAll={vi.fn()}
         onRefresh={onRefresh}
         onParent={onParent}
         onMkdir={onMkdir}
@@ -163,6 +165,45 @@ describe("FileExplorerPanel", () => {
     view.unmount();
   });
 
+  it("selects all visible remote files with ctrl+a while preserving path input selection", async () => {
+    const onSelectAll = vi.fn();
+    const view = render(
+      <FileExplorerPanel
+        savedSessionId="session-1"
+        path="/home/ops"
+        entries={entries}
+        selectedPaths={[]}
+        loading={false}
+        error={null}
+        onPathChange={vi.fn()}
+        onSelect={vi.fn()}
+        onSelectAll={onSelectAll}
+        onRefresh={vi.fn()}
+        onParent={vi.fn()}
+        onMkdir={vi.fn()}
+        onUpload={vi.fn()}
+        onUploadDropped={vi.fn()}
+        onDownload={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    const list = view.container.querySelector('[aria-label="远程文件列表"]') as HTMLElement;
+    const listEvent = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
+    const pathInput = view.container.querySelector('[aria-label="远程路径"]') as HTMLInputElement;
+    const inputEvent = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
+
+    await act(async () => {
+      list.dispatchEvent(listEvent);
+      pathInput.dispatchEvent(inputEvent);
+    });
+
+    expect(listEvent.defaultPrevented).toBe(true);
+    expect(onSelectAll).toHaveBeenCalledWith(entries.slice(0, 3).map((entry) => entry.path));
+    expect(inputEvent.defaultPrevented).toBe(false);
+    view.unmount();
+  });
+
   it("offers rename and delete for the row opened by context menu", async () => {
     const onSelect = vi.fn();
     const onRename = vi.fn();
@@ -177,6 +218,7 @@ describe("FileExplorerPanel", () => {
         error={null}
         onPathChange={vi.fn()}
         onSelect={onSelect}
+        onSelectAll={vi.fn()}
         onRefresh={vi.fn()}
         onParent={vi.fn()}
         onMkdir={vi.fn()}
@@ -220,6 +262,7 @@ describe("FileExplorerPanel", () => {
         error={null}
         onPathChange={vi.fn()}
         onSelect={vi.fn()}
+        onSelectAll={vi.fn()}
         onRefresh={vi.fn()}
         onParent={vi.fn()}
         onMkdir={vi.fn()}
@@ -260,6 +303,7 @@ describe("FileExplorerPanel", () => {
         error={null}
         onPathChange={vi.fn()}
         onSelect={vi.fn()}
+        onSelectAll={vi.fn()}
         onRefresh={vi.fn()}
         onParent={vi.fn()}
         onMkdir={vi.fn()}
@@ -288,6 +332,7 @@ describe("FileExplorerPanel", () => {
         error={null}
         onPathChange={vi.fn()}
         onSelect={vi.fn()}
+        onSelectAll={vi.fn()}
         onRefresh={vi.fn()}
         onParent={vi.fn()}
         onMkdir={vi.fn()}
@@ -323,6 +368,7 @@ describe("FileExplorerPanel", () => {
         error={null}
         onPathChange={vi.fn()}
         onSelect={vi.fn()}
+        onSelectAll={vi.fn()}
         onRefresh={onRefresh}
         onParent={vi.fn()}
         onMkdir={onMkdir}

@@ -90,6 +90,7 @@ interface RightToolsPanelProps {
     onRefresh: () => Promise<void> | void;
     onRename: (path: string) => Promise<void> | void;
     onSelect: (path: string | null, event?: FileSelectionEvent, orderedEntries?: FileEntry[]) => void;
+    onSelectAll: (paths: string[]) => void;
     onUpload: () => Promise<void> | void;
     onUploadDropped: (paths: string[]) => Promise<void> | void;
   };
@@ -231,6 +232,7 @@ export function RightToolsPanel({
                   error={files.error}
                   onPathChange={files.onPathChange}
                   onSelect={files.onSelect}
+                  onSelectAll={files.onSelectAll}
                   onRefresh={files.onRefresh}
                   onParent={files.onParent}
                   onMkdir={files.onMkdir}
