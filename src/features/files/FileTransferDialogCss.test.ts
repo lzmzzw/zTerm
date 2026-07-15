@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import css from "../../index.css?raw";
 
 function ruleBody(selector: string) {
-  const match = css.match(new RegExp(`${selector.replace(".", "\\.")}\\s*\\{([^}]*)\\}`));
+  const match = css.replace(/\r\n/g, "\n").match(new RegExp(`${selector.replace(".", "\\.")}\\s*\\{([^}]*)\\}`));
   return match?.[1] ?? "";
 }
 
@@ -114,7 +114,7 @@ describe("file transfer dialog styles", () => {
     expect(css).toContain(".zt-file-transfer-drag-preview-icon");
   });
 
-  it("uses an explicit local-endpoint selector rule for the drive picker", () => {
+  it("aligns the compact drive picker with file icons", () => {
     const selector = '.zt-file-transfer-pane[data-local="true"] .zt-file-transfer-path';
     const ruleStart = css.indexOf(selector);
     const localPathRule = css.slice(ruleStart, css.indexOf("}", ruleStart));
@@ -122,17 +122,18 @@ describe("file transfer dialog styles", () => {
     expect(ruleStart).toBeGreaterThanOrEqual(0);
     expect(css).toContain(".zt-file-transfer-root-select.zt-select-trigger");
     expect(localPathRule).toContain(
-      "grid-template-columns: 72px minmax(0, 1fr) repeat(3, 26px)",
+      "grid-template-columns: 48px minmax(0, 1fr) repeat(3, 26px)",
     );
-    expect(localPathRule).toContain("padding-left: 0");
+    expect(localPathRule).toContain("padding-left: 6px");
     const rootSelectRule = css.slice(
       css.indexOf(".zt-file-transfer-dialog .zt-file-transfer-path .zt-file-transfer-root-select.zt-select-trigger"),
       css.indexOf("}", css.indexOf(".zt-file-transfer-dialog .zt-file-transfer-path .zt-file-transfer-root-select.zt-select-trigger")),
     );
-    expect(rootSelectRule).toContain("width: 72px");
-    expect(rootSelectRule).toContain("min-width: 72px");
+    expect(rootSelectRule).toContain("width: 48px");
+    expect(rootSelectRule).toContain("min-width: 48px");
     expect(rootSelectRule).toContain("justify-content: flex-start");
-    expect(rootSelectRule).toContain("padding-left: 0");
+    expect(rootSelectRule).toContain("padding-left: 5px");
+    expect(ruleBody(".zt-file-transfer-root-select .zt-select-chevron")).toContain("right: 4px");
     expect(css).not.toContain(".zt-file-transfer-path:has(.zt-file-transfer-root-select)");
   });
 });

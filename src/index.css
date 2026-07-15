@@ -3280,8 +3280,8 @@ button {
 }
 
 .zt-file-transfer-pane[data-local="true"] .zt-file-transfer-path {
-  grid-template-columns: 72px minmax(0, 1fr) repeat(3, 26px);
-  padding-left: 0;
+  grid-template-columns: 48px minmax(0, 1fr) repeat(3, 26px);
+  padding-left: 6px;
 }
 
 .zt-file-transfer-root-select.zt-select-trigger {
@@ -3293,7 +3293,7 @@ button {
 }
 
 .zt-file-transfer-root-select .zt-select-chevron {
-  right: 8px;
+  right: 4px;
   width: 7px;
   height: 7px;
 }
@@ -4787,10 +4787,10 @@ button {
 }
 
 .zt-file-transfer-dialog .zt-file-transfer-path .zt-file-transfer-root-select.zt-select-trigger {
-  width: 72px;
-  min-width: 72px;
+  width: 48px;
+  min-width: 48px;
   justify-content: flex-start;
-  padding-left: 0;
+  padding-left: 5px;
 }
 
 .zt-file-transfer-dialog .zt-file-transfer-arrows button {
