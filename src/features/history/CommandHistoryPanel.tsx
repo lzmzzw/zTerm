@@ -177,6 +177,31 @@ export function CommandHistoryPanel({
     }
   }
 
+  function handlePanelKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (
+      activeView !== "history" ||
+      !hasHistoryScope ||
+      (!event.ctrlKey && !event.metaKey) ||
+      event.key.toLowerCase() !== "a"
+    ) {
+      return;
+    }
+    const target = event.target;
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement ||
+      (target instanceof HTMLElement && (target.isContentEditable || Boolean(target.closest('[contenteditable="true"]'))))
+    ) {
+      return;
+    }
+    const allEntryIds = orderedEntries.map((entry) => entry.id);
+    event.preventDefault();
+    setSelectedEntryIds(allEntryIds);
+    setSelectionAnchorId(allEntryIds[0] ?? null);
+    setContextMenu(null);
+  }
+
   function openContextMenu(entryId: string, event: ReactMouseEvent<HTMLElement>) {
     event.preventDefault();
     if (!hasHistoryScope) return;
@@ -285,7 +310,7 @@ export function CommandHistoryPanel({
   }
 
   return (
-    <section className="zt-history-panel" aria-label={t(language, "history")}>
+    <section className="zt-history-panel" aria-label={t(language, "history")} onKeyDown={handlePanelKeyDown}>
       <div className="zt-history-mode-tabs" role="tablist" aria-label={t(language, "history")}>
         <button type="button" aria-selected={activeView === "history"} onClick={() => changeView("history")}>
           {t(language, "history")}

@@ -62,9 +62,9 @@ async function contextMenu(element: HTMLElement) {
   });
 }
 
-async function keyDown(element: HTMLElement, key: string) {
+async function keyDown(element: HTMLElement, key: string, options: { ctrlKey?: boolean; metaKey?: boolean } = {}) {
   await act(async () => {
-    element.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key }));
+    element.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key, ...options }));
   });
 }
 
@@ -332,6 +332,31 @@ describe("CommandHistoryPanel", () => {
     view.unmount();
   });
 
+  it("selects all history entries with ctrl+a outside editable fields", async () => {
+    const selectionEntries = [
+      ...entries,
+      {
+        ...entries[1],
+        id: "history-3",
+        command: "uname -a",
+        started_at_ms: 3,
+      },
+    ];
+    const view = renderPanel({ entries: selectionEntries });
+
+    await keyDown(input(view.container, "筛选"), "a", { ctrlKey: true });
+    expect(view.container.querySelectorAll(".zt-history-entry.is-selected")).toHaveLength(0);
+
+    await keyDown(historyEntry(view.container, "pwd"), "a", { ctrlKey: true });
+    expect(
+      Array.from(view.container.querySelectorAll(".zt-history-entry.is-selected code")).map((item) =>
+        item.textContent?.trim(),
+      ),
+    ).toEqual(["pwd", "whoami", "uname -a"]);
+
+    view.unmount();
+  });
+
   it("opens a batch context menu for selected history entries", async () => {
     const onCopy = vi.fn();
     const onSend = vi.fn();
@@ -368,9 +393,11 @@ describe("CommandHistoryPanel", () => {
     const view = renderPanel({ historyScopeKind: null, historyScopeId: null });
 
     await contextMenu(historyEntry(view.container, "pwd"));
+    await keyDown(historyEntry(view.container, "pwd"), "a", { ctrlKey: true });
 
     expect(view.container.querySelector('[role="menu"]')).toBeNull();
     expect(view.container.querySelector('[role="dialog"]')).toBeNull();
+    expect(view.container.querySelector(".zt-history-entry.is-selected")).toBeNull();
 
     view.unmount();
   });
