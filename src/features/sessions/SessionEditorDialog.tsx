@@ -1,5 +1,5 @@
 // Author: Liz
-import { Monitor, Server, Terminal } from "lucide-react";
+import { FolderKey, FolderSync, Monitor, Server, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ZtNumberInput } from "../../components/ZtNumberInput";
@@ -7,8 +7,10 @@ import { ZtSelect } from "../../components/ZtSelect";
 import { ZtInput, ZtModalOverlay, ZtSurfaceFrame } from "../../components/ZtUi";
 import { fallbackOnlyErrorMessage } from "../../lib/unknownErrorMessage";
 import { LocalSessionForm } from "./LocalSessionForm";
+import { FtpSessionForm } from "./FtpSessionForm";
 import { RdpSessionForm } from "./RdpSessionForm";
 import {
+  defaultFtpOptions,
   defaultLocalOptions,
   defaultRdpOptions,
   initialSessionAuthMode,
@@ -21,6 +23,7 @@ import { defaultSshOptions, normalizeSshOptions } from "./sshSessionModel";
 import { selectSshKeyFile } from "./sshKeyFileDialog";
 import type {
   AuthMode,
+  FtpOptions,
   LocalOptions,
   RdpOptions,
   SavedSession,
@@ -81,6 +84,7 @@ export function SessionEditorDialog({
   const [sshOptions, setSshOptions] = useState<SshOptions>(initialSession?.ssh_options ?? defaultSshOptions);
   const [rdpOptions, setRdpOptions] = useState<RdpOptions>(initialSession?.rdp_options ?? defaultRdpOptions);
   const [localOptions, setLocalOptions] = useState<LocalOptions>(initialSession?.local_options ?? defaultLocalOptions);
+  const [ftpOptions, setFtpOptions] = useState<FtpOptions>(initialSession?.ftp_options ?? defaultFtpOptions);
   const [activeSection, setActiveSection] = useState(sessionEditorSections(type)[0]);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -94,7 +98,7 @@ export function SessionEditorDialog({
     event.preventDefault();
     const normalizedName = name.trim();
     const normalizedHost = type === "local" ? "localhost" : host.trim();
-    const normalizedUsername = type === "local" ? "" : username.trim();
+    const normalizedUsername = type === "local" ? "" : type === "ftp" && ftpOptions.anonymous ? "anonymous" : username.trim();
     const normalizedPort = type === "local" ? 1 : Number(port);
     const normalizedCredentialRef = credentialRef.trim();
 
@@ -107,36 +111,53 @@ export function SessionEditorDialog({
     setError(null);
     try {
       let sessionCredentialRef = normalizedCredentialRef || null;
-      if (type === "ssh") {
+      if (type === "ssh" || type === "sftp") {
         if (authMode === "password") {
           if (password && passwordDirty) {
             if (!onSaveCredential) {
-              setError("当前无法保存 SSH 密码凭据");
+              setError(`当前无法保存 ${type.toUpperCase()} 密码凭据`);
               return;
             }
             const credential = await onSaveCredential({
-              name: `${normalizedName} SSH 密码`,
+              name: `${normalizedName} ${type.toUpperCase()} 密码`,
               kind: "ssh_password",
               secret: password,
             });
             sessionCredentialRef = credential.credential_ref;
           } else if (!sessionCredentialRef) {
-            setError("请填写 SSH 密码");
+            setError(`请填写 ${type.toUpperCase()} 密码`);
             return;
           }
         } else if (authMode === "key") {
           if (keyPassphrase && keyPassphraseDirty) {
             if (!onSaveCredential) {
-              setError("当前无法保存 SSH 密钥密码凭据");
+              setError(`当前无法保存 ${type.toUpperCase()} 密钥密码凭据`);
               return;
             }
             const credential = await onSaveCredential({
-              name: `${normalizedName} SSH 密钥密码`,
+              name: `${normalizedName} ${type.toUpperCase()} 密钥密码`,
               kind: "ssh_key_passphrase",
               secret: keyPassphrase,
             });
             sessionCredentialRef = credential.credential_ref;
           }
+        }
+      }
+      if (type === "ftp" && !ftpOptions.anonymous) {
+        if (password && passwordDirty) {
+          if (!onSaveCredential) {
+            setError("当前无法保存 FTP 密码凭据");
+            return;
+          }
+          const credential = await onSaveCredential({
+            name: `${normalizedName} FTP 密码`,
+            kind: "ssh_password",
+            secret: password,
+          });
+          sessionCredentialRef = credential.credential_ref;
+        } else if (!sessionCredentialRef) {
+          setError("请填写 FTP 密码");
+          return;
         }
       }
       if (type === "rdp" && authMode === "password") {
@@ -190,10 +211,10 @@ export function SessionEditorDialog({
   }
 
   function transientTestSecret() {
-    if (type === "ssh" && authMode === "password" && passwordDirty && password) {
+    if ((type === "ssh" || type === "sftp" || type === "ftp") && authMode === "password" && passwordDirty && password) {
       return password;
     }
-    if (type === "ssh" && authMode === "key" && keyPassphraseDirty && keyPassphrase) {
+    if ((type === "ssh" || type === "sftp") && authMode === "key" && keyPassphraseDirty && keyPassphrase) {
       return keyPassphrase;
     }
     if (type === "rdp" && authMode === "password" && passwordDirty && password) {
@@ -210,18 +231,19 @@ export function SessionEditorDialog({
       group_id: groupId || null,
       host: type === "local" ? "localhost" : host.trim(),
       port: type === "local" ? 1 : Number(port),
-      username: type === "local" ? "" : username.trim(),
-      auth_mode: type === "local" ? "none" : authMode,
-      credential_ref: type === "local" ? null : sessionCredentialRef,
+      username: type === "local" ? "" : type === "ftp" && ftpOptions.anonymous ? "anonymous" : username.trim(),
+      auth_mode: type === "local" || (type === "ftp" && ftpOptions.anonymous) ? "none" : authMode,
+      credential_ref: type === "local" || (type === "ftp" && ftpOptions.anonymous) ? null : sessionCredentialRef,
       description: description.trim() || null,
       tags: tags
         .split(",")
         .map((tag) => tag.trim())
         .filter(Boolean),
       sort_order: initialSession?.sort_order ?? 0,
-      ssh_options: type === "ssh" ? normalizeSshOptionsForSessionHost(sshOptions, host.trim()) : null,
+      ssh_options: type === "ssh" || type === "sftp" ? normalizeSshOptionsForSessionHost(sshOptions, host.trim()) : null,
       rdp_options: type === "rdp" ? rdpOptions : null,
       local_options: type === "local" ? localOptions : null,
+      ftp_options: type === "ftp" ? ftpOptions : null,
     };
   }
 
@@ -273,7 +295,8 @@ export function SessionEditorDialog({
     const normalizedCredentialRef = credentialRef.trim();
     if (!normalizedCredentialRef) return true;
 
-    const secretLabel = kind === "password" ? "SSH 密码" : "SSH 密钥密码";
+    const protocol = type === "sftp" ? "SFTP" : "SSH";
+    const secretLabel = kind === "password" ? `${protocol} 密码` : `${protocol} 密钥密码`;
     if (!onReadCredential) {
       setError(`当前无法读取已保存的 ${secretLabel} 凭据`);
       return true;
@@ -319,6 +342,25 @@ export function SessionEditorDialog({
     }
   }
 
+  async function handleRevealFtpPassword() {
+    if (password) return true;
+    const normalizedCredentialRef = credentialRef.trim();
+    if (!normalizedCredentialRef) return true;
+    if (!onReadCredential) {
+      setError("当前无法读取已保存的 FTP 密码凭据");
+      return true;
+    }
+    setError(null);
+    try {
+      setPassword(await onReadCredential(normalizedCredentialRef));
+      setPasswordDirty(false);
+      return true;
+    } catch (readError) {
+      setError(fallbackOnlyErrorMessage(readError, "读取已保存的 FTP 密码失败"));
+      return false;
+    }
+  }
+
   async function handleSelectSshKeyFile() {
     try {
       return await (onSelectSshKeyFile ? onSelectSshKeyFile() : selectSshKeyFile());
@@ -330,12 +372,15 @@ export function SessionEditorDialog({
 
   const sections = sessionEditorSections(type);
   const showBaseFields = activeSection === "属性" || activeSection === "连接属性";
-  const hasSavedSshCredential = type === "ssh" && Boolean(credentialRef.trim());
+  const hasSavedSshCredential = (type === "ssh" || type === "sftp") && Boolean(credentialRef.trim());
+  const hasSavedFtpCredential = type === "ftp" && Boolean(credentialRef.trim());
   const hasSavedRdpCredential = type === "rdp" && Boolean(credentialRef.trim());
   const typeTabs = [
     { icon: Server, label: "SSH", type: "ssh" },
     { icon: Terminal, label: "Local", type: "local" },
     { icon: Monitor, label: "RDP", type: "rdp" },
+    { icon: FolderSync, label: "FTP", type: "ftp" },
+    { icon: FolderKey, label: "SFTP", type: "sftp" },
   ] satisfies Array<{ icon: typeof Server; label: string; type: SessionType }>;
 
   return (
@@ -433,7 +478,7 @@ export function SessionEditorDialog({
               </div>
             ) : null}
 
-            {type === "ssh" ? (
+            {type === "ssh" || type === "sftp" ? (
               <SshSessionForm
                 section={activeSection}
                 host={host}
@@ -452,6 +497,17 @@ export function SessionEditorDialog({
                 onSelectKeyFile={handleSelectSshKeyFile}
                 onRevealPassword={() => handleRevealSshSecret("password")}
                 onRevealKeyPassphrase={() => handleRevealSshSecret("keyPassphrase")}
+              />
+            ) : null}
+            {type === "ftp" ? (
+              <FtpSessionForm
+                section={activeSection}
+                password={password}
+                hasSavedPassword={hasSavedFtpCredential}
+                options={ftpOptions}
+                onPasswordChange={handlePasswordChange}
+                onOptionsChange={setFtpOptions}
+                onRevealPassword={handleRevealFtpPassword}
               />
             ) : null}
             {type === "rdp" ? (

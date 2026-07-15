@@ -5070,7 +5070,7 @@ button {
 
 .zt-session-type-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   grid-row: 2;
   align-items: center;
   gap: 8px;

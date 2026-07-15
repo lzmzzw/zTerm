@@ -34,6 +34,7 @@ fn saved_ssh_session() -> SavedSessionDraft {
         ssh_options: None,
         rdp_options: None,
         local_options: None,
+        ftp_options: None,
     }
 }
 

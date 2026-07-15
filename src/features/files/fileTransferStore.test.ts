@@ -45,7 +45,7 @@ function transferTask(overrides: Partial<TransferTask> = {}): TransferTask {
     updated_at_ms: 2,
     task_origin: "file_transfer",
     source_endpoint: { kind: "local", saved_session_id: null, path: "C:/tmp/a.txt" },
-    destination_endpoint: { kind: "ssh", saved_session_id: "session-1", path: "/tmp/a.txt" },
+    destination_endpoint: { kind: "saved_session", saved_session_id: "session-1", path: "/tmp/a.txt" },
     ...overrides,
   };
 }
@@ -65,7 +65,7 @@ describe("fileTransferStore", () => {
         error: null,
       },
       right: {
-        endpoint: { kind: "ssh", saved_session_id: null, path: "/" },
+        endpoint: { kind: "saved_session", saved_session_id: null, path: "/" },
         entries: [],
         selectedPaths: [],
         selectionAnchorPath: null,
@@ -108,8 +108,8 @@ describe("fileTransferStore", () => {
   });
 
   it("checks endpoint conflicts and enqueues a remote-to-remote file transfer with endpoint snapshots", async () => {
-    const source = { kind: "ssh" as const, saved_session_id: "source-ssh", path: "/var/app.log" };
-    const destination = { kind: "ssh" as const, saved_session_id: "destination-ssh", path: "/backup/app.log" };
+    const source = { kind: "saved_session" as const, saved_session_id: "source-ssh", path: "/var/app.log" };
+    const destination = { kind: "saved_session" as const, saved_session_id: "destination-ssh", path: "/backup/app.log" };
     const queued = transferTask({
       id: "remote-copy",
       saved_session_id: "source-ssh",
@@ -142,6 +142,29 @@ describe("fileTransferStore", () => {
       conflictPolicy: "rename",
     });
     expect(useFileTransferStore.getState().transfers).toEqual([queued]);
+  });
+
+  it("prepares a saved FTP or SFTP session on the right and resets the left side to the default local path", async () => {
+    useFileTransferStore.setState({ defaultLocalPath: "C:/Users/Ops" });
+
+    await useFileTransferStore.getState().prepareForSession("ftp-prod", "/incoming");
+
+    expect(useFileTransferStore.getState().left.endpoint).toEqual({
+      kind: "local",
+      saved_session_id: null,
+      path: "C:/Users/Ops",
+    });
+    expect(useFileTransferStore.getState().right.endpoint).toEqual({
+      kind: "saved_session",
+      saved_session_id: "ftp-prod",
+      path: "/incoming",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("file_transfer_list_endpoint", {
+      endpoint: { kind: "local", saved_session_id: null, path: "C:/Users/Ops" },
+    });
+    expect(invokeMock).toHaveBeenCalledWith("file_transfer_list_endpoint", {
+      endpoint: { kind: "saved_session", saved_session_id: "ftp-prod", path: "/incoming" },
+    });
   });
 
   it("loads the global file transfer task list and accepts transfer events from any session", async () => {

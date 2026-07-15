@@ -11,7 +11,7 @@ panes in the center, and files/history/monitor/AI tools on the right.
 
 ## Features
 
-- Save, search, group, and open SSH/RDP/local terminal sessions.
+- Save, search, group, and open SSH/RDP/local terminal sessions plus FTP/SFTP file-transfer sessions.
 - Run SSH sessions through the system OpenSSH client and render them with xterm.
 - Use split terminal panes with tabs and workspace restore.
 - Browse SFTP directories, create folders, upload, download, rename, delete, and retry transfers.

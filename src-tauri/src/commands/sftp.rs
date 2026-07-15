@@ -3,14 +3,18 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::{
     error::AppResult,
-    models::sftp::{
-        FileEntry, LocalPathInfo, SftpDeleteResult, SftpMkdirResult, SftpRenameResult,
-        TransferConflict, TransferConflictCheckItem, TransferConflictPolicy, TransferDirection,
-        TransferEndpoint, TransferEndpointConflict, TransferEndpointConflictCheckItem,
-        TransferEndpointKind, TransferKind, TransferTask, TransferTaskOrigin,
+    models::{
+        session::SessionType,
+        sftp::{
+            FileEntry, LocalPathInfo, SftpDeleteResult, SftpMkdirResult, SftpRenameResult,
+            TransferConflict, TransferConflictCheckItem, TransferConflictPolicy, TransferDirection,
+            TransferEndpoint, TransferEndpointConflict, TransferEndpointConflictCheckItem,
+            TransferEndpointKind, TransferKind, TransferTask, TransferTaskOrigin,
+        },
     },
     services::{
         external_launch_service::CompositeSshSecretResolver,
+        ftp_service,
         sftp_service::{
             default_local_directory, delete_local_path, list_local_directory,
             local_path_total_bytes, local_root_directories, rename_local_path, SftpService,
@@ -203,8 +207,12 @@ pub async fn file_transfer_list_endpoint(
 ) -> AppResult<Vec<FileEntry>> {
     match endpoint.kind {
         TransferEndpointKind::Local => list_local_directory(&endpoint.path).await,
-        TransferEndpointKind::Ssh => {
+        TransferEndpointKind::SavedSession => {
             let session = session_for_endpoint(&state, &endpoint)?;
+            if session.session_type == SessionType::Ftp {
+                return ftp_service::list(&session, &state.credential_service(), &endpoint.path)
+                    .await;
+            }
             let storage = state.storage();
             let all_sessions = list_sessions(storage.as_ref())?.sessions;
             let secrets = state
@@ -226,8 +234,13 @@ pub async fn file_transfer_rename_endpoint(
 ) -> AppResult<SftpRenameResult> {
     match endpoint.kind {
         TransferEndpointKind::Local => rename_local_path(&endpoint.path, &to).await?,
-        TransferEndpointKind::Ssh => {
+        TransferEndpointKind::SavedSession => {
             let session = session_for_endpoint(&state, &endpoint)?;
+            if session.session_type == SessionType::Ftp {
+                ftp_service::rename(&session, &state.credential_service(), &endpoint.path, &to)
+                    .await?;
+                return Ok(SftpRenameResult { renamed: true });
+            }
             let storage = state.storage();
             let all_sessions = list_sessions(storage.as_ref())?.sessions;
             let secrets = state
@@ -250,8 +263,18 @@ pub async fn file_transfer_delete_endpoint(
 ) -> AppResult<SftpDeleteResult> {
     match endpoint.kind {
         TransferEndpointKind::Local => delete_local_path(&endpoint.path, recursive).await?,
-        TransferEndpointKind::Ssh => {
+        TransferEndpointKind::SavedSession => {
             let session = session_for_endpoint(&state, &endpoint)?;
+            if session.session_type == SessionType::Ftp {
+                ftp_service::delete(
+                    &session,
+                    &state.credential_service(),
+                    &endpoint.path,
+                    recursive,
+                )
+                .await?;
+                return Ok(SftpDeleteResult { deleted: true });
+            }
             let storage = state.storage();
             let all_sessions = list_sessions(storage.as_ref())?.sessions;
             let secrets = state
@@ -278,17 +301,26 @@ pub async fn file_transfer_check_conflicts(
                 let path = std::path::PathBuf::from(item.destination.path.trim());
                 path.exists()
             }
-            TransferEndpointKind::Ssh => {
+            TransferEndpointKind::SavedSession => {
                 let session = session_for_endpoint(&state, &item.destination)?;
-                let storage = state.storage();
-                let all_sessions = list_sessions(storage.as_ref())?.sessions;
-                let secrets = state
-                    .external_launch_service()
-                    .composite_secret_resolver(state.credential_service());
-                state
-                    .sftp_service()
-                    .exists(&session, &all_sessions, &secrets, &item.destination.path)
+                if session.session_type == SessionType::Ftp {
+                    ftp_service::exists(
+                        &session,
+                        &state.credential_service(),
+                        &item.destination.path,
+                    )
                     .await?
+                } else {
+                    let storage = state.storage();
+                    let all_sessions = list_sessions(storage.as_ref())?.sessions;
+                    let secrets = state
+                        .external_launch_service()
+                        .composite_secret_resolver(state.credential_service());
+                    state
+                        .sftp_service()
+                        .exists(&session, &all_sessions, &secrets, &item.destination.path)
+                        .await?
+                }
             }
         };
         if exists {
@@ -317,6 +349,18 @@ pub async fn file_transfer_enqueue(
     }
     let source_session = optional_session_for_endpoint(&state, &source)?;
     let destination_session = optional_session_for_endpoint(&state, &destination)?;
+    if source.kind == TransferEndpointKind::SavedSession
+        && destination.kind == TransferEndpointKind::SavedSession
+        && source_session
+            .as_ref()
+            .into_iter()
+            .chain(destination_session.as_ref())
+            .any(|session| session.session_type == SessionType::Ftp)
+    {
+        return Err(crate::error::AppError::unsupported(
+            "FTP 远程端点之间暂不支持直接中转",
+        ));
+    }
     let storage = state.storage();
     let all_sessions = list_sessions(storage.as_ref())?.sessions;
     let secrets = state
@@ -326,8 +370,8 @@ pub async fn file_transfer_enqueue(
         .saved_session_id
         .as_deref()
         .or(destination.saved_session_id.as_deref())
-        .ok_or_else(|| crate::error::AppError::validation("文件传输任务必须包含 SSH 端点"))?;
-    let direction = if destination.kind == TransferEndpointKind::Ssh {
+        .ok_or_else(|| crate::error::AppError::validation("文件传输任务必须包含远程会话端点"))?;
+    let direction = if destination.kind == TransferEndpointKind::SavedSession {
         TransferDirection::Upload
     } else {
         TransferDirection::Download
@@ -339,7 +383,7 @@ pub async fn file_transfer_enqueue(
     } else {
         source.path.as_str()
     };
-    let remote_path = if destination.kind == TransferEndpointKind::Ssh {
+    let remote_path = if destination.kind == TransferEndpointKind::SavedSession {
         destination.path.as_str()
     } else {
         source.path.as_str()
@@ -371,6 +415,7 @@ pub async fn file_transfer_enqueue(
         destination_session,
         all_sessions,
         secrets,
+        state.credential_service(),
         task.clone(),
     );
     Ok(task)
@@ -424,6 +469,7 @@ pub fn transfer_retry(
             destination_session,
             all_sessions,
             secrets,
+            state.credential_service(),
             task.clone(),
         );
     } else {
@@ -573,6 +619,7 @@ fn spawn_transfer(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_file_transfer(
     app: AppHandle,
     service: SftpService,
@@ -581,6 +628,7 @@ fn spawn_file_transfer(
     destination_session: Option<crate::models::session::SavedSession>,
     all_sessions: Vec<crate::models::session::SavedSession>,
     credential_service: CompositeSshSecretResolver,
+    ftp_credentials: crate::services::credential_service::CredentialService,
     task: TransferTask,
 ) {
     let control = match queue.register_control(&task.id) {
@@ -614,15 +662,14 @@ fn spawn_file_transfer(
         };
 
         let result = match (task.source_endpoint.kind, task.destination_endpoint.kind) {
-            (TransferEndpointKind::Local, TransferEndpointKind::Ssh) => {
+            (TransferEndpointKind::Local, TransferEndpointKind::SavedSession) => {
                 let Some(destination_session) = destination_session.as_ref() else {
-                    return finish_missing_endpoint(app, queue, &task.id, "目标 SSH 会话不存在");
+                    return finish_missing_endpoint(app, queue, &task.id, "目标远程会话不存在");
                 };
-                service
-                    .upload_path(
+                if destination_session.session_type == SessionType::Ftp {
+                    ftp_service::upload_path(
                         destination_session,
-                        &all_sessions,
-                        &credential_service,
+                        &ftp_credentials,
                         &task.source_endpoint.path,
                         &task.destination_endpoint.path,
                         task.kind,
@@ -631,16 +678,30 @@ fn spawn_file_transfer(
                         &mut progress,
                     )
                     .await
+                } else {
+                    service
+                        .upload_path(
+                            destination_session,
+                            &all_sessions,
+                            &credential_service,
+                            &task.source_endpoint.path,
+                            &task.destination_endpoint.path,
+                            task.kind,
+                            task.conflict_policy,
+                            Some(control.clone()),
+                            &mut progress,
+                        )
+                        .await
+                }
             }
-            (TransferEndpointKind::Ssh, TransferEndpointKind::Local) => {
+            (TransferEndpointKind::SavedSession, TransferEndpointKind::Local) => {
                 let Some(source_session) = source_session.as_ref() else {
-                    return finish_missing_endpoint(app, queue, &task.id, "来源 SSH 会话不存在");
+                    return finish_missing_endpoint(app, queue, &task.id, "来源远程会话不存在");
                 };
-                service
-                    .download_path(
+                if source_session.session_type == SessionType::Ftp {
+                    ftp_service::download_path(
                         source_session,
-                        &all_sessions,
-                        &credential_service,
+                        &ftp_credentials,
                         &task.source_endpoint.path,
                         &task.destination_endpoint.path,
                         task.kind,
@@ -649,29 +710,52 @@ fn spawn_file_transfer(
                         &mut progress,
                     )
                     .await
+                } else {
+                    service
+                        .download_path(
+                            source_session,
+                            &all_sessions,
+                            &credential_service,
+                            &task.source_endpoint.path,
+                            &task.destination_endpoint.path,
+                            task.kind,
+                            task.conflict_policy,
+                            Some(control.clone()),
+                            &mut progress,
+                        )
+                        .await
+                }
             }
-            (TransferEndpointKind::Ssh, TransferEndpointKind::Ssh) => {
+            (TransferEndpointKind::SavedSession, TransferEndpointKind::SavedSession) => {
                 let Some(source_session) = source_session.as_ref() else {
-                    return finish_missing_endpoint(app, queue, &task.id, "来源 SSH 会话不存在");
+                    return finish_missing_endpoint(app, queue, &task.id, "来源远程会话不存在");
                 };
                 let Some(destination_session) = destination_session.as_ref() else {
-                    return finish_missing_endpoint(app, queue, &task.id, "目标 SSH 会话不存在");
+                    return finish_missing_endpoint(app, queue, &task.id, "目标远程会话不存在");
                 };
-                service
-                    .copy_remote_to_remote_path(
-                        source_session,
-                        &all_sessions,
-                        &task.source_endpoint.path,
-                        destination_session,
-                        &all_sessions,
-                        &credential_service,
-                        &task.destination_endpoint.path,
-                        task.kind,
-                        task.conflict_policy,
-                        Some(control.clone()),
-                        &mut progress,
-                    )
-                    .await
+                if source_session.session_type == SessionType::Ftp
+                    || destination_session.session_type == SessionType::Ftp
+                {
+                    Err(crate::error::AppError::unsupported(
+                        "FTP 远程端点之间暂不支持直接中转",
+                    ))
+                } else {
+                    service
+                        .copy_remote_to_remote_path(
+                            source_session,
+                            &all_sessions,
+                            &task.source_endpoint.path,
+                            destination_session,
+                            &all_sessions,
+                            &credential_service,
+                            &task.destination_endpoint.path,
+                            task.kind,
+                            task.conflict_policy,
+                            Some(control.clone()),
+                            &mut progress,
+                        )
+                        .await
+                }
             }
             (TransferEndpointKind::Local, TransferEndpointKind::Local) => Err(
                 crate::error::AppError::validation("文件传输栏暂不支持本机到本机复制"),
@@ -732,7 +816,7 @@ fn session_for_endpoint(
     endpoint: &TransferEndpoint,
 ) -> AppResult<crate::models::session::SavedSession> {
     optional_session_for_endpoint(state, endpoint)?
-        .ok_or_else(|| crate::error::AppError::validation("SSH 端点必须选择已保存会话"))
+        .ok_or_else(|| crate::error::AppError::validation("远程端点必须选择已保存会话"))
 }
 
 fn optional_session_for_endpoint(
@@ -741,10 +825,10 @@ fn optional_session_for_endpoint(
 ) -> AppResult<Option<crate::models::session::SavedSession>> {
     match endpoint.kind {
         TransferEndpointKind::Local => Ok(None),
-        TransferEndpointKind::Ssh => {
+        TransferEndpointKind::SavedSession => {
             let Some(saved_session_id) = endpoint.saved_session_id.as_deref() else {
                 return Err(crate::error::AppError::validation(
-                    "SSH 端点必须选择已保存会话",
+                    "远程端点必须选择已保存会话",
                 ));
             };
             ssh_session_context(state, saved_session_id).map(|(session, _)| Some(session))

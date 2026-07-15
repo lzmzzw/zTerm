@@ -1,5 +1,5 @@
 // Author: Liz
-import { ChevronDown, ChevronRight, Folder, Monitor, Server, Terminal } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, FolderKey, FolderSync, Monitor, Server, Terminal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
@@ -543,7 +543,15 @@ function SessionNode({
   onPointerDown?: (event: ReactPointerEvent<HTMLElement>, session: SavedSession) => void;
   dragging?: boolean;
 }) {
-  const Icon = session.type === "rdp" ? Monitor : session.type === "local" ? Terminal : Server;
+  const Icon = session.type === "rdp"
+    ? Monitor
+    : session.type === "local"
+      ? Terminal
+      : session.type === "ftp"
+        ? FolderSync
+        : session.type === "sftp"
+          ? FolderKey
+          : Server;
 
   function openSessionMenu(event: React.MouseEvent<HTMLElement>) {
     event.preventDefault();
@@ -574,5 +582,7 @@ function SessionNode({
 function sessionTypeTitle(type: SessionType) {
   if (type === "rdp") return "RDP 会话";
   if (type === "local") return "Local 会话";
+  if (type === "ftp") return "FTP 会话";
+  if (type === "sftp") return "SFTP 会话";
   return "SSH 会话";
 }

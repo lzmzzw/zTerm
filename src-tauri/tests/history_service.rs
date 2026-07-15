@@ -38,6 +38,7 @@ fn ssh_draft(name: &str) -> SavedSessionDraft {
         ssh_options: None,
         rdp_options: None,
         local_options: None,
+        ftp_options: None,
     }
 }
 

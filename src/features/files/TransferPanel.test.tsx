@@ -193,8 +193,8 @@ describe("TransferPanel", () => {
             ...tasks[0],
             id: "task-remote-copy",
             task_origin: "file_transfer",
-            source_endpoint: { kind: "ssh", saved_session_id: "source-ssh", path: "/var/app.log" },
-            destination_endpoint: { kind: "ssh", saved_session_id: "destination-ssh", path: "/backup/app.log" },
+            source_endpoint: { kind: "saved_session", saved_session_id: "source-ssh", path: "/var/app.log" },
+            destination_endpoint: { kind: "saved_session", saved_session_id: "destination-ssh", path: "/backup/app.log" },
           },
         ]}
         onRetry={vi.fn()}

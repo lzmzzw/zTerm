@@ -613,8 +613,8 @@ impl fmt::Debug for SftpCacheKey {
 }
 
 pub fn build_sftp_cache_key(session: &SavedSession) -> AppResult<SftpCacheKey> {
-    if session.session_type != SessionType::Ssh {
-        return Err(AppError::unsupported("SFTP 只支持 SSH 会话"));
+    if !matches!(session.session_type, SessionType::Ssh | SessionType::Sftp) {
+        return Err(AppError::unsupported("SFTP 只支持 SSH/SFTP 会话"));
     }
     let host = required_path(&session.host)?;
     let username = required_path(&session.username)?;
@@ -977,8 +977,8 @@ async fn connect_sftp(
     all_sessions: &[SavedSession],
     secrets: &dyn SshCommandSecretResolver,
 ) -> AppResult<ConnectedSftpSession> {
-    if session.session_type != SessionType::Ssh {
-        return Err(AppError::unsupported("SFTP 只支持 SSH 会话"));
+    if !matches!(session.session_type, SessionType::Ssh | SessionType::Sftp) {
+        return Err(AppError::unsupported("SFTP 只支持 SSH/SFTP 会话"));
     }
     let execution =
         build_ssh_command_execution(session, all_sessions, "true".to_string(), secrets)?;

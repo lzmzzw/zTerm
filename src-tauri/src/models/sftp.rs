@@ -159,21 +159,22 @@ impl TransferTaskOrigin {
 #[serde(rename_all = "snake_case")]
 pub enum TransferEndpointKind {
     Local,
-    Ssh,
+    #[serde(rename = "saved_session", alias = "ssh")]
+    SavedSession,
 }
 
 impl TransferEndpointKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Local => "local",
-            Self::Ssh => "ssh",
+            Self::SavedSession => "ssh",
         }
     }
 
     pub fn from_db(value: &str) -> Option<Self> {
         match value {
             "local" => Some(Self::Local),
-            "ssh" => Some(Self::Ssh),
+            "ssh" | "saved_session" => Some(Self::SavedSession),
             _ => None,
         }
     }

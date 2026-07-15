@@ -156,6 +156,9 @@ pub fn terminal_open(
             );
             Ok(opened.info)
         }
+        SessionType::Ftp | SessionType::Sftp => {
+            Err(AppError::unsupported("FTP/SFTP 会话请通过文件传输窗口打开"))
+        }
     }
 }
 

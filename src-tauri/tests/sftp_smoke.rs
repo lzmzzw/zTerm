@@ -71,6 +71,7 @@ async fn run_sftp_smoke(
         ssh_options: None,
         rdp_options: None,
         local_options: None,
+        ftp_options: None,
     };
     let all_sessions = vec![session.clone()];
     let secrets = SmokeSecretResolver;

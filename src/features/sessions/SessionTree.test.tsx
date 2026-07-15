@@ -397,7 +397,9 @@ describe("SessionTree", () => {
     expect(view.container.textContent).toContain("SSH");
     expect(view.container.textContent).toContain("Local");
     expect(view.container.textContent).toContain("RDP");
-    expect(view.container.querySelectorAll(".zt-session-type-tabs svg")).toHaveLength(3);
+    expect(view.container.textContent).toContain("FTP");
+    expect(view.container.textContent).toContain("SFTP");
+    expect(view.container.querySelectorAll(".zt-session-type-tabs svg")).toHaveLength(5);
     expect(view.container.querySelectorAll(".zt-session-editor-nav svg")).toHaveLength(0);
     expect(view.container.textContent).toContain("容器");
     expect(view.container.textContent).toContain("属性");
@@ -449,6 +451,8 @@ describe("SessionTree", () => {
     expect(button(view.container, "SSH").disabled).toBe(false);
     expect(button(view.container, "Local").disabled).toBe(true);
     expect(button(view.container, "RDP").disabled).toBe(true);
+    expect(button(view.container, "FTP").disabled).toBe(true);
+    expect(button(view.container, "SFTP").disabled).toBe(true);
     expect(dialog(view.container).textContent).not.toContain("标签");
     expect(dialog(view.container).textContent).not.toContain("ProxyCommand");
     expect(dialog(view.container).textContent).not.toContain("代理");
@@ -771,6 +775,26 @@ describe("SessionTree", () => {
     );
     expect(onSaveSession).not.toHaveBeenCalledWith(expect.objectContaining({ credential_ref: secret }));
     expect(view.container.textContent).not.toContain(secret);
+
+    view.unmount();
+  });
+
+  it("switches FTP and SFTP tabs with protocol defaults and protocol-specific sections", async () => {
+    const view = render(<SessionTree groups={[]} sessions={[]} />);
+    await contextMenu(view.container.querySelector(".zt-session-tree") as HTMLElement);
+    await click(button(view.container, "添加连接"));
+
+    await click(button(view.container, "FTP"));
+    expect(input(view.container, "端口").value).toBe("21");
+    expect(dialog(view.container).textContent).toContain("高级");
+    expect(dialog(view.container).textContent).not.toContain("隧道");
+    await click(button(view.container, "高级"));
+    expect(dialog(view.container).textContent).toContain("FTP 不加密账号、密码和传输内容");
+
+    await click(button(view.container, "SFTP"));
+    expect(input(view.container, "端口").value).toBe("22");
+    expect(dialog(view.container).textContent).toContain("跳板机");
+    expect(dialog(view.container).textContent).not.toContain("容器");
 
     view.unmount();
   });

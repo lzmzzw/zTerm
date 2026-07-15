@@ -22,7 +22,7 @@ export interface FileEntry {
 type TransferDirection = "upload" | "download";
 export type TransferStatus = "queued" | "running" | "paused" | "done" | "failed" | "cancelled";
 type TransferTaskOrigin = "sftp_panel" | "file_transfer";
-type TransferEndpointKind = "local" | "ssh";
+type TransferEndpointKind = "local" | "saved_session";
 
 export interface TransferEndpoint {
   kind: TransferEndpointKind;

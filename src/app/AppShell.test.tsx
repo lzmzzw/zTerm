@@ -1594,11 +1594,24 @@ describe("AppShell", () => {
     skipped.textContent = "新建终端";
     view.container.appendChild(skipped);
 
+    const ftpText = document.createElement("div");
+    ftpText.innerHTML = "<span>初始远程目录</span><span>匿名登录</span><span>FTP 不加密账号、密码和传输内容；敏感环境请使用 SFTP。</span>";
+    ftpText.setAttribute("aria-label", "新建 FTP 会话");
+    view.container.appendChild(ftpText);
+    const sftpCredentialName = document.createElement("span");
+    sftpCredentialName.textContent = "发布 SFTP SFTP 密钥密码";
+    view.container.appendChild(sftpCredentialName);
+
     await flushDomI18n();
 
     expect(dynamicButton.getAttribute("aria-label")).toBe("Delete Workspace 运维巡检");
     expect(dynamicButton.textContent).toBe("Confirm Delete Workspace");
     expect(skipped.textContent).toBe("新建终端");
+    expect(ftpText.getAttribute("aria-label")).toBe("New FTP Session");
+    expect(ftpText.textContent).toContain("Initial Remote Directory");
+    expect(ftpText.textContent).toContain("Anonymous Login");
+    expect(ftpText.textContent).toContain("FTP does not encrypt credentials");
+    expect(sftpCredentialName.textContent).toBe("发布 SFTP SFTP Key Passphrase");
 
     view.unmount();
   });
@@ -3232,6 +3245,10 @@ describe("AppShell", () => {
   });
 
   it("opens the connection picker without creating or offering a synthetic default local connection", async () => {
+    storeMocks.sessionState.sessions = [
+      { id: "ftp-1", name: "文件 FTP", type: "ftp", host: "ftp.test", port: 21, username: "ops", auth_mode: "password", group_id: null, tags: [], sort_order: 0, created_at_ms: 1, updated_at_ms: 1 },
+      { id: "sftp-1", name: "文件 SFTP", type: "sftp", host: "sftp.test", port: 22, username: "ops", auth_mode: "password", group_id: null, tags: [], sort_order: 1, created_at_ms: 1, updated_at_ms: 1 },
+    ];
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -3240,6 +3257,8 @@ describe("AppShell", () => {
 
     expect(view.container.querySelector('[aria-label="选择连接"]')).not.toBe(null);
     expect(view.container.querySelector('[aria-label="选择默认本地终端"]')).toBe(null);
+    expect(view.container.querySelector('[aria-label="选择连接 文件 FTP"]')).toBe(null);
+    expect(view.container.querySelector('[aria-label="选择连接 文件 SFTP"]')).toBe(null);
     expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
     expect(storeMocks.addPaneTab).not.toHaveBeenCalled();
     expect(storeMocks.bindRuntimeToPaneTab).not.toHaveBeenCalled();

@@ -115,7 +115,7 @@ function transferTask(): TransferTask {
     updated_at_ms: 2,
     task_origin: "file_transfer",
     source_endpoint: { kind: "local", saved_session_id: null, path: "C:/Users/Ops/bundle.zip" },
-    destination_endpoint: { kind: "ssh", saved_session_id: "ssh-1", path: "/bundle.zip" },
+    destination_endpoint: { kind: "saved_session", saved_session_id: "ssh-1", path: "/bundle.zip" },
   };
 }
 
@@ -176,7 +176,7 @@ describe("FileTransferPanel", () => {
         error: null,
       },
       right: {
-        endpoint: { kind: "ssh", saved_session_id: null, path: "/" },
+        endpoint: { kind: "saved_session", saved_session_id: null, path: "/" },
         entries: [],
         selectedPaths: [],
         selectionAnchorPath: null,
@@ -276,7 +276,7 @@ describe("FileTransferPanel", () => {
       if (command === "file_transfer_list") return Promise.resolve([]);
       if (command === "file_transfer_list_endpoint") {
         const endpoint = args?.endpoint as { kind: string };
-        return Promise.resolve(endpoint.kind === "ssh" ? [remoteFile] : []);
+        return Promise.resolve(endpoint.kind === "saved_session" ? [remoteFile] : []);
       }
       if (command === "file_transfer_rename_endpoint" || command === "file_transfer_delete_endpoint") {
         return Promise.resolve({ renamed: true, deleted: true });
@@ -298,7 +298,7 @@ describe("FileTransferPanel", () => {
     await flushEffects();
 
     expect(invokeMock).toHaveBeenCalledWith("file_transfer_delete_endpoint", {
-      endpoint: { kind: "ssh", saved_session_id: "ssh-1", path: "/var/log/app.log" },
+      endpoint: { kind: "saved_session", saved_session_id: "ssh-1", path: "/var/log/app.log" },
       recursive: false,
     });
 
@@ -340,7 +340,7 @@ describe("FileTransferPanel", () => {
     await flushEffects();
     await flushEffects();
 
-    expect((view.container.querySelector('[aria-label="右侧端点"]') as HTMLSelectElement).value).toBe("ssh:ssh-1");
+    expect((view.container.querySelector('[aria-label="右侧端点"]') as HTMLSelectElement).value).toBe("session:ssh-1");
     expect(view.container.textContent).toContain("bundle.zip");
 
     const row = Array.from(view.container.querySelectorAll('button[role="listitem"]')).find((item) =>
@@ -351,11 +351,11 @@ describe("FileTransferPanel", () => {
     await click(button(view.container, "传输到右侧"));
 
     expect(invokeMock).toHaveBeenCalledWith("file_transfer_check_conflicts", {
-      items: [{ destination: { kind: "ssh", saved_session_id: "ssh-1", path: "/bundle.zip" }, kind: "file" }],
+      items: [{ destination: { kind: "saved_session", saved_session_id: "ssh-1", path: "/bundle.zip" }, kind: "file" }],
     });
     expect(invokeMock).toHaveBeenCalledWith("file_transfer_enqueue", {
       source: { kind: "local", saved_session_id: null, path: "C:/Users/Ops/bundle.zip" },
-      destination: { kind: "ssh", saved_session_id: "ssh-1", path: "/bundle.zip" },
+      destination: { kind: "saved_session", saved_session_id: "ssh-1", path: "/bundle.zip" },
       kind: "file",
       conflictPolicy: "overwrite",
     });
@@ -461,11 +461,11 @@ describe("FileTransferPanel", () => {
     expect(document.body.querySelector(".zt-file-transfer-drag-preview")).toBeNull();
 
     expect(invokeMock).toHaveBeenCalledWith("file_transfer_check_conflicts", {
-      items: [{ destination: { kind: "ssh", saved_session_id: "ssh-1", path: "/bundle.zip" }, kind: "file" }],
+      items: [{ destination: { kind: "saved_session", saved_session_id: "ssh-1", path: "/bundle.zip" }, kind: "file" }],
     });
     expect(invokeMock).toHaveBeenCalledWith("file_transfer_enqueue", {
       source: { kind: "local", saved_session_id: null, path: "C:/Users/Ops/bundle.zip" },
-      destination: { kind: "ssh", saved_session_id: "ssh-1", path: "/bundle.zip" },
+      destination: { kind: "saved_session", saved_session_id: "ssh-1", path: "/bundle.zip" },
       kind: "file",
       conflictPolicy: "overwrite",
     });
@@ -605,7 +605,7 @@ describe("FileTransferPanel", () => {
     await flushEffects();
 
     const initialSshLoads = invokeMock.mock.calls.filter(
-      ([command, args]) => command === "file_transfer_list_endpoint" && (args as { endpoint: { kind: string } }).endpoint.kind === "ssh",
+      ([command, args]) => command === "file_transfer_list_endpoint" && (args as { endpoint: { kind: string } }).endpoint.kind === "saved_session",
     );
     expect(initialSshLoads).toHaveLength(1);
 

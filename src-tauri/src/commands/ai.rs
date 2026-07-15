@@ -325,6 +325,7 @@ fn app_error_message(error: crate::error::AppError) -> String {
         | crate::error::AppError::Terminal(message)
         | crate::error::AppError::Ssh(message)
         | crate::error::AppError::Sftp(message)
+        | crate::error::AppError::Ftp(message)
         | crate::error::AppError::Ai(message)
         | crate::error::AppError::Unsupported(message) => message,
     }

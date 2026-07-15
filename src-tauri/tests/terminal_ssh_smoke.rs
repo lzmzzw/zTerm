@@ -160,6 +160,7 @@ fn run_ssh_smoke(
         ssh_options: None,
         rdp_options: None,
         local_options: None,
+        ftp_options: None,
     };
     let opened = manager
         .open_ssh_session(&session, "pane-smoke".to_string(), 100, 30)

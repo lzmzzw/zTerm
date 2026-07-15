@@ -73,6 +73,7 @@ fn ssh_arguments_include_tunnels_proxy_and_jump_hosts() {
         }),
         rdp_options: None,
         local_options: None,
+        ftp_options: None,
     };
 
     let args = build_ssh_arguments(&session).expect("ssh args should build");
@@ -123,6 +124,7 @@ fn ssh_key_auth_uses_selected_identity_file() {
         }),
         rdp_options: None,
         local_options: None,
+        ftp_options: None,
     };
 
     let args = build_ssh_arguments(&session).expect("ssh args should build");
@@ -177,6 +179,7 @@ fn ssh_arguments_include_remote_dynamic_socks_tunnel() {
         }),
         rdp_options: None,
         local_options: None,
+        ftp_options: None,
     };
 
     let args = build_ssh_arguments(&session).expect("ssh args should build");
@@ -242,6 +245,7 @@ fn ssh_arguments_skip_tunnels_not_marked_auto_open_and_ignore_container_entry() 
         }),
         rdp_options: None,
         local_options: None,
+        ftp_options: None,
     };
 
     let args = build_ssh_arguments(&session).expect("ssh args should build");
@@ -294,6 +298,7 @@ fn ssh_container_arguments_append_selected_container_exec_command() {
         }),
         rdp_options: None,
         local_options: None,
+        ftp_options: None,
     };
 
     let args =
@@ -410,6 +415,7 @@ fn rdp_arguments_target_mstsc_with_saved_options() {
             fullscreen: false,
         }),
         local_options: None,
+        ftp_options: None,
     };
 
     let args = build_mstsc_arguments(&session).expect("rdp args should build");
@@ -449,6 +455,7 @@ fn rdp_file_content_includes_connection_display_and_password_fields() {
             fullscreen: false,
         }),
         local_options: None,
+        ftp_options: None,
     };
 
     let content = build_rdp_file_content(&session).expect("rdp content should build");
@@ -493,6 +500,7 @@ fn rdp_file_content_prompts_when_no_password_credential_exists() {
             fullscreen: false,
         }),
         local_options: None,
+        ftp_options: None,
     };
 
     let content = build_rdp_file_content(&session).expect("rdp content should build");
@@ -529,6 +537,7 @@ fn rdp_password_credential_target_matches_rdp_full_address() {
             fullscreen: false,
         }),
         local_options: None,
+        ftp_options: None,
     };
 
     assert_eq!(

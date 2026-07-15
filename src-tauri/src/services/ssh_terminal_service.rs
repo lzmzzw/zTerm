@@ -1371,6 +1371,7 @@ mod tests {
             ssh_options: Some(ssh_options),
             rdp_options: None,
             local_options: None,
+            ftp_options: None,
         }
     }
 

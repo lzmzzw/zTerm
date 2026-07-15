@@ -7,6 +7,8 @@ import {
   Eye,
   EyeOff,
   Folder,
+  FolderKey,
+  FolderSync,
   FolderUp,
   HardDrive,
   RefreshCw,
@@ -86,18 +88,18 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       loadSessions: state.loadSessions,
     })),
   );
-  const sshSessionTreeItems = useMemo(
+  const remoteSessionTreeItems = useMemo(
     () =>
       buildSessionTreeListItems({
         groups,
-        sessions: sessions.filter((session) => session.type === "ssh"),
+        sessions: sessions.filter((session) => session.type === "ssh" || session.type === "sftp" || session.type === "ftp"),
         hideEmptyGroups: true,
       }),
     [groups, sessions],
   );
-  const orderedSshSessions = useMemo(
-    () => sshSessionTreeItems.flatMap((item) => (item.kind === "session" ? [item.session] : [])),
-    [sshSessionTreeItems],
+  const orderedRemoteSessions = useMemo(
+    () => remoteSessionTreeItems.flatMap((item) => (item.kind === "session" ? [item.session] : [])),
+    [remoteSessionTreeItems],
   );
   const {
     left,
@@ -207,10 +209,10 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   }, [defaultLocalPath, left.endpoint.path, loadDefaultLocalPath, loadEndpoint]);
 
   useEffect(() => {
-    if (right.endpoint.kind !== "ssh" || right.endpoint.saved_session_id || orderedSshSessions.length === 0) return;
-    setEndpoint("right", { kind: "ssh", saved_session_id: orderedSshSessions[0].id, path: "/" });
+    if (right.endpoint.kind !== "saved_session" || right.endpoint.saved_session_id || orderedRemoteSessions.length === 0) return;
+    setEndpoint("right", { kind: "saved_session", saved_session_id: orderedRemoteSessions[0].id, path: "/" });
     void Promise.resolve().then(() => loadEndpoint("right"));
-  }, [loadEndpoint, orderedSshSessions, right.endpoint.kind, right.endpoint.saved_session_id, setEndpoint]);
+  }, [loadEndpoint, orderedRemoteSessions, right.endpoint.kind, right.endpoint.saved_session_id, setEndpoint]);
 
   useEffect(() => {
     if (!contextMenu) return undefined;
@@ -367,7 +369,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           side="left"
           title="左侧"
           pane={left}
-          sessionTreeItems={sshSessionTreeItems}
+          sessionTreeItems={remoteSessionTreeItems}
           collapsedGroupKeys={collapsedEndpointGroupKeys}
           onToggleGroup={toggleEndpointGroup}
           defaultLocalPath={defaultLocalPath}
@@ -420,7 +422,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           side="right"
           title="右侧"
           pane={right}
-          sessionTreeItems={sshSessionTreeItems}
+          sessionTreeItems={remoteSessionTreeItems}
           collapsedGroupKeys={collapsedEndpointGroupKeys}
           onToggleGroup={toggleEndpointGroup}
           defaultLocalPath={defaultLocalPath}
@@ -611,7 +613,7 @@ function EndpointPane({
   onContextMenu: (side: FileTransferSide, entry: FileEntry, event: MouseEvent<HTMLButtonElement>) => void;
   dropActive: boolean;
 }) {
-  const endpointValue = pane.endpoint.kind === "local" ? "local" : `ssh:${pane.endpoint.saved_session_id ?? ""}`;
+  const endpointValue = pane.endpoint.kind === "local" ? "local" : `session:${pane.endpoint.saved_session_id ?? ""}`;
   const selectedSessionItem = sessionTreeItems.find(
     (item) => item.kind === "session" && item.session.id === pane.endpoint.saved_session_id,
   );
@@ -644,10 +646,14 @@ function EndpointPane({
             };
           })()
         : {
-            value: `ssh:${item.session.id}`,
+            value: `session:${item.session.id}`,
             label: item.session.name,
             depth: item.depth,
-            icon: <Server size={14} aria-hidden="true" />,
+            icon: item.session.type === "ftp"
+              ? <FolderSync size={14} aria-hidden="true" />
+              : item.session.type === "sftp"
+                ? <FolderKey size={14} aria-hidden="true" />
+                : <Server size={14} aria-hidden="true" />,
           },
     ),
   ];
@@ -678,8 +684,8 @@ function EndpointPane({
               onEndpointChange({ kind: "local", saved_session_id: null, path: defaultLocalPath });
               return;
             }
-            const savedSessionId = value.replace(/^ssh:/, "");
-            onEndpointChange({ kind: "ssh", saved_session_id: savedSessionId || null, path: "/" });
+            const savedSessionId = value.replace(/^session:/, "");
+            onEndpointChange({ kind: "saved_session", saved_session_id: savedSessionId || null, path: "/" });
           }}
         />
       </div>
@@ -721,7 +727,7 @@ function EndpointPane({
         </button>
       </div>
       <div className="zt-file-transfer-pane-status">
-        {!endpointReady ? <div className="zt-empty-line">请选择 SSH 主机或本机端点</div> : null}
+        {!endpointReady ? <div className="zt-empty-line">请选择远程连接或本机端点</div> : null}
         {pane.error ? <div className="zt-terminal-error">{pane.error}</div> : null}
         {pane.loading ? <div className="zt-empty-line">加载中</div> : null}
         {endpointReady && !pane.loading && visibleEntries.length === 0 ? <div className="zt-empty-line">暂无文件</div> : null}
@@ -793,8 +799,8 @@ function canTransfer(
   destination: { endpoint: TransferEndpoint },
 ) {
   if (source.selectedPaths.length === 0) return false;
-  if (source.endpoint.kind === "ssh" && !source.endpoint.saved_session_id) return false;
-  if (destination.endpoint.kind === "ssh" && !destination.endpoint.saved_session_id) return false;
+  if (source.endpoint.kind === "saved_session" && !source.endpoint.saved_session_id) return false;
+  if (destination.endpoint.kind === "saved_session" && !destination.endpoint.saved_session_id) return false;
   if (source.endpoint.kind === "local" && destination.endpoint.kind === "local") return false;
   return Boolean(destination.endpoint.path.trim());
 }

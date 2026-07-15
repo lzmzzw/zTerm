@@ -33,7 +33,7 @@ pub fn list_sessions(store: &SqliteStore) -> AppResult<SessionsList> {
             "
             select id, name, type, group_id, host, port, username, auth_mode, credential_ref,
                    description, tags_json, sort_order, created_at_ms, updated_at_ms,
-                   last_used_at_ms, ssh_options_json, rdp_options_json, local_options_json
+                   last_used_at_ms, ssh_options_json, rdp_options_json, local_options_json, ftp_options_json
             from saved_sessions
             order by group_id is not null desc, group_id, sort_order, name
             ",
@@ -54,7 +54,7 @@ pub fn get_session(store: &SqliteStore, id: &str) -> AppResult<SavedSession> {
                 "
                 select id, name, type, group_id, host, port, username, auth_mode, credential_ref,
                        description, tags_json, sort_order, created_at_ms, updated_at_ms,
-                       last_used_at_ms, ssh_options_json, rdp_options_json, local_options_json
+                       last_used_at_ms, ssh_options_json, rdp_options_json, local_options_json, ftp_options_json
                 from saved_sessions
                 where id = ?1
                 ",
@@ -170,6 +170,7 @@ pub fn save_session(store: &SqliteStore, draft: SavedSessionDraft) -> AppResult<
     let ssh_options_json = optional_json(&draft.ssh_options)?;
     let rdp_options_json = optional_json(&draft.rdp_options)?;
     let local_options_json = optional_json(&draft.local_options)?;
+    let ftp_options_json = optional_json(&draft.ftp_options)?;
 
     store.write_transaction(|transaction| {
         let id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -187,9 +188,9 @@ pub fn save_session(store: &SqliteStore, draft: SavedSessionDraft) -> AppResult<
             insert into saved_sessions (
               id, name, type, group_id, host, port, username, auth_mode, credential_ref,
               description, tags_json, sort_order, created_at_ms, updated_at_ms,
-              last_used_at_ms, ssh_options_json, rdp_options_json, local_options_json
+              last_used_at_ms, ssh_options_json, rdp_options_json, local_options_json, ftp_options_json
             )
-            values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
             on conflict(id) do update set
               name = excluded.name,
               type = excluded.type,
@@ -205,7 +206,8 @@ pub fn save_session(store: &SqliteStore, draft: SavedSessionDraft) -> AppResult<
               updated_at_ms = excluded.updated_at_ms,
               ssh_options_json = excluded.ssh_options_json,
               rdp_options_json = excluded.rdp_options_json,
-              local_options_json = excluded.local_options_json
+              local_options_json = excluded.local_options_json,
+              ftp_options_json = excluded.ftp_options_json
             ",
             params![
                 id,
@@ -226,6 +228,7 @@ pub fn save_session(store: &SqliteStore, draft: SavedSessionDraft) -> AppResult<
                 ssh_options_json,
                 rdp_options_json,
                 local_options_json,
+                ftp_options_json,
             ],
         )?;
 
@@ -248,6 +251,7 @@ pub fn save_session(store: &SqliteStore, draft: SavedSessionDraft) -> AppResult<
             ssh_options: draft.ssh_options,
             rdp_options: draft.rdp_options,
             local_options: draft.local_options,
+            ftp_options: draft.ftp_options,
         })
     })
 }
@@ -284,6 +288,7 @@ fn map_session(row: &Row<'_>) -> rusqlite::Result<SavedSession> {
     let ssh_options_json: Option<String> = row.get(15)?;
     let rdp_options_json: Option<String> = row.get(16)?;
     let local_options_json: Option<String> = row.get(17)?;
+    let ftp_options_json: Option<String> = row.get(18)?;
 
     Ok(SavedSession {
         id: row.get(0)?,
@@ -307,6 +312,7 @@ fn map_session(row: &Row<'_>) -> rusqlite::Result<SavedSession> {
         ssh_options: optional_json_from_column(15, ssh_options_json)?,
         rdp_options: optional_json_from_column(16, rdp_options_json)?,
         local_options: optional_json_from_column(17, local_options_json)?,
+        ftp_options: optional_json_from_column(18, ftp_options_json)?,
     })
 }
 

@@ -28,6 +28,7 @@ portable-pty = "0.9"
 sysinfo = "0.36"
 russh = { version = "0.61", default-features = false, features = ["flate2", "ring", "rsa"] }
 russh-sftp = { package = "bssh-russh-sftp", version = "2.3" }
+suppaftp = { version = "10.0.1", default-features = false, features = ["tokio"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-updater = "2.10.1"

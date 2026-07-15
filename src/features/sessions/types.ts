@@ -1,5 +1,5 @@
 // Author: Liz
-export type SessionType = "ssh" | "local" | "rdp";
+export type SessionType = "ssh" | "local" | "rdp" | "ftp" | "sftp";
 export type AuthMode = "password" | "key" | "agent" | "none";
 type SshTunnelKind = "local" | "remote" | "dynamic" | "remote_dynamic";
 export type SshTunnelMode = "host_service" | "local_service" | "local_network" | "socks";
@@ -54,6 +54,13 @@ export interface LocalOptions {
   environment?: LocalEnvironmentVariable[];
 }
 
+export interface FtpOptions {
+  connect_timeout_ms?: number | null;
+  initial_directory?: string | null;
+  passive_mode: boolean;
+  anonymous: boolean;
+}
+
 export interface SavedSession {
   id: string;
   name: string;
@@ -73,6 +80,7 @@ export interface SavedSession {
   ssh_options?: SshOptions | null;
   rdp_options?: RdpOptions | null;
   local_options?: LocalOptions | null;
+  ftp_options?: FtpOptions | null;
 }
 
 export interface SessionGroup {
@@ -114,6 +122,7 @@ export interface SavedSessionDraft {
   ssh_options?: SshOptions | null;
   rdp_options?: RdpOptions | null;
   local_options?: LocalOptions | null;
+  ftp_options?: FtpOptions | null;
 }
 
 export interface SessionTestResult {

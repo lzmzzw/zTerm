@@ -54,10 +54,14 @@ describe("sessionEditorModel", () => {
 
   it("returns editor defaults by session type", () => {
     expect(sessionDefaultPort("ssh")).toBe(22);
+    expect(sessionDefaultPort("sftp")).toBe(22);
+    expect(sessionDefaultPort("ftp")).toBe(21);
     expect(sessionDefaultPort("rdp")).toBe(3389);
     expect(sessionDefaultPort("local")).toBe(1);
 
     expect(sessionEditorSections("ssh")).toEqual(["属性", "跳板机", "隧道", "容器"]);
+    expect(sessionEditorSections("sftp")).toEqual(["属性", "跳板机"]);
+    expect(sessionEditorSections("ftp")).toEqual(["属性", "高级"]);
     expect(sessionEditorSections("local")).toEqual(["属性", "环境变量"]);
     expect(sessionEditorSections("rdp")).toEqual(["连接属性", "显示属性"]);
   });
@@ -67,6 +71,8 @@ describe("sessionEditorModel", () => {
     expect(initialSessionAuthMode(null, "rdp")).toBe("password");
     expect(initialSessionAuthMode(session({ auth_mode: "key" }), "ssh")).toBe("key");
     expect(initialSessionAuthMode(session({ auth_mode: "password" }), "ssh")).toBe("password");
+    expect(initialSessionAuthMode(session({ auth_mode: "key" }), "sftp")).toBe("key");
+    expect(initialSessionAuthMode(null, "ftp")).toBe("password");
     expect(initialSessionAuthMode(session({ auth_mode: "agent" }), "ssh")).toBe("password");
   });
 

@@ -16,6 +16,7 @@ import { TitleBar } from "./TitleBar";
 import { WorkspaceStage } from "./WorkspaceStage";
 import { createRemoteFileActions } from "./remoteFileActions";
 import { createTerminalActions } from "./terminalActions";
+import { openSavedSessionTarget } from "./savedSessionActions";
 import { visibleRightTools, type ActiveConnectionKind, type RightTool } from "./rightTools";
 import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
@@ -23,6 +24,7 @@ import { ZtCenteredPageLayout, ZtConfirmDialog, ZtModalOverlay, ZtSurfaceFrame }
 import { setAiAffectedDomainsHandler, useAiStore } from "../features/ai/aiStore";
 import { buildAiTerminalContext } from "../features/ai/aiTerminalContextModel";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
+import { useFileTransferStore } from "../features/files/fileTransferStore";
 import { useFileStore, type TransferConflict, type TransferConflictPolicy } from "../features/files/fileStore";
 import type { CommandHistoryView } from "../features/history/CommandHistoryPanel";
 import { resolveHistoryScope } from "../features/history/historyScopeModel";
@@ -584,7 +586,10 @@ export function AppShell() {
     runtimeScopeKind: activeRuntimeInfo?.history_scope_kind,
     runtimeScopeId: activeRuntimeInfo?.history_scope_id,
     savedSessionId: activeSavedSessionId,
-    savedSessionType: activeSavedSession?.type,
+    savedSessionType:
+      activeSavedSession?.type === "ssh" || activeSavedSession?.type === "local"
+        ? activeSavedSession.type
+        : undefined,
     savedSessionLocalProfileId: activeSavedSession?.local_options?.profile_id,
     defaultLocalProfileId: terminalProfiles.find((profile) => profile.is_default)?.id,
   });
@@ -1013,7 +1018,7 @@ export function AppShell() {
         if (!savedSessionId) break;
         const session = sessions.find((item) => item.id === savedSessionId);
         if (session) {
-          await terminalActions.openSession(session);
+          await openSavedSession(session);
         }
         break;
       }
@@ -1573,6 +1578,14 @@ export function AppShell() {
     activeRuntimeSessionId,
   });
 
+  async function openSavedSession(session: SavedSession) {
+    await openSavedSessionTarget(session, {
+      openTerminalSession: terminalActions.openSession,
+      prepareFileTransfer: useFileTransferStore.getState().prepareForSession,
+      openFileTransferDialog: () => setFileTransferDialogOpen(true),
+    });
+  }
+
   async function createSessionFolder(name: string) {
     setSessionActionError(null);
     try {
@@ -1767,7 +1780,7 @@ export function AppShell() {
                   terminalProfiles={terminalProfiles}
                   onDeleteGroup={deleteGroup}
                   onDeleteSession={deleteSession}
-                  onOpenSession={terminalActions.openSession}
+                  onOpenSession={openSavedSession}
                 />
               </section>
             ) : null}
@@ -1855,7 +1868,9 @@ export function AppShell() {
       {connectionDialogTarget ? (
         <ConnectionPickerDialog
           groups={groups}
-          sessions={sessions}
+          sessions={sessions.filter(
+            (session) => session.type === "ssh" || session.type === "local" || session.type === "rdp",
+          )}
           opening={connectionOpening}
           error={connectionDialogError}
           onCancel={() => {

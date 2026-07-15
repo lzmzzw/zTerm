@@ -2,8 +2,9 @@
 use zterm_lib::{
     error::AppError,
     models::session::{
-        AuthMode, LocalEnvironmentVariable, LocalOptions, RdpOptions, SavedSessionDraft,
-        SessionGroupDraft, SessionType, SshContainerOptions, SshOptions, SshTunnel, SshTunnelKind,
+        AuthMode, FtpOptions, LocalEnvironmentVariable, LocalOptions, RdpOptions,
+        SavedSessionDraft, SessionGroupDraft, SessionType, SshContainerOptions, SshOptions,
+        SshTunnel, SshTunnelKind,
     },
     storage::{
         sessions::{delete_session_group, list_sessions, save_session, save_session_group},
@@ -38,6 +39,7 @@ fn ssh_draft(group_id: Option<String>) -> SavedSessionDraft {
         ssh_options: None,
         rdp_options: None,
         local_options: None,
+        ftp_options: None,
     }
 }
 
@@ -65,6 +67,7 @@ fn rdp_draft() -> SavedSessionDraft {
             fullscreen: false,
         }),
         local_options: None,
+        ftp_options: None,
     }
 }
 
@@ -92,6 +95,7 @@ fn local_draft() -> SavedSessionDraft {
                 value: "enabled".to_string(),
             }],
         }),
+        ftp_options: None,
     }
 }
 
@@ -255,4 +259,87 @@ fn non_empty_group_delete_returns_validation_error() {
         delete_session_group(&store, &group.id).expect_err("non-empty group should not delete");
 
     assert!(matches!(error, AppError::Validation(message) if message.contains("分组下仍有会话")));
+}
+
+#[test]
+fn ftp_and_sftp_sessions_persist_protocol_types_and_ftp_options() {
+    let store = SqliteStore::open_in_memory().expect("sqlite store should open");
+    let ftp = save_session(
+        &store,
+        SavedSessionDraft {
+            id: None,
+            name: "FTP Upload".to_string(),
+            session_type: SessionType::Ftp,
+            group_id: None,
+            host: "ftp.example.test".to_string(),
+            port: 21,
+            username: "ops".to_string(),
+            auth_mode: AuthMode::Password,
+            credential_ref: Some("credential:ftp".to_string()),
+            description: None,
+            tags: Vec::new(),
+            sort_order: 0,
+            ssh_options: None,
+            rdp_options: None,
+            local_options: None,
+            ftp_options: Some(FtpOptions {
+                connect_timeout_ms: Some(10_000),
+                initial_directory: Some("/incoming".to_string()),
+                passive_mode: true,
+                anonymous: false,
+            }),
+        },
+    )
+    .expect("FTP session should save");
+    let sftp = save_session(
+        &store,
+        SavedSessionDraft {
+            session_type: SessionType::Sftp,
+            name: "SFTP Upload".to_string(),
+            port: 22,
+            ftp_options: None,
+            ..SavedSessionDraft {
+                id: None,
+                name: String::new(),
+                session_type: SessionType::Sftp,
+                group_id: None,
+                host: "sftp.example.test".to_string(),
+                port: 22,
+                username: "ops".to_string(),
+                auth_mode: AuthMode::Password,
+                credential_ref: Some("credential:sftp".to_string()),
+                description: None,
+                tags: Vec::new(),
+                sort_order: 1,
+                ssh_options: None,
+                rdp_options: None,
+                local_options: None,
+                ftp_options: None,
+            }
+        },
+    )
+    .expect("SFTP session should save");
+
+    let sessions = list_sessions(&store)
+        .expect("sessions should list")
+        .sessions;
+    let listed_ftp = sessions
+        .iter()
+        .find(|session| session.id == ftp.id)
+        .expect("FTP should list");
+    assert_eq!(listed_ftp.session_type, SessionType::Ftp);
+    assert_eq!(
+        listed_ftp
+            .ftp_options
+            .as_ref()
+            .and_then(|options| options.initial_directory.as_deref()),
+        Some("/incoming")
+    );
+    assert_eq!(
+        sessions
+            .iter()
+            .find(|session| session.id == sftp.id)
+            .map(|session| session.session_type),
+        Some(SessionType::Sftp)
+    );
 }

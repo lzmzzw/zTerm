@@ -12,6 +12,7 @@ use crate::{
     },
     services::{
         credential_service::CredentialService,
+        ftp_service,
         ssh_command_service::{SshCommandSecretResolver, SshCommandService},
     },
     state::AppState,
@@ -83,7 +84,7 @@ pub async fn sessions_test_connection(
     let credential_service = state.credential_service();
     let ssh_command_service = state.ssh_command_service();
     match draft.session_type {
-        SessionType::Ssh => {
+        SessionType::Ssh | SessionType::Sftp => {
             let mut session = save_preview_session(draft)?;
             apply_transient_test_secret(&mut session, secret.as_deref());
             let all_sessions = list_sessions(storage.as_ref())?.sessions;
@@ -107,6 +108,9 @@ pub async fn sessions_test_connection(
                     storage.as_ref(),
                 )?;
             test_local_connection(&save_preview_session(draft)?, profiles)
+        }
+        SessionType::Ftp => {
+            test_ftp_connection(&save_preview_session(draft)?, credential_service, secret).await
         }
     }
 }
@@ -135,15 +139,25 @@ async fn test_ssh_connection(
                     .trim_end()
                     .ends_with(SESSION_TEST_EXPECTED_OUTPUT) =>
         {
+            let protocol = if session.session_type == SessionType::Sftp {
+                "SFTP"
+            } else {
+                "SSH"
+            };
             Ok(SessionTestResult {
                 ok: true,
-                message: "SSH 真实连接测试通过".to_string(),
+                message: format!("{protocol} 真实连接测试通过"),
             })
         }
         Ok(output) => Ok(SessionTestResult {
             ok: false,
             message: format!(
-                "SSH 已连接但测试命令返回异常，退出码 {}",
+                "{} 已连接但测试命令返回异常，退出码 {}",
+                if session.session_type == SessionType::Sftp {
+                    "SFTP"
+                } else {
+                    "SSH"
+                },
                 output
                     .exit_code
                     .map(|code| code.to_string())
@@ -152,9 +166,28 @@ async fn test_ssh_connection(
         }),
         Err(error) => Ok(SessionTestResult {
             ok: false,
-            message: format!("SSH 真实连接测试失败：{error}"),
+            message: format!(
+                "{} 真实连接测试失败：{error}",
+                if session.session_type == SessionType::Sftp {
+                    "SFTP"
+                } else {
+                    "SSH"
+                }
+            ),
         }),
     }
+}
+
+async fn test_ftp_connection(
+    session: &SavedSession,
+    credential_service: CredentialService,
+    secret: Option<String>,
+) -> AppResult<SessionTestResult> {
+    ftp_service::test_connection(session, &credential_service, secret.as_deref()).await?;
+    Ok(SessionTestResult {
+        ok: true,
+        message: "FTP 连接测试通过".to_string(),
+    })
 }
 
 async fn test_rdp_connection(
@@ -343,6 +376,7 @@ fn save_preview_session(draft: SavedSessionDraft) -> AppResult<SavedSession> {
         ssh_options: draft.ssh_options,
         rdp_options: draft.rdp_options,
         local_options: draft.local_options,
+        ftp_options: draft.ftp_options,
     })
 }
 
@@ -417,6 +451,7 @@ mod tests {
                 fullscreen: false,
             }),
             local_options: None,
+            ftp_options: None,
         };
         draft.ssh_options = Some(SshOptions {
             connect_timeout_ms: Some(100),

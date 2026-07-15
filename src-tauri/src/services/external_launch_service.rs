@@ -140,6 +140,7 @@ impl ExternalLaunchService {
             }),
             rdp_options: None,
             local_options: None,
+            ftp_options: None,
         };
         let launch = ExternalSshLaunchEvent {
             id: id.clone(),

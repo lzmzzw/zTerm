@@ -7,6 +7,8 @@ pub enum SessionType {
     Ssh,
     Local,
     Rdp,
+    Ftp,
+    Sftp,
 }
 
 impl SessionType {
@@ -15,6 +17,8 @@ impl SessionType {
             Self::Ssh => "ssh",
             Self::Local => "local",
             Self::Rdp => "rdp",
+            Self::Ftp => "ftp",
+            Self::Sftp => "sftp",
         }
     }
 
@@ -23,6 +27,8 @@ impl SessionType {
             "ssh" => Some(Self::Ssh),
             "local" => Some(Self::Local),
             "rdp" => Some(Self::Rdp),
+            "ftp" => Some(Self::Ftp),
+            "sftp" => Some(Self::Sftp),
             _ => None,
         }
     }
@@ -148,6 +154,18 @@ pub struct LocalEnvironmentVariable {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FtpOptions {
+    #[serde(default)]
+    pub connect_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub initial_directory: Option<String>,
+    #[serde(default = "default_true")]
+    pub passive_mode: bool,
+    #[serde(default)]
+    pub anonymous: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionGroup {
     pub id: String,
     pub parent_id: Option<String>,
@@ -188,6 +206,7 @@ pub struct SavedSession {
     pub ssh_options: Option<SshOptions>,
     pub rdp_options: Option<RdpOptions>,
     pub local_options: Option<LocalOptions>,
+    pub ftp_options: Option<FtpOptions>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,6 +227,7 @@ pub struct SavedSessionDraft {
     pub ssh_options: Option<SshOptions>,
     pub rdp_options: Option<RdpOptions>,
     pub local_options: Option<LocalOptions>,
+    pub ftp_options: Option<FtpOptions>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

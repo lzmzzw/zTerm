@@ -592,8 +592,8 @@ pub fn build_ssh_command_execution(
     script: String,
     secrets: &dyn SshCommandSecretResolver,
 ) -> AppResult<SshCommandExecution> {
-    if session.session_type != SessionType::Ssh {
-        return Err(AppError::unsupported("资源监控只支持 SSH 会话"));
+    if !matches!(session.session_type, SessionType::Ssh | SessionType::Sftp) {
+        return Err(AppError::unsupported("SSH 命令只支持 SSH/SFTP 会话"));
     }
     let script = normalize_script(script)?;
     let mut jumps = Vec::new();
@@ -630,8 +630,8 @@ fn build_hop(
     session: &SavedSession,
     secrets: &dyn SshCommandSecretResolver,
 ) -> AppResult<SshCommandHop> {
-    if session.session_type != SessionType::Ssh {
-        return Err(AppError::validation("跳板机必须是 SSH 会话"));
+    if !matches!(session.session_type, SessionType::Ssh | SessionType::Sftp) {
+        return Err(AppError::validation("SSH 连接链只支持 SSH/SFTP 会话"));
     }
     let host = required_text("主机", &session.host)?;
     let username = required_text("用户名", &session.username)?;
@@ -1281,6 +1281,7 @@ mod tests {
             ssh_options: None,
             rdp_options: None,
             local_options: None,
+            ftp_options: None,
         }
     }
 }

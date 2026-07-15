@@ -8,7 +8,7 @@ function endpointFileName(path: string) {
 }
 
 function joinEndpointPath(endpoint: TransferEndpoint, name: string) {
-  if (endpoint.kind === "ssh") {
+  if (endpoint.kind === "saved_session") {
     return joinRemotePath(endpoint.path, name);
   }
   const separator = endpoint.path.includes("\\") ? "\\" : "/";
@@ -16,7 +16,7 @@ function joinEndpointPath(endpoint: TransferEndpoint, name: string) {
 }
 
 export function parentEndpointPath(endpoint: TransferEndpoint) {
-  if (endpoint.kind === "ssh") {
+  if (endpoint.kind === "saved_session") {
     return parentRemotePath(endpoint.path);
   }
   const normalized = endpoint.path.replace(/[\\/]+$/, "");

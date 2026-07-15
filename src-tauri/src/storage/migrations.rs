@@ -1,9 +1,10 @@
 // Author: Liz
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::AppResult;
 
 pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
+    upgrade_saved_sessions_schema(connection)?;
     connection.execute_batch("pragma foreign_keys = on;")?;
 
     let transaction = connection.transaction()?;
@@ -40,7 +41,7 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
         create table if not exists saved_sessions (
             id text primary key,
             name text not null check (length(trim(name)) > 0),
-            type text not null check (type in ('ssh', 'local', 'rdp')),
+            type text not null check (type in ('ssh', 'local', 'rdp', 'ftp', 'sftp')),
             group_id text null references session_groups(id) on delete set null,
             host text not null check (length(trim(host)) > 0),
             port integer not null check (port between 1 and 65535),
@@ -55,7 +56,8 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
             last_used_at_ms integer null,
             ssh_options_json text null,
             rdp_options_json text null,
-            local_options_json text null
+            local_options_json text null,
+            ftp_options_json text null
         );
 
         create table if not exists workspaces (
@@ -250,6 +252,76 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
     drop_source_reuse_records(&transaction)?;
     transaction.commit()?;
     Ok(())
+}
+
+fn upgrade_saved_sessions_schema(connection: &mut Connection) -> AppResult<()> {
+    let table_sql = connection
+        .query_row(
+            "select sql from sqlite_master where type = 'table' and name = 'saved_sessions'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let Some(table_sql) = table_sql else {
+        return Ok(());
+    };
+    if table_sql.contains("'ftp'") && table_sql.contains("ftp_options_json") {
+        return Ok(());
+    }
+
+    let ftp_options_source = if table_sql.contains("ftp_options_json") {
+        "ftp_options_json"
+    } else {
+        "null"
+    };
+    connection.execute_batch("pragma foreign_keys = off;")?;
+    let migration_result = (|| -> AppResult<()> {
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            "
+            create table saved_sessions_next (
+                id text primary key,
+                name text not null check (length(trim(name)) > 0),
+                type text not null check (type in ('ssh', 'local', 'rdp', 'ftp', 'sftp')),
+                group_id text null references session_groups(id) on delete set null,
+                host text not null check (length(trim(host)) > 0),
+                port integer not null check (port between 1 and 65535),
+                username text not null,
+                auth_mode text not null check (auth_mode in ('password', 'key', 'agent', 'none')),
+                credential_ref text null,
+                description text null,
+                tags_json text not null default '[]',
+                sort_order integer not null default 0,
+                created_at_ms integer not null,
+                updated_at_ms integer not null,
+                last_used_at_ms integer null,
+                ssh_options_json text null,
+                rdp_options_json text null,
+                local_options_json text null,
+                ftp_options_json text null
+            );
+            ",
+        )?;
+        transaction.execute_batch(&format!(
+            "
+            insert into saved_sessions_next (
+                id, name, type, group_id, host, port, username, auth_mode, credential_ref,
+                description, tags_json, sort_order, created_at_ms, updated_at_ms,
+                last_used_at_ms, ssh_options_json, rdp_options_json, local_options_json, ftp_options_json
+            )
+            select id, name, type, group_id, host, port, username, auth_mode, credential_ref,
+                   description, tags_json, sort_order, created_at_ms, updated_at_ms,
+                   last_used_at_ms, ssh_options_json, rdp_options_json, local_options_json, {ftp_options_source}
+            from saved_sessions;
+            drop table saved_sessions;
+            alter table saved_sessions_next rename to saved_sessions;
+            "
+        ))?;
+        transaction.commit()?;
+        Ok(())
+    })();
+    connection.execute_batch("pragma foreign_keys = on;")?;
+    migration_result
 }
 
 fn ensure_ai_tool_pending_columns(transaction: &rusqlite::Transaction<'_>) -> AppResult<()> {

@@ -183,5 +183,6 @@ fn ssh_session(id: &str, host: &str, username: &str) -> SavedSession {
         ssh_options: None,
         rdp_options: None,
         local_options: None,
+        ftp_options: None,
     }
 }

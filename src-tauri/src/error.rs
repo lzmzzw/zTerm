@@ -23,6 +23,8 @@ pub enum AppError {
     Ssh(String),
     #[error("sftp error: {0}")]
     Sftp(String),
+    #[error("ftp error: {0}")]
+    Ftp(String),
     #[error("ai error: {0}")]
     Ai(String),
     #[error("unsupported: {0}")]
@@ -56,6 +58,10 @@ impl AppError {
 
     pub fn sftp(message: impl Into<String>) -> Self {
         Self::Sftp(redact_sensitive(&message.into()))
+    }
+
+    pub fn ftp(message: impl Into<String>) -> Self {
+        Self::Ftp(redact_sensitive(&message.into()))
     }
 
     pub fn ai(message: impl Into<String>) -> Self {

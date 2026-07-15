@@ -549,3 +549,122 @@ fn saved_sessions_accept_local_type_after_migration() {
         )
         .expect("local saved session should satisfy schema constraints");
 }
+
+#[test]
+fn saved_sessions_accept_ftp_and_sftp_types_after_migration() {
+    let mut connection = rusqlite::Connection::open_in_memory().expect("database should open");
+    run_migrations(&mut connection).expect("migrations should run on an empty database");
+
+    for (id, session_type, port) in [("ftp-1", "ftp", 21), ("sftp-1", "sftp", 22)] {
+        connection
+            .execute(
+                "insert into saved_sessions (
+                    id, name, type, host, port, username, auth_mode, tags_json,
+                    sort_order, created_at_ms, updated_at_ms
+                 ) values (?1, ?2, ?3, 'files.example.test', ?4, 'ops', 'password', '[]', 0, 1, 1)",
+                rusqlite::params![id, session_type.to_uppercase(), session_type, port],
+            )
+            .expect("FTP/SFTP session type should satisfy the schema constraint");
+    }
+
+    let count: i64 = connection
+        .query_row(
+            "select count(*) from saved_sessions where type in ('ftp', 'sftp')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("new session types should be queryable");
+    assert_eq!(count, 2);
+}
+
+#[test]
+fn migrations_upgrade_existing_saved_sessions_without_losing_data() {
+    let mut connection = rusqlite::Connection::open_in_memory().expect("database should open");
+    connection.execute_batch(
+        "
+        create table session_groups (
+            id text primary key,
+            parent_id text null,
+            name text not null,
+            expanded integer not null,
+            sort_order integer not null,
+            created_at_ms integer not null,
+            updated_at_ms integer not null
+        );
+        insert into session_groups values ('group-1', null, 'Existing', 1, 0, 1, 1);
+        create table saved_sessions (
+            id text primary key,
+            name text not null check (length(trim(name)) > 0),
+            type text not null check (type in ('ssh', 'local', 'rdp')),
+            group_id text null references session_groups(id) on delete set null,
+            host text not null check (length(trim(host)) > 0),
+            port integer not null check (port between 1 and 65535),
+            username text not null,
+            auth_mode text not null check (auth_mode in ('password', 'key', 'agent', 'none')),
+            credential_ref text null,
+            description text null,
+            tags_json text not null default '[]',
+            sort_order integer not null default 0,
+            created_at_ms integer not null,
+            updated_at_ms integer not null,
+            last_used_at_ms integer null,
+            ssh_options_json text null,
+            rdp_options_json text null,
+            local_options_json text null
+        );
+        insert into saved_sessions (
+            id, name, type, group_id, host, port, username, auth_mode,
+            tags_json, sort_order, created_at_ms, updated_at_ms
+        ) values ('ssh-existing', 'Existing SSH', 'ssh', 'group-1', 'host.test', 22, 'ops', 'none', '[]', 0, 1, 1);
+        create table saved_session_refs (
+            id text primary key,
+            saved_session_id text not null references saved_sessions(id) on delete cascade
+        );
+        insert into saved_session_refs values ('ref-1', 'ssh-existing');
+        ",
+    ).expect("legacy schema should be created");
+
+    run_migrations(&mut connection).expect("legacy saved sessions should migrate");
+
+    let existing: (String, String, Option<String>) = connection
+        .query_row(
+            "select type, host, group_id from saved_sessions where id = 'ssh-existing'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("existing session should remain");
+    assert_eq!(
+        existing,
+        (
+            "ssh".to_string(),
+            "host.test".to_string(),
+            Some("group-1".to_string())
+        )
+    );
+    assert!(column_exists(
+        &connection,
+        "saved_sessions",
+        "ftp_options_json"
+    ));
+    let referenced_session: String = connection
+        .query_row(
+            "select saved_session_id from saved_session_refs where id = 'ref-1'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("dependent foreign-key row should remain");
+    assert_eq!(referenced_session, "ssh-existing");
+    let foreign_key_errors: i64 = connection
+        .query_row("select count(*) from pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .expect("foreign key check should run");
+    assert_eq!(foreign_key_errors, 0);
+    connection.execute(
+        "insert into saved_sessions (
+            id, name, type, host, port, username, auth_mode, tags_json,
+            sort_order, created_at_ms, updated_at_ms, ftp_options_json
+         ) values ('ftp-new', 'FTP', 'ftp', 'ftp.test', 21, 'ops', 'password', '[]', 0, 2, 2, '{}')",
+        [],
+    ).expect("migrated schema should accept FTP sessions");
+}

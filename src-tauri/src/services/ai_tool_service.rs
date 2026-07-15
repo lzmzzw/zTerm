@@ -1015,7 +1015,7 @@ impl AiToolService {
             ));
         }
         let kind = match draft.session_type {
-            SessionType::Ssh => CredentialKind::SshPassword,
+            SessionType::Ssh | SessionType::Sftp | SessionType::Ftp => CredentialKind::SshPassword,
             SessionType::Rdp => CredentialKind::RdpPassword,
             SessionType::Local => {
                 return Err(AppError::validation("本机会话不支持保存密码"));
@@ -2252,6 +2252,14 @@ fn validate_session_draft_for_test(store: &SqliteStore, draft: SavedSessionDraft
                 return Err(AppError::validation("未检测到可用本机终端"));
             }
         }
+        crate::models::session::SessionType::Sftp => {
+            crate::services::ssh_terminal_service::build_ssh_arguments(&session)?;
+        }
+        crate::models::session::SessionType::Ftp => {
+            if session.port == 0 || session.host.trim().is_empty() {
+                return Err(AppError::validation("FTP 主机和端口不能为空"));
+            }
+        }
     }
     Ok(())
 }
@@ -2280,6 +2288,7 @@ fn preview_session_from_draft(draft: SavedSessionDraft) -> crate::models::sessio
         ssh_options: draft.ssh_options,
         rdp_options: draft.rdp_options,
         local_options: draft.local_options,
+        ftp_options: draft.ftp_options,
     }
 }
 

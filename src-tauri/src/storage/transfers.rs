@@ -32,14 +32,14 @@ pub fn insert_transfer_task(
             path: local_path.to_string(),
         },
         TransferDirection::Download => TransferEndpoint {
-            kind: TransferEndpointKind::Ssh,
+            kind: TransferEndpointKind::SavedSession,
             saved_session_id: Some(saved_session_id.to_string()),
             path: remote_path.to_string(),
         },
     };
     let destination_endpoint = match direction {
         TransferDirection::Upload => TransferEndpoint {
-            kind: TransferEndpointKind::Ssh,
+            kind: TransferEndpointKind::SavedSession,
             saved_session_id: Some(saved_session_id.to_string()),
             path: remote_path.to_string(),
         },
@@ -450,7 +450,7 @@ fn validate_endpoint(endpoint: &TransferEndpoint, label: &str) -> AppResult<()> 
                 )));
             }
         }
-        TransferEndpointKind::Ssh => {
+        TransferEndpointKind::SavedSession => {
             let Some(saved_session_id) = endpoint.saved_session_id.as_deref() else {
                 return Err(AppError::validation(format!("{label}SSH 端点必须选择会话")));
             };

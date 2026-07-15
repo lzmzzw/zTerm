@@ -31,6 +31,7 @@ fn ssh_draft() -> SavedSessionDraft {
         ssh_options: None,
         rdp_options: None,
         local_options: None,
+        ftp_options: None,
     }
 }
 
@@ -114,12 +115,12 @@ fn transfer_queue_records_file_transfer_endpoints_without_polluting_sftp_panel_l
         )
         .expect("legacy SFTP panel task should enqueue");
     let source_endpoint = TransferEndpoint {
-        kind: TransferEndpointKind::Ssh,
+        kind: TransferEndpointKind::SavedSession,
         saved_session_id: Some(source_session.id.clone()),
         path: "/var/app.log".to_string(),
     };
     let destination_endpoint = TransferEndpoint {
-        kind: TransferEndpointKind::Ssh,
+        kind: TransferEndpointKind::SavedSession,
         saved_session_id: Some(destination_session.id.clone()),
         path: "/backup/app.log".to_string(),
     };

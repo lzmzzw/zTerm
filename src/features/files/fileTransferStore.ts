@@ -47,6 +47,7 @@ interface FileTransferState {
   setConflictPolicy: (policy: TransferConflictPolicy) => void;
   setEndpoint: (side: FileTransferSide, endpoint: TransferEndpoint) => void;
   setPath: (side: FileTransferSide, path: string) => void;
+  prepareForSession: (savedSessionId: string, remotePath?: string) => Promise<void>;
   selectPath: (side: FileTransferSide, path: string | null, event?: FileSelectionEvent) => void;
   loadEndpoint: (side: FileTransferSide) => Promise<void>;
   renameEndpoint: (side: FileTransferSide, from: string, to: string) => Promise<void>;
@@ -85,7 +86,7 @@ const initialLeft: FileTransferPaneState = {
 };
 
 const initialRight: FileTransferPaneState = {
-  endpoint: { kind: "ssh", saved_session_id: null, path: "/" },
+  endpoint: { kind: "saved_session", saved_session_id: null, path: "/" },
   entries: [],
   selectedPaths: [],
   selectionAnchorPath: null,
@@ -139,6 +140,12 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   setPath(side, path) {
     updatePane(set, side, (pane) => ({ endpoint: { ...pane.endpoint, path } }));
   },
+  async prepareForSession(savedSessionId, remotePath = "/") {
+    const defaultLocalPath = get().defaultLocalPath || (await get().loadDefaultLocalPath());
+    get().setEndpoint("left", { kind: "local", saved_session_id: null, path: defaultLocalPath });
+    get().setEndpoint("right", { kind: "saved_session", saved_session_id: savedSessionId, path: remotePath || "/" });
+    await Promise.all([get().loadEndpoint("left"), get().loadEndpoint("right")]);
+  },
   selectPath(side, path, event) {
     if (!path) {
       updatePane(set, side, { selectedPaths: [], selectionAnchorPath: null });
@@ -157,7 +164,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       if (!isCurrentPaneRequest(side, requestId)) return;
       updatePane(set, side, (pane) => ({ endpoint: { ...pane.endpoint, path: defaultLocalPath } }));
     }
-    if (endpoint.kind === "ssh" && !endpoint.saved_session_id) {
+    if (endpoint.kind === "saved_session" && !endpoint.saved_session_id) {
       updatePane(set, side, { entries: [], selectedPaths: [], loading: false, error: null });
       return;
     }
