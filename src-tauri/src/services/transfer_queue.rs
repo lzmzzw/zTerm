@@ -83,6 +83,7 @@ impl TransferQueue {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn enqueue(
         &self,
         saved_session_id: &str,

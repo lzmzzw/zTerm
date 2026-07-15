@@ -237,7 +237,7 @@ fn migrations_upgrade_legacy_transfer_tasks_with_default_conflict_policy() {
 
     run_migrations(&mut connection).expect("migrations should upgrade legacy transfer tasks");
 
-    let row: (
+    type MigratedTransferEndpoints = (
         Option<String>,
         String,
         String,
@@ -247,7 +247,8 @@ fn migrations_upgrade_legacy_transfer_tasks_with_default_conflict_policy() {
         String,
         Option<String>,
         String,
-    ) = connection
+    );
+    let row: MigratedTransferEndpoints = connection
         .query_row(
             "
             select kind, conflict_policy, task_origin,

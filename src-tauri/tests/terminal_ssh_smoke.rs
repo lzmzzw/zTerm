@@ -76,8 +76,8 @@ fn configured_ssh_sessions_execute_basic_commands() {
         .sessions;
     let ssh_sessions = all_sessions
         .iter()
-        .cloned()
         .filter(|session| session.session_type == SessionType::Ssh)
+        .cloned()
         .collect::<Vec<_>>();
 
     assert!(

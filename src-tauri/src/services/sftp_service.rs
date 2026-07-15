@@ -159,9 +159,8 @@ impl SftpService {
             .cached_sftp_session(session, all_sessions, secrets)
             .await?;
         let sftp = lease.entry.sftp.lock().await;
-        create_remote_dir_all(&sftp, &path).await.map_err(|error| {
+        create_remote_dir_all(&sftp, &path).await.inspect_err(|_| {
             self.cache.remove_key_if_entry(&lease.key, &lease.entry);
-            error
         })
     }
 
@@ -235,12 +234,12 @@ impl SftpService {
                 .await
                 .map_err(|error| AppError::sftp(error.to_string()))
         };
-        result.map_err(|error| {
+        result.inspect_err(|_| {
             self.cache.remove_key_if_entry(&lease.key, &lease.entry);
-            error
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn upload_path<F>(
         &self,
         session: &SavedSession,
@@ -267,7 +266,7 @@ impl SftpService {
         if metadata.is_dir() {
             let total_bytes = local_path_total_bytes(local_path.to_string_lossy().as_ref()).await?;
             let Some(remote_root) =
-                prepare_remote_directory_root(&sftp, &remote_path, conflict_policy).await?
+                prepare_remote_directory_root(sftp, &remote_path, conflict_policy).await?
             else {
                 transferred = transferred.saturating_add(total_bytes);
                 on_progress(progress_update(transferred, None))?;
@@ -285,11 +284,11 @@ impl SftpService {
                     let remote_entry = join_remote_path(&remote_dir, &entry_name);
                     let entry_metadata = entry.metadata().await?;
                     if entry_metadata.is_dir() {
-                        ensure_remote_directory(&sftp, &remote_entry).await?;
+                        ensure_remote_directory(sftp, &remote_entry).await?;
                         stack.push((entry_path, remote_entry));
                     } else {
                         transferred = upload_file(
-                            &sftp,
+                            sftp,
                             &entry_path,
                             &remote_entry,
                             conflict_policy,
@@ -303,7 +302,7 @@ impl SftpService {
             }
         } else {
             transferred = upload_file(
-                &sftp,
+                sftp,
                 &local_path,
                 &remote_path,
                 conflict_policy,
@@ -319,6 +318,7 @@ impl SftpService {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn download_path<F>(
         &self,
         session: &SavedSession,
@@ -368,7 +368,7 @@ impl SftpService {
                         stack.push((remote_entry, local_entry));
                     } else {
                         transferred = download_file(
-                            &sftp,
+                            sftp,
                             &remote_entry,
                             &local_entry,
                             conflict_policy,
@@ -382,7 +382,7 @@ impl SftpService {
             }
         } else {
             transferred = download_file(
-                &sftp,
+                sftp,
                 &remote_path,
                 &local_path,
                 conflict_policy,
@@ -398,6 +398,7 @@ impl SftpService {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn copy_remote_to_remote_path<F>(
         &self,
         source_session: &SavedSession,
@@ -430,12 +431,9 @@ impl SftpService {
         let mut transferred = 0_u64;
 
         if metadata.file_type().is_dir() {
-            let Some(destination_root) = prepare_remote_directory_root(
-                &destination_sftp,
-                &destination_path,
-                conflict_policy,
-            )
-            .await?
+            let Some(destination_root) =
+                prepare_remote_directory_root(destination_sftp, &destination_path, conflict_policy)
+                    .await?
             else {
                 source_connection.close("sftp remote copy completed").await;
                 destination_connection
@@ -455,12 +453,12 @@ impl SftpService {
                     let source_entry = entry.path();
                     let destination_entry = join_remote_path(&destination_dir, &entry.file_name());
                     if entry.metadata().file_type().is_dir() {
-                        ensure_remote_directory(&destination_sftp, &destination_entry).await?;
+                        ensure_remote_directory(destination_sftp, &destination_entry).await?;
                         stack.push((source_entry, destination_entry));
                     } else {
                         transferred = copy_remote_file(
-                            &source_sftp,
-                            &destination_sftp,
+                            source_sftp,
+                            destination_sftp,
                             &source_entry,
                             &destination_entry,
                             conflict_policy,
@@ -474,8 +472,8 @@ impl SftpService {
             }
         } else {
             transferred = copy_remote_file(
-                &source_sftp,
-                &destination_sftp,
+                source_sftp,
+                destination_sftp,
                 &source_path,
                 &destination_path,
                 conflict_policy,
@@ -1249,6 +1247,7 @@ where
     Ok(transferred)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn copy_remote_file<F>(
     source_sftp: &RusshSftpSession,
     destination_sftp: &RusshSftpSession,

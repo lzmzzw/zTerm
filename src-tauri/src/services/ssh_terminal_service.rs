@@ -1210,6 +1210,27 @@ fn container_command(
     build_container_exec_command(container, container_id)
 }
 
+fn native_pty_modes() -> Vec<(Pty, u32)> {
+    vec![
+        (Pty::VINTR, 3),
+        (Pty::VEOF, 4),
+        (Pty::VERASE, 127),
+        (Pty::ICRNL, 1),
+        (Pty::IXON, 1),
+        (Pty::ISIG, 1),
+        (Pty::ICANON, 1),
+        (Pty::ECHO, 1),
+        (Pty::ECHOE, 1),
+        (Pty::ECHOK, 1),
+        (Pty::IEXTEN, 1),
+        (Pty::OPOST, 1),
+        (Pty::ONLCR, 1),
+        (Pty::CS8, 1),
+        (Pty::TTY_OP_ISPEED, 38400),
+        (Pty::TTY_OP_OSPEED, 38400),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1385,25 +1406,4 @@ mod tests {
             workdir: None,
         }
     }
-}
-
-fn native_pty_modes() -> Vec<(Pty, u32)> {
-    vec![
-        (Pty::VINTR, 3),
-        (Pty::VEOF, 4),
-        (Pty::VERASE, 127),
-        (Pty::ICRNL, 1),
-        (Pty::IXON, 1),
-        (Pty::ISIG, 1),
-        (Pty::ICANON, 1),
-        (Pty::ECHO, 1),
-        (Pty::ECHOE, 1),
-        (Pty::ECHOK, 1),
-        (Pty::IEXTEN, 1),
-        (Pty::OPOST, 1),
-        (Pty::ONLCR, 1),
-        (Pty::CS8, 1),
-        (Pty::TTY_OP_ISPEED, 38400),
-        (Pty::TTY_OP_OSPEED, 38400),
-    ]
 }

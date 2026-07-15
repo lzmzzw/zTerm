@@ -238,23 +238,21 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     let _ = state
         .external_launch_service()
         .register_from_args(env::args())
-        .map_err(|error| {
+        .inspect_err(|error| {
             eprintln!(
                 "external launch ignored: {}",
                 security::redaction::redact_sensitive(&error.to_string())
             );
-            error
         });
     for args in early_args.drain(..) {
         let _ = state
             .external_launch_service()
             .register_from_args(args)
-            .map_err(|error| {
+            .inspect_err(|error| {
                 eprintln!(
                     "external launch ignored: {}",
                     security::redaction::redact_sensitive(&error.to_string())
                 );
-                error
             });
     }
     if let Err(error) = tauri::async_runtime::block_on(commands::mcp::start_mcp_if_enabled(

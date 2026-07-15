@@ -438,6 +438,7 @@ pub fn terminal_zmodem_save_file(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_terminal_reader(
     app: AppHandle,
     manager: Arc<TerminalManager>,

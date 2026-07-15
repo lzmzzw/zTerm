@@ -351,6 +351,7 @@ impl AiToolService {
         Ok(audit)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn audit_execution(
         &self,
         store: &SqliteStore,

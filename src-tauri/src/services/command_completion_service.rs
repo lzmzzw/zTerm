@@ -267,6 +267,7 @@ impl CommandCompletionService {
             .map_err(|_| AppError::terminal("command completion runtime lock was poisoned"))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_history_candidates(
         &self,
         store: &SqliteStore,

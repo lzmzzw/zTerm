@@ -58,6 +58,7 @@ pub fn get_ai_provider_profile(store: &SqliteStore, id: &str) -> AppResult<AiPro
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn upsert_ai_provider_profile(
     store: &SqliteStore,
     id: &str,

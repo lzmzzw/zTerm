@@ -345,6 +345,7 @@ fn run_tool_rounds_sync(
     Ok(result)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_tool_round(
     store: &SqliteStore,
     tools: &AiToolService,

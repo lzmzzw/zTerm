@@ -38,7 +38,7 @@ fn terminal_profile_detection_uses_priority_order_and_default() {
             windows_paths: &[],
         },
     ];
-    let profiles = detect_terminal_profiles_in_dirs(&[temp_dir.clone()], &candidates)
+    let profiles = detect_terminal_profiles_in_dirs(std::slice::from_ref(&temp_dir), &candidates)
         .expect("profiles should detect from supplied dirs");
 
     assert_eq!(
@@ -60,9 +60,11 @@ fn terminal_profile_detection_recognizes_git_bash_with_login_args() {
     fs::create_dir_all(&git_bin_dir).expect("git bin dir should create");
     touch(git_bin_dir.join("bash.exe"));
 
-    let profiles =
-        detect_terminal_profiles_in_dirs(&[git_bin_dir.clone()], terminal_profile_candidates())
-            .expect("profiles should detect git bash from supplied dir");
+    let profiles = detect_terminal_profiles_in_dirs(
+        std::slice::from_ref(&git_bin_dir),
+        terminal_profile_candidates(),
+    )
+    .expect("profiles should detect git bash from supplied dir");
     let git_bash = profiles
         .iter()
         .find(|profile| profile.id == "git-bash")

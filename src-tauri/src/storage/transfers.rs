@@ -15,6 +15,7 @@ use crate::{
 
 pub const TRANSFER_TASKS_TABLE: &str = "transfer_tasks";
 
+#[allow(clippy::too_many_arguments)]
 pub fn insert_transfer_task(
     store: &SqliteStore,
     saved_session_id: &str,

@@ -200,6 +200,7 @@ impl TerminalManager {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn open_ssh_container_session_with_resolver(
         &self,
         session: &SavedSession,
@@ -269,6 +270,7 @@ impl TerminalManager {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn open_local_session(
         &self,
         profile: &TerminalProfile,
