@@ -55,7 +55,7 @@ export function ConnectionPickerDialog({
   onCancel: () => void;
   onSelect: (choice: ConnectionChoice) => void;
 }) {
-  const treeItems = buildSessionTreeListItems({ groups, sessions });
+  const treeItems = buildSessionTreeListItems({ groups, sessions, hideEmptyGroups: true });
   const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(() => new Set());
   const visibleTreeItems = visibleSessionTreeListItems(treeItems, collapsedGroupKeys);
 

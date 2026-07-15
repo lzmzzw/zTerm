@@ -117,7 +117,7 @@ describe("AppShellDialogs", () => {
     view.unmount();
   });
 
-  it("renders the complete grouped session tree using session-list ordering", () => {
+  it("renders available grouped sessions in session-list ordering without empty groups", () => {
     const view = render(
       <ConnectionPickerDialog
         groups={[
@@ -140,16 +140,16 @@ describe("AppShellDialogs", () => {
     );
 
     expect(Array.from(view.container.querySelectorAll(".zt-session-picker-row")).map((node) => node.textContent)).toEqual([
-      "Group 2",
       "Group 10",
       "172.16.40.20",
       "172.16.40.198",
       "Child",
       "Child local",
-      "Group 30 Empty",
       "未分组",
       "Root SSH",
     ]);
+    expect(view.container.querySelector('[aria-label="折叠分组 Group 2"]')).toBe(null);
+    expect(view.container.querySelector('[aria-label="折叠分组 Group 30 Empty"]')).toBe(null);
     expect(view.container.querySelector('[data-session-tree-depth="2"]')?.textContent).toBe("Child local");
     expect(view.container.querySelector('[aria-label="选择连接 Child local"]')?.getAttribute("aria-level")).toBe("3");
 
