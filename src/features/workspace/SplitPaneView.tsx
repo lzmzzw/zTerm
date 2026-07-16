@@ -33,6 +33,7 @@ interface SplitPaneViewProps {
   activePaneId: string;
   onActivatePane: (paneId: string) => void;
   onAddPaneTab: (paneId: string) => void;
+  onDuplicatePaneTab?: (paneId: string, paneTabId: string) => void;
   onSelectPaneTab: (paneId: string, paneTabId: string) => void;
   onClosePaneTab: (paneId: string, paneTabId: string) => void;
   onMovePaneTab?: (sourcePaneId: string, paneTabId: string, targetPaneId: string, beforePaneTabId: string | null) => void;
@@ -75,6 +76,7 @@ export function SplitPaneView({
   activePaneId,
   onActivatePane,
   onAddPaneTab,
+  onDuplicatePaneTab = () => undefined,
   onSelectPaneTab,
   onClosePaneTab,
   onMovePaneTab = () => undefined,
@@ -175,6 +177,7 @@ export function SplitPaneView({
           activePaneId={activePaneId}
           onActivatePane={onActivatePane}
           onAddPaneTab={onAddPaneTab}
+          onDuplicatePaneTab={onDuplicatePaneTab}
           onSelectPaneTab={onSelectPaneTab}
           onClosePaneTab={onClosePaneTab}
           onMovePaneTab={onMovePaneTab}
@@ -200,6 +203,7 @@ export function SplitPaneView({
           activePaneId={activePaneId}
           onActivatePane={onActivatePane}
           onAddPaneTab={onAddPaneTab}
+          onDuplicatePaneTab={onDuplicatePaneTab}
           onSelectPaneTab={onSelectPaneTab}
           onClosePaneTab={onClosePaneTab}
           onMovePaneTab={onMovePaneTab}
@@ -224,6 +228,7 @@ export function SplitPaneView({
       active={root.id === activePaneId}
       onActivatePane={onActivatePane}
       onAddPaneTab={onAddPaneTab}
+      onDuplicatePaneTab={onDuplicatePaneTab}
       onSelectPaneTab={onSelectPaneTab}
       onClosePaneTab={onClosePaneTab}
       onMovePaneTab={onMovePaneTab}
@@ -245,6 +250,7 @@ function LeafPane({
   active,
   onActivatePane,
   onAddPaneTab,
+  onDuplicatePaneTab,
   onSelectPaneTab,
   onClosePaneTab,
   onMovePaneTab,
@@ -262,6 +268,7 @@ function LeafPane({
   active: boolean;
   onActivatePane: (paneId: string) => void;
   onAddPaneTab: (paneId: string) => void;
+  onDuplicatePaneTab: (paneId: string, paneTabId: string) => void;
   onSelectPaneTab: (paneId: string, paneTabId: string) => void;
   onClosePaneTab: (paneId: string, paneTabId: string) => void;
   onMovePaneTab: (sourcePaneId: string, paneTabId: string, targetPaneId: string, beforePaneTabId: string | null) => void;
@@ -608,6 +615,18 @@ function LeafPane({
                 data-pane-tab-id={terminalTab.id}
                 data-flip-id={terminalTab.id}
                 onPointerDown={(event) => handlePaneTabPointerDown(event, terminalTab.id)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onActivatePane(root.id);
+                  onDuplicatePaneTab(root.id, terminalTab.id);
+                }}
+                onAuxClick={(event) => {
+                  if (event.button !== 1) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  handleClosePaneTab(terminalTab.id, terminalTab.runtime_session_id);
+                }}
               >
                 <button
                   type="button"

@@ -8,6 +8,7 @@ import { useWorkspaceStore } from "../features/workspace/workspaceStore";
 interface WorkspaceStageProps {
   onActivatePane: (paneId: string) => void;
   onAddPaneTab: (paneId: string) => void;
+  onDuplicatePaneTab: (paneId: string, paneTabId: string) => void;
   onSelectPaneTab: (paneId: string, paneTabId: string) => void;
   onClosePaneTab: (paneId: string, paneTabId: string) => void;
   onMovePaneTab: (sourcePaneId: string, paneTabId: string, targetPaneId: string, beforePaneTabId: string | null) => void;
@@ -21,6 +22,7 @@ interface WorkspaceStageProps {
 export function WorkspaceStage({
   onActivatePane,
   onAddPaneTab,
+  onDuplicatePaneTab,
   onSelectPaneTab,
   onClosePaneTab,
   onMovePaneTab,
@@ -48,6 +50,7 @@ export function WorkspaceStage({
             activePaneId={activeTab.active_pane_id}
             onActivatePane={onActivatePane}
             onAddPaneTab={onAddPaneTab}
+            onDuplicatePaneTab={onDuplicatePaneTab}
             onSelectPaneTab={onSelectPaneTab}
             onClosePaneTab={onClosePaneTab}
             onMovePaneTab={onMovePaneTab}

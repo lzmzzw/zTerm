@@ -1261,6 +1261,39 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
+  it("duplicates a terminal tab on right click and closes it on middle click", () => {
+    const onDuplicatePaneTab = vi.fn();
+    const onClosePaneTab = vi.fn();
+    const root = leaf("pane-a", "PowerShell 7");
+    const view = render(
+      <SplitPaneView
+        root={root}
+        activePaneId="pane-a"
+        onActivatePane={vi.fn()}
+        onAddPaneTab={vi.fn()}
+        onDuplicatePaneTab={onDuplicatePaneTab}
+        onSelectPaneTab={vi.fn()}
+        onClosePaneTab={onClosePaneTab}
+        onSplitPane={vi.fn()}
+        onClosePane={vi.fn()}
+      />,
+    );
+    const tab = view.container.querySelector('[data-pane-tab-id="pane-a-tab-1"]') as HTMLDivElement;
+
+    act(() => {
+      tab.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+    });
+
+    expect(onDuplicatePaneTab).toHaveBeenCalledWith("pane-a", "pane-a-tab-1");
+
+    act(() => {
+      tab.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
+    });
+
+    expect(onClosePaneTab).toHaveBeenCalledWith("pane-a", "pane-a-tab-1");
+    view.unmount();
+  });
+
   it("activates the pane that owns the toolbar before splitting from that pane", () => {
     const onActivatePane = vi.fn();
     const onSplitPane = vi.fn();

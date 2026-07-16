@@ -355,6 +355,7 @@ vi.mock("../features/workspace/SplitPaneView", () => ({
     root,
     activePaneId,
     onAddPaneTab,
+    onDuplicatePaneTab,
     onClosePaneTab,
     onClosePane,
     onSplitPane,
@@ -364,6 +365,7 @@ vi.mock("../features/workspace/SplitPaneView", () => ({
     root: Record<string, unknown>;
     activePaneId: string;
     onAddPaneTab: (paneId: string) => void;
+    onDuplicatePaneTab: (paneId: string, paneTabId: string) => void;
     onClosePaneTab: (paneId: string, paneTabId: string) => void;
     onClosePane: (paneId: string) => void;
     onSplitPane: (direction: "horizontal" | "vertical") => void;
@@ -382,6 +384,9 @@ vi.mock("../features/workspace/SplitPaneView", () => ({
       <span>{collectMockPaneTitles(root).join(" ")}</span>
       <button type="button" aria-label="创建连接" onClick={() => onAddPaneTab("pane-1")}>
         创建连接
+      </button>
+      <button type="button" aria-label="复制当前连接" onClick={() => onDuplicatePaneTab("pane-1", "pane-1-tab-1")}>
+        复制当前连接
       </button>
       <button type="button" aria-label="横向分栏" onClick={() => onSplitPane("horizontal")}>
         横向分栏
@@ -4062,6 +4067,77 @@ describe("AppShell", () => {
       username: "ubuntu",
     });
 
+    view.unmount();
+  });
+
+  it("duplicates the clicked saved connection into a new adjacent pane tab", async () => {
+    storeMocks.workspaceState.tabs = [
+      {
+        id: "tab-1",
+        title: "生产机",
+        active_pane_id: "pane-1",
+        root: {
+          kind: "leaf",
+          id: "pane-1",
+          title: "生产机",
+          runtime_session_id: "runtime-1",
+          saved_session_id: "session-1",
+          active_terminal_tab_id: "pane-1-tab-1",
+          terminal_tabs: [
+            {
+              id: "pane-1-tab-1",
+              title: "生产机",
+              runtime_session_id: "runtime-1",
+              saved_session_id: "session-1",
+              connection_source: "saved_session",
+              path: "/srv/app",
+            },
+          ],
+        },
+      },
+    ];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('[aria-label="复制当前连接"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.addPaneTabAfter).toHaveBeenCalledWith("pane-1", "pane-1-tab-1");
+    expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
+      "default-workspace",
+      "tab-1",
+      "pane-1",
+      "pane-1-tab-created",
+      expect.objectContaining({
+        saved_session_id: "session-1",
+        connection_source: "saved_session",
+        path: "/srv/app",
+        restore_status: "pending",
+      }),
+    );
+    expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1", "/srv/app");
+    expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
+      "default-workspace",
+      "tab-1",
+      "pane-1",
+      "pane-1-tab-created",
+      expect.objectContaining({ runtime_session_id: "runtime-2" }),
+    );
+    view.unmount();
+  });
+
+  it("does not duplicate an empty placeholder pane tab", async () => {
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('[aria-label="复制当前连接"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.addPaneTabAfter).not.toHaveBeenCalled();
+    expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
     view.unmount();
   });
 

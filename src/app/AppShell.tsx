@@ -64,7 +64,7 @@ import {
   workspaceSave,
   workspaceSaveDefaultSnapshot,
 } from "../features/workspace/workspacePersistence";
-import { findPane, getActiveTerminalTab } from "../features/workspace/workspaceLayout";
+import { findPane, getActiveTerminalTab, getLeafTerminalTabs } from "../features/workspace/workspaceLayout";
 import { markWorkspaceRestoreQueued, runWorkspaceRestoreQueue } from "../features/workspace/workspaceRestoreScheduler";
 import { DEFAULT_WORKSPACE_ID } from "../features/workspace/workspaceConstants";
 import {
@@ -1306,6 +1306,52 @@ export function AppShell() {
     setConnectionDialogError(null);
   }
 
+  async function handleDuplicatePaneConnection(paneId: string, paneTabId: string) {
+    if (!activeTab) return;
+    const sourcePane = findPane(activeTab.root, paneId);
+    const sourceTab = sourcePane?.kind === "leaf"
+      ? getLeafTerminalTabs(sourcePane).find((tab) => tab.id === paneTabId)
+      : null;
+    const source = sourceTab?.connection_source ?? (sourceTab?.saved_session_id ? "saved_session" : null);
+    if (!sourceTab || !source || source === "missing" || (source !== "default_local" && !sourceTab.saved_session_id)) return;
+
+    const targetWorkspaceId = activeWorkspaceId;
+    const targetWorkspaceTabId = activeTab.id;
+    const targetPaneTab = addPaneTabAfter(paneId, paneTabId);
+    updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTabId, paneId, targetPaneTab.id, {
+      title: sourceTab.title,
+      saved_session_id: sourceTab.saved_session_id,
+      connection_source: source,
+      container_target: sourceTab.container_target ?? null,
+      path: sourceTab.path ?? null,
+      restore_status: "pending",
+      restore_error: null,
+    });
+    setTerminalError(null);
+
+    try {
+      const workingDirectory = sourceTab.path?.trim() || null;
+      const runtime = source === "default_local"
+        ? await openDefaultLocalTerminal(paneId, workingDirectory)
+        : source === "ssh_container" && sourceTab.container_target?.id
+          ? await openSshContainerTerminal(
+              sourceTab.saved_session_id!,
+              paneId,
+              sourceTab.container_target.id,
+              sourceTab.container_target.name ?? null,
+            )
+          : await openTerminal(sourceTab.saved_session_id!, paneId, workingDirectory);
+      bindRuntimeToPaneTab(targetWorkspaceId, targetWorkspaceTabId, paneId, targetPaneTab.id, runtime);
+    } catch (error) {
+      const message = fallbackOnlyErrorMessage(error, "复制当前连接失败");
+      updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTabId, paneId, targetPaneTab.id, {
+        restore_status: "failed",
+        restore_error: message,
+      });
+      setTerminalError(message);
+    }
+  }
+
   async function handleCreatePaneConnection(choice: ConnectionChoice) {
     if (!connectionDialogTarget || connectionOpening) return;
     const target = connectionDialogTarget;
@@ -1993,6 +2039,7 @@ export function AppShell() {
         <WorkspaceStage
           onActivatePane={setActivePane}
           onAddPaneTab={handleRequestPaneConnection}
+          onDuplicatePaneTab={(paneId, paneTabId) => void handleDuplicatePaneConnection(paneId, paneTabId)}
           onSelectPaneTab={selectPaneTab}
           onClosePaneTab={(paneId, paneTabId) => closePaneTab(paneId, paneTabId)}
           onMovePaneTab={movePaneTab}
