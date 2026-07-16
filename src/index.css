@@ -5910,12 +5910,16 @@ button {
 
 .zt-mcp-tool-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
 }
 
 .zt-mcp-tool-item {
   min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.1fr);
+  align-items: baseline;
+  gap: 24px;
   padding: 8px 0;
   border-bottom: 1px solid var(--zt-border-subtle);
 }
@@ -5940,7 +5944,7 @@ button {
 }
 
 .zt-mcp-tool-item p {
-  margin: 3px 0 0;
+  margin: 0;
   color: var(--zt-text-secondary);
   font-size: var(--zt-font-size-ui);
 }
@@ -7097,8 +7101,10 @@ button {
     grid-template-columns: 20px minmax(0, 1fr) auto;
   }
 
-  .zt-mcp-tool-list {
+  .zt-mcp-tool-item {
     grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 4px;
   }
 
   .zt-mcp-tool-item > div {
