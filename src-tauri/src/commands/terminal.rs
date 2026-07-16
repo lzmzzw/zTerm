@@ -39,6 +39,11 @@ struct AuthPromptSecret {
     secret: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct TerminalHistoryChangedEvent {
+    runtime_session_id: String,
+}
+
 impl AuthPromptSecret {
     fn new(target: impl Into<String>, secret: impl Into<String>) -> Self {
         Self {
@@ -84,6 +89,9 @@ pub fn terminal_open(
                 opened.info.history_scope_kind,
                 opened.info.history_scope_id.clone(),
             );
+            if opened.shell_history_integration {
+                history.enable_shell_integration(&opened.info.runtime_session_id);
+            }
             let completion = state.command_completion_service();
             completion.register_runtime(
                 &opened.info.runtime_session_id,
@@ -219,6 +227,9 @@ pub fn terminal_open_ssh_container(
         opened.info.history_scope_kind,
         opened.info.history_scope_id.clone(),
     );
+    if opened.shell_history_integration {
+        history.enable_shell_integration(&opened.info.runtime_session_id);
+    }
     let completion = state.command_completion_service();
     completion.register_runtime(
         &opened.info.runtime_session_id,
@@ -268,6 +279,9 @@ pub fn terminal_open_default_local(
         opened.info.history_scope_kind,
         opened.info.history_scope_id.clone(),
     );
+    if opened.shell_history_integration {
+        history.enable_shell_integration(&opened.info.runtime_session_id);
+    }
     let completion = state.command_completion_service();
     completion.register_runtime(
         &opened.info.runtime_session_id,
@@ -470,18 +484,31 @@ fn spawn_terminal_reader(
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(read) => {
-                    let data = String::from_utf8_lossy(&buffer[..read]).to_string();
-                    if let Some(secret) =
-                        select_auth_secret_for_prompt(&data, &auth_secrets, &mut used_auth_secrets)
-                    {
+                    let raw_data = String::from_utf8_lossy(&buffer[..read]).to_string();
+                    if let Some(secret) = select_auth_secret_for_prompt(
+                        &raw_data,
+                        &auth_secrets,
+                        &mut used_auth_secrets,
+                    ) {
                         let _ = manager.write(&runtime_session_id, &format!("{secret}\r"));
+                    }
+                    let (data, history_changed) = history
+                        .consume_output(&runtime_session_id, &raw_data)
+                        .unwrap_or((raw_data.clone(), false));
+                    if history_changed {
+                        let _ = app.emit(
+                            "terminal:history-changed",
+                            TerminalHistoryChangedEvent {
+                                runtime_session_id: runtime_session_id.clone(),
+                            },
+                        );
                     }
                     let _ = manager.record_output(&runtime_session_id, &data);
                     let visible_data = manager
                         .visible_output_after_suppression(&runtime_session_id, &data)
                         .unwrap_or_else(|_| data.clone());
                     if !visible_data.is_empty() {
-                        let raw_bytes = if visible_data == data {
+                        let raw_bytes = if visible_data == raw_data {
                             buffer[..read].to_vec()
                         } else {
                             visible_data.as_bytes().to_vec()

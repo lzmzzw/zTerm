@@ -172,6 +172,21 @@ describe("terminalStore", () => {
     unlisten();
   });
 
+  it("refreshes command history when the shell reports a submitted command", async () => {
+    const unlisten = await useTerminalStore.getState().bindTerminalEvents();
+
+    eventMock.listeners["terminal:history-changed"]?.({
+      payload: { runtime_session_id: "runtime-1" },
+    });
+    eventMock.listeners["terminal:history-changed"]?.({
+      payload: { runtime_session_id: "runtime-1" },
+    });
+
+    expect(useTerminalStore.getState().inputSerialByRuntime["runtime-1"]).toBe(2);
+    expect(useTerminalStore.getState().inputSerialByRuntime["runtime-2"]).toBeUndefined();
+    unlisten();
+  });
+
   it("trims accumulated terminal output so workspace switches do not replay large histories", () => {
     const chunk = "a".repeat(50_010);
 

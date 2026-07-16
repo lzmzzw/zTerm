@@ -2,7 +2,7 @@
 use std::{
     collections::HashMap,
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Child as ProcessChild,
     sync::{Arc, Mutex},
     thread,
@@ -43,6 +43,7 @@ pub struct OpenedPtySession {
     pub info: RuntimeSessionInfo,
     pub reader: Box<dyn Read + Send>,
     pub auth_secret: Option<String>,
+    pub shell_history_integration: bool,
 }
 
 enum RuntimeSession {
@@ -215,6 +216,7 @@ impl TerminalManager {
             info,
             reader,
             auth_secret: spawn.auth_secret,
+            shell_history_integration: false,
         })
     }
 
@@ -306,6 +308,7 @@ impl TerminalManager {
             info,
             reader,
             auth_secret: spawn.auth_secret,
+            shell_history_integration: false,
         })
     }
 
@@ -323,6 +326,12 @@ impl TerminalManager {
         let mut command = CommandBuilder::new(profile.path.as_str());
         for arg in &profile.args {
             command.arg(arg.as_str());
+        }
+        let shell_history_integration = supports_powershell_history_integration(profile);
+        if shell_history_integration {
+            command.arg("-NoExit");
+            command.arg("-Command");
+            command.arg(powershell_history_integration_script());
         }
         if let Some(working_directory) = local_options
             .and_then(|options| options.working_directory.as_deref())
@@ -371,6 +380,7 @@ impl TerminalManager {
             info,
             reader: pty.reader,
             auth_secret: None,
+            shell_history_integration,
         })
     }
 
@@ -804,9 +814,38 @@ fn short_container_id(container_id: &str) -> String {
     }
 }
 
+fn supports_powershell_history_integration(profile: &TerminalProfile) -> bool {
+    let is_powershell = Path::new(&profile.path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            name.eq_ignore_ascii_case("pwsh.exe")
+                || name.eq_ignore_ascii_case("powershell.exe")
+                || name.eq_ignore_ascii_case("pwsh")
+                || name.eq_ignore_ascii_case("powershell")
+        })
+        .unwrap_or(false);
+    let has_conflicting_startup_arg = profile.args.iter().any(|arg| {
+        matches!(
+            arg.trim().to_ascii_lowercase().as_str(),
+            "-command" | "-c" | "-encodedcommand" | "-e" | "-file" | "-f" | "-noninteractive"
+        )
+    });
+    is_powershell && !has_conflicting_startup_arg
+}
+
+fn powershell_history_integration_script() -> &'static str {
+    "$global:__ztermOriginalEnterHandler=Get-PSReadLineKeyHandler -Chord Enter;Set-PSReadLineKeyHandler -Chord Enter -ScriptBlock { param($key,$arg) try { $line=$null;$cursor=0;[Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line,[ref]$cursor);$tokens=$null;$parseErrors=$null;[Management.Automation.Language.Parser]::ParseInput($line,[ref]$tokens,[ref]$parseErrors)>$null;if($parseErrors.IncompleteInput -notcontains $true){$payload=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($line));[Console]::Write(([char]27).ToString()+']633;ZTermCommand;'+$payload+[char]7)}} catch {} $handler=$global:__ztermOriginalEnterHandler;if ($handler.ScriptBlock) { & $handler.ScriptBlock $key $arg } elseif ($handler.Function -eq 'ValidateAndAcceptLine') { [Microsoft.PowerShell.PSConsoleReadLine]::ValidateAndAcceptLine() } else { [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine() } }"
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{tail_chars, TerminalManager};
+    use crate::models::terminal_profile::TerminalProfile;
+
+    use super::{
+        powershell_history_integration_script, supports_powershell_history_integration, tail_chars,
+        TerminalManager,
+    };
 
     #[test]
     fn output_suppression_hides_probe_until_end_marker_and_returns_tail() {
@@ -847,5 +886,33 @@ mod tests {
         assert_eq!(tail_chars("abc", 0), "");
         assert_eq!(tail_chars("abc", 5), "abc");
         assert_eq!(tail_chars("a中🚀b", 3), "中🚀b");
+    }
+
+    #[test]
+    fn powershell_profiles_install_the_shell_history_hook() {
+        let profile = TerminalProfile {
+            id: "pwsh".to_string(),
+            name: "PowerShell 7".to_string(),
+            path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe".to_string(),
+            args: Vec::new(),
+            detected: true,
+            is_default: true,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+
+        assert!(supports_powershell_history_integration(&profile));
+        assert!(powershell_history_integration_script().contains("GetBufferState"));
+        assert!(powershell_history_integration_script().contains("OriginalEnterHandler"));
+        assert!(powershell_history_integration_script().contains("ZTermCommand"));
+        assert!(powershell_history_integration_script().contains("IncompleteInput"));
+        assert!(!supports_powershell_history_integration(&TerminalProfile {
+            path: "C:\\Windows\\System32\\cmd.exe".to_string(),
+            ..profile.clone()
+        }));
+        assert!(!supports_powershell_history_integration(&TerminalProfile {
+            args: vec!["-File".to_string(), "startup.ps1".to_string()],
+            ..profile
+        }));
     }
 }

@@ -1,6 +1,7 @@
 // Author: Liz
 use std::sync::Arc;
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use zterm_lib::{
     error::AppError,
     models::{
@@ -563,6 +564,101 @@ fn command_history_ignores_terminal_control_responses() {
             .collect::<Vec<_>>(),
         vec!["ll"]
     );
+}
+
+#[test]
+fn command_history_uses_shell_submitted_commands_for_integrated_runtimes() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let service = CommandHistoryService::new(Arc::clone(&store));
+
+    service.register_runtime(
+        "runtime-pwsh",
+        None,
+        Some(HistoryScopeKind::LocalProfile),
+        Some("pwsh".to_string()),
+    );
+    service.enable_shell_integration("runtime-pwsh");
+    service
+        .capture_input("runtime-pwsh", "npm run tauri:dev\r")
+        .expect("integrated runtime input should be accepted without being persisted");
+
+    let command = "npm run tauri:dev";
+    let payload = BASE64_STANDARD.encode(command.as_bytes());
+    let marker = format!("\u{1b}]633;ZTermCommand;{payload}\u{7}");
+    let split_at = marker
+        .find("Command")
+        .expect("marker should contain command")
+        + 3;
+    let (first, first_changed) = service
+        .consume_output(
+            "runtime-pwsh",
+            &format!("PS C:\\work> {}", &marker[..split_at]),
+        )
+        .expect("first marker chunk should be consumed");
+    let (second, second_changed) = service
+        .consume_output(
+            "runtime-pwsh",
+            &format!("{}\r\ncommand output", &marker[split_at..]),
+        )
+        .expect("second marker chunk should be consumed");
+
+    assert_eq!(first, "PS C:\\work> ");
+    assert_eq!(second, "\r\ncommand output");
+    assert!(!first_changed);
+    assert!(second_changed);
+    let entries = search_command_history(
+        store.as_ref(),
+        HistorySearchOptions {
+            query: None,
+            scope_kind: Some(HistoryScopeKind::LocalProfile),
+            scope_id: Some("pwsh".to_string()),
+            limit: None,
+            deduplicate: None,
+        },
+    )
+    .expect("integrated history should search");
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.command.as_str())
+            .collect::<Vec<_>>(),
+        vec![command]
+    );
+}
+
+#[test]
+fn command_history_strips_invalid_shell_markers_without_persisting_them() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let service = CommandHistoryService::new(Arc::clone(&store));
+    service.register_runtime(
+        "runtime-pwsh",
+        None,
+        Some(HistoryScopeKind::LocalProfile),
+        Some("pwsh".to_string()),
+    );
+    service.enable_shell_integration("runtime-pwsh");
+
+    let (visible, history_changed) = service
+        .consume_output(
+            "runtime-pwsh",
+            "before\u{1b}]633;ZTermCommand;not-base64\u{7}after",
+        )
+        .expect("invalid marker should not break terminal output");
+
+    assert_eq!(visible, "beforeafter");
+    assert!(!history_changed);
+    let entries = search_command_history(
+        store.as_ref(),
+        HistorySearchOptions {
+            query: None,
+            scope_kind: Some(HistoryScopeKind::LocalProfile),
+            scope_id: Some("pwsh".to_string()),
+            limit: None,
+            deduplicate: None,
+        },
+    )
+    .expect("history should search");
+    assert!(entries.is_empty());
 }
 
 #[test]

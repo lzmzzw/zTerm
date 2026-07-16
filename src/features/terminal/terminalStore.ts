@@ -60,6 +60,10 @@ interface TerminalExitEvent {
   message: string | null;
 }
 
+interface TerminalHistoryChangedEvent {
+  runtime_session_id: string;
+}
+
 const MAX_TERMINAL_OUTPUT_CHARS = 50_000;
 const MAX_TERMINAL_VISUAL_TAIL_CHARS = 8_000;
 
@@ -129,9 +133,19 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           const suffix = event.payload.message ? `\r\n[已断开] ${event.payload.message}\r\n` : "\r\n[已断开]\r\n";
           get().appendOutput(event.payload.runtime_session_id, suffix);
         }),
-      ]).then(([unlistenData, unlistenExit]) => () => {
+        listen<TerminalHistoryChangedEvent>("terminal:history-changed", (event) => {
+          set((state) => ({
+            inputSerialByRuntime: {
+              ...state.inputSerialByRuntime,
+              [event.payload.runtime_session_id]:
+                (state.inputSerialByRuntime[event.payload.runtime_session_id] ?? 0) + 1,
+            },
+          }));
+        }),
+      ]).then(([unlistenData, unlistenExit, unlistenHistory]) => () => {
         unlistenData();
         unlistenExit();
+        unlistenHistory();
       });
     }
     let released = false;

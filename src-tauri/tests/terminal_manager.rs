@@ -147,6 +147,75 @@ fn local_git_bash_runtime_executes_basic_command_when_available() {
 }
 
 #[test]
+fn local_powershell_history_hook_reports_recalled_commands_when_available() {
+    let Some(profile) = pwsh_profile() else {
+        eprintln!("pwsh.exe is not installed; skipping PowerShell history integration smoke");
+        return;
+    };
+    let manager = TerminalManager::default();
+    let opened = manager
+        .open_local_session(
+            &profile,
+            None,
+            "pane-pwsh-history-smoke".to_string(),
+            None,
+            profile.name.clone(),
+            100,
+            30,
+        )
+        .expect("local PowerShell runtime should open");
+    assert!(opened.shell_history_integration);
+    let runtime_id = opened.info.runtime_session_id.clone();
+    let (sender, receiver) = mpsc::channel::<Option<String>>();
+    thread::spawn(move || read_terminal(opened.reader, sender));
+
+    let command = "Write-Output ZTERM_PWSH_HISTORY_RECALL_OK";
+    let history_marker = "\u{1b}]633;ZTermCommand;";
+    let mut output = String::new();
+    let mut sent_command = false;
+    let mut recalled_command = false;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        match receiver.recv_timeout(Duration::from_millis(200)) {
+            Ok(Some(chunk)) => {
+                output.push_str(&chunk);
+                if chunk.contains("\u{1b}[6n") {
+                    manager
+                        .write(&runtime_id, "\u{1b}[1;1R")
+                        .expect("PowerShell runtime should accept CPR response");
+                }
+                if !sent_command && output.contains("PS ") && output.contains('>') {
+                    sent_command = true;
+                    manager
+                        .write(&runtime_id, &format!("{command}\r"))
+                        .expect("PowerShell runtime should accept the first command");
+                }
+                if sent_command && !recalled_command && output.matches(history_marker).count() >= 1
+                {
+                    recalled_command = true;
+                    manager
+                        .write(&runtime_id, "\u{1b}[A\r")
+                        .expect("PowerShell runtime should accept recalled command input");
+                }
+                if output.matches(history_marker).count() >= 2 {
+                    let _ = manager.close(&runtime_id);
+                    return;
+                }
+            }
+            Ok(None) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(error) => panic!("PowerShell reader channel failed: {error}"),
+        }
+    }
+
+    let _ = manager.close(&runtime_id);
+    panic!(
+        "PowerShell history hook did not report the recalled command twice; tail={}",
+        terminal_tail(&output)
+    );
+}
+
+#[test]
 fn rdp_open_creates_placeholder_runtime_without_pty() {
     let manager = TerminalManager::default();
 
@@ -272,6 +341,31 @@ fn git_bash_profile() -> Option<TerminalProfile> {
         name: "Git Bash".to_string(),
         path: path.to_string_lossy().to_string(),
         args: vec!["--login".to_string(), "-i".to_string()],
+        detected: true,
+        is_default: true,
+        created_at_ms: 0,
+        updated_at_ms: 0,
+    })
+}
+
+fn pwsh_profile() -> Option<TerminalProfile> {
+    let path = Command::new("where.exe")
+        .arg("pwsh.exe")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .map(PathBuf::from)
+        })?;
+    Some(TerminalProfile {
+        id: "pwsh".to_string(),
+        name: "PowerShell 7".to_string(),
+        path: path.to_string_lossy().to_string(),
+        args: vec!["-NoLogo".to_string()],
         detected: true,
         is_default: true,
         created_at_ms: 0,
