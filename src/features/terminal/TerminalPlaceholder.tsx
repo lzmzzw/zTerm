@@ -9,8 +9,8 @@ export function TerminalPlaceholder({ mode = "terminal", message }: TerminalPlac
     <div className="zt-terminal-surface">
       {mode === "rdp" ? (
         <div className="zt-terminal-placeholder">
-          <strong>RDP 连接能力将在第二阶段启用</strong>
-          <span>{message ?? "当前仅保存并展示 RDP 会话配置。"}</span>
+          <strong>RDP 已在外部窗口中打开</strong>
+          <span>{message ?? "当前 RDP 会话使用系统远程桌面客户端。"}</span>
         </div>
       ) : message ? (
         <div className="zt-terminal-placeholder">

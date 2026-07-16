@@ -20,9 +20,10 @@ panes in the center, and files/history/monitor/AI tools on the right.
 - Use a local approval-based AI assistant panel for terminal context, risk hints, and candidate commands.
 - Monitor SSH server CPU, memory, disk, load, uptime, and network traffic snapshots.
 
-Current RDP support is a controlled placeholder and does not establish a real
-RDP protocol connection. Cloud model invocation and remote agent orchestration
-are intentionally outside the current public MVP.
+RDP sessions open in the Windows system Remote Desktop client. The workspace
+keeps the session tab for navigation but does not embed or render the remote
+desktop. Cloud model invocation and remote agent orchestration are intentionally
+outside the current public MVP.
 
 ## Screenshots
 
