@@ -39,7 +39,7 @@
 
 `AppSettings.workspace_restore_strategy` 支持 `visible_first`、`connect_all`、`layout_only`，旧设置 JSON 缺字段时默认 `visible_first`。`visible_first` 先显示布局，再优先恢复当前可见 pane/tab；`connect_all` 显示布局后尽快低并发连接全部标签；`layout_only` 只恢复布局和 queued 状态，不自动打开终端。`settings_get` 和 `settings_reset` 返回的 `AppSettings.shortcuts` 会合并当前 `shortcut_registry_list` 中缺失的动作，调用方应以返回值作为 UI 展示和后续保存的有效配置。
 
-`AppSettings.mcp` 为 `{ enabled, port? }`，旧设置缺字段时默认 `{ enabled: false, port: null }`；`port=null` 使用稳定默认端口 `9419`。启用状态会在 zTerm 启动时恢复监听，不依赖打开设置页。MCP token 只写入 OS keyring，不写入 SQLite settings JSON；首次升级且 keyring 尚无 MCP token 时可从 `ZTERM_MCP_TOKEN` 环境变量迁移，之后以 keyring 为准。token 只通过 `McpServerStatus.token` 返回给本地设置页复制或轮换。`McpServerStatus` 为 `{ enabled, endpoint?, token? }`，关闭时 `endpoint/token=null`。
+`AppSettings.mcp` 为 `{ enabled, port? }`，旧设置缺字段时默认 `{ enabled: false, port: null }`；`port=null` 优先使用稳定默认端口 `9419`。启用状态会在 zTerm 启动时恢复监听，不依赖打开设置页；多开实例发现目标端口已占用时自动监听系统分配的本机可用端口，实际地址以该实例返回的 `McpServerStatus.endpoint` 为准，保存的首选端口不被覆盖。MCP token 只写入 OS keyring，不写入 SQLite settings JSON；首次升级且 keyring 尚无 MCP token 时可从 `ZTERM_MCP_TOKEN` 环境变量迁移，之后以 keyring 为准。token 只通过 `McpServerStatus.token` 返回给本地设置页复制或轮换。`McpServerStatus` 为 `{ enabled, endpoint?, token? }`，关闭时 `endpoint/token=null`。
 
 MCP 设置页的工具详情默认折叠，首次展开时通过只读命令 `mcp_tool_catalog_list` 读取 MCP 专用 allowlist；结果按工具 ID 命名空间分组展示，并缓存到本次设置页会话。加载过程提供 loading、空清单、失败和重试状态，不读取或展示 MCP Bearer token 之外的 secret。
 
@@ -56,9 +56,9 @@ MCP 设置页的工具详情默认折叠，首次展开时通过只读命令 `mc
 | Command / Event | 入参 / Payload | 返回 | 说明 |
 | --- | --- | --- | --- |
 | `external_launch_take_pending` | 无 | `ExternalSshLaunchEvent[]` | 取走当前进程启动参数解析出的外部一次性 SSH 请求；返回值不包含 password、key passphrase 或任何 secret |
-| `zterm:external-ssh-launch` | `null` | 事件 | single-instance 回调完成参数解析和进程内入队后，仅通知已运行前端重新调用 `external_launch_take_pending`；事件不携带连接信息或 secret |
+| `zterm:external-ssh-launch` | `null` | 事件 | 带外部 SSH 参数的 single-instance 回调完成参数解析和进程内入队后，仅通知已运行前端重新调用 `external_launch_take_pending`；事件不携带连接信息或 secret |
 
-zTerm 使用 single-instance：程序未运行时由首个进程解析参数并建立临时 SSH；程序已运行时，第二次启动的参数转发到现有主进程，主窗口恢复并聚焦，前端重新取走 pending 请求并在当前活动 pane 新建标签建立连接，不保留第二个 zTerm 进程。
+zTerm 支持普通启动多开：程序已运行时再次执行不带外部连接参数的普通启动，会创建独立 zTerm 进程。带外部 SSH 参数的启动仍使用 single-instance 转发：程序未运行时由首个进程解析参数并建立临时 SSH；程序已运行时，启动参数转发到当前主进程，主窗口恢复并聚焦，前端重新取走 pending 请求并在当前活动 pane 新建标签建立连接，不为该临时连接保留第二个 zTerm 进程。
 
 外部启动推荐命令为 `zTerm.exe --external-ssh --host <host> --port <port> --user <user> --password <password> --sftp auto --remote-path /`。兼容 PuTTY 常见参数子集：`-ssh`、`-P`、`-l`、`-pw`、`-i`、`user@host`；兼容 SecureCRT 一次性 SSH 子集：`/SSH2`、`/L`、`/P`、`/PASSWORD`、`/I`、`host`；兼容 Xshell `-url ssh://user:password@host:port`、`-newwin ssh://user@host:port`、`-i <identity_file>`，以及云平台常见 `ssh://b64%3E%3E<base64>@gateway:port` 包装，内层 payload 形如 `<caller>:<password>@<ssh_user>@<ssh_host>:<ssh_port>:SSH2` 且 URL 未携带 password 时按内层目标创建一次性连接；当 Xshell URL 为 `ssh://"b64>>...":"en::..."@gateway:port` 这类 BHost 网关格式时，保留网关 host/port、解码后的 `b64>>...` username 和 URL password 作为 SSH 凭据，并标记 `channel_policy="single_channel"`。兼容 MobaXterm `-newtab "ssh -p <port> -l <user> <host>"` / `-exec "ssh ..."` 的内层 OpenSSH 子集，也兼容 `ssh`、`-p`、`user@host` 被拆成多个 argv 的形态；当平台把 zTerm 作为 MobaXterm 路径并传入 `.moba` session 文件时，按文件内 `#109#` SSH session 字段解析 host/port/username，文件内 username 为空时从 session 名前缀推断；若父进程是 BHost `bhmultauth.exe`，再从父进程命令行合并网关 host/port、`b64>>...` username 和 `en::...` password。通用目标接受 `ssh://user:password@host:port` 形式。解析后后端创建 `external:<uuid>` transient SSH session，password 只保存在进程内 secret resolver，不写入 SQLite、OS keyring、日志、事件 payload 或工作区定义。命令行传 password 会在本机进程列表中短暂可见；MobaXterm `.moba` 文件和父进程命令行都不含 password 时无法补出 transient password，SecureCRT `/ENCRYPTEDPASSWORD` 私有密文和更高安全级别场景应改用后续 `--password-stdin`、临时票据或云平台 token 换取模式。`ExternalSshLaunchEvent` 为 `{ id, name, host, port, username, auto_open_sftp, remote_path, channel_policy }`，其中 `channel_policy` 为 `unknown`、`multi_channel` 或 `single_channel`，`id` 即可传入 Terminal/SFTP/Transfer 当前会话相关 command 的 `savedSessionId` 参数。前端对旧事件缺少 `channel_policy` 时会基于有效 `b64>>` username 兜底识别单通道临时 SSH。
 

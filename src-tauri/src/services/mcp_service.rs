@@ -102,8 +102,7 @@ impl McpService {
         }
 
         let token_value = self.load_or_create_token()?;
-        let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), configured_mcp_port(port));
-        let listener = TcpListener::bind(bind_addr)
+        let listener = bind_mcp_listener(configured_mcp_port(port))
             .await
             .map_err(|error| AppError::ai(format!("MCP 服务绑定失败: {error}")))?;
         let local_addr = listener
@@ -850,13 +849,40 @@ fn configured_mcp_port(port: Option<u16>) -> u16 {
     port.unwrap_or(DEFAULT_MCP_PORT)
 }
 
+async fn bind_mcp_listener(port: u16) -> std::io::Result<TcpListener> {
+    let bind_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+    match TcpListener::bind(bind_addr).await {
+        Ok(listener) => Ok(listener),
+        Err(error) if port != 0 && error.kind() == std::io::ErrorKind::AddrInUse => {
+            TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{configured_mcp_port, DEFAULT_MCP_PORT};
+    use super::{bind_mcp_listener, configured_mcp_port, DEFAULT_MCP_PORT};
 
     #[test]
     fn missing_mcp_port_uses_stable_default_and_explicit_zero_stays_ephemeral() {
         assert_eq!(configured_mcp_port(None), DEFAULT_MCP_PORT);
         assert_eq!(configured_mcp_port(Some(0)), 0);
+    }
+
+    #[tokio::test]
+    async fn occupied_mcp_port_falls_back_to_an_available_port() {
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test port should bind");
+        let occupied_port = occupied.local_addr().expect("occupied address").port();
+
+        let listener = bind_mcp_listener(occupied_port)
+            .await
+            .expect("occupied port should fall back");
+        let actual_port = listener.local_addr().expect("fallback address").port();
+
+        assert_ne!(actual_port, occupied_port);
+        assert_ne!(actual_port, 0);
     }
 }
