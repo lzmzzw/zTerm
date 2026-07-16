@@ -1,10 +1,9 @@
 // Author: Liz
-use std::{env, process::Command, sync::Mutex};
+use std::{env, sync::Mutex};
 
 use tauri::{Emitter, Manager};
 
 const EXTERNAL_SSH_LAUNCH_EVENT: &str = "zterm:external-ssh-launch";
-const ALLOW_MULTI_INSTANCE_ENV: &str = "ZTERM_ALLOW_MULTI_INSTANCE";
 static EARLY_SECOND_INSTANCE_ARGS: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
 
 pub mod commands;
@@ -18,11 +17,8 @@ pub mod storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let allow_multi_instance = env::var_os(ALLOW_MULTI_INSTANCE_ENV).is_some();
-    env::remove_var(ALLOW_MULTI_INSTANCE_ENV);
-
     let mut builder = tauri::Builder::default();
-    if !allow_multi_instance {
+    if should_enable_single_instance(cfg!(debug_assertions)) {
         builder = builder.plugin(tauri_plugin_single_instance::init(handle_second_instance));
     }
 
@@ -132,14 +128,7 @@ pub fn run() {
         .expect("failed to run zTerm");
 }
 
-fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>, cwd: String) {
-    if should_spawn_additional_instance(&args) {
-        if let Err(error) = spawn_additional_instance(&cwd) {
-            eprintln!("failed to start additional zTerm instance: {error}");
-        }
-        return;
-    }
-
+fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>, _cwd: String) {
     let Ok(mut early_args) = EARLY_SECOND_INSTANCE_ARGS.lock() else {
         eprintln!("external launch ignored: early launch lock was poisoned");
         return;
@@ -154,19 +143,8 @@ fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>, cwd: String
     focus_main_window(app);
 }
 
-fn should_spawn_additional_instance(args: &[String]) -> bool {
-    args.len() <= 1
-}
-
-fn spawn_additional_instance(cwd: &str) -> std::io::Result<()> {
-    let executable = env::current_exe()?;
-    let mut command = Command::new(executable);
-    command.env(ALLOW_MULTI_INSTANCE_ENV, "1");
-    if !cwd.trim().is_empty() {
-        command.current_dir(cwd);
-    }
-    command.spawn()?;
-    Ok(())
+fn should_enable_single_instance(debug_assertions: bool) -> bool {
+    !debug_assertions
 }
 
 fn register_second_instance_args(
@@ -302,7 +280,7 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
 
 #[cfg(test)]
 mod tests {
-    use super::should_spawn_additional_instance;
+    use super::should_enable_single_instance;
 
     #[test]
     fn crate_metadata_matches_project() {
@@ -311,17 +289,8 @@ mod tests {
     }
 
     #[test]
-    fn plain_launch_spawns_an_additional_instance_but_external_launch_stays_forwarded() {
-        assert!(should_spawn_additional_instance(&["zterm.exe".to_string()]));
-        assert!(!should_spawn_additional_instance(&[
-            "zterm.exe".to_string(),
-            "--external-ssh".to_string(),
-            "--host".to_string(),
-            "example.test".to_string(),
-        ]));
-        assert!(!should_spawn_additional_instance(&[
-            "zterm.exe".to_string(),
-            "session.moba".to_string(),
-        ]));
+    fn single_instance_is_enabled_only_outside_development() {
+        assert!(!should_enable_single_instance(true));
+        assert!(should_enable_single_instance(false));
     }
 }
