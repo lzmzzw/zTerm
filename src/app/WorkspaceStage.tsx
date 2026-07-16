@@ -15,7 +15,7 @@ interface WorkspaceStageProps {
   onResizeSplit?: (splitId: string, ratio: number) => void;
   onClosePane: (paneId: string) => void;
   onDisconnectTerminal?: (paneId: string, paneTabId: string, runtimeSessionId: string) => void;
-  onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string) => void;
+  onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string | null) => void;
 }
 
 export function WorkspaceStage({

@@ -941,6 +941,112 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
+  it("allows a disconnected saved session to reconnect without an old runtime", () => {
+    const onReconnectTerminal = vi.fn();
+    const root: PaneNode = {
+      kind: "leaf",
+      id: "pane-a",
+      runtime_session_id: null,
+      saved_session_id: "session-1",
+      title: "生产机",
+      active_terminal_tab_id: "pane-a-tab-1",
+      terminal_tabs: [
+        {
+          id: "pane-a-tab-1",
+          title: "生产机",
+          runtime_session_id: null,
+          saved_session_id: "session-1",
+          connection_source: "saved_session",
+          restore_status: "failed",
+          restore_error: "已断开连接",
+        },
+      ],
+    };
+
+    const view = render(
+      <SplitPaneView
+        root={root}
+        activePaneId="pane-a"
+        onActivatePane={vi.fn()}
+        onAddPaneTab={vi.fn()}
+        onSelectPaneTab={vi.fn()}
+        onClosePaneTab={vi.fn()}
+        onSplitPane={vi.fn()}
+        onClosePane={vi.fn()}
+        onReconnectTerminal={onReconnectTerminal}
+      />,
+    );
+
+    act(() => {
+      (view.container.querySelector('button[aria-label="重新连接 生产机"]') as HTMLButtonElement).click();
+    });
+
+    expect(onReconnectTerminal).toHaveBeenCalledWith("pane-a", "pane-a-tab-1", "session-1", null);
+    view.unmount();
+  });
+
+  it("offers disconnect and reconnect controls for an active RDP runtime", () => {
+    useTerminalStore.setState({
+      runtimes: {
+        "runtime-rdp": {
+          runtime_session_id: "runtime-rdp",
+          saved_session_id: "rdp-1",
+          history_scope_kind: null,
+          history_scope_id: null,
+          pane_id: "pane-a",
+          title: "办公 RDP",
+          kind: "rdp_placeholder",
+          cols: 0,
+          rows: 0,
+        },
+      },
+    });
+    const onDisconnectTerminal = vi.fn();
+    const onReconnectTerminal = vi.fn();
+    const root: PaneNode = {
+      kind: "leaf",
+      id: "pane-a",
+      runtime_session_id: "runtime-rdp",
+      saved_session_id: "rdp-1",
+      title: "办公 RDP",
+      active_terminal_tab_id: "pane-a-tab-1",
+      terminal_tabs: [
+        {
+          id: "pane-a-tab-1",
+          title: "办公 RDP",
+          runtime_session_id: "runtime-rdp",
+          saved_session_id: "rdp-1",
+          connection_source: "saved_session",
+          restore_status: "connected",
+        },
+      ],
+    };
+
+    const view = render(
+      <SplitPaneView
+        root={root}
+        activePaneId="pane-a"
+        onActivatePane={vi.fn()}
+        onAddPaneTab={vi.fn()}
+        onSelectPaneTab={vi.fn()}
+        onClosePaneTab={vi.fn()}
+        onSplitPane={vi.fn()}
+        onClosePane={vi.fn()}
+        onDisconnectTerminal={onDisconnectTerminal}
+        onReconnectTerminal={onReconnectTerminal}
+      />,
+    );
+
+    act(() => {
+      (view.container.querySelector('button[aria-label="断开连接 办公 RDP"]') as HTMLButtonElement).click();
+      (view.container.querySelector('button[aria-label="重新连接 办公 RDP"]') as HTMLButtonElement).click();
+    });
+
+    expect(onDisconnectTerminal).toHaveBeenCalledWith("pane-a", "pane-a-tab-1", "runtime-rdp");
+    expect(onReconnectTerminal).toHaveBeenCalledWith("pane-a", "pane-a-tab-1", "rdp-1", "runtime-rdp");
+    view.unmount();
+  });
+
   it("does not mount xterm for inactive pane tabs that already have runtimes", async () => {
     useTerminalStore.setState({
       runtimes: {

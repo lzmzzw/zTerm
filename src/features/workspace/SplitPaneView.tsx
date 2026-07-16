@@ -40,7 +40,7 @@ interface SplitPaneViewProps {
   onResizeSplit?: (splitId: string, ratio: number) => void;
   onClosePane: (paneId: string) => void;
   onDisconnectTerminal?: (paneId: string, paneTabId: string, runtimeSessionId: string) => void;
-  onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string) => void;
+  onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string | null) => void;
   workspaceActive?: boolean;
   visualMode?: "normal" | "placeholder" | "snapshot";
   dragState?: PaneTabDragState | null;
@@ -268,7 +268,7 @@ function LeafPane({
   onSplitPane: (direction: PaneSplitDirection) => void;
   onClosePane: (paneId: string) => void;
   onDisconnectTerminal?: (paneId: string, paneTabId: string, runtimeSessionId: string) => void;
-  onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string) => void;
+  onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string | null) => void;
   workspaceActive: boolean;
   visualMode: "normal" | "placeholder" | "snapshot";
   dragState: PaneTabDragState | null;
@@ -746,6 +746,25 @@ function LeafPane({
       ) : (
         <TerminalPlaceholder
           mode={runtime?.kind === "rdp_placeholder" ? "rdp" : "terminal"}
+          title={activeTerminalTab.title}
+          onDisconnect={
+            runtime?.kind === "rdp_placeholder" && activeTerminalTab.runtime_session_id
+              ? () => onDisconnectTerminal?.(root.id, activeTerminalTab.id, activeTerminalTab.runtime_session_id!)
+              : undefined
+          }
+          onReconnect={
+            activeTerminalTab.saved_session_id &&
+            (runtime?.kind === "rdp_placeholder" ||
+              (!activeTerminalTab.runtime_session_id && activeTerminalTab.restore_status === "failed"))
+              ? () =>
+                  onReconnectTerminal?.(
+                    root.id,
+                    activeTerminalTab.id,
+                    activeTerminalTab.saved_session_id!,
+                    activeTerminalTab.runtime_session_id ?? null,
+                  )
+              : undefined
+          }
           message={
             runtime?.kind === "rdp_placeholder"
               ? activeTerminalTab.title

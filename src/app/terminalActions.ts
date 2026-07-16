@@ -86,12 +86,14 @@ export function createTerminalActions({
     paneId: string,
     paneTabId: string,
     savedSessionId: string,
-    runtimeSessionId: string,
+    runtimeSessionId: string | null,
   ) {
     if (!workbenchTabId) return;
     setTerminalError(null);
     try {
-      await closeTerminal(runtimeSessionId, { releaseExternalSession: !isExternalSessionId(savedSessionId) });
+      if (runtimeSessionId) {
+        await closeTerminal(runtimeSessionId, { releaseExternalSession: !isExternalSessionId(savedSessionId) });
+      }
       updatePaneTerminalTab(workbenchId, workbenchTabId, paneId, paneTabId, {
         runtime_session_id: null,
         restore_status: "pending",

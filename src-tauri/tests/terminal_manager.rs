@@ -2,6 +2,7 @@
 use std::{
     io::Read,
     path::PathBuf,
+    process::Command,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -181,6 +182,38 @@ fn closing_placeholder_runtime_removes_it_from_manager() {
 
     assert!(closed.closed);
     assert_eq!(manager.runtime_count(), 0);
+}
+
+#[test]
+fn closing_external_process_runtime_terminates_its_child() {
+    let manager = TerminalManager::default();
+    let mut command = Command::new("cmd.exe");
+    command.args(["/C", "ping", "127.0.0.1", "-n", "30", ">", "NUL"]);
+    let child = command.spawn().expect("test child should start");
+    let process_id = child.id();
+    let info = manager
+        .open_rdp_session(
+            "saved-rdp".to_string(),
+            "pane-1".to_string(),
+            "办公 RDP".to_string(),
+            child,
+            None,
+        )
+        .expect("external process runtime should open");
+
+    manager
+        .close(&info.runtime_session_id)
+        .expect("external process runtime should close");
+
+    let status = Command::new("tasklist.exe")
+        .args(["/FI", &format!("PID eq {process_id}"), "/NH"])
+        .output()
+        .expect("tasklist should run");
+    let output = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        !output.contains(&process_id.to_string()),
+        "child process still exists: {output}"
+    );
 }
 
 #[test]

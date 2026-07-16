@@ -105,8 +105,14 @@ pub fn terminal_open(
             Ok(opened.info)
         }
         SessionType::Rdp => {
-            crate::services::rdp_service::launch_mstsc(&session)?;
-            manager.open_rdp_placeholder(session.id, pane_id, session.name)
+            let process = crate::services::rdp_service::launch_mstsc(&session)?;
+            manager.open_rdp_session(
+                session.id,
+                pane_id,
+                session.name,
+                process.child,
+                Some(process.file_path),
+            )
         }
         SessionType::Ssh => {
             let is_external = is_external_session_id(&session.id);

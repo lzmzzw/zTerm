@@ -1,5 +1,9 @@
 // Author: Liz
-use std::{env, fs, path::Path, process::Command};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::{Child, Command},
+};
 
 #[cfg(target_os = "windows")]
 use std::{ffi::c_void, io, os::windows::process::CommandExt, ptr};
@@ -19,6 +23,11 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub struct RdpLaunchCommand {
     pub program: String,
     pub args: Vec<String>,
+}
+
+pub struct RdpProcess {
+    pub child: Child,
+    pub file_path: PathBuf,
 }
 
 pub fn build_mstsc_arguments(session: &SavedSession) -> AppResult<RdpLaunchCommand> {
@@ -46,7 +55,7 @@ pub fn build_mstsc_arguments(session: &SavedSession) -> AppResult<RdpLaunchComma
     })
 }
 
-pub fn launch_mstsc(session: &SavedSession) -> AppResult<()> {
+pub fn launch_mstsc(session: &SavedSession) -> AppResult<RdpProcess> {
     let password = match session.credential_ref.as_deref() {
         Some(credential_ref) if session.auth_mode == crate::models::session::AuthMode::Password => {
             Some(read_system_secret(credential_ref)?)
@@ -62,11 +71,11 @@ pub fn launch_mstsc(session: &SavedSession) -> AppResult<()> {
     ));
     fs::write(&file_path, rdp_content)?;
     try_sign_rdp_file(&file_path);
-    Command::new("mstsc.exe")
+    let child = Command::new("mstsc.exe")
         .arg(&file_path)
         .spawn()
-        .map(|_| ())
-        .map_err(|error| AppError::terminal(format!("failed to launch mstsc: {error}")))
+        .map_err(|error| AppError::terminal(format!("failed to launch mstsc: {error}")))?;
+    Ok(RdpProcess { child, file_path })
 }
 
 fn try_sign_rdp_file(file_path: &Path) -> bool {

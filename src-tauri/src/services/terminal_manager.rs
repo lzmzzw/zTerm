@@ -2,6 +2,8 @@
 use std::{
     collections::HashMap,
     io::{Read, Write},
+    path::PathBuf,
+    process::Child as ProcessChild,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -45,8 +47,14 @@ pub struct OpenedPtySession {
 
 enum RuntimeSession {
     Placeholder,
+    Rdp(RdpRuntime),
     Pty(PtyRuntime),
     NativeSsh(NativeSshRuntimeState),
+}
+
+struct RdpRuntime {
+    child: Mutex<ProcessChild>,
+    file_path: Option<PathBuf>,
 }
 
 struct PtyRuntime {
@@ -74,11 +82,45 @@ struct OutputSuppression {
 }
 
 impl TerminalManager {
+    pub fn open_rdp_session(
+        &self,
+        saved_session_id: String,
+        pane_id: String,
+        title: String,
+        child: ProcessChild,
+        file_path: Option<PathBuf>,
+    ) -> AppResult<RuntimeSessionInfo> {
+        self.open_rdp_runtime(
+            saved_session_id,
+            pane_id,
+            title,
+            RuntimeSession::Rdp(RdpRuntime {
+                child: Mutex::new(child),
+                file_path,
+            }),
+        )
+    }
+
     pub fn open_rdp_placeholder(
         &self,
         saved_session_id: String,
         pane_id: String,
         title: String,
+    ) -> AppResult<RuntimeSessionInfo> {
+        self.open_rdp_runtime(
+            saved_session_id,
+            pane_id,
+            title,
+            RuntimeSession::Placeholder,
+        )
+    }
+
+    fn open_rdp_runtime(
+        &self,
+        saved_session_id: String,
+        pane_id: String,
+        title: String,
+        runtime: RuntimeSession,
     ) -> AppResult<RuntimeSessionInfo> {
         let info = RuntimeSessionInfo {
             runtime_session_id: Uuid::new_v4().to_string(),
@@ -95,10 +137,7 @@ impl TerminalManager {
         self.sessions
             .lock()
             .map_err(|_| AppError::terminal("terminal session lock was poisoned"))?
-            .insert(
-                info.runtime_session_id.clone(),
-                Arc::new(RuntimeSession::Placeholder),
-            );
+            .insert(info.runtime_session_id.clone(), Arc::new(runtime));
         self.record_runtime_info(&info)?;
         self.ensure_output_buffer(&info.runtime_session_id)?;
 
@@ -347,7 +386,7 @@ impl TerminalManager {
         let runtime = self.runtime_session(runtime_session_id)?;
 
         match runtime.as_ref() {
-            RuntimeSession::Placeholder => Err(AppError::unsupported(
+            RuntimeSession::Placeholder | RuntimeSession::Rdp(_) => Err(AppError::unsupported(
                 "RDP placeholder sessions do not accept terminal input",
             )),
             RuntimeSession::Pty(pty) => {
@@ -388,7 +427,9 @@ impl TerminalManager {
         let runtime = self.runtime_session(runtime_session_id)?;
 
         match runtime.as_ref() {
-            RuntimeSession::Placeholder => Ok(TerminalResized { resized: false }),
+            RuntimeSession::Placeholder | RuntimeSession::Rdp(_) => {
+                Ok(TerminalResized { resized: false })
+            }
             RuntimeSession::NativeSsh(native) => {
                 native.control.resize(cols, rows);
                 Ok(TerminalResized { resized: true })
@@ -414,6 +455,13 @@ impl TerminalManager {
 
         match runtime.as_ref() {
             RuntimeSession::Placeholder => Ok(None),
+            RuntimeSession::Rdp(rdp) => rdp
+                .child
+                .lock()
+                .map_err(|_| AppError::terminal("RDP process lock was poisoned"))?
+                .try_wait()
+                .map(|status| status.map(|value| value.code().unwrap_or_default()))
+                .map_err(|error| AppError::terminal(error.to_string())),
             RuntimeSession::NativeSsh(native) => {
                 let status = native
                     .exit_status
@@ -454,6 +502,17 @@ impl TerminalManager {
             }
             RuntimeSession::NativeSsh(native) => {
                 native.control.close();
+            }
+            RuntimeSession::Rdp(rdp) => {
+                let mut child = rdp
+                    .child
+                    .lock()
+                    .map_err(|_| AppError::terminal("RDP process lock was poisoned"))?;
+                let _ = child.kill();
+                let _ = child.wait();
+                if let Some(file_path) = &rdp.file_path {
+                    let _ = std::fs::remove_file(file_path);
+                }
             }
             RuntimeSession::Placeholder => {}
         }

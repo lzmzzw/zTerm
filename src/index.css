@@ -2095,6 +2095,18 @@ button {
   font-size: var(--zt-font-size-ui);
 }
 
+.zt-terminal-placeholder-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.zt-terminal-placeholder-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .zt-terminal-snapshot-pane {
   display: grid;
   align-content: end;

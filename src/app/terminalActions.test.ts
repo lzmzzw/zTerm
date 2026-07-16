@@ -93,6 +93,27 @@ describe("terminalActions", () => {
     expect(deps.setTerminalError).toHaveBeenLastCalledWith("connection refused");
   });
 
+  it("reconnects a previously disconnected pane tab without closing a missing runtime", async () => {
+    const deps = dependencies();
+    const actions = createTerminalActions(deps);
+
+    await actions.reconnectTerminal("pane-1", "pane-tab-1", "session-1", null);
+
+    expect(deps.closeTerminal).not.toHaveBeenCalled();
+    expect(deps.openTerminal).toHaveBeenCalledWith("session-1", "pane-1");
+    expect(deps.updatePaneTerminalTab).toHaveBeenLastCalledWith(
+      "live-workbench",
+      "tab-1",
+      "pane-1",
+      "pane-tab-1",
+      expect.objectContaining({
+        runtime_session_id: "runtime-1",
+        restore_status: "connected",
+        restore_error: null,
+      }),
+    );
+  });
+
   it("reconnects an ssh_container pane tab with its saved container target", async () => {
     const deps = dependencies({
       activePaneTab: paneTab({
