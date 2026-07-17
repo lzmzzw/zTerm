@@ -49,7 +49,7 @@ declare module "zmodem.js/src/zmodem_browser" {
 
   export interface ZmodemSession {
     type: "send" | "receive";
-    on: (eventName: "offer" | "session_end" | "garbage", handler: (...args: any[]) => void) => ZmodemSession;
+    on: (eventName: "offer" | "receive" | "session_end" | "garbage", handler: (...args: any[]) => void) => ZmodemSession;
     start: () => void;
     close: () => Promise<void>;
     abort?: () => void;

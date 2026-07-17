@@ -50,6 +50,7 @@ const ASCII_ONE = 49;
 const ASCII_LINE_FEED = 10;
 const ASCII_HIGH_LINE_FEED = 0x8a;
 const ASCII_XON = 0x11;
+const ZMODEM_OVER_AND_OUT = [79, 79] as const;
 const MIN_ZMODEM_HEX_HEADER_LF_OFFSET = 18;
 const MAX_ZMODEM_HEX_HEADER_LF_OFFSET = 19;
 
@@ -95,6 +96,7 @@ class ZmodemRuntimeController {
   private readonly sentry: ZmodemSentry;
   private readonly textDecoder = new TextDecoder("utf-8", { fatal: false });
   private activeSession: ZmodemSession | null = null;
+  private pendingReceiveOverAndOut: number[] | null = null;
 
   constructor(private readonly runtimeSessionId: string, dependencies: ZmodemTransferDependencies) {
     this.dependencies = withDefaultDependencies(dependencies);
@@ -129,7 +131,9 @@ class ZmodemRuntimeController {
 
   consume(bytes: Uint8Array, fallbackText: string) {
     try {
-      const chunks = this.activeSession ? [bytes] : splitCoalescedZmodemStartupBytes(bytes);
+      const completedBytes = this.completeMissingReceiveOverAndOut(bytes);
+      if (!completedBytes) return;
+      const chunks = this.activeSession ? [completedBytes] : splitCoalescedZmodemStartupBytes(completedBytes);
       for (const chunk of chunks) {
         this.sentry.consume(Array.from(chunk));
         if (this.activeSession) {
@@ -140,6 +144,7 @@ class ZmodemRuntimeController {
       this.appendOutput(fallbackText);
       this.appendOutput(`\r\n[ZMODEM] 传输解析失败：${stringifiedErrorMessage(error)}\r\n`);
       this.activeSession = null;
+      this.pendingReceiveOverAndOut = null;
     }
   }
 
@@ -219,6 +224,11 @@ class ZmodemRuntimeController {
 
     let savedCount = 0;
     const saveTasks: Array<Promise<void>> = [];
+    session.on("receive", (value: unknown) => {
+      if (isZfinHeader(value)) {
+        this.pendingReceiveOverAndOut = [];
+      }
+    });
     session.on("offer", (offer: ZmodemOffer) => {
       const details = offer.get_details();
       const saveTask = offer
@@ -235,12 +245,32 @@ class ZmodemRuntimeController {
       saveTasks.push(saveTask);
     });
     session.on("session_end", () => {
+      this.pendingReceiveOverAndOut = null;
       void Promise.allSettled(saveTasks).then(() => {
         this.appendOutput(`[ZMODEM] 下载完成，共 ${savedCount} 个文件。\r\n`);
         this.activeSession = null;
       });
     });
     session.start();
+  }
+
+  private completeMissingReceiveOverAndOut(bytes: Uint8Array) {
+    if (this.pendingReceiveOverAndOut === null) return bytes;
+
+    const combined = [...this.pendingReceiveOverAndOut, ...bytes];
+    if (combined.length === 1 && combined[0] === ZMODEM_OVER_AND_OUT[0]) {
+      this.pendingReceiveOverAndOut = combined;
+      return null;
+    }
+
+    this.pendingReceiveOverAndOut = null;
+    if (combined[0] === ZMODEM_OVER_AND_OUT[0] && combined[1] === ZMODEM_OVER_AND_OUT[1]) {
+      return Uint8Array.from(combined);
+    }
+    if (combined[0] === ZMODEM_OVER_AND_OUT[0]) {
+      return Uint8Array.from([ZMODEM_OVER_AND_OUT[0], ...combined]);
+    }
+    return Uint8Array.from([...ZMODEM_OVER_AND_OUT, ...combined]);
   }
 
   private appendOutput(data: string) {
@@ -251,6 +281,10 @@ class ZmodemRuntimeController {
   private octetsToText(octets: number[] | Uint8Array) {
     return this.textDecoder.decode(octets instanceof Uint8Array ? octets : Uint8Array.from(octets), { stream: true });
   }
+}
+
+function isZfinHeader(value: unknown): value is { NAME: "ZFIN" } {
+  return typeof value === "object" && value !== null && "NAME" in value && value.NAME === "ZFIN";
 }
 
 async function sendFileBytes(transfer: ZmodemTransfer, bytes: Uint8Array) {

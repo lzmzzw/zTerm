@@ -246,6 +246,42 @@ describe("zmodemTransfer", () => {
     expect(saveFile).toHaveBeenCalledWith("D:\\Downloads", "remote.txt", [4, 5, 6]);
     expect(appendOutput).toHaveBeenCalledWith("runtime-1", expect.stringContaining("下载完成，共 1 个文件"));
   });
+
+  it("completes a receive session when terminal output follows ZFIN without OO", async () => {
+    const appendOutput = vi.fn();
+    const terminalBytes = binaryBytes("\x1b[?2004h\x1b]0;root@host: ~\x07root@host:~# ");
+    const receiveHandler = await startMockReceiveSession(appendOutput);
+    receiveHandler({ NAME: "ZFIN" });
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "terminal prompt", dataBase64: base64(terminalBytes) },
+      { appendOutput },
+    );
+
+    expect(Array.from(sentryMock.instances[0].consume.mock.calls[1][0])).toEqual([
+      79,
+      79,
+      ...terminalBytes,
+    ]);
+  });
+
+  it("preserves a normal OO marker split across terminal data events", async () => {
+    const appendOutput = vi.fn();
+    const receiveHandler = await startMockReceiveSession(appendOutput);
+    receiveHandler({ NAME: "ZFIN" });
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "O", dataBase64: base64([79]) },
+      { appendOutput },
+    );
+    expect(sentryMock.instances[0].consume).toHaveBeenCalledTimes(1);
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "O prompt", dataBase64: base64([79, 32, 35, 32]) },
+      { appendOutput },
+    );
+    expect(Array.from(sentryMock.instances[0].consume.mock.calls[1][0])).toEqual([79, 79, 32, 35, 32]);
+  });
 });
 
 function base64(bytes: number[]) {
@@ -260,4 +296,37 @@ async function flushPromises() {
   await Promise.resolve();
   await Promise.resolve();
   await new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+async function startMockReceiveSession(appendOutput: (runtimeSessionId: string, data: string) => void) {
+  sentryMock.consumeImpl = () => undefined;
+  const receiveHandler = vi.fn();
+  const session: any = {
+    type: "receive",
+    on: vi.fn((eventName: string, handler: (...args: any[]) => void) => {
+      if (eventName === "receive") {
+        receiveHandler.mockImplementation(handler);
+      }
+      return session;
+    }),
+    start: vi.fn(),
+    close: vi.fn(),
+    abort: vi.fn(),
+    send_offer: vi.fn(),
+  };
+  const detection = {
+    confirm: vi.fn(() => session),
+    deny: vi.fn(),
+  };
+
+  consumeTerminalZmodemData(
+    { runtimeSessionId: "runtime-1", data: "**B", dataBase64: base64([42, 42, 66]) },
+    {
+      appendOutput,
+      selectDownloadDirectory: vi.fn().mockResolvedValue("D:\\Downloads"),
+    },
+  );
+  sentryMock.instances[0].options.on_detect(detection);
+  await flushPromises();
+  return receiveHandler;
 }
