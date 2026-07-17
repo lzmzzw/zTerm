@@ -109,12 +109,14 @@ describe("split pane css direction mapping", () => {
     expect(css).toContain("--zt-surface-hover: rgb(255 255 255 / 0.07)");
     expect(css).toContain("--zt-surface-selected: rgb(255 255 255 / 0.14)");
     expect(css).toContain("--zt-accent-muted: rgb(255 255 255 / 0.1)");
+    expect(css).toContain("--zt-focus-ring: rgb(255 255 255 / 0.92)");
     expect(css).toContain("--zt-focus-soft: rgb(255 255 255 / 0.18)");
     expect(css).not.toContain("100 210 255");
 
     expect(css).toContain("--zt-surface-hover: rgb(0 0 0 / 0.04)");
     expect(css).toContain("--zt-surface-selected: rgb(0 0 0 / 0.09)");
     expect(css).toContain("--zt-accent-muted: rgb(0 0 0 / 0.07)");
+    expect(css).toContain("--zt-focus-ring: rgb(24 31 42 / 0.78)");
     expect(css).toContain("--zt-focus-soft: rgb(0 0 0 / 0.13)");
     expect(css).not.toContain("10 132 255");
   });

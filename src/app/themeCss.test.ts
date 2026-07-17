@@ -205,6 +205,33 @@ describe("global dark theme colors", () => {
     expect(selectedPane).not.toContain("var(--zt-accent)");
   });
 
+  it("uses one high-contrast non-blue focus-visible ring across interactive elements", () => {
+    expect(rootVariable("--zt-focus-ring")).toBe("rgb(255 255 255 / 0.92)");
+    expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-focus-ring")).toBe(
+      "rgb(24 31 42 / 0.78)",
+    );
+
+    for (const selector of [
+      "button:focus-visible",
+      "a[href]:focus-visible",
+      '[role="button"]:focus-visible',
+      '[role="listitem"][tabindex]:focus-visible',
+      '[role="tab"]:focus-visible',
+      '[role="option"]:focus-visible',
+    ]) {
+      const body = ruleBodiesForSelector(selector);
+      expect(body).toContain("outline: 2px solid var(--zt-focus-ring)");
+      expect(body).toContain("outline-offset: -2px");
+    }
+
+    const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+    let match: RegExpExecArray | null;
+    while ((match = rulePattern.exec(css))) {
+      if (!match[1].includes(":focus-visible")) continue;
+      expect(match[2]).not.toContain("var(--zt-accent)");
+    }
+  });
+
   it("keeps expanded left tool panels full height so blank areas receive context menu events", () => {
     expect(ruleBodiesForSelector(".zt-left-tool-panel")).toContain("height: 100%");
     expect(ruleBodiesForSelector(".zt-workspace-panel")).toContain("height: 100%");
