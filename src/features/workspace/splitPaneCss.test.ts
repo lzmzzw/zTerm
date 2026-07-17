@@ -125,16 +125,13 @@ describe("split pane css direction mapping", () => {
     expect(frameStyles).not.toContain("border-radius: var(--zt-radius-window)");
   });
 
-  it("draws a restrained kerminal-like border around the active pane", () => {
+  it("marks the active pane with a theme-blue titlebar dot instead of a highlighted frame", () => {
     const activePaneStyles = ruleBodiesForSelector(".zt-terminal-frame.active");
+    const activeIndicatorStyles = ruleBodiesForSelector(".zt-pane-active-indicator");
 
-    expect(activePaneStyles).toContain("border-color: var(--zt-pane-active-border)");
-    expect(activePaneStyles).toContain("outline: 1px solid var(--zt-pane-active-outline)");
-    expect(activePaneStyles).toContain("outline-offset: -1px");
-    expect(activePaneStyles).toContain("box-shadow: inset 0 0 0 1px var(--zt-line-hairline)");
-    expect(activePaneStyles).not.toContain("rgba(255, 255, 255, 0.72)");
-    expect(activePaneStyles).not.toContain("var(--zt-focus-soft)");
-    expect(activePaneStyles).not.toContain("var(--zt-accent)");
+    expect(activePaneStyles).toBe("");
+    expect(activeIndicatorStyles).toContain("background: var(--zt-accent)");
+    expect(activeIndicatorStyles).toContain("border-radius: 50%");
   });
 
   it("preserves a low contrast active surface for the current pane tab", () => {

@@ -706,6 +706,7 @@ function LeafPane({
             <Plus size={14} aria-hidden="true" />
           </button>
         </div>
+        {active ? <span className="zt-pane-active-indicator" aria-hidden="true" /> : null}
         <TerminalToolbar
           onSplitPane={handleSplitPane}
           onClosePane={handleClosePane}

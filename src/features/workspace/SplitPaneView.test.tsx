@@ -119,6 +119,34 @@ describe("SplitPaneView", () => {
     resetTerminalOutputCachesForTest();
   });
 
+  it("shows the active pane indicator only in the active pane titlebar", () => {
+    const root: PaneNode = {
+      kind: "split",
+      id: "split-root",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: leaf("pane-a", "终端 A"),
+      second: leaf("pane-b", "终端 B"),
+    };
+    const view = render(
+      <SplitPaneView
+        root={root}
+        activePaneId="pane-a"
+        onActivatePane={vi.fn()}
+        onAddPaneTab={vi.fn()}
+        onSelectPaneTab={vi.fn()}
+        onClosePaneTab={vi.fn()}
+        onSplitPane={vi.fn()}
+        onClosePane={vi.fn()}
+      />,
+    );
+
+    const indicators = view.container.querySelectorAll(".zt-pane-active-indicator");
+    expect(indicators).toHaveLength(1);
+    expect(indicators[0]?.closest(".zt-terminal-frame")?.classList.contains("active")).toBe(true);
+    view.unmount();
+  });
+
   it("hides empty unconnected pane tabs while keeping the add button", () => {
     const root: PaneNode = leaf("pane-a", "新建终端");
     const view = render(
