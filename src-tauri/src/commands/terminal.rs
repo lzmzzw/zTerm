@@ -22,8 +22,10 @@ use crate::{
     },
     services::{
         command_completion_service::CommandCompletionService,
-        command_history_service::CommandHistoryService, credential_service::read_system_secret,
-        external_launch_service::is_external_session_id, terminal_manager::TerminalManager,
+        command_history_service::CommandHistoryService,
+        credential_service::read_system_secret,
+        external_launch_service::{is_external_session_id, ExternalSshChannelPolicy},
+        terminal_manager::TerminalManager,
         terminal_output_dispatcher::TerminalOutputDispatcher,
     },
     state::AppState,
@@ -124,6 +126,11 @@ pub fn terminal_open(
         }
         SessionType::Ssh => {
             let is_external = is_external_session_id(&session.id);
+            let single_channel = is_external
+                && state
+                    .external_launch_service()
+                    .channel_policy(&session.id)?
+                    == Some(ExternalSshChannelPolicy::SingleChannel);
             let (session, mut auth_secrets) = if is_external {
                 (session, Vec::new())
             } else {
@@ -139,6 +146,7 @@ pub fn terminal_open(
                 32,
                 &secrets,
                 !is_external,
+                single_channel,
             )?;
             if let Some(secret) = opened.auth_secret {
                 auth_secrets.push(AuthPromptSecret::new(ssh_prompt_target(&session), secret));

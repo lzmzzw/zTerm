@@ -51,6 +51,7 @@ enum RuntimeSession {
     Rdp(RdpRuntime),
     Pty(PtyRuntime),
     NativeSsh(NativeSshRuntimeState),
+    TunnelOnly { _runtime: TunnelOnlyRuntime },
 }
 
 struct RdpRuntime {
@@ -69,6 +70,11 @@ struct NativeSshRuntimeState {
     writer: Mutex<Box<dyn Write + Send>>,
     control: NativeSshControl,
     exit_status: Arc<Mutex<Option<i32>>>,
+}
+
+struct TunnelOnlyRuntime {
+    _keepalive: std::sync::mpsc::Sender<Vec<u8>>,
+    _tunnel_bridges: Vec<SshTunnelBridge>,
 }
 
 #[derive(Default)]
@@ -159,6 +165,7 @@ impl TerminalManager {
             rows,
             &SystemSshSecretResolver,
             true,
+            false,
         )
     }
 
@@ -170,8 +177,9 @@ impl TerminalManager {
         rows: u16,
         secrets: &dyn SshCommandSecretResolver,
         history_enabled: bool,
+        single_channel: bool,
     ) -> AppResult<OpenedPtySession> {
-        let spawn = spawn_ssh_terminal_with_resolver(session, cols, rows, secrets)?;
+        let spawn = spawn_ssh_terminal_with_resolver(session, cols, rows, secrets, single_channel)?;
         let history_scope_kind = history_enabled.then_some(HistoryScopeKind::SavedSession);
         let history_scope_id = history_enabled.then(|| session.id.clone());
         let info = RuntimeSessionInfo {
@@ -203,6 +211,15 @@ impl TerminalManager {
                     exit_status: native.exit_status,
                 }),
                 native.reader,
+            ),
+            SshTerminalRuntime::TunnelOnly(tunnel) => (
+                RuntimeSession::TunnelOnly {
+                    _runtime: TunnelOnlyRuntime {
+                        _keepalive: tunnel.keepalive,
+                        _tunnel_bridges: spawn.tunnel_bridges,
+                    },
+                },
+                tunnel.reader,
             ),
         };
         self.sessions
@@ -296,6 +313,9 @@ impl TerminalManager {
                 }),
                 native.reader,
             ),
+            SshTerminalRuntime::TunnelOnly(_) => {
+                return Err(AppError::unsupported("SSH 容器终端不支持隧道独占模式"));
+            }
         };
         self.sessions
             .lock()
@@ -399,6 +419,9 @@ impl TerminalManager {
             RuntimeSession::Placeholder | RuntimeSession::Rdp(_) => Err(AppError::unsupported(
                 "RDP placeholder sessions do not accept terminal input",
             )),
+            RuntimeSession::TunnelOnly { .. } => {
+                Err(AppError::unsupported("隧道独占模式不接受终端输入"))
+            }
             RuntimeSession::Pty(pty) => {
                 let mut writer = pty
                     .writer
@@ -437,9 +460,9 @@ impl TerminalManager {
         let runtime = self.runtime_session(runtime_session_id)?;
 
         match runtime.as_ref() {
-            RuntimeSession::Placeholder | RuntimeSession::Rdp(_) => {
-                Ok(TerminalResized { resized: false })
-            }
+            RuntimeSession::Placeholder
+            | RuntimeSession::Rdp(_)
+            | RuntimeSession::TunnelOnly { .. } => Ok(TerminalResized { resized: false }),
             RuntimeSession::NativeSsh(native) => {
                 native.control.resize(cols, rows);
                 Ok(TerminalResized { resized: true })
@@ -464,7 +487,7 @@ impl TerminalManager {
         let runtime = self.runtime_session(runtime_session_id)?;
 
         match runtime.as_ref() {
-            RuntimeSession::Placeholder => Ok(None),
+            RuntimeSession::Placeholder | RuntimeSession::TunnelOnly { .. } => Ok(None),
             RuntimeSession::Rdp(rdp) => rdp
                 .child
                 .lock()
@@ -524,7 +547,7 @@ impl TerminalManager {
                     let _ = std::fs::remove_file(file_path);
                 }
             }
-            RuntimeSession::Placeholder => {}
+            RuntimeSession::Placeholder | RuntimeSession::TunnelOnly { .. } => {}
         }
         if let Ok(mut buffers) = self.output_buffers.lock() {
             buffers.remove(runtime_session_id);

@@ -1,15 +1,18 @@
 // Author: Liz
 use std::{
     fs::OpenOptions,
-    io::{Read, Write},
+    io::{Cursor, Read, Write},
     net::{Shutdown, SocketAddr, TcpStream as StdTcpStream},
     path::PathBuf,
-    sync::{mpsc as std_mpsc, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc as std_mpsc, Arc, Mutex,
+    },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
-use portable_pty::CommandBuilder;
+use portable_pty::{ChildKiller, CommandBuilder};
 use russh::{
     client,
     keys::{
@@ -18,6 +21,7 @@ use russh::{
     ChannelMsg, Pty,
 };
 use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::{mpsc as tokio_mpsc, oneshot},
 };
@@ -45,6 +49,12 @@ pub struct SshTerminalSpawn {
 pub enum SshTerminalRuntime {
     Pty(PtySpawn),
     Native(NativeSshRuntime),
+    TunnelOnly(TunnelOnlySshRuntime),
+}
+
+pub struct TunnelOnlySshRuntime {
+    pub reader: Box<dyn Read + Send>,
+    pub keepalive: std_mpsc::Sender<Vec<u8>>,
 }
 
 pub struct NativeSshRuntime {
@@ -56,11 +66,20 @@ pub struct NativeSshRuntime {
 
 pub struct SshTunnelBridge {
     shutdown: Option<oneshot::Sender<()>>,
+    cancelled: Arc<AtomicBool>,
+    child_killer: Arc<Mutex<Option<Box<dyn ChildKiller + Send + Sync>>>>,
     _thread: Option<JoinHandle<()>>,
 }
 
 impl Drop for SshTunnelBridge {
     fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
+        if let Ok(mut child_killer) = self.child_killer.lock() {
+            if let Some(killer) = child_killer.as_mut() {
+                let _ = killer.kill();
+            }
+            child_killer.take();
+        }
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
@@ -88,12 +107,18 @@ enum NativeSshCommand {
     Close,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SshTerminalLaunchMode {
+    Interactive,
+    ExclusiveTunnel,
+}
+
 pub fn spawn_ssh_terminal(
     session: &SavedSession,
     cols: u16,
     rows: u16,
 ) -> AppResult<SshTerminalSpawn> {
-    spawn_ssh_terminal_with_resolver(session, cols, rows, &SystemSshSecretResolver)
+    spawn_ssh_terminal_with_resolver(session, cols, rows, &SystemSshSecretResolver, false)
 }
 
 pub fn spawn_ssh_terminal_with_resolver(
@@ -101,6 +126,7 @@ pub fn spawn_ssh_terminal_with_resolver(
     cols: u16,
     rows: u16,
     secrets: &dyn SshCommandSecretResolver,
+    single_channel: bool,
 ) -> AppResult<SshTerminalSpawn> {
     if session.session_type != SessionType::Ssh {
         return Err(AppError::unsupported(
@@ -108,11 +134,98 @@ pub fn spawn_ssh_terminal_with_resolver(
         ));
     }
 
+    if ssh_terminal_launch_mode(session, single_channel) == SshTerminalLaunchMode::ExclusiveTunnel {
+        return spawn_exclusive_tunnel_terminal(session, secrets);
+    }
+
     if requires_system_ssh(session) {
         return spawn_system_ssh_terminal(session, cols, rows, secrets);
     }
 
     spawn_native_ssh_terminal(session, cols, rows, secrets)
+}
+
+pub fn ssh_terminal_launch_mode(
+    session: &SavedSession,
+    single_channel: bool,
+) -> SshTerminalLaunchMode {
+    let has_open_tunnel = session
+        .ssh_options
+        .as_ref()
+        .is_some_and(|options| options.tunnels.iter().any(|tunnel| tunnel.auto_open));
+    if single_channel && has_open_tunnel {
+        SshTerminalLaunchMode::ExclusiveTunnel
+    } else {
+        SshTerminalLaunchMode::Interactive
+    }
+}
+
+fn spawn_exclusive_tunnel_terminal(
+    session: &SavedSession,
+    secrets: &dyn SshCommandSecretResolver,
+) -> AppResult<SshTerminalSpawn> {
+    let tunnel = session
+        .ssh_options
+        .as_ref()
+        .and_then(|options| options.tunnels.iter().find(|tunnel| tunnel.auto_open))
+        .ok_or_else(|| AppError::validation("隧道独占模式需要一条自动打开的 SSH 隧道"))?;
+    let auth_secret = match session.auth_mode {
+        AuthMode::Password | AuthMode::Key => session
+            .credential_ref
+            .as_deref()
+            .map(|credential_ref| secrets.secret_for(credential_ref))
+            .transpose()?,
+        AuthMode::Agent | AuthMode::None => None,
+    };
+    let mut bridge_session = session.clone();
+    if let Some(options) = bridge_session.ssh_options.as_mut() {
+        options.tunnels.clear();
+    }
+    let (keepalive, receiver) = std_mpsc::channel();
+    let target = NativeSshTarget::from_session_with_auth_secret(&bridge_session, auth_secret)?;
+    let bridge = spawn_native_exclusive_tunnel_bridge(target, tunnel, Some(keepalive.clone()))?;
+    let _ = keepalive.send(
+        "\r\n单通道临时 SSH 已进入隧道独占模式。\r\n首次本地连接将使用一次性凭据，当前终端不可交互。\r\n"
+            .as_bytes()
+            .to_vec(),
+    );
+    Ok(SshTerminalSpawn {
+        runtime: SshTerminalRuntime::TunnelOnly(TunnelOnlySshRuntime {
+            reader: Box::new(TunnelOnlyReader::new(receiver)),
+            keepalive,
+        }),
+        auth_secret: None,
+        tunnel_bridges: vec![bridge],
+    })
+}
+
+struct TunnelOnlyReader {
+    receiver: std_mpsc::Receiver<Vec<u8>>,
+    pending: Cursor<Vec<u8>>,
+}
+
+impl TunnelOnlyReader {
+    fn new(receiver: std_mpsc::Receiver<Vec<u8>>) -> Self {
+        Self {
+            receiver,
+            pending: Cursor::new(Vec::new()),
+        }
+    }
+}
+
+impl Read for TunnelOnlyReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let read = Read::read(&mut self.pending, buffer)?;
+            if read > 0 {
+                return Ok(read);
+            }
+            match self.receiver.recv() {
+                Ok(data) => self.pending = Cursor::new(data),
+                Err(_) => return Ok(0),
+            }
+        }
+    }
 }
 
 fn spawn_system_ssh_terminal(
@@ -518,16 +631,34 @@ impl NativeSshTarget {
         session: &SavedSession,
         secrets: &dyn SshCommandSecretResolver,
     ) -> AppResult<Self> {
+        let auth_secret = match session.auth_mode {
+            AuthMode::Password => {
+                let credential_ref = required_credential_ref(session, "密码认证需要凭据引用")?;
+                Some(secrets.secret_for(credential_ref)?)
+            }
+            AuthMode::Key => session
+                .credential_ref
+                .as_deref()
+                .map(|credential_ref| secrets.secret_for(credential_ref))
+                .transpose()?,
+            AuthMode::Agent | AuthMode::None => None,
+        };
+        Self::from_session_with_auth_secret(session, auth_secret)
+    }
+
+    fn from_session_with_auth_secret(
+        session: &SavedSession,
+        auth_secret: Option<String>,
+    ) -> AppResult<Self> {
         let host = required_text("主机", &session.host)?;
         let username = required_text("用户名", &session.username)?;
         if session.port == 0 {
             return Err(AppError::validation("端口必须大于 0"));
         }
         let auth = match session.auth_mode {
-            AuthMode::Password => {
-                let credential_ref = required_credential_ref(session, "密码认证需要凭据引用")?;
-                NativeSshAuth::Password(secrets.secret_for(credential_ref)?)
-            }
+            AuthMode::Password => NativeSshAuth::Password(
+                auth_secret.ok_or_else(|| AppError::credential("密码认证需要凭据"))?,
+            ),
             AuthMode::Key => {
                 let identity_file = session
                     .ssh_options
@@ -544,14 +675,9 @@ impl NativeSshTarget {
                 {
                     return Err(AppError::validation("identity_file 不能包含控制字符"));
                 }
-                let passphrase = session
-                    .credential_ref
-                    .as_deref()
-                    .map(|credential_ref| secrets.secret_for(credential_ref))
-                    .transpose()?;
                 NativeSshAuth::PrivateKey {
                     identity_file: PathBuf::from(identity_file),
-                    passphrase,
+                    passphrase: auth_secret,
                 }
             }
             AuthMode::Agent => NativeSshAuth::Agent,
@@ -873,6 +999,177 @@ fn push_tunnel_args(args: &mut Vec<String>, tunnel: &SshTunnel) -> AppResult<()>
     Ok(())
 }
 
+fn spawn_native_exclusive_tunnel_bridge(
+    target: NativeSshTarget,
+    tunnel: &SshTunnel,
+    status: Option<std_mpsc::Sender<Vec<u8>>>,
+) -> AppResult<SshTunnelBridge> {
+    if tunnel.kind != SshTunnelKind::Local {
+        return Err(AppError::unsupported(
+            "单通道临时 SSH 当前只支持访问主机服务本地隧道",
+        ));
+    }
+    let local_port = tunnel_port("本地端口", tunnel.local_port)?;
+    let remote_host = tunnel_host("远程主机", tunnel.remote_host.as_deref())?;
+    let remote_port = tunnel_port("远程端口", tunnel.remote_port)?;
+    let bind_addr = format!("{}:{local_port}", tunnel_bind(tunnel))
+        .parse::<SocketAddr>()
+        .map_err(|_| AppError::validation("SSH 隧道本地监听地址无效"))?;
+    let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let child_killer = Arc::new(Mutex::new(None));
+    let failure_status = status.clone();
+    let thread = thread::spawn(move || {
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|error| AppError::ssh(error.to_string()))
+            .and_then(|runtime| {
+                runtime.block_on(run_native_exclusive_tunnel_bridge(
+                    bind_addr,
+                    remote_host,
+                    remote_port,
+                    target,
+                    status,
+                    shutdown_receiver,
+                ))
+            });
+        if let Err(error) = result {
+            eprintln!("[zTerm] native exclusive SSH tunnel failed: {error}");
+            send_tunnel_status(
+                failure_status.as_ref(),
+                format!("\r\nSSH 隧道启动失败：{error}\r\n"),
+            );
+        }
+    });
+    Ok(SshTunnelBridge {
+        shutdown: Some(shutdown_sender),
+        cancelled,
+        child_killer,
+        _thread: Some(thread),
+    })
+}
+
+async fn run_native_exclusive_tunnel_bridge(
+    bind_addr: SocketAddr,
+    remote_host: String,
+    remote_port: u16,
+    target: NativeSshTarget,
+    status: Option<std_mpsc::Sender<Vec<u8>>>,
+    mut shutdown: oneshot::Receiver<()>,
+) -> AppResult<()> {
+    let listener = TcpListener::bind(bind_addr)
+        .await
+        .map_err(|error| AppError::ssh(format!("SSH 隧道监听 {bind_addr} 失败: {error}")))?;
+    let accepted = tokio::select! {
+        _ = &mut shutdown => return Ok(()),
+        accepted = listener.accept() => accepted,
+    };
+    let (local, _) =
+        accepted.map_err(|error| AppError::ssh(format!("SSH 隧道接收连接失败: {error}")))?;
+    drop(listener);
+    send_tunnel_status(status.as_ref(), "\r\n正在建立独占 SSH 隧道…\r\n");
+    let connection =
+        run_native_exclusive_tunnel_connection(local, target, remote_host, remote_port);
+    tokio::select! {
+        _ = &mut shutdown => Ok(()),
+        result = connection => result,
+    }?;
+    send_tunnel_status(status.as_ref(), "\r\n独占 SSH 隧道已关闭。\r\n");
+    Ok(())
+}
+
+async fn run_native_exclusive_tunnel_connection(
+    mut local: TcpStream,
+    target: NativeSshTarget,
+    remote_host: String,
+    remote_port: u16,
+) -> AppResult<()> {
+    let mut handle = connect_native_ssh(&target).await?;
+    authenticate_native_ssh(&mut handle, &target).await?;
+    let channel = handle.channel_open_session().await.map_err(russh_error)?;
+    let pty_modes = native_pty_modes();
+    channel
+        .request_pty(true, "xterm-256color", 120, 32, 0, 0, &pty_modes)
+        .await
+        .map_err(russh_error)?;
+    channel.request_shell(true).await.map_err(russh_error)?;
+    let (mut channel_reader, channel_writer) = channel.split();
+    let start_command = system_tunnel_bridge_start_command(&remote_host, remote_port);
+
+    tokio::time::timeout(TUNNEL_BRIDGE_AUTH_TIMEOUT, async {
+        let mut output = Vec::new();
+        let mut wrote_start_command = false;
+        loop {
+            let message = channel_reader
+                .wait()
+                .await
+                .ok_or_else(|| AppError::ssh("SSH 隧道桥接远端连接已关闭"))?;
+            match message {
+                ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
+                    output.extend_from_slice(data.as_ref());
+                    let text = String::from_utf8_lossy(&output);
+                    if !wrote_start_command && system_bridge_shell_prompt_seen(&text) {
+                        channel_writer
+                            .data_bytes(format!("{start_command}\r").into_bytes())
+                            .await
+                            .map_err(russh_error)?;
+                        wrote_start_command = true;
+                    }
+                    if wrote_start_command && text.contains(TUNNEL_BRIDGE_READY_MARKER) {
+                        return Ok(());
+                    }
+                    if output.len() > 64 * 1024 {
+                        let keep_from = output.len().saturating_sub(16 * 1024);
+                        output = output.split_off(keep_from);
+                    }
+                }
+                ChannelMsg::Close => {
+                    return Err(AppError::ssh("SSH 隧道桥接远端连接已关闭"));
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .map_err(|_| AppError::ssh("SSH 隧道桥接等待远端 shell 超时"))??;
+
+    let mut local_buffer = vec![0_u8; 16 * 1024];
+    loop {
+        tokio::select! {
+            read = local.read(&mut local_buffer) => {
+                let read = read.map_err(|error| AppError::ssh(format!("SSH 隧道读取本地连接失败: {error}")))?;
+                if read == 0 {
+                    let _ = channel_writer.eof().await;
+                    break;
+                }
+                channel_writer
+                    .data_bytes(local_buffer[..read].to_vec())
+                    .await
+                    .map_err(russh_error)?;
+            }
+            message = channel_reader.wait() => {
+                let Some(message) = message else { break; };
+                match message {
+                    ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
+                        local
+                            .write_all(data.as_ref())
+                            .await
+                            .map_err(|error| AppError::ssh(format!("SSH 隧道写入本地连接失败: {error}")))?;
+                    }
+                    ChannelMsg::Close | ChannelMsg::Eof => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+    let _ = channel_writer.close().await;
+    let _ = handle
+        .disconnect(russh::Disconnect::ByApplication, "tunnel closed", "")
+        .await;
+    Ok(())
+}
+
 fn spawn_session_tunnel_bridges(
     session: &SavedSession,
     secrets: &dyn SshCommandSecretResolver,
@@ -902,7 +1199,7 @@ fn spawn_session_tunnel_bridges(
     };
     tunnels
         .into_iter()
-        .map(|tunnel| spawn_session_tunnel_bridge(session, auth_secret.clone(), tunnel))
+        .map(|tunnel| spawn_session_tunnel_bridge(session, auth_secret.clone(), tunnel, None))
         .collect()
 }
 
@@ -910,6 +1207,7 @@ fn spawn_session_tunnel_bridge(
     session: &SavedSession,
     auth_secret: Option<String>,
     tunnel: &SshTunnel,
+    status: Option<std_mpsc::Sender<Vec<u8>>>,
 ) -> AppResult<SshTunnelBridge> {
     if tunnel.kind != SshTunnelKind::Local {
         return Err(AppError::unsupported(
@@ -925,6 +1223,11 @@ fn spawn_session_tunnel_bridge(
         .map_err(|_| AppError::validation("SSH 隧道本地监听地址无效"))?;
     let session = session.clone();
     let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let child_killer = Arc::new(Mutex::new(None));
+    let bridge_cancelled = Arc::clone(&cancelled);
+    let bridge_child_killer = Arc::clone(&child_killer);
+    let failure_status = status.clone();
     let thread = thread::spawn(move || {
         let result = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -937,15 +1240,24 @@ fn spawn_session_tunnel_bridge(
                     remote_port,
                     session,
                     auth_secret,
+                    status,
+                    bridge_cancelled,
+                    bridge_child_killer,
                     shutdown_receiver,
                 ))
             });
         if let Err(error) = result {
             eprintln!("[zTerm] SSH tunnel bridge failed: {error}");
+            send_tunnel_status(
+                failure_status.as_ref(),
+                format!("\r\nSSH 隧道启动失败：{error}\r\n"),
+            );
         }
     });
     Ok(SshTunnelBridge {
         shutdown: Some(shutdown_sender),
+        cancelled,
+        child_killer,
         _thread: Some(thread),
     })
 }
@@ -956,27 +1268,33 @@ async fn run_session_tunnel_bridge(
     remote_port: u16,
     session: SavedSession,
     auth_secret: Option<String>,
+    status: Option<std_mpsc::Sender<Vec<u8>>>,
+    cancelled: Arc<AtomicBool>,
+    child_killer: Arc<Mutex<Option<Box<dyn ChildKiller + Send + Sync>>>>,
     mut shutdown: oneshot::Receiver<()>,
 ) -> AppResult<()> {
     let listener = TcpListener::bind(bind_addr)
         .await
         .map_err(|error| AppError::ssh(format!("SSH 隧道监听 {bind_addr} 失败: {error}")))?;
-    loop {
-        tokio::select! {
-            _ = &mut shutdown => break,
-            accepted = listener.accept() => {
-                let (stream, _) = accepted
-                    .map_err(|error| AppError::ssh(format!("SSH 隧道接收连接失败: {error}")))?;
-                tokio::spawn(handle_session_tunnel_connection(
-                    stream,
-                    remote_host.clone(),
-                    remote_port,
-                    session.clone(),
-                    auth_secret.clone(),
-                ));
-            }
-        }
-    }
+    let accepted = tokio::select! {
+        _ = &mut shutdown => return Ok(()),
+        accepted = listener.accept() => accepted,
+    };
+    let (stream, _) =
+        accepted.map_err(|error| AppError::ssh(format!("SSH 隧道接收连接失败: {error}")))?;
+    drop(listener);
+    send_tunnel_status(status.as_ref(), "\r\n正在建立独占 SSH 隧道…\r\n");
+    handle_session_tunnel_connection(
+        stream,
+        remote_host,
+        remote_port,
+        session,
+        auth_secret,
+        cancelled,
+        child_killer,
+    )
+    .await?;
+    send_tunnel_status(status.as_ref(), "\r\n独占 SSH 隧道已关闭。\r\n");
     Ok(())
 }
 
@@ -986,7 +1304,9 @@ async fn handle_session_tunnel_connection(
     remote_port: u16,
     session: SavedSession,
     auth_secret: Option<String>,
-) {
+    cancelled: Arc<AtomicBool>,
+    child_killer: Arc<Mutex<Option<Box<dyn ChildKiller + Send + Sync>>>>,
+) -> AppResult<()> {
     let result = match local.into_std() {
         Ok(local) => tokio::task::spawn_blocking(move || {
             handle_system_session_tunnel_connection(
@@ -995,15 +1315,18 @@ async fn handle_session_tunnel_connection(
                 auth_secret,
                 remote_host,
                 remote_port,
+                cancelled,
+                child_killer,
             )
         })
         .await
         .unwrap_or_else(|error| Err(AppError::ssh(format!("SSH 隧道桥接线程失败: {error}")))),
         Err(error) => Err(AppError::ssh(format!("SSH 隧道本地连接转换失败: {error}"))),
     };
-    if let Err(error) = result {
+    if let Err(error) = &result {
         eprintln!("[zTerm] SSH tunnel bridge connection failed: {error}");
     }
+    result
 }
 
 fn handle_system_session_tunnel_connection(
@@ -1012,6 +1335,8 @@ fn handle_system_session_tunnel_connection(
     auth_secret: Option<String>,
     remote_host: String,
     remote_port: u16,
+    cancelled: Arc<AtomicBool>,
+    child_killer: Arc<Mutex<Option<Box<dyn ChildKiller + Send + Sync>>>>,
 ) -> AppResult<()> {
     tunnel_bridge_debug_log("accepted local tunnel connection");
     local
@@ -1025,17 +1350,34 @@ fn handle_system_session_tunnel_connection(
     let PtySpawn {
         master,
         mut child,
-        mut reader,
+        reader,
         mut writer,
     } = spawn_pty_command(command, 120, 32).map_err(|error| AppError::ssh(error.to_string()))?;
 
-    prepare_system_tunnel_bridge(
-        reader.as_mut(),
+    if let Ok(mut registered_killer) = child_killer.lock() {
+        *registered_killer = Some(child.clone_killer());
+    }
+    if cancelled.load(Ordering::Acquire) {
+        let _ = child.kill();
+        clear_tunnel_child_killer(&child_killer);
+        return Err(AppError::ssh("SSH 隧道已取消"));
+    }
+
+    let output = spawn_tunnel_pty_output_reader(reader);
+
+    if let Err(error) = prepare_system_tunnel_bridge(
+        &output,
         writer.as_mut(),
         auth_secret.as_deref(),
         &remote_host,
         remote_port,
-    )?;
+        TUNNEL_BRIDGE_AUTH_TIMEOUT,
+    ) {
+        let _ = child.kill();
+        clear_tunnel_child_killer(&child_killer);
+        drop(master);
+        return Err(error);
+    }
     tunnel_bridge_debug_log("system bridge prepared; starting bidirectional copy");
 
     let mut local_reader = local
@@ -1045,44 +1387,55 @@ fn handle_system_session_tunnel_connection(
     let upstream = thread::spawn(move || {
         let _ = std::io::copy(&mut local_reader, &mut writer);
     });
+    let mut downstream_reader = TunnelPtyReader::new(output);
     let downstream = thread::spawn(move || {
-        let _ = std::io::copy(reader.as_mut(), &mut local_writer);
+        let _ = std::io::copy(&mut downstream_reader, &mut local_writer);
         let _ = local_writer.shutdown(Shutdown::Both);
     });
     let _ = upstream.join();
     let _ = downstream.join();
     let _ = child.kill();
+    clear_tunnel_child_killer(&child_killer);
     drop(master);
     tunnel_bridge_debug_log("system bridge connection closed");
     Ok(())
 }
 
 fn prepare_system_tunnel_bridge(
-    reader: &mut dyn Read,
+    output_receiver: &std_mpsc::Receiver<std::io::Result<Vec<u8>>>,
     writer: &mut dyn Write,
     auth_secret: Option<&str>,
     remote_host: &str,
     remote_port: u16,
+    timeout: Duration,
 ) -> AppResult<()> {
     let start_command = system_tunnel_bridge_start_command(remote_host, remote_port);
-    let mut output = Vec::new();
-    let mut buffer = [0_u8; 4096];
+    let mut output_buffer = Vec::new();
     let mut wrote_secret = false;
     let mut wrote_start_command = false;
     let started = Instant::now();
 
     loop {
-        if started.elapsed() > TUNNEL_BRIDGE_AUTH_TIMEOUT {
+        let remaining = timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
             return Err(AppError::ssh("SSH 隧道桥接等待远端 shell 超时"));
         }
-        let read = reader
-            .read(&mut buffer)
-            .map_err(|error| AppError::ssh(format!("SSH 隧道桥接读取远端输出失败: {error}")))?;
-        if read == 0 {
-            return Err(AppError::ssh("SSH 隧道桥接远端连接已关闭"));
-        }
-        output.extend_from_slice(&buffer[..read]);
-        let text = String::from_utf8_lossy(&output).to_string();
+        let chunk = match output_receiver.recv_timeout(remaining) {
+            Ok(Ok(chunk)) => chunk,
+            Ok(Err(error)) => {
+                return Err(AppError::ssh(format!(
+                    "SSH 隧道桥接读取远端输出失败: {error}"
+                )))
+            }
+            Err(std_mpsc::RecvTimeoutError::Timeout) => {
+                return Err(AppError::ssh("SSH 隧道桥接等待远端 shell 超时"))
+            }
+            Err(std_mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(AppError::ssh("SSH 隧道桥接远端连接已关闭"))
+            }
+        };
+        output_buffer.extend_from_slice(&chunk);
+        let text = String::from_utf8_lossy(&output_buffer).to_string();
         if !wrote_secret && system_bridge_should_answer_auth_prompt(&text) {
             if let Some(secret) = auth_secret {
                 tunnel_bridge_debug_log("answering SSH bridge auth prompt");
@@ -1109,10 +1462,77 @@ fn prepare_system_tunnel_bridge(
             tunnel_bridge_debug_log("tunnel bridge ready marker seen");
             return Ok(());
         }
-        if output.len() > 64 * 1024 {
-            let keep_from = output.len().saturating_sub(16 * 1024);
-            output = output.split_off(keep_from);
+        if output_buffer.len() > 64 * 1024 {
+            let keep_from = output_buffer.len().saturating_sub(16 * 1024);
+            output_buffer = output_buffer.split_off(keep_from);
         }
+    }
+}
+
+fn spawn_tunnel_pty_output_reader(
+    mut reader: Box<dyn Read + Send>,
+) -> std_mpsc::Receiver<std::io::Result<Vec<u8>>> {
+    let (sender, receiver) = std_mpsc::channel();
+    thread::spawn(move || loop {
+        let mut buffer = vec![0_u8; 4096];
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(read) => {
+                buffer.truncate(read);
+                if sender.send(Ok(buffer)).is_err() {
+                    break;
+                }
+            }
+            Err(error) => {
+                let _ = sender.send(Err(error));
+                break;
+            }
+        }
+    });
+    receiver
+}
+
+struct TunnelPtyReader {
+    receiver: std_mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    pending: Cursor<Vec<u8>>,
+}
+
+impl TunnelPtyReader {
+    fn new(receiver: std_mpsc::Receiver<std::io::Result<Vec<u8>>>) -> Self {
+        Self {
+            receiver,
+            pending: Cursor::new(Vec::new()),
+        }
+    }
+}
+
+impl Read for TunnelPtyReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            let read = Read::read(&mut self.pending, buffer)?;
+            if read > 0 {
+                return Ok(read);
+            }
+            match self.receiver.recv() {
+                Ok(Ok(data)) => self.pending = Cursor::new(data),
+                Ok(Err(error)) => return Err(error),
+                Err(_) => return Ok(0),
+            }
+        }
+    }
+}
+
+fn clear_tunnel_child_killer(
+    child_killer: &Arc<Mutex<Option<Box<dyn ChildKiller + Send + Sync>>>>,
+) {
+    if let Ok(mut registered_killer) = child_killer.lock() {
+        registered_killer.take();
+    }
+}
+
+fn send_tunnel_status(status: Option<&std_mpsc::Sender<Vec<u8>>>, message: impl AsRef<str>) {
+    if let Some(status) = status {
+        let _ = status.send(message.as_ref().as_bytes().to_vec());
     }
 }
 
@@ -1233,10 +1653,18 @@ fn native_pty_modes() -> Vec<(Pty, u32)> {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        io::Cursor,
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+
     use super::{
-        build_ssh_arguments, remote_tcp_bridge_command, ssh_container_terminal_transport,
-        system_bridge_shell_prompt_seen, system_tunnel_bridge_start_command,
-        SshContainerTerminalTransport, TUNNEL_BRIDGE_READY_MARKER,
+        build_ssh_arguments, prepare_system_tunnel_bridge, remote_tcp_bridge_command,
+        spawn_ssh_terminal_with_resolver, ssh_container_terminal_transport,
+        ssh_terminal_launch_mode, system_bridge_shell_prompt_seen,
+        system_tunnel_bridge_start_command, SshContainerTerminalTransport, SshTerminalLaunchMode,
+        SshTerminalRuntime, SystemSshSecretResolver, TUNNEL_BRIDGE_READY_MARKER,
     };
     use crate::models::session::{
         AuthMode, SavedSession, SessionType, SshContainerOptions, SshOptions, SshTunnel,
@@ -1343,6 +1771,113 @@ mod tests {
     }
 
     #[test]
+    fn single_channel_temporary_ssh_with_an_open_tunnel_uses_exclusive_tunnel_mode() {
+        let session = ssh_session_with_options(SshOptions {
+            connect_timeout_ms: None,
+            keepalive_interval_ms: None,
+            proxy_command: None,
+            identity_file: None,
+            jump_hosts: Vec::new(),
+            tunnels: vec![SshTunnel {
+                mode: Some("host_service".to_string()),
+                name: Some("PostgreSQL".to_string()),
+                kind: SshTunnelKind::Local,
+                auto_open: true,
+                bind_address: Some("127.0.0.1".to_string()),
+                local_port: Some(15432),
+                remote_host: Some("127.0.0.1".to_string()),
+                remote_port: Some(35432),
+            }],
+            container: Some(container_options()),
+        });
+
+        assert_eq!(
+            ssh_terminal_launch_mode(&session, true),
+            SshTerminalLaunchMode::ExclusiveTunnel
+        );
+    }
+
+    #[test]
+    fn single_channel_temporary_ssh_without_an_open_tunnel_keeps_interactive_mode() {
+        let session = ssh_session_with_options(SshOptions {
+            connect_timeout_ms: None,
+            keepalive_interval_ms: None,
+            proxy_command: None,
+            identity_file: None,
+            jump_hosts: Vec::new(),
+            tunnels: Vec::new(),
+            container: Some(container_options()),
+        });
+
+        assert_eq!(
+            ssh_terminal_launch_mode(&session, true),
+            SshTerminalLaunchMode::Interactive
+        );
+    }
+
+    #[test]
+    fn non_single_channel_ssh_with_an_open_tunnel_keeps_interactive_mode() {
+        let session = ssh_session_with_options(SshOptions {
+            connect_timeout_ms: None,
+            keepalive_interval_ms: None,
+            proxy_command: None,
+            identity_file: None,
+            jump_hosts: Vec::new(),
+            tunnels: vec![SshTunnel {
+                mode: Some("host_service".to_string()),
+                name: Some("PostgreSQL".to_string()),
+                kind: SshTunnelKind::Local,
+                auto_open: true,
+                bind_address: Some("127.0.0.1".to_string()),
+                local_port: Some(15432),
+                remote_host: Some("127.0.0.1".to_string()),
+                remote_port: Some(35432),
+            }],
+            container: Some(container_options()),
+        });
+
+        assert_eq!(
+            ssh_terminal_launch_mode(&session, false),
+            SshTerminalLaunchMode::Interactive
+        );
+    }
+
+    #[test]
+    fn exclusive_tunnel_mode_does_not_spawn_an_interactive_ssh_runtime() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("port should bind");
+        let local_port = listener.local_addr().expect("address should exist").port();
+        drop(listener);
+        let mut session = ssh_session_with_options(SshOptions {
+            connect_timeout_ms: None,
+            keepalive_interval_ms: None,
+            proxy_command: None,
+            identity_file: None,
+            jump_hosts: Vec::new(),
+            tunnels: vec![SshTunnel {
+                mode: Some("host_service".to_string()),
+                name: Some("PostgreSQL".to_string()),
+                kind: SshTunnelKind::Local,
+                auto_open: true,
+                bind_address: Some("127.0.0.1".to_string()),
+                local_port: Some(local_port),
+                remote_host: Some("127.0.0.1".to_string()),
+                remote_port: Some(35432),
+            }],
+            container: Some(container_options()),
+        });
+        session.auth_mode = AuthMode::None;
+        session.credential_ref = None;
+
+        let spawn =
+            spawn_ssh_terminal_with_resolver(&session, 120, 32, &SystemSshSecretResolver, true)
+                .expect("exclusive tunnel runtime should open");
+
+        assert!(matches!(spawn.runtime, SshTerminalRuntime::TunnelOnly(_)));
+        assert!(spawn.auth_secret.is_none());
+        assert_eq!(spawn.tunnel_bridges.len(), 1);
+    }
+
+    #[test]
     fn remote_tcp_bridge_command_uses_remote_tcp_tools() {
         let command = remote_tcp_bridge_command("127.0.0.1", 8040);
 
@@ -1363,6 +1898,26 @@ mod tests {
         assert!(command.contains("stty raw -echo"));
         assert!(command.contains("/dev/tcp"));
         assert!(command.contains("8040"));
+    }
+
+    #[test]
+    fn system_tunnel_bridge_auth_wait_has_a_real_timeout_without_pty_output() {
+        let (_sender, receiver) = mpsc::channel();
+        let mut writer = Cursor::new(Vec::new());
+        let started = Instant::now();
+
+        let error = prepare_system_tunnel_bridge(
+            &receiver,
+            &mut writer,
+            None,
+            "127.0.0.1",
+            35432,
+            Duration::from_millis(10),
+        )
+        .expect_err("silent SSH startup should time out");
+
+        assert!(error.to_string().contains("等待远端 shell 超时"));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

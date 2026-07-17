@@ -64,6 +64,7 @@ pub struct ExternalLaunchService {
 struct ExternalLaunchInner {
     sessions: Mutex<HashMap<String, TransientSshSession>>,
     pending_launches: Mutex<VecDeque<ExternalSshLaunchEvent>>,
+    single_channel_tunnel_templates: Mutex<HashMap<String, Vec<crate::models::session::SshTunnel>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +109,20 @@ impl ExternalLaunchService {
         } else {
             AuthMode::None
         };
+        let channel_policy = external_ssh_channel_policy_for_username(&username);
+        let inherited_tunnels = if channel_policy == ExternalSshChannelPolicy::SingleChannel {
+            single_channel_template_key(&host, request.port, &username)
+                .and_then(|key| {
+                    self.inner
+                        .single_channel_tunnel_templates
+                        .lock()
+                        .ok()
+                        .and_then(|templates| templates.get(&key).cloned())
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let now = now_ms();
         let name = format!("{username}@{host}:{}", request.port);
         let session = SavedSession {
@@ -135,7 +150,7 @@ impl ExternalLaunchService {
                     .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty()),
                 jump_hosts: Vec::new(),
-                tunnels: Vec::new(),
+                tunnels: inherited_tunnels,
                 container: Some(default_external_container_options()),
             }),
             rdp_options: None,
@@ -147,7 +162,7 @@ impl ExternalLaunchService {
             name,
             host,
             port: request.port,
-            channel_policy: external_ssh_channel_policy_for_username(&username),
+            channel_policy,
             username,
             auto_open_sftp: request.auto_open_sftp,
             remote_path,
@@ -216,6 +231,19 @@ impl ExternalLaunchService {
             .map(|entry| entry.session.clone()))
     }
 
+    pub fn channel_policy(&self, id: &str) -> AppResult<Option<ExternalSshChannelPolicy>> {
+        if !is_external_session_id(id) {
+            return Ok(None);
+        }
+        Ok(self
+            .inner
+            .sessions
+            .lock()
+            .map_err(|_| AppError::terminal("external session lock was poisoned"))?
+            .get(id)
+            .map(|entry| entry.launch.channel_policy.clone()))
+    }
+
     pub fn get_ssh_options(&self, id: &str) -> AppResult<SshOptions> {
         if !is_external_session_id(id) {
             return Err(AppError::validation("只能读取临时 SSH 连接配置"));
@@ -239,27 +267,48 @@ impl ExternalLaunchService {
         if !is_external_session_id(id) {
             return Err(AppError::validation("只能更新临时 SSH 连接配置"));
         }
-        let mut sessions = self
-            .inner
-            .sessions
-            .lock()
-            .map_err(|_| AppError::terminal("external session lock was poisoned"))?;
-        let entry = sessions
-            .get_mut(id)
-            .ok_or_else(|| AppError::validation("临时 SSH 连接不存在"))?;
-        let mut options = entry
-            .session
-            .ssh_options
-            .clone()
-            .unwrap_or_else(default_external_ssh_options);
-        if entry.launch.channel_policy == ExternalSshChannelPolicy::SingleChannel {
-            validate_single_channel_ssh_options(&next_options)?;
+        let (options, template_update) = {
+            let mut sessions = self
+                .inner
+                .sessions
+                .lock()
+                .map_err(|_| AppError::terminal("external session lock was poisoned"))?;
+            let entry = sessions
+                .get_mut(id)
+                .ok_or_else(|| AppError::validation("临时 SSH 连接不存在"))?;
+            let mut options = entry
+                .session
+                .ssh_options
+                .clone()
+                .unwrap_or_else(default_external_ssh_options);
+            if entry.launch.channel_policy == ExternalSshChannelPolicy::SingleChannel {
+                validate_single_channel_ssh_options(&next_options)?;
+            }
+            options.tunnels = next_options.tunnels;
+            options.container = next_options
+                .container
+                .or(Some(default_external_container_options()));
+            entry.session.ssh_options = Some(options.clone());
+            let template_update = (entry.launch.channel_policy
+                == ExternalSshChannelPolicy::SingleChannel)
+                .then(|| {
+                    single_channel_template_key(
+                        &entry.launch.host,
+                        entry.launch.port,
+                        &entry.launch.username,
+                    )
+                    .map(|key| (key, options.tunnels.clone()))
+                })
+                .flatten();
+            (options, template_update)
+        };
+        if let Some((key, tunnels)) = template_update {
+            self.inner
+                .single_channel_tunnel_templates
+                .lock()
+                .map_err(|_| AppError::terminal("external tunnel template lock was poisoned"))?
+                .insert(key, tunnels);
         }
-        options.tunnels = next_options.tunnels;
-        options.container = next_options
-            .container
-            .or(Some(default_external_container_options()));
-        entry.session.ssh_options = Some(options.clone());
         Ok(options)
     }
 
@@ -349,20 +398,33 @@ fn validate_single_channel_ssh_options(options: &SshOptions) -> AppResult<()> {
 }
 
 fn valid_b64_gateway_username(username: &str) -> bool {
-    let Some(payload) = username.trim().trim_matches('"').strip_prefix("b64>>") else {
-        return false;
-    };
-    let mut normalized_payload = payload.trim().replace('-', "+").replace('_', "/");
-    let padding = (4 - (normalized_payload.len() % 4)) % 4;
-    normalized_payload.extend(std::iter::repeat_n('=', padding));
-    let Ok(decoded) = general_purpose::STANDARD.decode(normalized_payload) else {
-        return false;
-    };
-    let Ok(decoded) = String::from_utf8(decoded) else {
+    let Some(decoded) = decode_b64_gateway_username(username) else {
         return false;
     };
     let normalized = decoded.trim().to_ascii_lowercase();
     normalized.contains('@') && (normalized.ends_with(":ssh2") || normalized.ends_with(":ssh"))
+}
+
+fn decode_b64_gateway_username(username: &str) -> Option<String> {
+    let payload = username.trim().trim_matches('"').strip_prefix("b64>>")?;
+    let mut normalized_payload = payload.trim().replace('-', "+").replace('_', "/");
+    let padding = (4 - (normalized_payload.len() % 4)) % 4;
+    normalized_payload.extend(std::iter::repeat_n('=', padding));
+    let decoded = general_purpose::STANDARD.decode(normalized_payload).ok()?;
+    String::from_utf8(decoded).ok()
+}
+
+fn single_channel_template_key(host: &str, port: u16, username: &str) -> Option<String> {
+    let decoded = decode_b64_gateway_username(username)?;
+    let normalized = decoded.trim().to_ascii_lowercase();
+    if !(normalized.ends_with(":ssh2") || normalized.ends_with(":ssh")) {
+        return None;
+    }
+    let target = normalized.rsplit_once('@')?.1;
+    Some(format!(
+        "{}:{port}|{target}",
+        host.trim().to_ascii_lowercase()
+    ))
 }
 
 pub fn parse_external_ssh_launch_args<I, S>(args: I) -> AppResult<Option<ExternalSshLaunchRequest>>
@@ -1614,6 +1676,63 @@ mod tests {
             .expect_err("single-channel launch should reject multiple tunnels");
 
         assert!(error.to_string().contains("只支持一个隧道"));
+    }
+
+    #[test]
+    fn next_single_channel_credential_for_the_same_target_inherits_the_tunnel() {
+        let service = ExternalLaunchService::default();
+        let first_request = parse_external_ssh_launch_args([
+            "Xshell.exe",
+            "-url",
+            "ssh://\"b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=\":\"en::first\"@gateway.example.test:222",
+        ])
+        .expect("first args should parse")
+        .expect("first request should exist");
+        let first_launch = service
+            .register_request(first_request)
+            .expect("first launch should register");
+        service
+            .update_ssh_options(
+                &first_launch.id,
+                SshOptions {
+                    connect_timeout_ms: None,
+                    keepalive_interval_ms: None,
+                    proxy_command: None,
+                    identity_file: None,
+                    jump_hosts: Vec::new(),
+                    tunnels: vec![SshTunnel {
+                        mode: Some("host_service".to_string()),
+                        name: Some("PostgreSQL".to_string()),
+                        kind: SshTunnelKind::Local,
+                        auto_open: true,
+                        bind_address: Some("127.0.0.1".to_string()),
+                        local_port: Some(15432),
+                        remote_host: Some("127.0.0.1".to_string()),
+                        remote_port: Some(35432),
+                    }],
+                    container: None,
+                },
+            )
+            .expect("tunnel should update");
+
+        let next_request = parse_external_ssh_launch_args([
+            "Xshell.exe",
+            "-url",
+            "ssh://\"b64>>d2VuOjMwMTI1OTY5NDQ4OTVAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=\":\"en::next\"@gateway.example.test:222",
+        ])
+        .expect("next args should parse")
+        .expect("next request should exist");
+        let next_launch = service
+            .register_request(next_request)
+            .expect("next launch should register");
+        let next_options = service
+            .get_ssh_options(&next_launch.id)
+            .expect("next options should load");
+
+        assert_eq!(next_options.tunnels.len(), 1);
+        assert_eq!(next_options.tunnels[0].local_port, Some(15432));
+        assert_eq!(next_options.tunnels[0].remote_port, Some(35432));
+        assert!(next_options.tunnels[0].auto_open);
     }
 
     #[test]
