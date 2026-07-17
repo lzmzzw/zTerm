@@ -2005,8 +2005,8 @@ button {
 
 .zt-pane-active-indicator {
   align-self: center;
-  width: 6px;
-  height: 6px;
+  width: 12px;
+  height: 12px;
   margin: 0 10px;
   border-radius: 50%;
   background: var(--zt-accent);
