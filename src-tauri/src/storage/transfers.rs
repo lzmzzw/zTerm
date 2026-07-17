@@ -169,6 +169,7 @@ pub fn list_transfer_tasks(
                 from transfer_tasks
                 where saved_session_id = ?1
                   and task_origin = 'sftp_panel'
+                  and saved_session_id not like 'external:%'
                 order by created_at_ms desc
                 limit ?2
                 ",
@@ -186,6 +187,9 @@ pub fn list_transfer_tasks(
                        task_origin, source_kind, source_session_id, source_path,
                        destination_kind, destination_session_id, destination_path
                 from transfer_tasks
+                where saved_session_id not like 'external:%'
+                  and coalesce(source_session_id, '') not like 'external:%'
+                  and coalesce(destination_session_id, '') not like 'external:%'
                 order by created_at_ms desc
                 limit ?1
                 ",

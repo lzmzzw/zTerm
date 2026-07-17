@@ -72,6 +72,7 @@ pub fn get_workspace(store: &SqliteStore, id: &str) -> AppResult<WorkspaceDefini
             .collect::<Result<Vec<_>, _>>()?;
         let valid_session_ids = valid_saved_session_ids(connection)?;
         for tab in &mut tabs {
+            remove_transient_connections(&mut tab.root);
             sanitize_missing_sessions(&mut tab.root, &valid_session_ids);
         }
         workspace.tabs = tabs;
@@ -259,11 +260,14 @@ fn strip_runtime_state(root: PaneNode) -> PaneNode {
             terminal_tabs,
             ..
         } => {
-            let terminal_tabs = normalize_terminal_tabs(
+            let terminal_tabs = remove_transient_terminal_tabs(
                 id.as_str(),
-                title.as_str(),
-                saved_session_id.clone(),
-                terminal_tabs,
+                normalize_terminal_tabs(
+                    id.as_str(),
+                    title.as_str(),
+                    saved_session_id,
+                    terminal_tabs,
+                ),
             );
             let active_terminal_tab = terminal_tabs
                 .iter()
@@ -272,9 +276,7 @@ fn strip_runtime_state(root: PaneNode) -> PaneNode {
             PaneNode::Leaf {
                 id,
                 runtime_session_id: None,
-                saved_session_id: active_terminal_tab
-                    .and_then(|tab| tab.saved_session_id.clone())
-                    .or(saved_session_id),
+                saved_session_id: active_terminal_tab.and_then(|tab| tab.saved_session_id.clone()),
                 title: active_terminal_tab
                     .map(|tab| tab.title.clone())
                     .unwrap_or(title),
@@ -344,6 +346,66 @@ fn connection_source_for_session(saved_session_id: Option<&str>) -> Option<Strin
         }
         .to_string(),
     )
+}
+
+fn remove_transient_connections(root: &mut PaneNode) {
+    match root {
+        PaneNode::Leaf {
+            id,
+            runtime_session_id,
+            saved_session_id,
+            title,
+            active_terminal_tab_id,
+            terminal_tabs,
+        } => {
+            let retained = remove_transient_terminal_tabs(id, std::mem::take(terminal_tabs));
+            let active = retained
+                .iter()
+                .find(|tab| Some(tab.id.as_str()) == active_terminal_tab_id.as_deref())
+                .or_else(|| retained.first())
+                .expect("transient filtering always keeps a fallback tab");
+            *runtime_session_id = active.runtime_session_id.clone();
+            *saved_session_id = active.saved_session_id.clone();
+            *title = active.title.clone();
+            *active_terminal_tab_id = Some(active.id.clone());
+            *terminal_tabs = retained;
+        }
+        PaneNode::Split { first, second, .. } => {
+            remove_transient_connections(first);
+            remove_transient_connections(second);
+        }
+    }
+}
+
+fn remove_transient_terminal_tabs(
+    pane_id: &str,
+    terminal_tabs: Vec<WorkspaceTerminalTab>,
+) -> Vec<WorkspaceTerminalTab> {
+    let retained = terminal_tabs
+        .into_iter()
+        .filter(|tab| {
+            tab.connection_source.as_deref() != Some("external_ssh")
+                && !tab
+                    .saved_session_id
+                    .as_deref()
+                    .is_some_and(|id| id.starts_with("external:"))
+        })
+        .collect::<Vec<_>>();
+    if !retained.is_empty() {
+        return retained;
+    }
+    vec![WorkspaceTerminalTab {
+        id: format!("{pane_id}-tab-1"),
+        title: "新建终端".to_string(),
+        runtime_session_id: None,
+        saved_session_id: None,
+        connection_source: Some("default_local".to_string()),
+        container_target: None,
+        path: None,
+        startup_command: None,
+        restore_status: None,
+        restore_error: None,
+    }]
 }
 
 fn sanitize_missing_sessions(root: &mut PaneNode, valid_session_ids: &HashSet<String>) {

@@ -433,6 +433,36 @@ describe("workspaceStore pane tabs", () => {
     expect(root.terminal_tabs?.[0]).not.toHaveProperty("visual_snapshot");
   });
 
+  it("excludes external connection tabs from the active workspace draft", () => {
+    const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
+    if (workspaceA.tabs[0].root.kind === "leaf") {
+      workspaceA.tabs[0].root.terminal_tabs!.push({
+        id: "workspace-a-pane-1-tab-external",
+        title: "temporary@example.test:22",
+        runtime_session_id: "runtime-external",
+        saved_session_id: "external:launch-1",
+        connection_source: "external_ssh",
+      });
+      workspaceA.tabs[0].root.active_terminal_tab_id = "workspace-a-pane-1-tab-external";
+    }
+    useWorkspaceStore.setState({
+      workspaces: [workspaceA],
+      activeWorkspaceId: workspaceA.id,
+      tabs: workspaceA.tabs,
+      activeTabId: workspaceA.activeTabId,
+    });
+
+    const draft = useWorkspaceStore.getState().buildActiveWorkspaceDraft();
+    const root = draft?.tabs[0].root;
+
+    expect(root?.kind).toBe("leaf");
+    if (!root || root.kind !== "leaf") return;
+    expect(root.terminal_tabs).toHaveLength(1);
+    expect(root.terminal_tabs?.[0].saved_session_id).toBe("session-1");
+    expect(root.active_terminal_tab_id).toBe(root.terminal_tabs?.[0].id);
+    expect(JSON.stringify(root)).not.toContain("external:launch-1");
+  });
+
   it("removes a workspace runtime and cached definition while falling back from the active workspace", () => {
     const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
     const defaultWorkspace = runtimeWorkspace("default-workspace", "runtime-default");

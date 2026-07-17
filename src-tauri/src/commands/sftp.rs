@@ -23,10 +23,7 @@ use crate::{
         transfer_queue::TransferQueue,
     },
     state::AppState,
-    storage::{
-        sessions::{get_session, list_sessions},
-        transfers::list_transfer_tasks,
-    },
+    storage::sessions::{get_session, list_sessions},
 };
 
 #[tauri::command]
@@ -458,12 +455,9 @@ pub fn transfer_list(
     saved_session_id: Option<String>,
     limit: Option<u32>,
 ) -> AppResult<Vec<TransferTask>> {
-    let storage = state.storage();
-    list_transfer_tasks(
-        storage.as_ref(),
-        saved_session_id.as_deref(),
-        limit.unwrap_or(200),
-    )
+    state
+        .transfer_queue()
+        .list(saved_session_id.as_deref(), limit.unwrap_or(200))
 }
 
 #[tauri::command]
@@ -471,8 +465,7 @@ pub fn file_transfer_list(
     state: State<'_, AppState>,
     limit: Option<u32>,
 ) -> AppResult<Vec<TransferTask>> {
-    let storage = state.storage();
-    list_transfer_tasks(storage.as_ref(), None, limit.unwrap_or(200))
+    state.transfer_queue().list(None, limit.unwrap_or(200))
 }
 
 #[tauri::command]

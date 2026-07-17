@@ -71,12 +71,12 @@ FileZilla 格式文件传输可直接使用 `zTerm.exe "sftp://user:password@hos
 | Command | 入参 | 返回 | 说明 |
 | --- | --- | --- | --- |
 | `workspace_list` | 无 | `WorkspaceSummary[]` | 列出已保存工作区定义和标签数量 |
-| `workspace_get` | `{ workspaceId }` | `WorkspaceDefinition` | 读取单个工作区布局快照；若引用的保存会话已删除，终端标签返回 `connection_source="missing"` 且清空 `saved_session_id` |
-| `workspace_save` | `{ draft: WorkspaceDefinitionDraft }` | `WorkspaceDefinition` | 新增或更新显式工作区定义；后端保存前清除 runtime id、恢复状态和恢复错误，并统一保存为 `closed`；显式传入 `id="default-workspace"` 返回 `Validation` |
+| `workspace_get` | `{ workspaceId }` | `WorkspaceDefinition` | 读取单个工作区布局快照；若引用的保存会话已删除，终端标签返回 `connection_source="missing"` 且清空 `saved_session_id`；历史快照中的 `external:` 临时标签直接移除，叶节点无其他标签时回退为空白标签 |
+| `workspace_save` | `{ draft: WorkspaceDefinitionDraft }` | `WorkspaceDefinition` | 新增或更新显式工作区定义；后端保存前清除 runtime id、恢复状态、恢复错误和 `external:` 临时标签，并统一保存为 `closed`；显式传入 `id="default-workspace"` 返回 `Validation` |
 | `workspace_delete` | `{ workspaceId }` | `{ deleted: true }` | 关闭工作区定义，将 `status` 标为 `closed`；不物理删除布局快照 |
 | `workspace_remove` | `{ workspaceId }` | `{ deleted: true }` | 物理删除非默认工作区定义和布局快照；`default-workspace` 返回 `Validation` |
 
-`WorkspaceDefinition` 包含 `id`、`name`、`status`（持久化兼容字段，保存和读取定义时始终为 `closed`）、`active_tab_id`、`tabs[]`、`sort_order`、`created_at_ms`、`updated_at_ms`。前端仅维护一个以 `default-workspace` 标识的独立实时工作台；已保存定义不会进入运行态，列表选择也不会改变工作台。`tabs[].root` 为分栏树，终端标签保存连接引用、容器目标、显式路径和连接后指令。SQLite 不保存 `runtime_session_id`、`restore_status`、`restore_error`、终端输出或 secret；一次性外部 SSH 保存时仍转换为 `missing`。顶部手动保存从当前实时工作台构建草稿，右键编辑读取已保存定义；二者都不探测 Local/SSH 当前 cwd。`workspace_delete` 作为兼容 IPC 保留，但当前前端和 AI 工具目录不再提供“关闭工作区”入口。
+`WorkspaceDefinition` 包含 `id`、`name`、`status`（持久化兼容字段，保存和读取定义时始终为 `closed`）、`active_tab_id`、`tabs[]`、`sort_order`、`created_at_ms`、`updated_at_ms`。前端仅维护一个以 `default-workspace` 标识的独立实时工作台；已保存定义不会进入运行态，列表选择也不会改变工作台。`tabs[].root` 为分栏树，终端标签保存连接引用、容器目标、显式路径和连接后指令。SQLite 不保存 `runtime_session_id`、`restore_status`、`restore_error`、终端输出、secret 或 `external:` 临时连接标签；临时标签不会转换为失败占位。顶部手动保存从当前实时工作台构建草稿，右键编辑读取已保存定义；二者都不探测 Local/SSH 当前 cwd。`workspace_delete` 作为兼容 IPC 保留，但当前前端和 AI 工具目录不再提供“关闭工作区”入口。
 
 ## Terminal
 
@@ -152,15 +152,15 @@ FileZilla 格式文件传输可直接使用 `zTerm.exe "sftp://user:password@hos
 | `file_transfer_delete_endpoint` | `{ endpoint, recursive }` | `{ deleted: true }` | 删除本机或 SSH 端点文件/目录；目录递归删除必须显式 `recursive=true`，根目录显式拒绝 |
 | `file_transfer_check_conflicts` | `{ items: { destination, kind }[] }` | `{ path }[]` | 批量检查通用端点目标是否已存在 |
 | `file_transfer_enqueue` | `{ source, destination, kind?, conflictPolicy? }` | `TransferTask` | 入队独立文件传输栏任务；本机到本机拒绝；SSH/SFTP 远端到远端通过双 SFTP 连接流式中转；FTP 参与的远端到远端直传暂不支持 |
-| `file_transfer_list` | `{ limit? }` | `TransferTask[]` | 查询全局传输任务列表，包含旧 SFTP 栏和独立文件传输栏任务 |
-| `transfer_list` | `{ savedSessionId?, limit? }` | `TransferTask[]` | 查询传输任务；传入 `savedSessionId` 时只返回旧 SFTP 栏 `sftp_panel` 来源任务，保持当前会话 Dock 兼容 |
+| `file_transfer_list` | `{ limit? }` | `TransferTask[]` | 查询全局传输任务列表，包含旧 SFTP 栏和独立文件传输栏任务；当前进程内仍会返回临时连接任务，重启后不返回 |
+| `transfer_list` | `{ savedSessionId?, limit? }` | `TransferTask[]` | 查询传输任务；传入 `savedSessionId` 时只返回旧 SFTP 栏 `sftp_panel` 来源任务，保持当前会话 Dock 兼容；`external:` 任务仅来自当前进程内存 |
 | `transfer_retry` | `{ taskId }` | `TransferTask` | 重试 failed 任务 |
 | `transfer_pause` | `{ taskId }` | `TransferTask` | 暂停当前进程内有控制句柄的 queued/running 任务；没有当前运行期控制句柄时返回 `Validation`，不承诺重启后断点续传 |
 | `transfer_resume` | `{ taskId }` | `TransferTask` | 恢复 paused 任务；没有当前运行期控制句柄时返回 `Validation` |
 | `transfer_cancel` | `{ taskId }` | `TransferTask` | 取消 queued/running/paused 任务，状态写为 `cancelled` |
 | `transfer_delete` | `{ taskId }` | `{ deleted: true }` | 删除任务记录；queued/running/paused 会先取消再删除，已删除任务的迟到事件由前端忽略 |
 
-`TransferEndpoint` wire shape 为 `{ kind: "local", saved_session_id?: null, path }` 或 `{ kind: "saved_session", saved_session_id, path }`；Rust 继续接受旧 wire 值 `kind: "ssh"`，SQLite 端点快照继续使用 `ssh` 作为兼容存储编码。`TransferTask` 包含 `kind: "file" | "directory" | null`、`conflict_policy: "overwrite" | "skip" | "rename"`、`task_origin: "sftp_panel" | "file_transfer"`、`source_endpoint`、`destination_endpoint` 和 `status: "queued" | "running" | "paused" | "done" | "failed" | "cancelled"`；旧 SQLite 任务迁移后 `kind=null`、`conflict_policy="overwrite"`、`task_origin="sftp_panel"`，并由旧 `direction/local_path/remote_path/saved_session_id` 回填端点快照。前端批量上传/下载在入队前统一弹出冲突策略选择，取消时不创建任务。右侧 SFTP 面板只展示当前活动 SSH 会话的 `sftp_panel` 任务，传输任务 Dock 支持暂停、恢复、取消、删除和失败重试；左侧 rail 的 `文件传输` 按钮位于 `会话` 下方，点击后打开居中文件传输弹窗，弹窗展示全局任务，左右端点独立于当前终端会话，并支持两栏间拖拽或方向按钮触发传输。两栏文件列表均通过右键菜单对本机或 SSH 端点执行重命名和删除；重命名仅支持单项，删除支持当前选择集并在目录删除前确认。本机端点不提供新建目录；SSH 端点选择 UI 仍以已保存 SSH 会话为主，但 API 层可处理当前进程内 `external:<uuid>`。暂停只保留当前进程内运行期控制，不保存可跨重启恢复的断点；使用 `external:<uuid>` 的传输任务若持久化到 SQLite，应用重启后因 transient session 和 secret 已释放，重试会失败，需要重新由云平台发起一次性连接。SFTP 连接复用 SSH command service 的 native 链路：认证支持 `password`、`none`、`key + ssh_options.identity_file` 和 `agent`，密钥口令从 `credential_ref` 指向的 OS keyring 或当前进程 transient resolver 读取；`jump_hosts` 按已保存 SSH 会话解析并读取跳板机凭据；`ProxyCommand` 通过本机 shell 启动 stdio 代理并支持 `%h`、`%p`、`%r`、`%%` token。
+`TransferEndpoint` wire shape 为 `{ kind: "local", saved_session_id?: null, path }` 或 `{ kind: "saved_session", saved_session_id, path }`；Rust 继续接受旧 wire 值 `kind: "ssh"`，SQLite 端点快照继续使用 `ssh` 作为兼容存储编码。`TransferTask` 包含 `kind: "file" | "directory" | null`、`conflict_policy: "overwrite" | "skip" | "rename"`、`task_origin: "sftp_panel" | "file_transfer"`、`source_endpoint`、`destination_endpoint` 和 `status: "queued" | "running" | "paused" | "done" | "failed" | "cancelled"`；旧 SQLite 任务迁移后 `kind=null`、`conflict_policy="overwrite"`、`task_origin="sftp_panel"`，并由旧 `direction/local_path/remote_path/saved_session_id` 回填端点快照。前端批量上传/下载在入队前统一弹出冲突策略选择，取消时不创建任务。右侧 SFTP 面板只展示当前活动 SSH 会话的 `sftp_panel` 任务，传输任务 Dock 支持暂停、恢复、取消、删除和失败重试；左侧 rail 的 `文件传输` 按钮位于 `会话` 下方，点击后打开居中文件传输弹窗，弹窗展示全局任务，左右端点独立于当前终端会话，并支持两栏间拖拽或方向按钮触发传输。两栏文件列表均通过右键菜单对本机或 SSH 端点执行重命名和删除；重命名仅支持单项，删除支持当前选择集并在目录删除前确认。本机端点不提供新建目录；SSH 端点选择 UI 仍以已保存 SSH 会话为主，但 API 层可处理当前进程内 `external:<uuid>`。暂停只保留当前进程内运行期控制，不保存可跨重启恢复的断点；任何会话 ID 或端点引用 `external:<uuid>` 的任务只进入 `TransferQueue` 进程内存，不写入 SQLite，当前进程内仍可暂停、恢复、取消、删除和失败重试，应用重启后不再列出。持久化列表查询同时过滤旧版本遗留的 `external:` 任务记录。SFTP 连接复用 SSH command service 的 native 链路：认证支持 `password`、`none`、`key + ssh_options.identity_file` 和 `agent`，密钥口令从 `credential_ref` 指向的 OS keyring 或当前进程 transient resolver 读取；`jump_hosts` 按已保存 SSH 会话解析并读取跳板机凭据；`ProxyCommand` 通过本机 shell 启动 stdio 代理并支持 `%h`、`%p`、`%r`、`%%` token。
 
 ## Credentials And AI Provider
 

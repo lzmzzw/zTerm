@@ -543,7 +543,9 @@ function stripRuntimeState(root: PaneNode): PaneNode {
     };
   }
 
-  const terminalTabs = getLeafTerminalTabs(root).map((tab) => ({
+  const retainedTabs = getLeafTerminalTabs(root).filter((tab) => !isTransientConnectionTab(tab));
+  const sourceTabs = retainedTabs.length > 0 ? retainedTabs : [emptyPersistedTerminalTab(root.id)];
+  const terminalTabs = sourceTabs.map((tab) => ({
     ...stripTerminalVisualSnapshot(tab),
     runtime_session_id: null,
     connection_source: tab.connection_source ?? (tab.saved_session_id ? "saved_session" : "default_local"),
@@ -558,6 +560,22 @@ function stripRuntimeState(root: PaneNode): PaneNode {
     title: activeTerminalTab?.title ?? root.title,
     active_terminal_tab_id: activeTerminalTab?.id ?? root.active_terminal_tab_id,
     terminal_tabs: terminalTabs,
+  };
+}
+
+function isTransientConnectionTab(tab: PaneTerminalTab): boolean {
+  return tab.connection_source === "external_ssh" || tab.saved_session_id?.startsWith("external:") === true;
+}
+
+function emptyPersistedTerminalTab(paneId: string): PaneTerminalTab {
+  return {
+    id: `${paneId}-tab-1`,
+    title: "新建终端",
+    runtime_session_id: null,
+    saved_session_id: null,
+    connection_source: "default_local",
+    restore_status: null,
+    restore_error: null,
   };
 }
 

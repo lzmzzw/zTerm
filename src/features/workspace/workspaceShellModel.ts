@@ -83,26 +83,32 @@ function removeTransientConnections(root: PaneNode): PaneNode {
     };
   }
 
-  const terminalTabs = getLeafTerminalTabs(root).map((tab) =>
-    tab.connection_source === "external_ssh"
-      ? {
-          ...tab,
-          runtime_session_id: null,
-          saved_session_id: null,
-          connection_source: "missing" as const,
-          restore_status: "failed" as const,
-          restore_error: "外部一次性连接不会保存到工作区",
-          visual_snapshot: null,
-        }
-      : tab,
-  );
+  const retainedTabs = getLeafTerminalTabs(root).filter((tab) => !isTransientConnection(tab));
+  const terminalTabs = retainedTabs.length > 0 ? retainedTabs : [emptyTerminalTab(root.id)];
   const activeTerminalTab = terminalTabs.find((tab) => tab.id === root.active_terminal_tab_id) ?? terminalTabs[0];
   return {
     ...root,
     runtime_session_id: activeTerminalTab?.runtime_session_id ?? null,
     saved_session_id: activeTerminalTab?.saved_session_id ?? null,
     title: activeTerminalTab?.title ?? root.title,
+    active_terminal_tab_id: activeTerminalTab?.id,
     terminal_tabs: terminalTabs,
+  };
+}
+
+function isTransientConnection(tab: PaneTerminalTab): boolean {
+  return tab.connection_source === "external_ssh" || tab.saved_session_id?.startsWith("external:") === true;
+}
+
+function emptyTerminalTab(paneId: string): PaneTerminalTab {
+  return {
+    id: `${paneId}-tab-1`,
+    title: "新建终端",
+    runtime_session_id: null,
+    saved_session_id: null,
+    connection_source: "default_local",
+    restore_status: null,
+    restore_error: null,
   };
 }
 

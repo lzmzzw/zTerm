@@ -228,6 +228,38 @@ fn default_workspace_runtime_snapshot_is_saved_and_restorable() {
 }
 
 #[test]
+fn external_connections_are_removed_from_persisted_workspace_snapshots() {
+    let store = SqliteStore::open_in_memory().expect("sqlite store should open");
+    let mut draft = workspace_draft(Some("external:launch-1".to_string()));
+    draft.id = Some("default-workspace".to_string());
+    draft.name = "默认工作区".to_string();
+
+    save_default_workspace_snapshot(&store, draft).expect("default snapshot should save");
+    let loaded = get_workspace(&store, "default-workspace").expect("default snapshot should load");
+
+    let PaneNode::Leaf {
+        saved_session_id,
+        title,
+        active_terminal_tab_id,
+        terminal_tabs,
+        ..
+    } = &loaded.tabs[0].root
+    else {
+        panic!("default workspace root should be a leaf");
+    };
+    assert_eq!(saved_session_id, &None);
+    assert_eq!(title, "新建终端");
+    assert_eq!(active_terminal_tab_id.as_deref(), Some("pane-1-tab-1"));
+    assert_eq!(terminal_tabs.len(), 1);
+    assert_eq!(terminal_tabs[0].title, "新建终端");
+    assert_eq!(terminal_tabs[0].saved_session_id, None);
+    assert_eq!(
+        terminal_tabs[0].connection_source.as_deref(),
+        Some("default_local")
+    );
+}
+
+#[test]
 fn deleted_saved_session_is_removed_from_workspace_snapshot_on_read() {
     let store = SqliteStore::open_in_memory().expect("sqlite store should open");
     let session = save_session(&store, saved_ssh_session()).expect("session should save");

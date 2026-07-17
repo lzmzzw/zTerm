@@ -175,6 +175,128 @@ fn transfer_queue_records_file_transfer_endpoints_without_polluting_sftp_panel_l
 }
 
 #[test]
+fn external_file_transfers_stay_in_memory_and_disappear_after_restart() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite store should open"));
+    let queue = TransferQueue::from_storage(Arc::clone(&store));
+    let source_endpoint = TransferEndpoint {
+        kind: TransferEndpointKind::Local,
+        saved_session_id: None,
+        path: "C:/tmp/local.txt".to_string(),
+    };
+    let destination_endpoint = TransferEndpoint {
+        kind: TransferEndpointKind::SavedSession,
+        saved_session_id: Some("external:filezilla-1".to_string()),
+        path: "/incoming/local.txt".to_string(),
+    };
+
+    let task = queue
+        .enqueue_with_endpoints(
+            "external:filezilla-1",
+            TransferDirection::Upload,
+            "C:/tmp/local.txt",
+            "/incoming/local.txt",
+            Some(TransferKind::File),
+            TransferConflictPolicy::Overwrite,
+            12,
+            TransferTaskOrigin::FileTransfer,
+            &source_endpoint,
+            &destination_endpoint,
+        )
+        .expect("transient transfer should enqueue");
+
+    assert_eq!(
+        queue.get(&task.id).expect("transient task should exist"),
+        task.clone()
+    );
+    assert_eq!(
+        queue.list(None, 20).expect("runtime tasks should list"),
+        vec![task.clone()]
+    );
+    queue
+        .register_control(&task.id)
+        .expect("transient control should register");
+    assert_eq!(
+        queue
+            .mark_running(&task.id)
+            .expect("transient task should run")
+            .status,
+        TransferStatus::Running
+    );
+    assert_eq!(
+        queue
+            .pause(&task.id)
+            .expect("transient task should pause")
+            .status,
+        TransferStatus::Paused
+    );
+    assert_eq!(
+        queue
+            .resume(&task.id)
+            .expect("transient task should resume")
+            .status,
+        TransferStatus::Running
+    );
+    assert_eq!(
+        queue
+            .mark_progress(&task.id, 7)
+            .expect("transient progress should update")
+            .transferred_bytes,
+        7
+    );
+    assert_eq!(
+        queue
+            .mark_failed(&task.id, "temporary failure")
+            .expect("transient task should fail")
+            .status,
+        TransferStatus::Failed
+    );
+    assert_eq!(
+        queue
+            .retry_failed(&task.id)
+            .expect("transient task should retry")
+            .status,
+        TransferStatus::Queued
+    );
+    assert!(transfers::list_transfer_tasks(store.as_ref(), None, 20)
+        .expect("persistent tasks should list")
+        .is_empty());
+
+    let restarted_queue = TransferQueue::from_storage(Arc::clone(&store));
+    assert!(restarted_queue
+        .list(None, 20)
+        .expect("restarted queue should list")
+        .is_empty());
+}
+
+#[test]
+fn legacy_external_transfer_rows_are_hidden_from_persistent_lists() {
+    let store = SqliteStore::open_in_memory().expect("sqlite store should open");
+    save_session(
+        &store,
+        SavedSessionDraft {
+            id: Some("external:legacy-1".to_string()),
+            ..ssh_draft()
+        },
+    )
+    .expect("legacy external session fixture should save");
+    transfers::insert_transfer_task(
+        &store,
+        "external:legacy-1",
+        TransferDirection::Upload,
+        "C:/tmp/local.txt",
+        "/incoming/local.txt",
+        Some(TransferKind::File),
+        TransferConflictPolicy::Overwrite,
+        12,
+    )
+    .expect("legacy external row should insert");
+
+    assert!(transfers::list_transfer_tasks(&store, None, 20)
+        .expect("persistent tasks should list")
+        .is_empty());
+}
+
+#[test]
 fn recursive_directory_delete_requires_explicit_confirmation() {
     let error =
         zterm_lib::services::sftp_service::validate_delete_request("/var/log/app", true, false)

@@ -176,7 +176,7 @@ describe("workspaceShellModel", () => {
     expect(nextWorkspaceSortOrder([])).toBe(0);
   });
 
-  it("does not persist external one-time SSH tabs into workspace definitions", () => {
+  it("removes external one-time SSH tabs from workspace definitions", () => {
     const runtime: WorkspaceRuntime = {
       ...definition("runtime-workspace", [
         tab(
@@ -209,16 +209,20 @@ describe("workspaceShellModel", () => {
       kind: "leaf",
       runtime_session_id: null,
       saved_session_id: null,
+      title: "新建终端",
       terminal_tabs: [
         {
+          title: "新建终端",
           runtime_session_id: null,
           saved_session_id: null,
-          connection_source: "missing",
-          restore_status: "failed",
-          restore_error: "外部一次性连接不会保存到工作区",
+          connection_source: "default_local",
+          restore_status: null,
+          restore_error: null,
         },
       ],
     });
+    expect(JSON.stringify(root)).not.toContain("external:launch-1");
+    expect(JSON.stringify(root)).not.toContain("ops@cloud.example.test:22");
   });
 
   it("collects terminal restore targets by workspace tab sort order", () => {
