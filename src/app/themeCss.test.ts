@@ -31,6 +31,61 @@ function ruleBodiesForSelector(selector: string) {
 }
 
 describe("global dark theme colors", () => {
+  it("defines shared geometry tokens for cross-module alignment", () => {
+    expect(rootVariable("--zt-titlebar-height")).toBe("30px");
+    expect(rootVariable("--zt-rail-width")).toBe("40px");
+    expect(rootVariable("--zt-workbar-height")).toBe("32px");
+    expect(rootVariable("--zt-rail-button-size")).toBe("28px");
+    expect(rootVariable("--zt-rail-block-inset")).toBe("3px");
+    expect(rootVariable("--zt-rail-inline-inset")).toBe("6px");
+    expect(rootVariable("--zt-pane-border-width")).toBe("1px");
+    expect(rootVariable("--zt-workbar-control-size")).toBe("24px");
+    expect(rootVariable("--zt-font-size-caption")).toBe("11px");
+    expect(rootVariable("--zt-left-sidebar-width")).toBe("300px");
+    expect(rootVariable("--zt-right-sidebar-width")).toBe("430px");
+    expect(rootVariable("--zt-settings-nav-width")).toBe("260px");
+    expect(rootVariable("--zt-window-actions-width")).toBe("120px");
+  });
+
+  it("drives aligned workbench chrome from the shared geometry tokens", () => {
+    expect(ruleBodiesForSelector(".zt-workbench")).toContain(
+      "grid-template-rows: var(--zt-titlebar-height) minmax(320px, 1fr)",
+    );
+    expect(ruleBodiesForSelector(".zt-titlebar")).toContain("height: var(--zt-titlebar-height)");
+    expect(ruleBodiesForSelector(".zt-titlebar-logo-slot")).toContain("width: var(--zt-rail-width)");
+    expect(ruleBodiesForSelector(".zt-left-rail button")).toContain("width: var(--zt-rail-button-size)");
+    expect(ruleBodiesForSelector(".zt-left-rail button")).toContain("height: var(--zt-rail-button-size)");
+    expect(ruleBodiesForSelector(".zt-tool-rail button")).toContain("width: var(--zt-rail-button-size)");
+    expect(ruleBodiesForSelector(".zt-tool-rail button")).toContain("height: var(--zt-rail-button-size)");
+
+    for (const selector of [".zt-panel-header", ".zt-pane-tabs", ".zt-terminal-toolbar"]) {
+      expect(ruleBodiesForSelector(selector)).toContain("height: var(--zt-workbar-height)");
+    }
+
+    expect(ruleBodiesForSelector(".zt-session-panel")).toContain(
+      "border-top: var(--zt-pane-border-width) solid var(--zt-border-subtle)",
+    );
+    expect(ruleBodiesForSelector(".zt-terminal-frame")).toContain(
+      "border: var(--zt-pane-border-width) solid transparent",
+    );
+
+    expect(ruleBodiesForSelector(".zt-terminal-toolbar button")).toContain(
+      "width: var(--zt-workbar-control-size)",
+    );
+    expect(ruleBodiesForSelector(".zt-terminal-toolbar button")).toContain(
+      "height: var(--zt-workbar-control-size)",
+    );
+  });
+
+  it("keeps rail and workbar centers on the same horizontal guide", () => {
+    const workbarHeight = Number.parseFloat(rootVariable("--zt-workbar-height"));
+    const railButtonSize = Number.parseFloat(rootVariable("--zt-rail-button-size"));
+    const railBlockInset = Number.parseFloat(rootVariable("--zt-rail-block-inset"));
+    const paneBorderWidth = Number.parseFloat(rootVariable("--zt-pane-border-width"));
+
+    expect(railBlockInset + railButtonSize / 2).toBe(paneBorderWidth + workbarHeight / 2);
+  });
+
   it("uses kerminal-like semantic surface and line tokens in the dark theme", () => {
     expect(rootVariable("--zt-surface-page")).toBe("#101012");
     expect(rootVariable("--zt-surface-chrome")).toBe("#111113");
@@ -73,7 +128,7 @@ describe("global dark theme colors", () => {
     expect(rootVariable("--zt-bg-settings-nav")).toBe("var(--zt-surface-chrome)");
     expect(rootVariable("--zt-bg-settings-content")).toBe("var(--zt-surface-page)");
     expect(ruleBodiesForSelector(".zt-settings-page-body")).toContain(
-      "grid-template-columns: clamp(260px, 24%, 360px) minmax(0, 1fr)",
+      "grid-template-columns: var(--zt-settings-nav-width) minmax(0, 1fr)",
     );
     expect(ruleBodiesForSelector(".zt-settings-page-tabs")).toContain("background: var(--zt-bg-settings-nav)");
     expect(ruleBodiesForSelector(".zt-settings-page-main")).toContain("background: var(--zt-bg-settings-content)");
@@ -87,17 +142,32 @@ describe("global dark theme colors", () => {
 
   it("keeps the left rail visible and preserves left panel content width", () => {
     expect(ruleBodiesForSelector(".zt-workbench")).toContain(
-      "grid-template-columns: 300px minmax(420px, 1fr) 430px",
+      "grid-template-columns: var(--zt-left-sidebar-width) minmax(420px, 1fr) var(--zt-right-sidebar-width)",
     );
     expect(ruleBodiesForSelector(".zt-workbench-left-collapsed")).toContain(
-      "grid-template-columns: 40px minmax(420px, 1fr) 430px",
+      "grid-template-columns: var(--zt-rail-width) minmax(420px, 1fr) var(--zt-right-sidebar-width)",
     );
     expect(ruleBodiesForSelector(".zt-workbench-right-collapsed")).toContain(
-      "grid-template-columns: 300px minmax(420px, 1fr) 40px",
+      "grid-template-columns: var(--zt-left-sidebar-width) minmax(420px, 1fr) var(--zt-rail-width)",
     );
     expect(ruleBodiesForSelector(".zt-workbench-left-collapsed.zt-workbench-right-collapsed")).toContain(
-      "grid-template-columns: 40px minmax(420px, 1fr) 40px",
+      "grid-template-columns: var(--zt-rail-width) minmax(420px, 1fr) var(--zt-rail-width)",
     );
+  });
+
+  it("uses stable grid alignment in the file transfer header", () => {
+    expect(ruleBodiesForSelector(".zt-file-transfer-dialog-title")).toContain(
+      "grid-template-columns: minmax(0, 1fr) auto",
+    );
+    expect(ruleBodiesForSelector(".zt-file-transfer-policy")).toContain("justify-self: end");
+    expect(ruleBodiesForSelector(".zt-file-transfer-policy")).not.toContain("position: absolute");
+  });
+
+  it("distinguishes selected file rows from transient hover feedback", () => {
+    for (const selector of [".zt-file-list button.active", ".zt-file-transfer-list button.active"]) {
+      expect(ruleBodiesForSelector(selector)).toContain("background: var(--zt-bg-active)");
+      expect(ruleBodiesForSelector(selector)).toContain("box-shadow: inset 2px 0 0 var(--zt-accent)");
+    }
   });
 
   it("keeps expanded left tool panels full height so blank areas receive context menu events", () => {

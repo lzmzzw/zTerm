@@ -76,16 +76,18 @@ describe("split pane css direction mapping", () => {
     const paneTablistStyles = ruleBodiesForSelector(".zt-pane-tablist");
     const terminalToolbarStyles = ruleBodiesForSelector(".zt-terminal-toolbar");
 
-    expect(leftRailStyles).toContain("padding: 2px 6px 8px");
-    expect(toolRailStyles).toContain("padding: 2px 6px 8px");
-    expect(railButtonStyles).toContain("height: 28px");
-    expect(panelHeaderStyles).toContain("height: 32px");
-    expect(frameStyles).toContain("grid-template-rows: 32px 1fr");
-    expect(paneTabsStyles).toContain("height: 32px");
+    expect(leftRailStyles).toContain("var(--zt-rail-block-inset)");
+    expect(leftRailStyles).toContain("var(--zt-rail-inline-inset)");
+    expect(toolRailStyles).toContain("var(--zt-rail-block-inset)");
+    expect(toolRailStyles).toContain("var(--zt-rail-inline-inset)");
+    expect(railButtonStyles).toContain("height: var(--zt-rail-button-size)");
+    expect(panelHeaderStyles).toContain("height: var(--zt-workbar-height)");
+    expect(frameStyles).toContain("grid-template-rows: var(--zt-workbar-height) 1fr");
+    expect(paneTabsStyles).toContain("height: var(--zt-workbar-height)");
     expect(paneTablistStyles).toContain("align-items: center");
     expect(paneTablistStyles).toContain("padding: 0 6px");
-    expect(terminalToolbarStyles).toContain("height: 32px");
-    expect(terminalToolbarStyles).toContain("padding: 0 12px 0 10px");
+    expect(terminalToolbarStyles).toContain("height: var(--zt-workbar-height)");
+    expect(terminalToolbarStyles).toContain("padding: 0 var(--zt-space-3) 0 10px");
   });
 
   it("keeps compact terminal header controls vertically centered inside the 32px header", () => {
@@ -94,10 +96,10 @@ describe("split pane css direction mapping", () => {
     const terminalToolbarButtonStyles = ruleBodiesForSelector(".zt-terminal-toolbar button");
     const panelHeaderActionButtonStyles = ruleBodiesForSelector(".zt-panel-header-action button");
 
-    expect(paneTabStyles).toContain("height: 24px");
-    expect(paneTabIconStyles).toContain("height: 24px");
-    expect(terminalToolbarButtonStyles).toContain("height: 24px");
-    expect(panelHeaderActionButtonStyles).toContain("height: 24px");
+    expect(paneTabStyles).toContain("height: var(--zt-workbar-control-size)");
+    expect(paneTabIconStyles).toContain("height: var(--zt-workbar-control-size)");
+    expect(terminalToolbarButtonStyles).toContain("height: var(--zt-workbar-control-size)");
+    expect(panelHeaderActionButtonStyles).toContain("height: var(--zt-workbar-control-size)");
     expect(paneTabIconStyles).toContain("align-items: center");
     expect(terminalToolbarButtonStyles).toContain("align-items: center");
     expect(panelHeaderActionButtonStyles).toContain("align-items: center");

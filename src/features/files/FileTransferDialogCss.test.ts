@@ -27,13 +27,16 @@ describe("file transfer dialog styles", () => {
 
   it("presents the conflict policy as a cohesive title-bar control", () => {
     const header = ruleBody(".zt-file-transfer-dialog .zt-dialog-header");
+    const title = ruleBody(".zt-file-transfer-dialog-title");
     const control = ruleBody(".zt-file-transfer-policy");
     const label = ruleBody(".zt-file-transfer-policy-label");
     const selector = ruleBody(".zt-file-transfer-policy .zt-select-trigger");
 
-    expect(header).toContain("position: relative");
-    expect(control).toContain("position: absolute");
-    expect(control).toContain("left: 50%");
+    expect(header).toContain("min-height: var(--zt-dialog-header-height)");
+    expect(title).toContain("grid-template-columns: minmax(0, 1fr) auto");
+    expect(title).toContain("align-items: center");
+    expect(control).toContain("justify-self: end");
+    expect(control).not.toContain("position: absolute");
     expect(control).toContain("height: 30px");
     expect(control).toContain("border: 1px solid var(--zt-border)");
     expect(control).toContain("background: var(--zt-bg-input)");
@@ -42,7 +45,6 @@ describe("file transfer dialog styles", () => {
     expect(label).toContain("font-weight: 500");
     expect(selector).toContain("width: 128px");
     expect(selector).toContain("border: 0");
-    expect(css).toContain("@media (max-width: 760px)");
   });
 
   it("reserves one third of the panel for expanded transfer tasks and separates their header", () => {
