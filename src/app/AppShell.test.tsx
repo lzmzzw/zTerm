@@ -4600,7 +4600,9 @@ describe("AppShell", () => {
     });
 
     expect(storeMocks.listSshContainers).toHaveBeenCalledWith("session-1");
-    const containerTarget = view.container.querySelector(".zt-tunnel-panel > .zt-target-summary");
+    const containerPanel = view.container.querySelector(".zt-tunnel-panel.zt-container-panel");
+    expect(containerPanel).not.toBe(null);
+    const containerTarget = containerPanel?.querySelector(":scope > .zt-target-summary");
     expect(containerTarget?.children[0]?.tagName).toBe("STRONG");
     expect(containerTarget?.children[1]?.tagName).toBe("SPAN");
     expect(containerTarget?.children[2]?.tagName).toBe("BUTTON");

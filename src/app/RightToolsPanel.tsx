@@ -401,7 +401,7 @@ function SshContainerListPanel({
   onRuntimeChange: (runtime: string) => Promise<void> | void;
 }) {
   return (
-    <div className="zt-tunnel-panel">
+    <div className="zt-tunnel-panel zt-container-panel">
       <div className="zt-tunnel-target zt-target-summary">
         <strong>{sessionName ?? "当前 SSH 连接"}</strong>
         {target ? <span>{target}</span> : null}

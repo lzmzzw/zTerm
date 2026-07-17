@@ -1352,6 +1352,15 @@ button {
   overflow: hidden;
 }
 
+.zt-container-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.zt-container-panel > .zt-tunnel-list {
+  flex: 1 1 0;
+}
+
 .zt-tunnel-target {
   min-width: 0;
   display: flex;

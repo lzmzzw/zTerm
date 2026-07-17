@@ -86,6 +86,12 @@ describe("global dark theme colors", () => {
     expect(railBlockInset + railButtonSize / 2).toBe(paneBorderWidth + workbarHeight / 2);
   });
 
+  it("keeps cached SSH containers directly below the loading state", () => {
+    expect(ruleBodiesForSelector(".zt-container-panel")).toContain("display: flex");
+    expect(ruleBodiesForSelector(".zt-container-panel")).toContain("flex-direction: column");
+    expect(ruleBodiesForSelector(".zt-container-panel > .zt-tunnel-list")).toContain("flex: 1 1 0");
+  });
+
   it("uses kerminal-like semantic surface and line tokens in the dark theme", () => {
     expect(rootVariable("--zt-surface-page")).toBe("#101012");
     expect(rootVariable("--zt-surface-chrome")).toBe("#111113");
