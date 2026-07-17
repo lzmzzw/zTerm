@@ -111,7 +111,7 @@ class ZmodemRuntimeController {
         void this.handleDetection(detection);
       },
       on_retract: () => {
-        this.appendOutput("\r\n[ZMODEM] 已取消检测到的传输。\r\n");
+        this.appendOutput("\r\n已取消检测到的传输。\r\n");
       },
     }) ?? new Zmodem.Sentry({
       to_terminal: (octets) => this.appendOutput(this.octetsToText(octets)),
@@ -122,7 +122,7 @@ class ZmodemRuntimeController {
         void this.handleDetection(detection);
       },
       on_retract: () => {
-        this.appendOutput("\r\n[ZMODEM] 已取消检测到的传输。\r\n");
+        this.appendOutput("\r\n已取消检测到的传输。\r\n");
       },
     });
   }
@@ -144,7 +144,7 @@ class ZmodemRuntimeController {
       }
     } catch (error) {
       this.appendOutput(fallbackText);
-      this.appendOutput(`\r\n[ZMODEM] 传输解析失败：${stringifiedErrorMessage(error)}\r\n`);
+      this.appendOutput(`\r\n传输解析失败：${stringifiedErrorMessage(error)}\r\n`);
       this.activeSession = null;
       this.pendingReceiveOverAndOut = null;
     }
@@ -166,17 +166,17 @@ class ZmodemRuntimeController {
       }
     } catch (error) {
       session.abort?.();
-      this.appendOutput(`\r\n[ZMODEM] 传输失败：${stringifiedErrorMessage(error)}\r\n`);
+      this.appendOutput(`\r\n传输失败：${stringifiedErrorMessage(error)}\r\n`);
       this.activeSession = null;
     }
   }
 
   private async runUpload(session: ZmodemSession) {
-    this.appendOutput("\r\n[ZMODEM] rz 请求上传文件，正在选择本机文件...\r\n");
+    this.appendOutput("\r\nrz 请求上传文件，正在选择本机文件...\r\n");
     const paths = await this.dependencies.selectUploadFiles?.();
     if (!paths?.length) {
       await session.close();
-      this.appendOutput("[ZMODEM] 未选择文件，上传已取消。\r\n");
+      this.appendOutput("未选择文件，上传已取消。\r\n");
       this.activeSession = null;
       return;
     }
@@ -184,7 +184,7 @@ class ZmodemRuntimeController {
     const files = await this.dependencies.readLocalFiles?.(paths);
     if (!files?.length) {
       await session.close();
-      this.appendOutput("[ZMODEM] 未读取到可上传文件。\r\n");
+      this.appendOutput("未读取到可上传文件。\r\n");
       this.activeSession = null;
       return;
     }
@@ -202,7 +202,7 @@ class ZmodemRuntimeController {
       });
       remainingBytes -= file.size;
       if (!transfer) {
-        this.appendOutput(`[ZMODEM] 远端跳过 ${file.name}。\r\n`);
+        this.appendOutput(`远端跳过 ${file.name}。\r\n`);
         continue;
       }
       const progress = createTransferProgress("上传", file.name, file.size, (output) => this.appendOutput(output));
@@ -212,16 +212,16 @@ class ZmodemRuntimeController {
     }
 
     await session.close();
-    this.appendOutput("[ZMODEM] 上传完成。\r\n");
+    this.appendOutput("上传完成。\r\n");
     this.activeSession = null;
   }
 
   private async runDownload(session: ZmodemSession) {
-    this.appendOutput("\r\n[ZMODEM] sz 请求下载文件，正在选择保存目录...\r\n");
+    this.appendOutput("\r\nsz 请求下载文件，正在选择保存目录...\r\n");
     const directory = await this.dependencies.selectDownloadDirectory?.();
     if (!directory) {
       session.abort?.();
-      this.appendOutput("[ZMODEM] 未选择保存目录，下载已取消。\r\n");
+      this.appendOutput("未选择保存目录，下载已取消。\r\n");
       this.activeSession = null;
       return;
     }
@@ -257,18 +257,18 @@ class ZmodemRuntimeController {
         .then((saved) => {
           if (!saved) return;
           savedCount += 1;
-          this.appendOutput(`[ZMODEM] 已保存 ${details.name} -> ${saved.path}\r\n`);
+          this.appendOutput(`已保存 ${details.name} -> ${saved.path}\r\n`);
         })
         .catch((error) => {
           finishProgress();
-          this.appendOutput(`[ZMODEM] 保存 ${details.name} 失败：${stringifiedErrorMessage(error)}\r\n`);
+          this.appendOutput(`保存 ${details.name} 失败：${stringifiedErrorMessage(error)}\r\n`);
         });
       saveTasks.push(saveTask);
     });
     session.on("session_end", () => {
       this.pendingReceiveOverAndOut = null;
       void Promise.allSettled(saveTasks).then(() => {
-        this.appendOutput(`[ZMODEM] 下载完成，共 ${savedCount} 个文件。\r\n`);
+        this.appendOutput(`下载完成，共 ${savedCount} 个文件。\r\n`);
         this.activeSession = null;
       });
     });
@@ -351,7 +351,7 @@ function createTransferProgress(
     const size = knownTotal === null
       ? formatBytes(transferred)
       : `${formatBytes(Math.min(transferred, knownTotal))} / ${formatBytes(knownTotal)}`;
-    appendOutput(`\x1b[2K\r[ZMODEM] ${direction} ${fileName} [${bar}] ${percentage}% ${size}${finished ? "\r\n" : ""}`);
+    appendOutput(`\x1b[2K\r${direction} ${fileName} [${bar}] ${percentage}% ${size}${finished ? "\r\n" : ""}`);
   };
 
   return {

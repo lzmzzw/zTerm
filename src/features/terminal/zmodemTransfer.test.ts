@@ -195,13 +195,14 @@ describe("zmodemTransfer", () => {
     expect(session.close).toHaveBeenCalled();
     expect(appendOutput).toHaveBeenCalledWith(
       "runtime-1",
-      "\x1b[2K\r[ZMODEM] 上传 hello.txt [░░░░░░░░░░░░░░░░░░░░]   0% 0 B / 3 B",
+      "\x1b[2K\r上传 hello.txt [░░░░░░░░░░░░░░░░░░░░]   0% 0 B / 3 B",
     );
     expect(appendOutput).toHaveBeenCalledWith(
       "runtime-1",
-      "\x1b[2K\r[ZMODEM] 上传 hello.txt [████████████████████] 100% 3 B / 3 B\r\n",
+      "\x1b[2K\r上传 hello.txt [████████████████████] 100% 3 B / 3 B\r\n",
     );
     expect(appendOutput).toHaveBeenCalledWith("runtime-1", expect.stringContaining("上传完成"));
+    expect(appendOutput.mock.calls.every(([, output]) => !output.includes("[ZMODEM]"))).toBe(true);
   });
 
   it("downloads offered remote files into the selected directory", async () => {
@@ -265,21 +266,22 @@ describe("zmodemTransfer", () => {
     expect(saveFile).toHaveBeenCalledWith("D:\\Downloads", "remote.txt", [4, 5, 6]);
     expect(appendOutput).toHaveBeenCalledWith(
       "runtime-1",
-      "\x1b[2K\r[ZMODEM] 下载 remote.txt [░░░░░░░░░░░░░░░░░░░░]   0% 0 B / 3 B",
+      "\x1b[2K\r下载 remote.txt [░░░░░░░░░░░░░░░░░░░░]   0% 0 B / 3 B",
     );
     expect(appendOutput).toHaveBeenCalledWith(
       "runtime-1",
-      "\x1b[2K\r[ZMODEM] 下载 remote.txt [█████████████░░░░░░░]  66% 2 B / 3 B",
+      "\x1b[2K\r下载 remote.txt [█████████████░░░░░░░]  66% 2 B / 3 B",
     );
     expect(appendOutput).toHaveBeenCalledWith(
       "runtime-1",
-      "\x1b[2K\r[ZMODEM] 下载 remote.txt [████████████████████] 100% 3 B / 3 B\r\n",
+      "\x1b[2K\r下载 remote.txt [████████████████████] 100% 3 B / 3 B\r\n",
     );
     expect(appendOutput).toHaveBeenCalledWith(
       "runtime-1",
-      "[ZMODEM] 已保存 remote.txt -> D:\\Downloads\\remote.txt\r\n",
+      "已保存 remote.txt -> D:\\Downloads\\remote.txt\r\n",
     );
     expect(appendOutput).toHaveBeenCalledWith("runtime-1", expect.stringContaining("下载完成，共 1 个文件"));
+    expect(appendOutput.mock.calls.every(([, output]) => !output.includes("[ZMODEM]"))).toBe(true);
   });
 
   it("completes a receive session when terminal output follows ZFIN without OO", async () => {
