@@ -76,6 +76,7 @@ export function WorkspaceManagerPanel({
         <div className="zt-panel-header-action">
           {selectedWorkspaceId ? (
             <button
+              className="zt-panel-action-button"
               type="button"
               aria-label="保存工作区"
               title="保存工作区"
@@ -84,7 +85,7 @@ export function WorkspaceManagerPanel({
               <Save size={14} aria-hidden="true" />
             </button>
           ) : (
-            <button type="button" aria-label="新建工作区" title="新建工作区" onClick={onCreateWorkspace}>
+            <button className="zt-panel-action-button" type="button" aria-label="新建工作区" title="新建工作区" onClick={onCreateWorkspace}>
               <CopyPlus size={14} aria-hidden="true" />
             </button>
           )}

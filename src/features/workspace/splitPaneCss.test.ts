@@ -94,7 +94,7 @@ describe("split pane css direction mapping", () => {
     const paneTabStyles = ruleBodiesForSelector(".zt-pane-tab");
     const paneTabIconStyles = ruleBodiesForSelector(".zt-pane-tab-icon");
     const terminalToolbarButtonStyles = ruleBodiesForSelector(".zt-terminal-toolbar button");
-    const panelHeaderActionButtonStyles = ruleBodiesForSelector(".zt-panel-header-action button");
+    const panelHeaderActionButtonStyles = ruleBodiesForSelector(".zt-panel-action-button");
 
     expect(paneTabStyles).toContain("height: var(--zt-workbar-control-size)");
     expect(paneTabIconStyles).toContain("height: var(--zt-workbar-control-size)");
@@ -204,7 +204,7 @@ describe("split pane css direction mapping", () => {
   it("keeps sidebar and tool panel icon buttons borderless", () => {
     expectBorderlessIconButton(".zt-left-rail button");
     expectBorderlessIconButton(".zt-tool-rail button");
-    expectBorderlessIconButton(".zt-panel-header-action button");
+    expectBorderlessIconButton(".zt-panel-action-button");
     expect(ruleBodiesForSelector(".zt-session-node-actions button")).toBe("");
     expectBorderlessIconButton(".zt-file-toolbar button");
     expectBorderlessIconButton(".zt-history-entry button");

@@ -486,7 +486,12 @@ function CommandGroupView({
   return (
     <>
       <div className="zt-history-group-toolbar">
-        <button type="button" onClick={onNewGroup} disabled={!hasHistoryScope || groupLoading}>
+        <button
+          type="button"
+          className="zt-panel-action-button zt-panel-action-button-labeled"
+          onClick={onNewGroup}
+          disabled={!hasHistoryScope || groupLoading}
+        >
           <Plus size={14} aria-hidden="true" />
           {t(language, "addCommandGroup")}
         </button>

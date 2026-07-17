@@ -1859,6 +1859,7 @@ export function AppShell() {
                   title="Session"
                   action={
                     <button
+                      className="zt-panel-action-button"
                       type="button"
                       aria-label="添加文件夹"
                       title="添加文件夹"

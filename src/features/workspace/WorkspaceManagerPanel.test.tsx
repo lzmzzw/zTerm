@@ -74,13 +74,13 @@ function panel(overrides: Partial<React.ComponentProps<typeof WorkspaceManagerPa
 describe("WorkspaceManagerPanel", () => {
   it("shows new only when nothing is selected and save only when a workspace is selected", () => {
     const unselected = render(panel());
-    expect(unselected.container.querySelector('[aria-label="新建工作区"]')).not.toBeNull();
+    expect(unselected.container.querySelector('[aria-label="新建工作区"]')?.classList.contains("zt-panel-action-button")).toBe(true);
     expect(unselected.container.querySelector('[aria-label="保存工作区"]')).toBeNull();
     unselected.unmount();
 
     const selected = render(panel({ selectedWorkspaceId: "workspace-1" }));
     expect(selected.container.querySelector('[aria-label="新建工作区"]')).toBeNull();
-    expect(selected.container.querySelector('[aria-label="保存工作区"]')).not.toBeNull();
+    expect(selected.container.querySelector('[aria-label="保存工作区"]')?.classList.contains("zt-panel-action-button")).toBe(true);
     selected.unmount();
   });
 

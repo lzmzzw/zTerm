@@ -146,6 +146,7 @@ describe("ModelManagerPanel", () => {
     expect(view.container.querySelector('[aria-label="模型配置"]')).toBe(null);
     expect(view.container.querySelector('[aria-label="模型名称"]')).toBe(null);
 
+    expect(button(view.container, "新增模型").classList.contains("zt-panel-action-button")).toBe(true);
     await click(button(view.container, "新增模型"));
     const dialog = view.container.querySelector('[aria-label="模型配置"]') as HTMLElement | null;
     expect(dialog).not.toBe(null);

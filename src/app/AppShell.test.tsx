@@ -1764,6 +1764,7 @@ describe("AppShell", () => {
 
     expect(view.container.querySelector('[aria-label="会话树"]')).not.toBe(null);
     expect(view.container.querySelector('[aria-label="会话管理"]')).not.toBe(null);
+    expect(button(view.container, "添加文件夹").classList.contains("zt-panel-action-button")).toBe(true);
     expect(view.container.querySelector('[aria-label="工作区管理"]')).toBe(null);
     expect(workbench?.classList.contains("zt-workbench-left-collapsed")).toBe(false);
     expect(button(view.container, "会话").getAttribute("aria-pressed")).toBe("true");
@@ -4304,6 +4305,10 @@ describe("AppShell", () => {
     });
 
     expect(view.container.querySelector('[aria-label="SSH 隧道"]')).not.toBe(null);
+    expect(view.container.querySelector('[aria-label="新增隧道"]')?.classList.contains("zt-panel-action-button")).toBe(true);
+    const tunnelTarget = view.container.querySelector(".zt-tunnel-panel > .zt-target-summary");
+    expect(tunnelTarget?.children[0]?.tagName).toBe("STRONG");
+    expect(tunnelTarget?.children[1]?.tagName).toBe("SPAN");
     expect(view.container.textContent).toContain("开发机 A");
     expect(view.container.textContent).toContain("ubuntu@172.16.41.180:22");
     expect(view.container.textContent).toContain("管理后台");
@@ -4595,6 +4600,10 @@ describe("AppShell", () => {
     });
 
     expect(storeMocks.listSshContainers).toHaveBeenCalledWith("session-1");
+    const containerTarget = view.container.querySelector(".zt-tunnel-panel > .zt-target-summary");
+    expect(containerTarget?.children[0]?.tagName).toBe("STRONG");
+    expect(containerTarget?.children[1]?.tagName).toBe("SPAN");
+    expect(containerTarget?.children[2]?.tagName).toBe("BUTTON");
     expect(view.container.textContent).toContain("api");
     expect(view.container.textContent).toContain("old");
     expect(view.container.textContent).not.toContain("Up 3 minutes");

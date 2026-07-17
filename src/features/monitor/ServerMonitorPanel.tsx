@@ -68,13 +68,12 @@ export function ServerMonitorPanel({
   return (
     <section className="zt-monitor-panel" aria-label="资源监控">
       <section className="zt-monitor-overview">
-        <header>
-          <div>
-            <strong>{snapshot?.host_name ?? target.name}</strong>
-            <span>{target.kind === "local" ? "本机资源" : `${target.username}@${target.host}:${target.port}`}</span>
-          </div>
+        <header className="zt-target-summary">
+          <strong>{snapshot?.host_name ?? target.name}</strong>
+          <span>{target.kind === "local" ? "本机资源" : `${target.username}@${target.host}:${target.port}`}</span>
           <button
             type="button"
+            className="zt-target-summary-action"
             aria-label="刷新服务器信息"
             title="刷新服务器信息"
             onClick={() => void onRefresh({ force: true })}

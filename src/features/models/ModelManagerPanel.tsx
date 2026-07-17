@@ -407,7 +407,7 @@ export function ModelManagerPanel({
       <div className="zt-panel-header">
         <span>模型</span>
         <div className="zt-panel-header-action">
-          <button type="button" aria-label="新增模型" title="新增模型" onClick={openCreateEditor}>
+          <button className="zt-panel-action-button" type="button" aria-label="新增模型" title="新增模型" onClick={openCreateEditor}>
             <Plus size={14} aria-hidden="true" />
           </button>
         </div>

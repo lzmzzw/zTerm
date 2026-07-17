@@ -235,6 +235,14 @@ describe("CommandHistoryPanel", () => {
     view.unmount();
   });
 
+  it("uses the shared panel action style for the contextual command-group action", () => {
+    const view = renderPanel({ activeView: "groups" });
+
+    expect(button(view.container, "新增指令组").classList.contains("zt-panel-action-button")).toBe(true);
+
+    view.unmount();
+  });
+
   it("toggles deduplicated history display from the toolbar checkbox", async () => {
     const onDeduplicateHistoryChange = vi.fn();
     const view = renderPanel({ onDeduplicateHistoryChange });

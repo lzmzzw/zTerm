@@ -330,7 +330,7 @@ export function RightToolsPanel({
                   tunnels.canManage ? (
                     <button
                       type="button"
-                      className="zt-tunnel-add-button"
+                      className="zt-panel-action-button zt-panel-action-button-labeled"
                       aria-label="新增隧道"
                       title={tunnels.canCreate ? "新增隧道" : "当前 SSH 连接最多只能配置一条隧道"}
                       disabled={!tunnels.canCreate}
@@ -402,14 +402,12 @@ function SshContainerListPanel({
 }) {
   return (
     <div className="zt-tunnel-panel">
-      <div className="zt-tunnel-target">
-        <div className="zt-tunnel-target-content">
-          <strong>{sessionName ?? "当前 SSH 连接"}</strong>
-          {target ? <span>{target}</span> : null}
-        </div>
+      <div className="zt-tunnel-target zt-target-summary">
+        <strong>{sessionName ?? "当前 SSH 连接"}</strong>
+        {target ? <span>{target}</span> : null}
         <button
           type="button"
-          className="zt-icon-button zt-container-refresh-button"
+          className="zt-target-summary-action zt-container-refresh-button"
           aria-label="刷新容器"
           title="刷新"
           onPointerDown={(event) => {
@@ -534,7 +532,7 @@ function SshTunnelListPanel({
   return (
     <div className={editable ? "zt-tunnel-panel zt-transient-tunnel-panel" : "zt-tunnel-panel"}>
       <div
-        className="zt-tunnel-target"
+        className="zt-tunnel-target zt-target-summary"
         onContextMenu={(event) => {
           event.preventDefault();
           setContextMenu({ kind: "target", x: event.clientX, y: event.clientY });

@@ -98,6 +98,11 @@ describe("ServerMonitorPanel", () => {
     );
 
     expect(view.container.textContent).toContain("生产服务器");
+    const targetSummary = view.container.querySelector(".zt-target-summary");
+    expect(targetSummary).not.toBeNull();
+    expect(targetSummary?.children[0]?.tagName).toBe("STRONG");
+    expect(targetSummary?.children[1]?.tagName).toBe("SPAN");
+    expect(targetSummary?.children[2]?.tagName).toBe("BUTTON");
     expect(view.container.textContent).toContain("Ubuntu 24.04 LTS · x86_64");
     expect(view.container.textContent).toContain("CPU");
     expect(view.container.textContent).toContain("GPU");

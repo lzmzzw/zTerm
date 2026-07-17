@@ -176,10 +176,29 @@ describe("global dark theme colors", () => {
     expect(ruleBodiesForSelector(".zt-model-panel")).toContain("height: 100%");
   });
 
-  it("lets the tunnel add action fit its icon and text", () => {
-    const body = ruleBodiesForSelector(".zt-panel-header-action .zt-tunnel-add-button");
-    expect(body).toContain("width: auto");
-    expect(body).toContain("white-space: nowrap");
+  it("uses one compact action style for panel headers and contextual toolbars", () => {
+    const body = ruleBodiesForSelector(".zt-panel-action-button");
+    expect(body).toContain("width: var(--zt-workbar-control-size)");
+    expect(body).toContain("height: var(--zt-workbar-control-size)");
+    expect(body).toContain("border: 0");
+    expect(body).toContain("background: transparent");
+    expect(body).toContain("color: var(--zt-text-secondary)");
+    const labeled = ruleBodiesForSelector(".zt-panel-action-button-labeled");
+    expect(labeled).toContain("width: auto");
+    expect(labeled).toContain("white-space: nowrap");
+    expect(ruleBodiesForSelector(".zt-history-group-toolbar")).toContain("justify-content: flex-end");
+  });
+
+  it("uses one target summary layout for right-side connection tools", () => {
+    const summary = ruleBodiesForSelector(".zt-target-summary");
+    expect(summary).toContain("grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto");
+    expect(summary).toContain("align-items: center");
+    expect(ruleBodiesForSelector(".zt-target-summary strong")).toContain("text-overflow: ellipsis");
+    expect(ruleBodiesForSelector(".zt-target-summary span")).toContain("text-align: right");
+    expect(ruleBodiesForSelector(".zt-target-summary span")).toContain("white-space: nowrap");
+    expect(ruleBodiesForSelector(".zt-target-summary-action")).toContain(
+      "width: var(--zt-icon-button-default)",
+    );
   });
 
   it("keeps session tree rows compact instead of stretching empty space between groups", () => {

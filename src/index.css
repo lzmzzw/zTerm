@@ -1368,6 +1368,56 @@ button {
   gap: 3px;
 }
 
+.zt-target-summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.zt-target-summary strong,
+.zt-target-summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-target-summary strong {
+  color: var(--zt-text-primary);
+  font-size: var(--zt-font-size-ui);
+  font-weight: 600;
+}
+
+.zt-target-summary span {
+  color: var(--zt-text-muted);
+  font-size: var(--zt-font-size-caption);
+  text-align: right;
+}
+
+.zt-target-summary-action {
+  grid-column: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--zt-icon-button-default);
+  height: var(--zt-icon-button-default);
+  padding: 0;
+  border: 0;
+  border-radius: var(--zt-radius-control);
+  background: transparent;
+  color: var(--zt-text-secondary);
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.zt-target-summary-action:hover:not(:disabled) {
+  background: var(--zt-bg-hover);
+  color: var(--zt-text-primary);
+}
+
 .zt-tunnel-target strong,
 .zt-tunnel-list-item strong {
   min-width: 0;
@@ -1419,7 +1469,6 @@ button {
   font-size: 11px;
 }
 
-.zt-container-refresh-button,
 .zt-container-enter-button {
   flex: 0 0 auto;
   display: inline-flex;
@@ -1433,7 +1482,6 @@ button {
   color: var(--zt-text-secondary);
 }
 
-.zt-container-refresh-button:hover,
 .zt-container-enter-button:hover:not(:disabled) {
   background: var(--zt-bg-hover);
   color: var(--zt-text-primary);
@@ -1602,27 +1650,39 @@ button {
   align-items: center;
 }
 
-.zt-panel-header-action button {
+.zt-panel-action-button {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
+  width: var(--zt-workbar-control-size);
   height: var(--zt-workbar-control-size);
+  padding: 0;
   border: 0;
   border-radius: var(--zt-radius-control);
   background: transparent;
   color: var(--zt-text-secondary);
+  font-size: var(--zt-font-size-ui);
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
-.zt-panel-header-action button:hover {
+.zt-panel-action-button:hover:not(:disabled) {
   background: var(--zt-bg-hover);
   color: var(--zt-text-primary);
 }
 
-.zt-panel-header-action .zt-tunnel-add-button {
+.zt-panel-action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.zt-panel-action-button-labeled {
   width: auto;
   gap: 5px;
   padding: 0 7px;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -2436,27 +2496,9 @@ button {
 .zt-history-group-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: flex-end;
   padding: 5px 8px;
   border-bottom: 1px solid var(--zt-border);
-}
-
-.zt-history-group-toolbar button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  height: 24px;
-  border: 1px solid var(--zt-border);
-  border-radius: var(--zt-radius-control);
-  background: var(--zt-bg-surface);
-  color: var(--zt-text-primary);
-  font-size: var(--zt-font-size-ui);
-}
-
-.zt-history-group-toolbar button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
 }
 
 .zt-history-entry button {
@@ -2550,11 +2592,6 @@ button {
   resize: vertical;
   font-family: var(--zt-font-mono);
   line-height: 1.55;
-}
-
-.zt-history-group-toolbar button:hover {
-  border-color: var(--zt-border-strong);
-  background: var(--zt-bg-hover);
 }
 
 .zt-command-group-dialog-error {
@@ -2683,7 +2720,6 @@ button {
   padding: 12px;
 }
 
-.zt-monitor-overview header,
 .zt-monitor-card header {
   display: flex;
   align-items: flex-start;
@@ -2691,7 +2727,6 @@ button {
   gap: 8px;
 }
 
-.zt-monitor-overview header div,
 .zt-monitor-card header div {
   display: grid;
   min-width: 0;
@@ -2715,24 +2750,6 @@ button {
   color: var(--zt-text-muted);
   font-size: 11px;
   line-height: 1.4;
-}
-
-.zt-monitor-overview button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid transparent;
-  border-radius: var(--zt-radius-control);
-  background: transparent;
-  color: var(--zt-text-muted);
-}
-
-.zt-monitor-overview button:hover {
-  border-color: var(--zt-border);
-  background: var(--zt-bg-hover);
-  color: var(--zt-text-primary);
 }
 
 .zt-monitor-overview-grid {
