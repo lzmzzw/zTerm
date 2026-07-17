@@ -173,7 +173,6 @@ type ActiveSshTunnelTarget = {
   host: string;
   hostServiceTargetHost: string;
   external: boolean;
-  singleChannel: boolean;
 };
 
 type SshTunnelEditorState = ActiveSshTunnelTarget & {
@@ -544,7 +543,7 @@ export function AppShell() {
   const activeExternalSshChannelPolicy = activeExternalSshSession
     ? externalSshChannelPolicy(activeExternalSshSession)
     : null;
-  const activeExternalSshSingleChannel = activeExternalSshChannelPolicy === "single_channel";
+  const activeExternalSshMultiChannel = activeExternalSshChannelPolicy === "multi_channel";
   const activeSshSessionId = activeSavedSession?.type === "ssh" ? activeSavedSession.id : activeExternalSshSession?.id ?? null;
   const activeSshTunnels =
     activeSavedSession?.type === "ssh"
@@ -553,7 +552,7 @@ export function AppShell() {
   const activeSshContainersEnabled =
     activeSavedSession?.type === "ssh"
       ? activeSavedSession.ssh_options?.container?.enabled === true
-      : activeExternalSshOptions?.container?.enabled === true && !activeExternalSshSingleChannel;
+      : activeExternalSshOptions?.container?.enabled === true && activeExternalSshMultiChannel;
   const activeRuntimeSessionId = activePaneTab?.runtime_session_id ?? null;
   const syncChannelCandidates = collectSyncChannelCandidates(
     tabs,
@@ -592,7 +591,10 @@ export function AppShell() {
   );
   const activeConnectionKind: ActiveConnectionKind = (() => {
     if (!activeRuntimeSessionId || activePaneTab?.connection_source === "ssh_container") return "none";
-    if (activeExternalSshSession || activeSavedSession?.type === "ssh" || activeRuntimeInfo?.kind === "ssh") return "ssh";
+    if (activeExternalSshSession) {
+      return activeExternalSshMultiChannel ? "ssh_transient_multi" : "ssh_transient_restricted";
+    }
+    if (activeSavedSession?.type === "ssh" || activeRuntimeInfo?.kind === "ssh") return "ssh";
     if (
       activeSavedSession?.type === "local" ||
       activePaneTab?.connection_source === "default_local" ||
@@ -893,6 +895,7 @@ export function AppShell() {
       processedExternalLaunchIdsRef.current.add(launch.id);
       setExternalSshSessions((current) => ({ ...current, [launch.id]: launch }));
       setExternalSshOptionsById((current) => ({ ...current, [launch.id]: current[launch.id] ?? DEFAULT_EXTERNAL_SSH_OPTIONS }));
+      setActiveTool(null);
 
       const workspaceState = useWorkspaceStore.getState();
       const targetWorkspaceId = workspaceState.activeWorkspaceId;
@@ -919,13 +922,6 @@ export function AppShell() {
       try {
         const runtime = await openTerminal(launch.id, targetPaneId);
         bindRuntimeToPaneTab(targetWorkspaceId, targetWorkspaceTab.id, targetPaneId, targetPaneTab.id, runtime);
-        if (launch.auto_open_sftp) {
-          const remotePath = launch.remote_path?.trim() || "/";
-          setFilePath(remotePath);
-          setActiveTool("files");
-          await listFiles(launch.id, remotePath);
-          await loadTransfers(launch.id);
-        }
       } catch (error) {
         const message = fallbackOnlyErrorMessage(error, "打开外部 SSH 连接失败");
         updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTab.id, targetPaneId, targetPaneTab.id, {
@@ -935,7 +931,7 @@ export function AppShell() {
         setTerminalError(message);
       }
     },
-    [addPaneTab, bindRuntimeToPaneTab, listFiles, loadTransfers, openTerminal, setFilePath, updatePaneTerminalTab],
+    [addPaneTab, bindRuntimeToPaneTab, openTerminal, updatePaneTerminalTab],
   );
 
   const drainPendingExternalLaunches = useCallback(async () => {
@@ -1475,7 +1471,6 @@ export function AppShell() {
         host: activeSavedSession.host,
         hostServiceTargetHost: activeSavedSession.host,
         external: false,
-        singleChannel: false,
       };
     }
     if (activeExternalSshSession) {
@@ -1486,7 +1481,6 @@ export function AppShell() {
         host: activeExternalSshSession.host,
         hostServiceTargetHost: externalSshHostServiceTarget(activeExternalSshSession),
         external: true,
-        singleChannel: activeExternalSshSingleChannel,
       };
     }
     return null;
@@ -1990,7 +1984,6 @@ export function AppShell() {
           host={externalSshSessions[externalSshTunnelEditor]?.host ?? ""}
           hostServiceTargetHost={externalSshHostServiceTarget(externalSshSessions[externalSshTunnelEditor] ?? null)}
           initialOptions={externalSshOptionsById[externalSshTunnelEditor] ?? DEFAULT_EXTERNAL_SSH_OPTIONS}
-          singleChannel={externalSshChannelPolicy(externalSshSessions[externalSshTunnelEditor] ?? null) === "single_channel"}
           onCancel={() => setExternalSshTunnelEditor(null)}
           onSave={(options) => void saveExternalTunnelOptions(externalSshTunnelEditor, options)}
         />
@@ -2191,7 +2184,7 @@ export function AppShell() {
         }}
         tunnels={{
           canManage: Boolean(activeSshSessionId) && !activeExternalSshSession,
-          canCreate: !activeExternalSshSingleChannel || activeSshTunnels.length === 0,
+          canCreate: true,
           editable: Boolean(activeExternalSshSession),
           needsReconnect: activeSshSessionId ? Boolean(sshTunnelNeedsReconnectBySessionId[activeSshSessionId]) : false,
           sessionName: activeSavedSession?.type === "ssh" ? activeSavedSession.name : activeExternalSshSession?.name ?? null,
@@ -2228,14 +2221,12 @@ function ExternalSshTunnelEditorDialog({
   host,
   hostServiceTargetHost,
   initialOptions,
-  singleChannel,
   onCancel,
   onSave,
 }: {
   host: string;
   hostServiceTargetHost: string;
   initialOptions: SshOptions;
-  singleChannel: boolean;
   onCancel: () => void;
   onSave: (options: SshOptions) => void;
 }) {
@@ -2263,9 +2254,6 @@ function ExternalSshTunnelEditorDialog({
               host={host}
               hostServiceTargetHost={hostServiceTargetHost}
               hostServiceTargetEditable={true}
-              maxTunnels={singleChannel ? 1 : undefined}
-              maxTunnelsMessage={singleChannel ? "单通道临时 SSH 只支持一个隧道" : undefined}
-              allowedModes={singleChannel ? ["host_service"] : undefined}
               newTunnelMode={newTunnelMode}
               onNewTunnelModeChange={setNewTunnelMode}
               onSshOptionsChange={setSshOptions}
@@ -2324,7 +2312,6 @@ function SshTunnelEditorDialog({
               hostServiceTargetHost={editor.hostServiceTargetHost}
               hostServiceTargetEditable={editor.external}
               maxTunnels={1}
-              allowedModes={editor.singleChannel ? ["host_service"] : undefined}
               singleTunnelEditor
               newTunnelMode={tunnelMode}
               onNewTunnelModeChange={setTunnelMode}

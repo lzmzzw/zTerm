@@ -209,7 +209,9 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 vi.mock("../features/terminal/externalLaunchApi", () => ({
   externalSshChannelPolicy: (launch: { channel_policy?: string; username?: string } | null | undefined) => {
-    if (launch?.channel_policy === "single_channel") return "single_channel";
+    if (["unknown", "multi_channel", "single_channel"].includes(launch?.channel_policy ?? "")) {
+      return launch!.channel_policy;
+    }
     const username = launch?.username?.trim() ?? "";
     if (!username.startsWith("b64>>")) return "unknown";
     try {
@@ -1320,7 +1322,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("opens a pending external SSH launch and automatically loads SFTP files", async () => {
+  it("opens a multi-channel external SSH launch with SSH tools collapsed", async () => {
     storeMocks.pendingExternalLaunches = [
       {
         id: "external:launch-1",
@@ -1330,6 +1332,7 @@ describe("AppShell", () => {
         username: "ops",
         auto_open_sftp: true,
         remote_path: "/srv/app",
+        channel_policy: "multi_channel",
       },
     ];
     storeMocks.openTerminal.mockResolvedValueOnce({
@@ -1374,8 +1377,9 @@ describe("AppShell", () => {
         saved_session_id: "external:launch-1",
       }),
     );
-    expect(storeMocks.listFiles).toHaveBeenCalledWith("external:launch-1", "/srv/app");
-    expect(storeMocks.loadTransfers).toHaveBeenCalledWith("external:launch-1");
+    expect(view.container.querySelector(".zt-right-tools-collapsed")).not.toBe(null);
+    expect(storeMocks.listFiles).not.toHaveBeenCalled();
+    expect(storeMocks.loadTransfers).not.toHaveBeenCalled();
 
     view.unmount();
   });
@@ -1390,6 +1394,7 @@ describe("AppShell", () => {
         username: "ops",
         auto_open_sftp: false,
         remote_path: "/",
+        channel_policy: "multi_channel",
       },
     ];
     storeMocks.workspaceState.tabs = [
@@ -1425,6 +1430,8 @@ describe("AppShell", () => {
     });
 
     expect(storeMocks.getExternalSshOptions).toHaveBeenCalledWith("external:launch-1");
+    expect(view.container.querySelector(".zt-right-tools-collapsed")).not.toBe(null);
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SFTP 文件"]')).not.toBe(null);
     expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).not.toBe(null);
     expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).not.toBe(null);
 
@@ -1472,7 +1479,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("shows SSH tools and limits tunnel editing for single-channel external SSH", async () => {
+  it("hides SFTP, container, and tunnel tools for single-channel external SSH", async () => {
     storeMocks.pendingExternalLaunches = [
       {
         id: "external:launch-1",
@@ -1482,6 +1489,7 @@ describe("AppShell", () => {
         username: "b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=",
         auto_open_sftp: false,
         remote_path: "/",
+        channel_policy: "single_channel",
       },
     ];
     storeMocks.workspaceState.tabs = [
@@ -1516,16 +1524,10 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).not.toBe(null);
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SFTP 文件"]')).toBe(null);
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).toBe(null);
+    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).toBe(null);
     expect(storeMocks.listSshContainers).not.toHaveBeenCalled();
-
-    await clickButton(view.container, "SSH 隧道");
-    await clickButton(view.container, "添加临时 SSH 隧道");
-    await clickButton(view.container, "添加隧道");
-
-    expect(view.container.textContent).toContain("单通道临时 SSH 只支持一个隧道");
-    expect((button(view.container, "添加隧道") as HTMLButtonElement).disabled).toBe(true);
 
     view.unmount();
   });
@@ -1534,12 +1536,13 @@ describe("AppShell", () => {
     storeMocks.pendingExternalLaunches = [
       {
         id: "external:launch-1",
-        name: "b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=@172.21.195.223:222",
-        host: "172.21.195.223",
-        port: 222,
-        username: "b64>>d2VuOjQ2ODI3MTc4NTE2MDJAcm9vdEAxMC4xMS4wLjc1OjIyOlNTSDI=",
+        name: "ops@cloud.example.test:2200",
+        host: "cloud.example.test",
+        port: 2200,
+        username: "ops",
         auto_open_sftp: false,
         remote_path: "/",
+        channel_policy: "multi_channel",
       },
     ];
     storeMocks.workspaceState.tabs = [
@@ -1593,7 +1596,7 @@ describe("AppShell", () => {
     await clickButton(view.container, "添加隧道");
     const targetHostInput = input(dialog!, "主机目标地址");
     expect(targetHostInput.readOnly).toBe(false);
-    expect(targetHostInput.value).toBe("127.0.0.1");
+    expect(targetHostInput.value).toBe("cloud.example.test");
     await clickButton(view.container, "保存临时隧道");
 
     expect(storeMocks.updateExternalSshOptions).toHaveBeenCalledWith(
@@ -1603,7 +1606,7 @@ describe("AppShell", () => {
           expect.objectContaining({
             mode: "host_service",
             kind: "local",
-            remote_host: "127.0.0.1",
+            remote_host: "cloud.example.test",
           }),
         ],
       }),

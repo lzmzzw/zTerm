@@ -100,6 +100,15 @@ describe("externalLaunchApi", () => {
     ).toBe("single_channel");
   });
 
+  it("keeps an explicit multi-channel policy from the backend", () => {
+    expect(
+      externalSshChannelPolicy({
+        channel_policy: "multi_channel",
+        username: "ops",
+      }),
+    ).toBe("multi_channel");
+  });
+
   it("falls back to the external launch host when the b64 gateway username is invalid", () => {
     expect(
       externalSshHostServiceTarget({

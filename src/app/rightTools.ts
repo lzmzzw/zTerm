@@ -2,7 +2,12 @@
 import type { I18nKey } from "../features/settings/i18n";
 
 export type RightTool = "agent" | "files" | "history" | "monitor" | "tunnels" | "containers";
-export type ActiveConnectionKind = "none" | "local" | "ssh";
+export type ActiveConnectionKind =
+  | "none"
+  | "local"
+  | "ssh"
+  | "ssh_transient_multi"
+  | "ssh_transient_restricted";
 
 export const rightToolRailOrder: RightTool[] = ["monitor", "history", "files", "containers", "tunnels", "agent"];
 
@@ -29,7 +34,7 @@ export function visibleRightTools(connectionKind: ActiveConnectionKind): RightTo
   return rightToolRailOrder.filter((tool) => {
     if (tool === "monitor" || tool === "agent") return true;
     if (tool === "history") return connectionKind !== "none";
-    return connectionKind === "ssh";
+    return connectionKind === "ssh" || connectionKind === "ssh_transient_multi";
   });
 }
 

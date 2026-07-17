@@ -30,6 +30,15 @@ describe("rightTools", () => {
       "tunnels",
       "agent",
     ]);
+    expect(visibleRightTools("ssh_transient_multi")).toEqual([
+      "monitor",
+      "history",
+      "files",
+      "containers",
+      "tunnels",
+      "agent",
+    ]);
+    expect(visibleRightTools("ssh_transient_restricted")).toEqual(["monitor", "history", "agent"]);
   });
 
   it("maps only currently supported right tool shortcut actions", () => {
