@@ -38,9 +38,10 @@ pub async fn test_connection(
 pub async fn list(
     session: &SavedSession,
     credentials: &CredentialService,
+    transient_secret: Option<&str>,
     path: &str,
 ) -> AppResult<Vec<FileEntry>> {
-    let mut ftp = connect(session, credentials, None).await?;
+    let mut ftp = connect(session, credentials, transient_secret).await?;
     let lines = ftp
         .list(Some(required_remote_path(path)?))
         .await
@@ -84,9 +85,10 @@ pub async fn list(
 pub async fn exists(
     session: &SavedSession,
     credentials: &CredentialService,
+    transient_secret: Option<&str>,
     path: &str,
 ) -> AppResult<bool> {
-    let mut ftp = connect(session, credentials, None).await?;
+    let mut ftp = connect(session, credentials, transient_secret).await?;
     let exists = ftp.size(path).await.is_ok() || ftp.cwd(path).await.is_ok();
     let _ = ftp.quit().await;
     Ok(exists)
@@ -95,10 +97,11 @@ pub async fn exists(
 pub async fn rename(
     session: &SavedSession,
     credentials: &CredentialService,
+    transient_secret: Option<&str>,
     from: &str,
     to: &str,
 ) -> AppResult<()> {
-    let mut ftp = connect(session, credentials, None).await?;
+    let mut ftp = connect(session, credentials, transient_secret).await?;
     ftp.rename(required_remote_path(from)?, required_remote_path(to)?)
         .await
         .map_err(ftp_error)?;
@@ -109,11 +112,12 @@ pub async fn rename(
 pub async fn delete(
     session: &SavedSession,
     credentials: &CredentialService,
+    transient_secret: Option<&str>,
     path: &str,
     recursive: bool,
 ) -> AppResult<()> {
     let path = required_destructive_path(path)?.to_string();
-    let mut ftp = connect(session, credentials, None).await?;
+    let mut ftp = connect(session, credentials, transient_secret).await?;
     if is_directory(&mut ftp, &path).await {
         if recursive {
             remove_directory_recursive(&mut ftp, &path).await?;
@@ -131,6 +135,7 @@ pub async fn delete(
 pub async fn upload_path<F>(
     session: &SavedSession,
     credentials: &CredentialService,
+    transient_secret: Option<&str>,
     local_path: &str,
     remote_path: &str,
     kind: Option<TransferKind>,
@@ -143,7 +148,7 @@ where
 {
     let local_path = PathBuf::from(local_path);
     let metadata = fs::metadata(&local_path).await?;
-    let mut ftp = connect(session, credentials, None).await?;
+    let mut ftp = connect(session, credentials, transient_secret).await?;
     let mut transferred = 0_u64;
     checkpoint(control.as_ref()).await?;
     if metadata.is_dir() || kind == Some(TransferKind::Directory) {
@@ -202,6 +207,7 @@ where
 pub async fn download_path<F>(
     session: &SavedSession,
     credentials: &CredentialService,
+    transient_secret: Option<&str>,
     remote_path: &str,
     local_path: &str,
     kind: Option<TransferKind>,
@@ -212,7 +218,7 @@ pub async fn download_path<F>(
 where
     F: FnMut(TransferProgressUpdate) -> AppResult<()>,
 {
-    let mut ftp = connect(session, credentials, None).await?;
+    let mut ftp = connect(session, credentials, transient_secret).await?;
     let local_path = PathBuf::from(local_path);
     let directory =
         kind == Some(TransferKind::Directory) || is_directory(&mut ftp, remote_path).await;

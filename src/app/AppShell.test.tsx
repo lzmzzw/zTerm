@@ -4,7 +4,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "./AppShell";
+import { useFileTransferStore } from "../features/files/fileTransferStore";
 import { useSyncInputStore } from "../features/terminal/syncInputStore";
+
+const originalPrepareForSession = useFileTransferStore.getState().prepareForSession;
 
 const storeMocks = vi.hoisted(() => ({
   noop: vi.fn(),
@@ -939,6 +942,7 @@ function runningWorkspace(id: string, sortOrder: number, updatedAtMs: number, ru
 describe("AppShell", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useFileTransferStore.setState({ prepareForSession: originalPrepareForSession });
     useSyncInputStore.getState().closeChannel();
     storeMocks.aiAffectedDomainsHandler = null;
     storeMocks.tauriEventHandlers.clear();
@@ -2091,6 +2095,37 @@ describe("AppShell", () => {
     expect(view.container.querySelector('[aria-label="保存工作区"]')).not.toBeNull();
 
     promptSpy.mockRestore();
+    view.unmount();
+  });
+
+  it("opens a FileZilla-format SFTP launch in the file transfer dialog with the remote endpoint on the right", async () => {
+    const prepareForSession = vi.fn().mockResolvedValue(undefined);
+    useFileTransferStore.setState({ prepareForSession });
+    storeMocks.pendingExternalLaunches = [
+      {
+        id: "external:filezilla-1",
+        name: "release@example.test:2222",
+        host: "example.test",
+        port: 2222,
+        username: "release",
+        auto_open_sftp: false,
+        remote_path: "/srv/releases",
+        channel_policy: "unknown",
+        file_transfer_protocol: "sftp",
+      },
+    ];
+
+    const view = render(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(prepareForSession).toHaveBeenCalledWith("external:filezilla-1", "/srv/releases");
+    expect(view.container.querySelector('[aria-label="文件传输"]')).not.toBe(null);
+    expect(storeMocks.openTerminal).not.toHaveBeenCalled();
+
     view.unmount();
   });
 

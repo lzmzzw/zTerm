@@ -14,6 +14,7 @@ export interface ExternalSshLaunchEvent {
   auto_open_sftp: boolean;
   remote_path: string;
   channel_policy?: ExternalSshChannelPolicy | null;
+  file_transfer_protocol?: "ftp" | "sftp" | null;
 }
 
 export async function takePendingExternalLaunches(): Promise<ExternalSshLaunchEvent[]> {

@@ -8,12 +8,16 @@ use std::{
 };
 
 use base64::{engine::general_purpose, Engine as _};
+use percent_encoding::percent_decode_str;
 use serde::{Deserialize, Serialize};
+use url::Url;
 use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    models::session::{AuthMode, SavedSession, SessionType, SshContainerOptions, SshOptions},
+    models::session::{
+        AuthMode, FtpOptions, SavedSession, SessionType, SshContainerOptions, SshOptions,
+    },
     services::{
         credential_service::CredentialService, ssh_command_service::SshCommandSecretResolver,
     },
@@ -30,6 +34,23 @@ pub struct ExternalSshLaunchRequest {
     pub password: Option<String>,
     pub identity_file: Option<String>,
     pub auto_open_sftp: bool,
+    pub remote_path: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalFileTransferProtocol {
+    Ftp,
+    Sftp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalFileTransferLaunchRequest {
+    pub protocol: ExternalFileTransferProtocol,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: Option<String>,
     pub remote_path: String,
 }
 
@@ -51,6 +72,8 @@ pub struct ExternalSshLaunchEvent {
     pub auto_open_sftp: bool,
     pub remote_path: String,
     pub channel_policy: ExternalSshChannelPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_transfer_protocol: Option<ExternalFileTransferProtocol>,
 }
 
 #[derive(Clone, Default)]
@@ -149,6 +172,7 @@ impl ExternalLaunchService {
             username,
             auto_open_sftp: request.auto_open_sftp,
             remote_path,
+            file_transfer_protocol: None,
         };
         let mut secrets = HashMap::new();
         if let (Some(credential_ref), Some(password)) = (credential_ref, request.password) {
@@ -175,11 +199,106 @@ impl ExternalLaunchService {
         Ok(launch)
     }
 
+    pub fn register_file_transfer_request(
+        &self,
+        request: ExternalFileTransferLaunchRequest,
+    ) -> AppResult<ExternalSshLaunchEvent> {
+        let host = required_text("主机", &request.host)?;
+        let username = required_text("用户名", &request.username)?;
+        if request.port == 0 {
+            return Err(AppError::validation("端口必须大于 0"));
+        }
+        let remote_path = normalized_remote_path(&request.remote_path);
+        let id = format!("{EXTERNAL_SESSION_PREFIX}{}", Uuid::new_v4());
+        let credential_ref = request
+            .password
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .map(|_| format!("{EXTERNAL_CREDENTIAL_PREFIX}{id}:password"));
+        let anonymous = request.protocol == ExternalFileTransferProtocol::Ftp
+            && username.eq_ignore_ascii_case("anonymous")
+            && credential_ref.is_none();
+        let auth_mode = if credential_ref.is_some() {
+            AuthMode::Password
+        } else {
+            AuthMode::None
+        };
+        let now = now_ms();
+        let name = format!("{username}@{host}:{}", request.port);
+        let session_type = match request.protocol {
+            ExternalFileTransferProtocol::Ftp => SessionType::Ftp,
+            ExternalFileTransferProtocol::Sftp => SessionType::Sftp,
+        };
+        let session = SavedSession {
+            id: id.clone(),
+            name: name.clone(),
+            session_type,
+            group_id: None,
+            host: host.clone(),
+            port: request.port,
+            username: username.clone(),
+            auth_mode,
+            credential_ref: credential_ref.clone(),
+            description: None,
+            tags: Vec::new(),
+            sort_order: 0,
+            created_at_ms: now,
+            updated_at_ms: now,
+            last_used_at_ms: None,
+            ssh_options: (session_type == SessionType::Sftp).then(default_external_ssh_options),
+            rdp_options: None,
+            local_options: None,
+            ftp_options: (session_type == SessionType::Ftp).then(|| FtpOptions {
+                connect_timeout_ms: None,
+                initial_directory: Some(remote_path.clone()),
+                passive_mode: true,
+                anonymous,
+            }),
+        };
+        let launch = ExternalSshLaunchEvent {
+            id: id.clone(),
+            name,
+            host,
+            port: request.port,
+            username,
+            auto_open_sftp: false,
+            remote_path,
+            channel_policy: ExternalSshChannelPolicy::Unknown,
+            file_transfer_protocol: Some(request.protocol),
+        };
+        let mut secrets = HashMap::new();
+        if let (Some(credential_ref), Some(password)) = (credential_ref, request.password) {
+            secrets.insert(credential_ref, password);
+        }
+        self.inner
+            .sessions
+            .lock()
+            .map_err(|_| AppError::terminal("external session lock was poisoned"))?
+            .insert(
+                id,
+                TransientSshSession {
+                    session,
+                    secrets,
+                    launch: launch.clone(),
+                },
+            );
+        self.inner
+            .pending_launches
+            .lock()
+            .map_err(|_| AppError::terminal("external launch queue lock was poisoned"))?
+            .push_back(launch.clone());
+        Ok(launch)
+    }
+
     pub fn register_from_args<I, S>(&self, args: I) -> AppResult<Option<ExternalSshLaunchEvent>>
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
+        let args = args.into_iter().map(Into::into).collect::<Vec<String>>();
+        if let Some(request) = parse_external_file_transfer_launch_args(args.clone())? {
+            return self.register_file_transfer_request(request).map(Some);
+        }
         match parse_external_ssh_launch_args(args)? {
             Some(request) => self.register_request(request).map(Some),
             None => Ok(None),
@@ -195,6 +314,10 @@ impl ExternalLaunchService {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
+        let args = args.into_iter().map(Into::into).collect::<Vec<String>>();
+        if let Some(request) = parse_external_file_transfer_launch_args(args.clone())? {
+            return self.register_file_transfer_request(request).map(Some);
+        }
         match parse_external_ssh_launch_args_inner(args, parent_command_line)? {
             Some(request) => self.register_request(request).map(Some),
             None => Ok(None),
@@ -297,6 +420,25 @@ impl ExternalLaunchService {
         })
     }
 
+    pub fn secret_for_external_session(&self, id: &str) -> AppResult<Option<String>> {
+        if !is_external_session_id(id) {
+            return Ok(None);
+        }
+        let sessions = self
+            .inner
+            .sessions
+            .lock()
+            .map_err(|_| AppError::terminal("external session lock was poisoned"))?;
+        let Some(entry) = sessions.get(id) else {
+            return Ok(None);
+        };
+        Ok(entry
+            .session
+            .credential_ref
+            .as_deref()
+            .and_then(|reference| entry.secrets.get(reference).cloned()))
+    }
+
     pub fn launch_metadata(&self, id: &str) -> AppResult<Option<ExternalSshLaunchEvent>> {
         if !is_external_session_id(id) {
             return Ok(None);
@@ -354,6 +496,74 @@ fn valid_b64_gateway_username(username: &str) -> bool {
     };
     let normalized = decoded.trim().to_ascii_lowercase();
     normalized.contains('@') && (normalized.ends_with(":ssh2") || normalized.ends_with(":ssh"))
+}
+
+pub fn parse_external_file_transfer_launch_args<I, S>(
+    args: I,
+) -> AppResult<Option<ExternalFileTransferLaunchRequest>>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let args = args.into_iter().map(Into::into).collect::<Vec<String>>();
+    let Some(target) = args.iter().skip(1).find(|value| {
+        let lower = value.trim().to_ascii_lowercase();
+        lower.starts_with("ftp://") || lower.starts_with("sftp://")
+    }) else {
+        return Ok(None);
+    };
+    let parsed = Url::parse(target.trim())
+        .map_err(|error| AppError::validation(format!("FileZilla URL 无效: {error}")))?;
+    let protocol = match parsed.scheme().to_ascii_lowercase().as_str() {
+        "ftp" => ExternalFileTransferProtocol::Ftp,
+        "sftp" => ExternalFileTransferProtocol::Sftp,
+        _ => return Ok(None),
+    };
+    let host = parsed
+        .host_str()
+        .map(str::to_string)
+        .ok_or_else(|| AppError::validation("FileZilla URL 缺少主机"))?;
+    let username = decode_url_component(parsed.username())?;
+    let username = if username.is_empty() && protocol == ExternalFileTransferProtocol::Ftp {
+        "anonymous".to_string()
+    } else {
+        required_text("用户名", &username)?
+    };
+    let password = parsed
+        .password()
+        .map(decode_url_component)
+        .transpose()?
+        .filter(|value| !value.is_empty());
+    let default_port = match protocol {
+        ExternalFileTransferProtocol::Ftp => 21,
+        ExternalFileTransferProtocol::Sftp => 22,
+    };
+    Ok(Some(ExternalFileTransferLaunchRequest {
+        protocol,
+        host,
+        port: parsed.port().unwrap_or(default_port),
+        username,
+        password,
+        remote_path: normalized_remote_path(&decode_url_component(parsed.path())?),
+    }))
+}
+
+fn decode_url_component(value: &str) -> AppResult<String> {
+    percent_decode_str(value)
+        .decode_utf8()
+        .map(|value| value.into_owned())
+        .map_err(|_| AppError::validation("FileZilla URL 包含无效 UTF-8 转义"))
+}
+
+fn normalized_remote_path(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        "/".to_string()
+    } else if value.starts_with('/') {
+        value.to_string()
+    } else {
+        format!("/{value}")
+    }
 }
 
 pub fn parse_external_ssh_launch_args<I, S>(args: I) -> AppResult<Option<ExternalSshLaunchRequest>>
@@ -1071,10 +1281,82 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_external_session_id, parse_external_ssh_launch_args, ExternalLaunchService,
+        is_external_session_id, parse_external_file_transfer_launch_args,
+        parse_external_ssh_launch_args, ExternalFileTransferProtocol, ExternalLaunchService,
         ExternalSshChannelPolicy,
     };
     use crate::models::session::{SshContainerOptions, SshOptions, SshTunnel, SshTunnelKind};
+
+    #[test]
+    fn parses_filezilla_sftp_url_for_the_remote_file_transfer_endpoint() {
+        let request = parse_external_file_transfer_launch_args([
+            "zTerm.exe",
+            "sftp://release%20user:p%40ss@example.test:2222/srv/releases%20today",
+        ])
+        .expect("FileZilla URL should parse")
+        .expect("file transfer request should exist");
+
+        assert_eq!(request.protocol, ExternalFileTransferProtocol::Sftp);
+        assert_eq!(request.host, "example.test");
+        assert_eq!(request.port, 2222);
+        assert_eq!(request.username, "release user");
+        assert_eq!(request.password.as_deref(), Some("p@ss"));
+        assert_eq!(request.remote_path, "/srv/releases today");
+
+        let launch = ExternalLaunchService::default()
+            .register_file_transfer_request(request)
+            .expect("transient file transfer launch should register");
+        assert_eq!(
+            launch.file_transfer_protocol,
+            Some(ExternalFileTransferProtocol::Sftp)
+        );
+        assert!(!format!("{launch:?}").contains("p@ss"));
+
+        let service = ExternalLaunchService::default();
+        let registered = service
+            .register_from_args([
+                "zTerm.exe",
+                "sftp://release%20user:p%40ss@example.test:2222/srv/releases%20today",
+            ])
+            .expect("application argv should register")
+            .expect("launch should be queued");
+        assert_eq!(
+            service
+                .get_session(&registered.id)
+                .expect("session lookup should succeed")
+                .expect("transient session should exist")
+                .session_type,
+            crate::models::session::SessionType::Sftp
+        );
+        assert_eq!(
+            service
+                .secret_for_external_session(&registered.id)
+                .expect("secret lookup should succeed")
+                .as_deref(),
+            Some("p@ss")
+        );
+    }
+
+    #[test]
+    fn parses_filezilla_ftp_url_with_defaults_and_rejects_unrelated_urls() {
+        let request = parse_external_file_transfer_launch_args([
+            "zTerm.exe",
+            "ftp://anonymous@example.test/incoming",
+        ])
+        .expect("FileZilla URL should parse")
+        .expect("file transfer request should exist");
+
+        assert_eq!(request.protocol, ExternalFileTransferProtocol::Ftp);
+        assert_eq!(request.port, 21);
+        assert_eq!(request.username, "anonymous");
+        assert_eq!(request.remote_path, "/incoming");
+        assert!(parse_external_file_transfer_launch_args([
+            "zTerm.exe",
+            "https://example.test/incoming",
+        ])
+        .expect("unrelated URL should be ignored")
+        .is_none());
+    }
 
     #[test]
     fn parses_recommended_external_ssh_cli_without_leaking_password_to_event() {

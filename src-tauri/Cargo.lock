@@ -7161,6 +7161,7 @@ dependencies = [
  "bssh-russh-sftp",
  "dirs",
  "keyring",
+ "percent-encoding",
  "portable-pty",
  "reqwest",
  "rusqlite",
@@ -7178,6 +7179,7 @@ dependencies = [
  "tauri-plugin-updater",
  "thiserror 2.0.18",
  "tokio",
+ "url",
  "uuid",
 ]
 

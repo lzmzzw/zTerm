@@ -893,6 +893,16 @@ export function AppShell() {
     async (launch: ExternalSshLaunchEvent) => {
       if (!launch.id || processedExternalLaunchIdsRef.current.has(launch.id)) return;
       processedExternalLaunchIdsRef.current.add(launch.id);
+      if (launch.file_transfer_protocol === "ftp" || launch.file_transfer_protocol === "sftp") {
+        setTerminalError(null);
+        try {
+          await useFileTransferStore.getState().prepareForSession(launch.id, launch.remote_path || "/");
+          setFileTransferDialogOpen(true);
+        } catch (error) {
+          setTerminalError(fallbackOnlyErrorMessage(error, "打开外部文件传输连接失败"));
+        }
+        return;
+      }
       setExternalSshSessions((current) => ({ ...current, [launch.id]: launch }));
       setExternalSshOptionsById((current) => ({ ...current, [launch.id]: current[launch.id] ?? DEFAULT_EXTERNAL_SSH_OPTIONS }));
       setActiveTool(null);

@@ -210,8 +210,16 @@ pub async fn file_transfer_list_endpoint(
         TransferEndpointKind::SavedSession => {
             let session = session_for_endpoint(&state, &endpoint)?;
             if session.session_type == SessionType::Ftp {
-                return ftp_service::list(&session, &state.credential_service(), &endpoint.path)
-                    .await;
+                let secret = state
+                    .external_launch_service()
+                    .secret_for_external_session(&session.id)?;
+                return ftp_service::list(
+                    &session,
+                    &state.credential_service(),
+                    secret.as_deref(),
+                    &endpoint.path,
+                )
+                .await;
             }
             let storage = state.storage();
             let all_sessions = list_sessions(storage.as_ref())?.sessions;
@@ -237,8 +245,17 @@ pub async fn file_transfer_rename_endpoint(
         TransferEndpointKind::SavedSession => {
             let session = session_for_endpoint(&state, &endpoint)?;
             if session.session_type == SessionType::Ftp {
-                ftp_service::rename(&session, &state.credential_service(), &endpoint.path, &to)
-                    .await?;
+                let secret = state
+                    .external_launch_service()
+                    .secret_for_external_session(&session.id)?;
+                ftp_service::rename(
+                    &session,
+                    &state.credential_service(),
+                    secret.as_deref(),
+                    &endpoint.path,
+                    &to,
+                )
+                .await?;
                 return Ok(SftpRenameResult { renamed: true });
             }
             let storage = state.storage();
@@ -266,9 +283,13 @@ pub async fn file_transfer_delete_endpoint(
         TransferEndpointKind::SavedSession => {
             let session = session_for_endpoint(&state, &endpoint)?;
             if session.session_type == SessionType::Ftp {
+                let secret = state
+                    .external_launch_service()
+                    .secret_for_external_session(&session.id)?;
                 ftp_service::delete(
                     &session,
                     &state.credential_service(),
+                    secret.as_deref(),
                     &endpoint.path,
                     recursive,
                 )
@@ -304,9 +325,13 @@ pub async fn file_transfer_check_conflicts(
             TransferEndpointKind::SavedSession => {
                 let session = session_for_endpoint(&state, &item.destination)?;
                 if session.session_type == SessionType::Ftp {
+                    let secret = state
+                        .external_launch_service()
+                        .secret_for_external_session(&session.id)?;
                     ftp_service::exists(
                         &session,
                         &state.credential_service(),
+                        secret.as_deref(),
                         &item.destination.path,
                     )
                     .await?
@@ -407,6 +432,11 @@ pub async fn file_transfer_enqueue(
         &source,
         &destination,
     )?;
+    let ftp_secret = transient_ftp_secret(
+        &state,
+        source_session.as_ref(),
+        destination_session.as_ref(),
+    )?;
     spawn_file_transfer(
         app,
         state.sftp_service(),
@@ -415,6 +445,7 @@ pub async fn file_transfer_enqueue(
         destination_session,
         all_sessions,
         secrets,
+        ftp_secret,
         state.credential_service(),
         task.clone(),
     );
@@ -461,6 +492,11 @@ pub fn transfer_retry(
         let secrets = state
             .external_launch_service()
             .composite_secret_resolver(state.credential_service());
+        let ftp_secret = transient_ftp_secret(
+            &state,
+            source_session.as_ref(),
+            destination_session.as_ref(),
+        )?;
         spawn_file_transfer(
             app,
             state.sftp_service(),
@@ -469,6 +505,7 @@ pub fn transfer_retry(
             destination_session,
             all_sessions,
             secrets,
+            ftp_secret,
             state.credential_service(),
             task.clone(),
         );
@@ -628,6 +665,7 @@ fn spawn_file_transfer(
     destination_session: Option<crate::models::session::SavedSession>,
     all_sessions: Vec<crate::models::session::SavedSession>,
     credential_service: CompositeSshSecretResolver,
+    ftp_secret: Option<String>,
     ftp_credentials: crate::services::credential_service::CredentialService,
     task: TransferTask,
 ) {
@@ -670,6 +708,7 @@ fn spawn_file_transfer(
                     ftp_service::upload_path(
                         destination_session,
                         &ftp_credentials,
+                        ftp_secret.as_deref(),
                         &task.source_endpoint.path,
                         &task.destination_endpoint.path,
                         task.kind,
@@ -702,6 +741,7 @@ fn spawn_file_transfer(
                     ftp_service::download_path(
                         source_session,
                         &ftp_credentials,
+                        ftp_secret.as_deref(),
                         &task.source_endpoint.path,
                         &task.destination_endpoint.path,
                         task.kind,
@@ -809,6 +849,23 @@ fn finish_missing_endpoint(app: AppHandle, queue: TransferQueue, task_id: &str, 
         }
     }
     let _ = queue.unregister_control(task_id);
+}
+
+fn transient_ftp_secret(
+    state: &State<'_, AppState>,
+    source: Option<&crate::models::session::SavedSession>,
+    destination: Option<&crate::models::session::SavedSession>,
+) -> AppResult<Option<String>> {
+    let Some(session) = source
+        .into_iter()
+        .chain(destination)
+        .find(|session| session.session_type == SessionType::Ftp)
+    else {
+        return Ok(None);
+    };
+    state
+        .external_launch_service()
+        .secret_for_external_session(&session.id)
 }
 
 fn session_for_endpoint(
