@@ -2190,7 +2190,7 @@ export function AppShell() {
           onRuntimeChange: changeExternalContainerRuntime,
         }}
         tunnels={{
-          canManage: Boolean(activeSshSessionId),
+          canManage: Boolean(activeSshSessionId) && !activeExternalSshSession,
           canCreate: !activeExternalSshSingleChannel || activeSshTunnels.length === 0,
           editable: Boolean(activeExternalSshSession),
           needsReconnect: activeSshSessionId ? Boolean(sshTunnelNeedsReconnectBySessionId[activeSshSessionId]) : false,

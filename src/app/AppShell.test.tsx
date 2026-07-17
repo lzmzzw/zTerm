@@ -1577,6 +1577,8 @@ describe("AppShell", () => {
     await clickButton(view.container, "SSH 隧道");
     expect(view.container.querySelector(".zt-transient-tunnel-panel")).not.toBe(null);
     expect(view.container.querySelector(".zt-transient-tunnel-actions")).not.toBe(null);
+    expect(view.container.querySelector('[aria-label="新增隧道"]')).toBe(null);
+    expect(view.container.querySelector('[aria-label="添加临时 SSH 隧道"]')).not.toBe(null);
     expect(view.container.textContent).toContain("当前 SSH 连接没有配置隧道");
 
     await clickButton(view.container, "添加临时 SSH 隧道");
