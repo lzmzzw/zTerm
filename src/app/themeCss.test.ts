@@ -104,6 +104,7 @@ describe("global dark theme colors", () => {
     expect(rootVariable("--zt-bg-main")).toBe("var(--zt-surface-page)");
     expect(rootVariable("--zt-bg-terminal")).toBe("var(--zt-surface-terminal)");
     expect(rootVariable("--zt-bg-hover")).toBe("var(--zt-surface-hover)");
+    expect(rootVariable("--zt-bg-selected")).toBe("var(--zt-surface-selected)");
     expect(rootVariable("--zt-bg-active")).toBe("var(--zt-surface-selected)");
     expect(rootVariable("--zt-border-subtle")).toBe("var(--zt-line-hairline)");
     expect(ruleBodiesForSelector(".zt-sidebar")).toContain("background: var(--zt-bg-sidebar)");
@@ -165,9 +166,37 @@ describe("global dark theme colors", () => {
 
   it("distinguishes selected file rows from transient hover feedback", () => {
     for (const selector of [".zt-file-list button.active", ".zt-file-transfer-list button.active"]) {
-      expect(ruleBodiesForSelector(selector)).toContain("background: var(--zt-bg-active)");
-      expect(ruleBodiesForSelector(selector)).toContain("box-shadow: inset 2px 0 0 var(--zt-accent)");
+      expect(ruleBodiesForSelector(selector)).toContain("background: var(--zt-bg-selected)");
+      expect(ruleBodiesForSelector(selector)).not.toContain("box-shadow");
     }
+    expect(ruleBodiesForSelector(".zt-file-list button:hover")).toContain("background: var(--zt-bg-hover)");
+    expect(ruleBodiesForSelector(".zt-file-transfer-list button:hover")).toContain("background: var(--zt-bg-hover)");
+  });
+
+  it("uses one neutral hover and selected hierarchy without directional accent bars", () => {
+    const statePairs = [
+      [".zt-tabs button:hover:not(:disabled)", ".zt-tabs button[aria-selected=\"true\"]"],
+      [".zt-ai-conversation-row:hover .zt-ai-conversation-main", ".zt-ai-conversation-row.is-active .zt-ai-conversation-main"],
+      [".zt-session-editor-nav button:hover", ".zt-session-editor-nav button[aria-current=\"page\"]"],
+      [".zt-settings-page-tabs button:hover", ".zt-settings-page-tabs button[aria-selected=\"true\"]"],
+    ];
+
+    for (const [hoverSelector, selectedSelector] of statePairs) {
+      expect(ruleBodiesForSelector(hoverSelector)).toContain("background: var(--zt-bg-hover)");
+      expect(ruleBodiesForSelector(selectedSelector)).toContain("background: var(--zt-bg-selected)");
+      expect(ruleBodiesForSelector(selectedSelector)).not.toContain("var(--zt-accent)");
+    }
+
+    expect(css).not.toContain("box-shadow: inset 2px 0 0 var(--zt-accent)");
+    expect(css).not.toContain("box-shadow: inset 0 -2px 0 var(--zt-accent)");
+    expect(css).not.toContain("box-shadow: inset 0 1px 0 var(--zt-accent)");
+    expect(ruleBodiesForSelector(".zt-workspace-layout-pane:hover")).toContain(
+      "border-color: var(--zt-border-strong)",
+    );
+    const selectedPane = ruleBodiesForSelector(".zt-workspace-layout-pane.selected");
+    expect(selectedPane).toContain("border-color: var(--zt-pane-active-border)");
+    expect(selectedPane).toContain("box-shadow: inset 0 0 0 1px var(--zt-pane-active-outline)");
+    expect(selectedPane).not.toContain("var(--zt-accent)");
   });
 
   it("keeps expanded left tool panels full height so blank areas receive context menu events", () => {

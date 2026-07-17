@@ -51,8 +51,8 @@
   --zt-surface-elevated: #18181a;
   --zt-surface-floating: #1c1c1e;
   --zt-surface-field: rgb(0 0 0 / 0.22);
-  --zt-surface-hover: rgb(255 255 255 / 0.08);
-  --zt-surface-selected: rgb(255 255 255 / 0.12);
+  --zt-surface-hover: rgb(255 255 255 / 0.07);
+  --zt-surface-selected: rgb(255 255 255 / 0.14);
   --zt-surface-muted: rgb(255 255 255 / 0.06);
   --zt-scrim: rgb(0 0 0 / 0.42);
   --zt-line-hairline: rgb(255 255 255 / 0.08);
@@ -70,6 +70,7 @@
   --zt-bg-elevated: var(--zt-surface-elevated);
   --zt-bg-base: var(--zt-surface-page);
   --zt-bg-hover: var(--zt-surface-hover);
+  --zt-bg-selected: var(--zt-surface-selected);
   --zt-bg-active: var(--zt-surface-selected);
   --zt-bg-input: var(--zt-surface-field);
   --zt-border: var(--zt-line-regular);
@@ -125,8 +126,8 @@
   --zt-surface-elevated: #ffffff;
   --zt-surface-floating: #ffffff;
   --zt-surface-field: rgb(255 255 255 / 0.78);
-  --zt-surface-hover: rgb(0 0 0 / 0.045);
-  --zt-surface-selected: rgb(0 0 0 / 0.075);
+  --zt-surface-hover: rgb(0 0 0 / 0.04);
+  --zt-surface-selected: rgb(0 0 0 / 0.09);
   --zt-surface-muted: rgb(0 0 0 / 0.035);
   --zt-scrim: rgb(0 0 0 / 0.28);
   --zt-line-hairline: rgb(0 0 0 / 0.08);
@@ -143,6 +144,7 @@
   --zt-bg-surface: var(--zt-surface-elevated);
   --zt-bg-elevated: var(--zt-surface-elevated);
   --zt-bg-hover: var(--zt-surface-hover);
+  --zt-bg-selected: var(--zt-surface-selected);
   --zt-bg-active: var(--zt-surface-selected);
   --zt-bg-input: var(--zt-surface-field);
   --zt-border: var(--zt-line-regular);
@@ -846,9 +848,8 @@ button {
 
 .zt-tabs button[aria-selected="true"],
 .zt-segmented-control button[aria-selected="true"] {
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
   color: var(--zt-text-primary);
-  box-shadow: inset 2px 0 0 var(--zt-accent);
 }
 
 .zt-segmented-control {
@@ -1004,7 +1005,7 @@ button {
 }
 
 .zt-select-option.is-selected {
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
 }
 
 .zt-select-option:disabled {
@@ -1611,7 +1612,7 @@ button {
 
 .zt-left-rail button[aria-pressed="true"],
 .zt-tool-rail button[aria-pressed="true"] {
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
   color: var(--zt-text-primary);
 }
 
@@ -1729,7 +1730,7 @@ button {
 
 .zt-workspace-item.active {
   border-color: var(--zt-border-strong);
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
 }
 
 .zt-workspace-main {
@@ -1964,7 +1965,7 @@ button {
 .zt-tabbar .active {
   color: var(--zt-text-primary);
   border-color: var(--zt-border-strong) var(--zt-border) var(--zt-bg-main);
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
 }
 
 .zt-tabbar .zt-tabbar-icon {
@@ -2047,7 +2048,7 @@ button {
 
 .zt-pane-tab.active {
   border-color: var(--zt-border-strong);
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
   color: var(--zt-text-primary);
 }
 
@@ -2435,7 +2436,7 @@ button {
 
 .zt-history-mode-tabs button[aria-selected="true"] {
   border-color: var(--zt-border-strong);
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
   color: var(--zt-text-primary);
 }
 
@@ -2561,7 +2562,7 @@ button {
 }
 
 .zt-history-entry.is-selected {
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
 }
 
 .zt-history-entry:focus-visible {
@@ -3259,8 +3260,7 @@ button {
 }
 
 .zt-file-transfer-list button.active {
-  background: var(--zt-bg-active);
-  box-shadow: inset 2px 0 0 var(--zt-accent);
+  background: var(--zt-bg-selected);
 }
 
 .zt-file-transfer-list strong,
@@ -3402,8 +3402,7 @@ button {
 }
 
 .zt-file-list button.active {
-  background: var(--zt-bg-active);
-  box-shadow: inset 2px 0 0 var(--zt-accent);
+  background: var(--zt-bg-selected);
 }
 
 .zt-file-list span {
@@ -4260,10 +4259,14 @@ button {
   flex: 0 0 auto;
 }
 
-.zt-ai-conversation-row.is-active .zt-ai-conversation-main,
 .zt-ai-conversation-row:hover .zt-ai-conversation-main,
 .zt-ai-section-title button:hover {
   background: var(--zt-bg-hover);
+  color: var(--zt-text-primary);
+}
+
+.zt-ai-conversation-row.is-active .zt-ai-conversation-main {
+  background: var(--zt-bg-selected);
   color: var(--zt-text-primary);
 }
 
@@ -4499,7 +4502,7 @@ button {
 }
 
 .zt-ai-mode button[aria-selected="true"] {
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
   color: var(--zt-text-primary);
 }
 
@@ -5017,9 +5020,12 @@ button {
   font-weight: 400;
 }
 
-.zt-file-transfer-dialog .zt-file-transfer-list button:hover,
-.zt-file-transfer-dialog .zt-file-transfer-list button.active {
+.zt-file-transfer-dialog .zt-file-transfer-list button:hover {
   background: var(--zt-bg-hover);
+}
+
+.zt-file-transfer-dialog .zt-file-transfer-list button.active {
+  background: var(--zt-bg-selected);
 }
 
 .zt-file-transfer-dialog .zt-file-kind-icon {
@@ -5182,7 +5188,7 @@ button {
 .zt-workspace-preview-workspace-tabs button[aria-selected="true"],
 .zt-workspace-preview-pane-tab-list button[aria-selected="true"] {
   border-color: var(--zt-border-strong);
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
   color: var(--zt-text-primary);
 }
 
@@ -5250,6 +5256,10 @@ button {
   text-align: left;
 }
 
+.zt-workspace-layout-pane:hover {
+  border-color: var(--zt-border-strong);
+}
+
 .zt-workspace-layout-pane.selected {
   border-color: var(--zt-pane-active-border);
   box-shadow: inset 0 0 0 1px var(--zt-pane-active-outline);
@@ -5287,6 +5297,7 @@ button {
 
 .zt-workspace-layout-pane-tabs span.active {
   border-color: var(--zt-border-strong);
+  background: var(--zt-bg-selected);
   color: var(--zt-text-primary);
 }
 
@@ -5460,7 +5471,7 @@ button {
 
 .zt-session-type-tabs button[aria-selected="true"] {
   border-color: var(--zt-border-strong);
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
   color: var(--zt-text-primary);
   box-shadow: inset 0 0 0 1px var(--zt-border-subtle);
 }
@@ -5506,9 +5517,8 @@ button {
 
 .zt-session-editor-nav button[aria-current="page"] {
   border-color: transparent;
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
   color: var(--zt-text-primary);
-  box-shadow: inset 2px 0 0 var(--zt-accent);
 }
 
 .zt-session-editor-fields {
@@ -5720,9 +5730,8 @@ button {
 .zt-settings-tabs button[aria-selected="true"] {
   color: var(--zt-text-primary);
   border-color: var(--zt-border-strong);
-  background: var(--zt-bg-main);
-  border-bottom-color: var(--zt-bg-main);
-  box-shadow: inset 0 1px 0 var(--zt-accent);
+  background: var(--zt-bg-selected);
+  border-bottom-color: var(--zt-border-strong);
 }
 
 .zt-settings-section {
@@ -6388,9 +6397,8 @@ button {
 
 .zt-settings-page-tabs button[aria-selected="true"] {
   border-color: transparent;
-  background: var(--zt-bg-active);
+  background: var(--zt-bg-selected);
   color: var(--zt-text-primary);
-  box-shadow: inset 2px 0 0 var(--zt-accent);
 }
 
 .zt-settings-page-main {
@@ -6569,9 +6577,8 @@ button {
 }
 
 .zt-ssh-tunnel-mode-grid button[aria-pressed="true"] {
-  border-color: var(--zt-accent);
-  background: var(--zt-bg-active);
-  box-shadow: inset 0 0 0 1px var(--zt-accent);
+  border-color: var(--zt-border-strong);
+  background: var(--zt-bg-selected);
 }
 
 .zt-ssh-tunnel-mode-grid button > span {
@@ -7045,10 +7052,6 @@ button {
     text-align: center;
   }
 
-  .zt-settings-page-tabs button[aria-selected="true"] {
-    box-shadow: inset 0 -2px 0 var(--zt-accent);
-  }
-
   .zt-session-modal-backdrop {
     padding: 24px 16px;
   }
@@ -7129,10 +7132,6 @@ button {
   .zt-session-editor-nav button {
     justify-content: center;
     min-width: 88px;
-  }
-
-  .zt-session-editor-nav button[aria-current="page"] {
-    box-shadow: inset 0 -2px 0 var(--zt-accent);
   }
 
   .zt-session-editor-fields {

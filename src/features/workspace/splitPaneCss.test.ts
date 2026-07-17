@@ -106,12 +106,14 @@ describe("split pane css direction mapping", () => {
   });
 
   it("uses neutral selected surfaces instead of blue-green highlights", () => {
-    expect(css).toContain("--zt-surface-selected: rgb(255 255 255 / 0.12)");
+    expect(css).toContain("--zt-surface-hover: rgb(255 255 255 / 0.07)");
+    expect(css).toContain("--zt-surface-selected: rgb(255 255 255 / 0.14)");
     expect(css).toContain("--zt-accent-muted: rgb(255 255 255 / 0.1)");
     expect(css).toContain("--zt-focus-soft: rgb(255 255 255 / 0.18)");
     expect(css).not.toContain("100 210 255");
 
-    expect(css).toContain("--zt-surface-selected: rgb(0 0 0 / 0.075)");
+    expect(css).toContain("--zt-surface-hover: rgb(0 0 0 / 0.04)");
+    expect(css).toContain("--zt-surface-selected: rgb(0 0 0 / 0.09)");
     expect(css).toContain("--zt-accent-muted: rgb(0 0 0 / 0.07)");
     expect(css).toContain("--zt-focus-soft: rgb(0 0 0 / 0.13)");
     expect(css).not.toContain("10 132 255");
@@ -138,7 +140,7 @@ describe("split pane css direction mapping", () => {
     const activeTabStyles = ruleBodiesForSelector(".zt-pane-tab.active");
 
     expect(activeTabStyles).toContain("border-color: var(--zt-border-strong)");
-    expect(activeTabStyles).toContain("background: var(--zt-bg-active)");
+    expect(activeTabStyles).toContain("background: var(--zt-bg-selected)");
     expect(activeTabStyles).not.toContain("var(--zt-accent)");
     expect(activeTabStyles).not.toContain("rgba(255, 255, 255, 0.28)");
   });
@@ -263,7 +265,7 @@ describe("split pane css direction mapping", () => {
 
   it("highlights selected history rows without a left accent", () => {
     const selectedStyles = ruleBodiesForSelector(".zt-history-entry.is-selected");
-    expect(selectedStyles).toContain("background: var(--zt-bg-active)");
+    expect(selectedStyles).toContain("background: var(--zt-bg-selected)");
     expect(selectedStyles).not.toContain("box-shadow");
   });
 
