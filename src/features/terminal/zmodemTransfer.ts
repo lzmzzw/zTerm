@@ -42,6 +42,8 @@ interface ZmodemTransferDependencies {
 
 const controllers = new Map<string, ZmodemRuntimeController>();
 const SEND_CHUNK_BYTES = 64 * 1024;
+const PROGRESS_BAR_WIDTH = 20;
+const UNKNOWN_TOTAL_PROGRESS_STEP_BYTES = 256 * 1024;
 const ZMODEM_ASTERISK = 42;
 const ZMODEM_ZDLE = 24;
 const ZMODEM_HEADER_B = 66;
@@ -203,8 +205,10 @@ class ZmodemRuntimeController {
         this.appendOutput(`[ZMODEM] 远端跳过 ${file.name}。\r\n`);
         continue;
       }
-      await sendFileBytes(transfer, Uint8Array.from(file.data));
-      this.appendOutput(`[ZMODEM] 已上传 ${file.name} (${file.size} bytes)。\r\n`);
+      const progress = createTransferProgress("上传", file.name, file.size, (output) => this.appendOutput(output));
+      progress.update(transfer.get_offset());
+      await sendFileBytes(transfer, Uint8Array.from(file.data), progress.update);
+      progress.finish(file.data.length);
     }
 
     await session.close();
@@ -231,15 +235,32 @@ class ZmodemRuntimeController {
     });
     session.on("offer", (offer: ZmodemOffer) => {
       const details = offer.get_details();
+      const progress = createTransferProgress("下载", details.name, details.size, (output) => this.appendOutput(output));
+      let receivedBytes = 0;
+      let progressFinished = false;
+      const finishProgress = () => {
+        if (progressFinished) return;
+        progressFinished = true;
+        progress.finish(receivedBytes);
+      };
+      progress.update(0);
+      offer.on("input", (payload) => {
+        receivedBytes += payload.length;
+        progress.update(receivedBytes);
+      });
       const saveTask = offer
         .accept({ on_input: "spool_uint8array" })
-        .then((payloads) => this.dependencies.saveFile?.(directory, details.name, flattenPayloads(payloads)))
+        .then((payloads) => {
+          finishProgress();
+          return this.dependencies.saveFile?.(directory, details.name, flattenPayloads(payloads));
+        })
         .then((saved) => {
           if (!saved) return;
           savedCount += 1;
-          this.appendOutput(`[ZMODEM] 已下载 ${details.name} -> ${saved.path} (${saved.bytes} bytes)。\r\n`);
+          this.appendOutput(`[ZMODEM] 已保存 ${details.name} -> ${saved.path}\r\n`);
         })
         .catch((error) => {
+          finishProgress();
           this.appendOutput(`[ZMODEM] 保存 ${details.name} 失败：${stringifiedErrorMessage(error)}\r\n`);
         });
       saveTasks.push(saveTask);
@@ -287,14 +308,68 @@ function isZfinHeader(value: unknown): value is { NAME: "ZFIN" } {
   return typeof value === "object" && value !== null && "NAME" in value && value.NAME === "ZFIN";
 }
 
-async function sendFileBytes(transfer: ZmodemTransfer, bytes: Uint8Array) {
+async function sendFileBytes(
+  transfer: ZmodemTransfer,
+  bytes: Uint8Array,
+  onProgress?: (transferredBytes: number) => void,
+) {
   let offset = Math.max(0, transfer.get_offset());
   while (offset < bytes.length) {
     const nextOffset = Math.min(bytes.length, offset + SEND_CHUNK_BYTES);
     transfer.send(bytes.slice(offset, nextOffset));
     offset = nextOffset;
+    onProgress?.(offset);
   }
   await transfer.end(new Uint8Array());
+}
+
+function createTransferProgress(
+  direction: "上传" | "下载",
+  fileName: string,
+  totalBytes: number | undefined,
+  appendOutput: (output: string) => void,
+) {
+  const knownTotal = Number.isFinite(totalBytes) && totalBytes !== undefined
+    ? Math.max(0, totalBytes)
+    : null;
+  let lastRenderKey: string | null = null;
+
+  const render = (transferredBytes: number, finished: boolean) => {
+    const transferred = Math.max(0, transferredBytes);
+    const ratio = knownTotal === null
+      ? (finished ? 1 : null)
+      : (knownTotal === 0 ? 1 : Math.min(1, transferred / knownTotal));
+    const filledCells = ratio === null ? 0 : Math.floor(ratio * PROGRESS_BAR_WIDTH);
+    const renderKey = ratio === null
+      ? `unknown:${Math.floor(transferred / UNKNOWN_TOTAL_PROGRESS_STEP_BYTES)}`
+      : `known:${filledCells}`;
+    if (!finished && renderKey === lastRenderKey) return;
+    lastRenderKey = renderKey;
+
+    const bar = `${"█".repeat(filledCells)}${"░".repeat(PROGRESS_BAR_WIDTH - filledCells)}`;
+    const percentage = ratio === null ? " --" : String(Math.floor(ratio * 100)).padStart(3, " ");
+    const size = knownTotal === null
+      ? formatBytes(transferred)
+      : `${formatBytes(Math.min(transferred, knownTotal))} / ${formatBytes(knownTotal)}`;
+    appendOutput(`\x1b[2K\r[ZMODEM] ${direction} ${fileName} [${bar}] ${percentage}% ${size}${finished ? "\r\n" : ""}`);
+  };
+
+  return {
+    update: (transferredBytes: number) => render(transferredBytes, false),
+    finish: (transferredBytes: number) => render(transferredBytes, true),
+  };
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${Math.floor(bytes)} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
 function flattenPayloads(payloads: Array<Uint8Array | number[]>) {

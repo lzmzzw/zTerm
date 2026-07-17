@@ -193,6 +193,14 @@ describe("zmodemTransfer", () => {
     expect(Array.from(transfer.send.mock.calls[0][0])).toEqual([1, 2, 3]);
     expect(transfer.end).toHaveBeenCalledWith(expect.any(Uint8Array));
     expect(session.close).toHaveBeenCalled();
+    expect(appendOutput).toHaveBeenCalledWith(
+      "runtime-1",
+      "\x1b[2K\r[ZMODEM] 上传 hello.txt [░░░░░░░░░░░░░░░░░░░░]   0% 0 B / 3 B",
+    );
+    expect(appendOutput).toHaveBeenCalledWith(
+      "runtime-1",
+      "\x1b[2K\r[ZMODEM] 上传 hello.txt [████████████████████] 100% 3 B / 3 B\r\n",
+    );
     expect(appendOutput).toHaveBeenCalledWith("runtime-1", expect.stringContaining("上传完成"));
   });
 
@@ -201,9 +209,20 @@ describe("zmodemTransfer", () => {
     const appendOutput = vi.fn();
     let offerHandler: ((offer: any) => void) | null = null;
     let sessionEndHandler: (() => void) | null = null;
+    let inputHandler: ((payload: number[] | Uint8Array) => void) | null = null;
     const offer = {
       get_details: vi.fn(() => ({ name: "remote.txt", size: 3 })),
-      accept: vi.fn().mockResolvedValue([new Uint8Array([4, 5]), [6]]),
+      on: vi.fn((eventName: string, handler: (payload: number[] | Uint8Array) => void) => {
+        if (eventName === "input") {
+          inputHandler = handler;
+        }
+        return offer;
+      }),
+      accept: vi.fn(async () => {
+        inputHandler?.([4, 5]);
+        inputHandler?.(new Uint8Array([6]));
+        return [new Uint8Array([4, 5]), [6]];
+      }),
     };
     const session: any = {
       type: "receive",
@@ -244,6 +263,22 @@ describe("zmodemTransfer", () => {
     expect(session.start).toHaveBeenCalled();
     expect(offer.accept).toHaveBeenCalledWith({ on_input: "spool_uint8array" });
     expect(saveFile).toHaveBeenCalledWith("D:\\Downloads", "remote.txt", [4, 5, 6]);
+    expect(appendOutput).toHaveBeenCalledWith(
+      "runtime-1",
+      "\x1b[2K\r[ZMODEM] 下载 remote.txt [░░░░░░░░░░░░░░░░░░░░]   0% 0 B / 3 B",
+    );
+    expect(appendOutput).toHaveBeenCalledWith(
+      "runtime-1",
+      "\x1b[2K\r[ZMODEM] 下载 remote.txt [█████████████░░░░░░░]  66% 2 B / 3 B",
+    );
+    expect(appendOutput).toHaveBeenCalledWith(
+      "runtime-1",
+      "\x1b[2K\r[ZMODEM] 下载 remote.txt [████████████████████] 100% 3 B / 3 B\r\n",
+    );
+    expect(appendOutput).toHaveBeenCalledWith(
+      "runtime-1",
+      "[ZMODEM] 已保存 remote.txt -> D:\\Downloads\\remote.txt\r\n",
+    );
     expect(appendOutput).toHaveBeenCalledWith("runtime-1", expect.stringContaining("下载完成，共 1 个文件"));
   });
 

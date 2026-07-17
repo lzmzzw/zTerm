@@ -28,6 +28,7 @@ declare module "zmodem.js/src/zmodem_browser" {
 
   export interface ZmodemOffer {
     get_details: () => ZmodemOfferDetails;
+    on: (eventName: "input", handler: (payload: number[] | Uint8Array) => void) => ZmodemOffer;
     accept: (options?: { on_input?: "spool_uint8array" | "spool_array" | ((octets: Uint8Array) => void) }) => Promise<Array<Uint8Array | number[]>>;
     skip: () => void;
   }
