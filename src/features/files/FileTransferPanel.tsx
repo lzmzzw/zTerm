@@ -691,6 +691,7 @@ function EndpointPane({
     value: root,
     label: root,
   }));
+  const hasRootSelect = pane.endpoint.kind === "local" && rootOptions.length > 0;
 
   function toggleSort(key: FileSortKey) {
     setSort((current) => ({
@@ -746,8 +747,8 @@ function EndpointPane({
           }}
         />
       </div>
-      <div className="zt-file-transfer-path">
-        {pane.endpoint.kind === "local" && rootOptions.length > 0 ? (
+      <div className={hasRootSelect ? "zt-file-transfer-path zt-file-transfer-path-with-root" : "zt-file-transfer-path"}>
+        {hasRootSelect ? (
           <ZtSelect
             ariaLabel={`${title}本地磁盘`}
             className="zt-file-transfer-root-select"

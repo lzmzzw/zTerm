@@ -76,6 +76,23 @@ describe("file transfer dialog styles", () => {
     expect(resizer).toContain("touch-action: none");
   });
 
+  it("uses one pane inset for endpoint, path, header, and file row edges", () => {
+    const pane = ruleBody(".zt-file-transfer-pane");
+    const endpoint = ruleBody(".zt-file-transfer-pane-header");
+    const path = ruleBody(".zt-file-transfer-path");
+    const list = ruleBody(".zt-file-transfer-list");
+    const header = ruleBody(".zt-file-transfer-list-header");
+    const row = ruleBody(".zt-file-transfer-dialog .zt-file-transfer-list button");
+
+    expect(pane).toContain("--zt-file-transfer-pane-inset: var(--zt-dialog-inline-inset)");
+    expect(endpoint).toContain("padding: 4px var(--zt-file-transfer-pane-inset)");
+    expect(path).toContain("padding: 4px var(--zt-file-transfer-pane-inset)");
+    expect(list).toContain("padding: 6px var(--zt-file-transfer-pane-inset)");
+    expect(header).toContain("margin: 0 var(--zt-file-transfer-pane-inset)");
+    expect(header).toContain("padding: 0");
+    expect(row).toContain("padding: 0");
+  });
+
   it("left-aligns file columns and clips long values within their own grid tracks", () => {
     const sortButton = ruleBody(".zt-file-transfer-sort-button");
     const values = ruleBody(".zt-file-transfer-dialog .zt-file-transfer-list strong,\n.zt-file-transfer-dialog .zt-file-transfer-list small");
@@ -117,7 +134,7 @@ describe("file transfer dialog styles", () => {
   });
 
   it("aligns the compact drive picker with file icons", () => {
-    const selector = '.zt-file-transfer-pane[data-local="true"] .zt-file-transfer-path';
+    const selector = ".zt-file-transfer-path-with-root";
     const ruleStart = css.indexOf(selector);
     const localPathRule = css.slice(ruleStart, css.indexOf("}", ruleStart));
 
@@ -126,7 +143,7 @@ describe("file transfer dialog styles", () => {
     expect(localPathRule).toContain(
       "grid-template-columns: 48px minmax(0, 1fr) repeat(3, 26px)",
     );
-    expect(localPathRule).toContain("padding-left: 6px");
+    expect(localPathRule).not.toContain("padding-left:");
     const rootSelectRule = css.slice(
       css.indexOf(".zt-file-transfer-dialog .zt-file-transfer-path .zt-file-transfer-root-select.zt-select-trigger"),
       css.indexOf("}", css.indexOf(".zt-file-transfer-dialog .zt-file-transfer-path .zt-file-transfer-root-select.zt-select-trigger")),

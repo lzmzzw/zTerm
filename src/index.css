@@ -33,6 +33,7 @@
   --zt-right-sidebar-width: 430px;
   --zt-settings-nav-width: 260px;
   --zt-dialog-header-height: 52px;
+  --zt-dialog-inline-inset: 18px;
   --zt-control-height-dense: 28px;
   --zt-control-height-default: 32px;
   --zt-control-height-form: 36px;
@@ -507,7 +508,7 @@ button {
 
 .zt-sync-channel-body {
   min-height: 0;
-  padding: 14px;
+  padding: 14px var(--zt-dialog-inline-inset);
 }
 
 .zt-sync-channel-columns {
@@ -618,7 +619,7 @@ button {
 .zt-dialog-header {
   justify-content: space-between;
   min-height: var(--zt-dialog-header-height);
-  padding: 0 18px;
+  padding: 0 var(--zt-dialog-inline-inset);
   border-bottom: 1px solid var(--zt-border-subtle);
   border-radius: var(--zt-radius-window) var(--zt-radius-window) 0 0;
 }
@@ -650,7 +651,7 @@ button {
 .zt-dialog-form {
   display: grid;
   gap: 12px;
-  padding: 16px 20px;
+  padding: 16px var(--zt-dialog-inline-inset);
 }
 
 .zt-dialog-message p {
@@ -670,7 +671,7 @@ button {
 .zt-dialog-footer {
   justify-content: flex-end;
   min-height: 68px;
-  padding: 12px 18px;
+  padding: 12px var(--zt-dialog-inline-inset);
   border-top: 1px solid var(--zt-border-subtle);
   border-radius: 0 0 var(--zt-radius-window) var(--zt-radius-window);
 }
@@ -3019,6 +3020,7 @@ button {
 }
 
 .zt-file-transfer-pane {
+  --zt-file-transfer-pane-inset: var(--zt-dialog-inline-inset);
   --zt-file-name-fr: 70fr;
   --zt-file-size-fr: 15fr;
   --zt-file-modified-fr: 15fr;
@@ -3093,7 +3095,7 @@ button {
 .zt-file-transfer-pane-header {
   display: flex;
   align-items: center;
-  padding: 4px 8px;
+  padding: 4px var(--zt-file-transfer-pane-inset);
   border-bottom: 1px solid var(--zt-border-subtle);
   color: var(--zt-text-primary);
   font-size: var(--zt-font-size-ui);
@@ -3111,7 +3113,7 @@ button {
   grid-template-columns: minmax(0, 1fr) repeat(3, 26px);
   align-items: center;
   gap: 4px;
-  padding: 4px 6px;
+  padding: 4px var(--zt-file-transfer-pane-inset);
   border-bottom: 1px solid var(--zt-border-subtle);
 }
 
@@ -3158,7 +3160,7 @@ button {
   gap: 2px;
   min-height: 0;
   overflow: auto;
-  padding: 6px;
+  padding: 6px var(--zt-file-transfer-pane-inset);
 }
 
 .zt-file-transfer-list-header {
@@ -3167,8 +3169,8 @@ button {
   align-items: stretch;
   gap: 5px;
   min-width: 0;
-  margin: 0 6px;
-  padding: 0 5px;
+  margin: 0 var(--zt-file-transfer-pane-inset);
+  padding: 0;
   border-bottom: 1px solid var(--zt-border-subtle);
   color: var(--zt-text-muted);
 }
@@ -3237,7 +3239,7 @@ button {
   min-height: 28px;
   border: 0;
   border-radius: var(--zt-radius-control);
-  padding: 0 5px;
+  padding: 0;
   background: transparent;
   color: var(--zt-text-primary);
   text-align: left;
@@ -3463,9 +3465,8 @@ button {
   overflow: hidden;
 }
 
-.zt-file-transfer-pane[data-local="true"] .zt-file-transfer-path {
+.zt-file-transfer-path-with-root {
   grid-template-columns: 48px minmax(0, 1fr) repeat(3, 26px);
-  padding-left: 6px;
 }
 
 .zt-file-transfer-root-select.zt-select-trigger {
@@ -4783,7 +4784,7 @@ button {
   top: 0;
   z-index: 1;
   min-height: var(--zt-dialog-header-height);
-  padding: 0 18px;
+  padding: 0 var(--zt-dialog-inline-inset);
   border-bottom: 1px solid var(--zt-border-subtle);
   background: var(--zt-bg-elevated);
   border-radius: var(--zt-radius-window) var(--zt-radius-window) 0 0;
@@ -4851,7 +4852,7 @@ button {
 
 .zt-transient-tunnel-dialog .zt-transient-tunnel-fields {
   min-height: 0;
-  padding: 16px;
+  padding: 16px var(--zt-dialog-inline-inset);
   overflow: auto;
 }
 
@@ -5007,7 +5008,7 @@ button {
   min-width: 0;
   min-height: 28px;
   height: auto;
-  padding: 0 5px;
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--zt-text-primary);
@@ -5043,7 +5044,7 @@ button {
   position: sticky;
   bottom: 0;
   min-height: 64px;
-  padding: 12px 18px;
+  padding: 12px var(--zt-dialog-inline-inset);
   border-top: 1px solid var(--zt-border-subtle);
   background: var(--zt-bg-elevated);
   border-radius: 0 0 var(--zt-radius-window) var(--zt-radius-window);
@@ -5134,7 +5135,7 @@ button {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 14px;
+  padding: 14px var(--zt-dialog-inline-inset);
 }
 
 .zt-workspace-preview-body.has-workspace-tabs {
@@ -5409,7 +5410,7 @@ button {
 .zt-session-confirm-dialog form > p,
 .zt-session-confirm-body {
   margin: 0;
-  padding: 18px 20px;
+  padding: 18px var(--zt-dialog-inline-inset);
   color: var(--zt-text-secondary);
   font-size: var(--zt-font-size-ui);
   line-height: 1.65;
@@ -5421,7 +5422,7 @@ button {
   grid-row: 2;
   align-items: center;
   gap: 8px;
-  padding: 16px 20px;
+  padding: 16px var(--zt-dialog-inline-inset);
   border-bottom: 1px solid var(--zt-border-subtle);
   background: var(--zt-bg-settings-content);
 }
@@ -5542,7 +5543,7 @@ button {
 .zt-session-group-dialog label {
   display: grid;
   gap: 5px;
-  padding: 16px 20px 0;
+  padding: 16px var(--zt-dialog-inline-inset) 0;
   color: var(--zt-text-secondary);
   font-size: var(--zt-font-size-ui);
   font-weight: 500;
@@ -6125,7 +6126,7 @@ button {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 20px 24px;
+  padding: 20px var(--zt-dialog-inline-inset);
 }
 
 .zt-model-config-section,

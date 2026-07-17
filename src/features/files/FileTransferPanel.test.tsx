@@ -548,6 +548,7 @@ describe("FileTransferPanel", () => {
     await flushEffects();
 
     const leftPathBar = view.container.querySelector('[aria-label="左侧文件端点"] .zt-file-transfer-path') as HTMLElement;
+    expect(leftPathBar.classList.contains("zt-file-transfer-path-with-root")).toBe(true);
     expect(leftPathBar.firstElementChild?.getAttribute("aria-label")).toBe("左侧本地磁盘");
     expect(leftPathBar.children[1]?.getAttribute("aria-label")).toBe("左侧路径");
 

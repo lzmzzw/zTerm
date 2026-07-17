@@ -269,6 +269,43 @@ describe("global dark theme colors", () => {
     expect(ruleBodiesForSelector(".zt-session-dialog form")).toContain("overflow: hidden");
     expect(ruleBodiesForSelector(".zt-session-dialog header strong")).toContain("text-align: left");
     expect(ruleBodiesForSelector(".zt-session-dialog footer")).toContain("min-height: 64px");
+    expect(rootVariable("--zt-dialog-inline-inset")).toBe("18px");
+    expect(ruleBodiesForSelector(".zt-dialog-header")).toContain(
+      "padding: 0 var(--zt-dialog-inline-inset)",
+    );
+    expect(ruleBodiesForSelector(".zt-dialog-footer")).toContain(
+      "padding: 12px var(--zt-dialog-inline-inset)",
+    );
+    expect(ruleBodiesForSelector(".zt-dialog-form")).toContain(
+      "padding: 16px var(--zt-dialog-inline-inset)",
+    );
+    expect(ruleBodiesForSelector(".zt-session-dialog header")).toContain(
+      "padding: 0 var(--zt-dialog-inline-inset)",
+    );
+    expect(ruleBodiesForSelector(".zt-session-dialog footer")).toContain(
+      "padding: 12px var(--zt-dialog-inline-inset)",
+    );
+    expect(ruleBodiesForSelector(".zt-session-type-tabs")).toContain(
+      "padding: 16px var(--zt-dialog-inline-inset)",
+    );
+    expect(ruleBodiesForSelector(".zt-sync-channel-body")).toContain(
+      "padding: 14px var(--zt-dialog-inline-inset)",
+    );
+    expect(ruleBodiesForSelector(".zt-transient-tunnel-dialog .zt-transient-tunnel-fields")).toContain(
+      "padding: 16px var(--zt-dialog-inline-inset)",
+    );
+    expect(ruleBodiesForSelector(".zt-workspace-preview-body")).toContain(
+      "padding: 14px var(--zt-dialog-inline-inset)",
+    );
+    expect(ruleBodiesForSelector(".zt-session-confirm-body")).toContain(
+      "padding: 18px var(--zt-dialog-inline-inset)",
+    );
+    expect(ruleBodiesForSelector(".zt-session-group-dialog label")).toContain(
+      "padding: 16px var(--zt-dialog-inline-inset) 0",
+    );
+    expect(ruleBodiesForSelector(".zt-model-editor-main")).toContain(
+      "padding: 20px var(--zt-dialog-inline-inset)",
+    );
     expect(rootVariable("--zt-dialog-height-large")).toBe("780px");
     expect(ruleBodiesForSelector(".zt-settings-page")).toContain(
       "height: min(var(--zt-dialog-height-large), calc(100vh - 96px))",
