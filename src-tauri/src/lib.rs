@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn crate_metadata_matches_project() {
         assert_eq!(env!("CARGO_PKG_NAME"), "zterm");
-        assert_eq!(env!("CARGO_PKG_VERSION"), "0.2.4");
+        assert_eq!(env!("CARGO_PKG_VERSION"), "0.2.5");
     }
 
     #[test]
