@@ -254,6 +254,19 @@ impl AiToolService {
         tool_definitions()
     }
 
+    pub fn saved_session_id_for_runtime(
+        &self,
+        runtime_session_id: &str,
+    ) -> AppResult<Option<String>> {
+        let runtime_session_id = required_text("运行时会话 ID", runtime_session_id)?;
+        Ok(self
+            .writer
+            .list_terminals()?
+            .into_iter()
+            .find(|runtime| runtime.runtime_session_id == runtime_session_id)
+            .and_then(|runtime| runtime.saved_session_id))
+    }
+
     pub fn prepare(
         &self,
         store: &SqliteStore,

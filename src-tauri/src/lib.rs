@@ -82,6 +82,8 @@ pub fn run() {
             commands::ai::ai_conversation_get,
             commands::ai::ai_conversation_delete,
             commands::ai::ai_set_conversation_approval_mode,
+            commands::ai::ai_connection_approval_mode_get,
+            commands::ai::ai_connection_approval_mode_set,
             commands::ai::ai_conversation_message_append,
             commands::sftp::sftp_list,
             commands::sftp::sftp_mkdir,

@@ -8,9 +8,9 @@ use crate::{
     error::{AppError, AppResult},
     models::{
         ai::{
-            AiApprovalMode, AiConversation, AiConversationMessage, AiConversationSummary,
-            AiMessageRole, AiToolAuditRecord, AiToolInvocationStatus, AiToolPendingInvocation,
-            RiskLevel,
+            AiApprovalMode, AiConnectionApprovalPolicy, AiConversation, AiConversationMessage,
+            AiConversationSummary, AiMessageRole, AiToolAuditRecord, AiToolInvocationStatus,
+            AiToolPendingInvocation, RiskLevel,
         },
         credential::{AiProviderKind, AiProviderProfile},
         session::DeleteResult,
@@ -20,9 +20,105 @@ use crate::{
 
 pub const AI_PROVIDER_PROFILES_TABLE: &str = "ai_provider_profiles";
 pub const AI_CONVERSATIONS_TABLE: &str = "ai_conversations";
+pub const AI_CONNECTION_APPROVAL_POLICIES_TABLE: &str = "ai_connection_approval_policies";
 pub const AI_CONVERSATION_MESSAGES_TABLE: &str = "ai_conversation_messages";
 pub const AI_TOOL_PENDING_TABLE: &str = "ai_tool_pending";
 pub const AI_TOOL_AUDITS_TABLE: &str = "ai_tool_audits";
+
+pub fn get_ai_connection_approval_mode(
+    store: &SqliteStore,
+    saved_session_id: &str,
+) -> AppResult<AiApprovalMode> {
+    let saved_session_id = required_text("SSH 连接 ID", saved_session_id)?;
+    store.with_connection(|connection| {
+        let value = connection
+            .query_row(
+                "select approval_mode from ai_connection_approval_policies where saved_session_id = ?1",
+                [&saved_session_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        match value {
+            Some(value) => AiApprovalMode::from_db(&value).ok_or_else(|| {
+                AppError::storage(format!("invalid ai approval mode: {value}"))
+            }),
+            None => Ok(AiApprovalMode::Safe),
+        }
+    })
+}
+
+pub fn get_ai_connection_approval_policy(
+    store: &SqliteStore,
+    saved_session_id: &str,
+) -> AppResult<AiConnectionApprovalPolicy> {
+    let saved_session_id = validate_persisted_ssh_session(store, saved_session_id)?;
+    let approval_mode = get_ai_connection_approval_mode(store, &saved_session_id)?;
+    let updated_at_ms = store.with_connection(|connection| {
+        Ok(connection
+            .query_row(
+                "select updated_at_ms from ai_connection_approval_policies where saved_session_id = ?1",
+                [&saved_session_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .unwrap_or_default())
+    })?;
+    Ok(AiConnectionApprovalPolicy {
+        saved_session_id,
+        approval_mode,
+        updated_at_ms,
+    })
+}
+
+pub fn upsert_ai_connection_approval_policy(
+    store: &SqliteStore,
+    saved_session_id: &str,
+    approval_mode: AiApprovalMode,
+) -> AppResult<AiConnectionApprovalPolicy> {
+    let saved_session_id = validate_persisted_ssh_session(store, saved_session_id)?;
+    let now = now_ms();
+    store.write_transaction(|transaction| {
+        transaction.execute(
+            "
+            insert into ai_connection_approval_policies (saved_session_id, approval_mode, updated_at_ms)
+            values (?1, ?2, ?3)
+            on conflict(saved_session_id) do update set
+                approval_mode = excluded.approval_mode,
+                updated_at_ms = excluded.updated_at_ms
+            ",
+            params![saved_session_id, approval_mode.as_str(), now],
+        )?;
+        Ok(())
+    })?;
+    Ok(AiConnectionApprovalPolicy {
+        saved_session_id,
+        approval_mode,
+        updated_at_ms: now,
+    })
+}
+
+fn validate_persisted_ssh_session(
+    store: &SqliteStore,
+    saved_session_id: &str,
+) -> AppResult<String> {
+    let saved_session_id = required_text("SSH 连接 ID", saved_session_id)?;
+    let session_type = store.with_connection(|connection| {
+        Ok(connection
+            .query_row(
+                "select type from saved_sessions where id = ?1",
+                [&saved_session_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?)
+    })?;
+    match session_type.as_deref() {
+        Some("ssh") => Ok(saved_session_id),
+        Some(_) => Err(AppError::validation("AI 安全策略只能绑定已保存的 SSH 连接")),
+        None => Err(AppError::not_found(format!(
+            "saved ssh session not found: {saved_session_id}"
+        ))),
+    }
+}
 
 pub fn list_ai_provider_profiles(store: &SqliteStore) -> AppResult<Vec<AiProviderProfile>> {
     store.with_connection(|connection| {

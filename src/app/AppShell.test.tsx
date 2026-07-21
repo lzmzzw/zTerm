@@ -12,6 +12,7 @@ const originalPrepareForSession = useFileTransferStore.getState().prepareForSess
 const storeMocks = vi.hoisted(() => ({
   noop: vi.fn(),
   asyncNoop: vi.fn().mockResolvedValue(undefined),
+  bindApprovalModeToSession: vi.fn().mockResolvedValue(undefined),
   saveSession: vi.fn().mockResolvedValue(undefined),
   bindEvents: vi.fn().mockResolvedValue(() => undefined),
   addPaneTab: vi.fn(),
@@ -502,6 +503,7 @@ vi.mock("../features/ai/aiStore", () => {
     conversations: [],
     activeConversationId: null,
     approvalMode: "safe",
+    approvalSessionId: null,
     messages: [],
     conversationPreviews: {},
     pendingInvocations: [],
@@ -513,6 +515,7 @@ vi.mock("../features/ai/aiStore", () => {
     captureContext: storeMocks.captureContext,
     sendChat: storeMocks.asyncNoop,
     setApprovalMode: storeMocks.asyncNoop,
+    bindApprovalModeToSession: storeMocks.bindApprovalModeToSession,
     selectConversation: storeMocks.asyncNoop,
     loadConversationPreview: storeMocks.asyncNoop,
     newConversation: storeMocks.asyncNoop,
@@ -3566,6 +3569,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
     const filesButton = view.container.querySelector('.zt-tool-rail [aria-label="SFTP 文件"]') as HTMLButtonElement;
 
+    expect(storeMocks.bindApprovalModeToSession).toHaveBeenCalledWith("session-1");
     expect(view.container.querySelector('.zt-tool-rail [aria-label="传输任务"]')).toBe(null);
     expect(storeMocks.loadTransfers).not.toHaveBeenCalled();
 

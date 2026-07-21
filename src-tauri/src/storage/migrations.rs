@@ -156,6 +156,12 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
             updated_at_ms integer not null
         );
 
+        create table if not exists ai_connection_approval_policies (
+            saved_session_id text primary key references saved_sessions(id) on delete cascade,
+            approval_mode text not null default 'safe' check (approval_mode in ('request_approval', 'safe', 'full_access')),
+            updated_at_ms integer not null
+        );
+
         create table if not exists ai_conversation_messages (
             id text primary key,
             conversation_id text not null references ai_conversations(id) on delete cascade,

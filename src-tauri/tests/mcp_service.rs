@@ -17,6 +17,7 @@ use zterm_lib::{
         mcp_service::{handle_http_request, McpHttpRequest, McpService, DEFAULT_MCP_PORT},
     },
     storage::{
+        ai::upsert_ai_connection_approval_policy,
         sessions::save_session,
         settings::{get_app_settings, save_app_settings},
         sqlite::SqliteStore,
@@ -453,6 +454,90 @@ async fn mcp_terminal_read_and_write_return_output_with_cursor() {
     assert_eq!(
         write_body["result"]["structuredContent"]["result"]["output"],
         "/home/ops"
+    );
+}
+
+#[tokio::test]
+async fn mcp_uses_the_target_ssh_connection_approval_policy() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    save_session(
+        store.as_ref(),
+        SavedSessionDraft {
+            id: Some("session-1".to_string()),
+            name: "Policy SSH".to_string(),
+            session_type: SessionType::Ssh,
+            group_id: None,
+            host: "ssh.example.test".to_string(),
+            port: 22,
+            username: "ops".to_string(),
+            auth_mode: AuthMode::None,
+            credential_ref: None,
+            description: None,
+            tags: Vec::new(),
+            sort_order: 0,
+            ssh_options: None,
+            rdp_options: None,
+            local_options: None,
+            ftp_options: None,
+        },
+    )
+    .expect("ssh session should save");
+    upsert_ai_connection_approval_policy(
+        store.as_ref(),
+        "session-1",
+        zterm_lib::models::ai::AiApprovalMode::RequestApproval,
+    )
+    .expect("connection policy should save");
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+
+    let pending = handle_http_request(
+        Arc::clone(&store),
+        tools.clone(),
+        "token-1",
+        authed_request(json!({
+            "jsonrpc": "2.0",
+            "id": 30,
+            "method": "tools/call",
+            "params": {
+                "name": "terminal.read",
+                "arguments": { "runtime_session_id": "runtime-1" }
+            }
+        })),
+    )
+    .await
+    .expect("terminal.read should handle");
+    let pending_body: Value = serde_json::from_slice(&pending.body).expect("json body");
+    assert_eq!(
+        pending_body["result"]["structuredContent"]["status"],
+        "pending"
+    );
+
+    upsert_ai_connection_approval_policy(
+        store.as_ref(),
+        "session-1",
+        zterm_lib::models::ai::AiApprovalMode::FullAccess,
+    )
+    .expect("connection policy should update");
+    let executed = handle_http_request(
+        store,
+        tools,
+        "token-1",
+        authed_request(json!({
+            "jsonrpc": "2.0",
+            "id": 31,
+            "method": "tools/call",
+            "params": {
+                "name": "terminal.read",
+                "arguments": { "runtime_session_id": "runtime-1" }
+            }
+        })),
+    )
+    .await
+    .expect("terminal.read should handle");
+    let executed_body: Value = serde_json::from_slice(&executed.body).expect("json body");
+    assert_eq!(
+        executed_body["result"]["structuredContent"]["status"],
+        "succeeded"
     );
 }
 

@@ -14,6 +14,7 @@ use crate::{
             AiToolAuditRecord, AiToolPendingInvocation, AiToolPrepareRequest,
         },
         credential::{AiProviderKind, AiProviderProfile},
+        session::SessionType,
     },
     security::redaction::redact_sensitive,
     services::{
@@ -26,7 +27,7 @@ use crate::{
             ProviderToolChatResponse,
         },
     },
-    storage::sqlite::SqliteStore,
+    storage::{ai::get_ai_connection_approval_mode, sessions::get_session, sqlite::SqliteStore},
 };
 
 const MAX_TOOL_ROUNDS: usize = 5;
@@ -515,6 +516,7 @@ fn ensure_conversation(
     conversation_service: &AiConversationService,
     request: &AiChatRequest,
 ) -> AppResult<(String, AiApprovalMode)> {
+    let connection_policy = connection_approval_mode(store, request)?;
     if let Some(conversation_id) = request
         .conversation_id
         .as_deref()
@@ -522,18 +524,63 @@ fn ensure_conversation(
         .filter(|value| !value.is_empty())
     {
         let conversation = conversation_service.get(store, conversation_id)?;
-        return Ok((conversation.id, conversation.approval_mode));
+        let approval_mode = connection_policy.unwrap_or(conversation.approval_mode);
+        if approval_mode != conversation.approval_mode {
+            let conversation = conversation_service.update_approval_mode(
+                store,
+                crate::models::ai::AiConversationApprovalModeUpdateRequest {
+                    conversation_id: conversation.id,
+                    approval_mode,
+                },
+            )?;
+            return Ok((conversation.id, conversation.approval_mode));
+        }
+        return Ok((conversation.id, approval_mode));
     }
+    let saved_session_id = request
+        .terminal_context
+        .as_ref()
+        .and_then(|context| non_empty(context.saved_session_id.as_deref()));
     let conversation = conversation_service.create(
         store,
         AiConversationCreateRequest {
             title: Some(build_title(&request.message)),
             scope_kind: "follow_focus".to_string(),
-            scope_ref_json: Some("{}".to_string()),
-            approval_mode: Some(request.approval_mode.unwrap_or(AiApprovalMode::Safe)),
+            scope_ref_json: Some(
+                saved_session_id
+                    .map(|saved_session_id| {
+                        json!({ "saved_session_id": saved_session_id }).to_string()
+                    })
+                    .unwrap_or_else(|| "{}".to_string()),
+            ),
+            approval_mode: Some(
+                connection_policy
+                    .or(request.approval_mode)
+                    .unwrap_or(AiApprovalMode::Safe),
+            ),
         },
     )?;
     Ok((conversation.id, conversation.approval_mode))
+}
+
+fn connection_approval_mode(
+    store: &SqliteStore,
+    request: &AiChatRequest,
+) -> AppResult<Option<AiApprovalMode>> {
+    let Some(saved_session_id) = request
+        .terminal_context
+        .as_ref()
+        .and_then(|context| non_empty(context.saved_session_id.as_deref()))
+    else {
+        return Ok(None);
+    };
+    let Ok(session) = get_session(store, saved_session_id) else {
+        return Ok(None);
+    };
+    if session.session_type != SessionType::Ssh {
+        return Ok(None);
+    }
+    get_ai_connection_approval_mode(store, saved_session_id).map(Some)
 }
 
 fn build_provider_messages(
@@ -812,7 +859,7 @@ mod tests {
         models::{
             ai::AiChatRequest,
             credential::{AiProviderKind, AiProviderProfileDraft},
-            session::SessionGroupDraft,
+            session::{AuthMode, SavedSessionDraft, SessionGroupDraft},
         },
         services::{
             ai_tool_service::AiToolCommandWriter,
@@ -820,8 +867,8 @@ mod tests {
             llm_provider_service::ProviderToolCall,
         },
         storage::{
-            ai::list_ai_provider_profiles,
-            sessions::{list_sessions, save_session_group},
+            ai::{list_ai_provider_profiles, upsert_ai_connection_approval_policy},
+            sessions::{list_sessions, save_session, save_session_group},
         },
     };
 
@@ -839,6 +886,70 @@ mod tests {
 
         assert!(prompt.contains("创建、修改、删除 zTerm 资源时只能调用提供的工具"));
         assert!(prompt.contains("只读取列表或上下文不等于完成变更"));
+    }
+
+    #[test]
+    fn saved_ssh_connection_policy_overrides_conversation_policy_for_each_chat() {
+        let store = SqliteStore::open_in_memory().expect("store should open");
+        save_session(
+            &store,
+            SavedSessionDraft {
+                id: Some("session-policy".to_string()),
+                name: "Policy SSH".to_string(),
+                session_type: SessionType::Ssh,
+                group_id: None,
+                host: "ssh.example.test".to_string(),
+                port: 22,
+                username: "ops".to_string(),
+                auth_mode: AuthMode::None,
+                credential_ref: None,
+                description: None,
+                tags: Vec::new(),
+                sort_order: 0,
+                ssh_options: None,
+                rdp_options: None,
+                local_options: None,
+                ftp_options: None,
+            },
+        )
+        .expect("ssh session should save");
+        upsert_ai_connection_approval_policy(&store, "session-policy", AiApprovalMode::FullAccess)
+            .expect("connection policy should save");
+        let service = AiConversationService;
+        let mut request = AiChatRequest {
+            conversation_id: None,
+            message: "读取当前目录".to_string(),
+            approval_mode: Some(AiApprovalMode::RequestApproval),
+            history: Vec::new(),
+            terminal_context: Some(AiTerminalContextRequest {
+                saved_session_id: Some("session-policy".to_string()),
+                ..AiTerminalContextRequest::default()
+            }),
+        };
+
+        let (conversation_id, approval_mode) =
+            ensure_conversation(&store, &service, &request).expect("conversation should create");
+        assert_eq!(approval_mode, AiApprovalMode::FullAccess);
+
+        upsert_ai_connection_approval_policy(
+            &store,
+            "session-policy",
+            AiApprovalMode::RequestApproval,
+        )
+        .expect("connection policy should update");
+        request.conversation_id = Some(conversation_id.clone());
+        request.approval_mode = Some(AiApprovalMode::FullAccess);
+
+        let (_, approval_mode) =
+            ensure_conversation(&store, &service, &request).expect("conversation should reload");
+        assert_eq!(approval_mode, AiApprovalMode::RequestApproval);
+        assert_eq!(
+            service
+                .get(&store, &conversation_id)
+                .expect("conversation should persist effective mode")
+                .approval_mode,
+            AiApprovalMode::RequestApproval
+        );
     }
 
     #[test]

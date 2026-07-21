@@ -38,6 +38,12 @@ export interface AiConversationPreviewState {
   messages: AiConversationMessage[] | null;
 }
 
+interface AiConnectionApprovalPolicy {
+  saved_session_id: string;
+  approval_mode: AiApprovalMode;
+  updated_at_ms: number;
+}
+
 interface AiConversation {
   id: string;
   title: string;
@@ -154,6 +160,7 @@ interface AiState {
   conversations: AiConversationSummary[];
   activeConversationId: string | null;
   approvalMode: AiApprovalMode;
+  approvalSessionId: string | null;
   messages: AiConversationMessage[];
   conversationPreviews: Record<string, AiConversationPreviewState>;
   pendingInvocations: AiToolPendingInvocation[];
@@ -165,6 +172,7 @@ interface AiState {
   captureContext: (context: AiTerminalContextSnapshot) => Promise<void>;
   sendChat: (message: string, context: AiTerminalContextSnapshot | null) => Promise<void>;
   cancelChat: () => void;
+  bindApprovalModeToSession: (savedSessionId: string | null) => Promise<void>;
   setApprovalMode: (mode: AiApprovalMode) => Promise<void>;
   selectConversation: (conversationId: string) => Promise<void>;
   loadConversationPreview: (conversationId: string) => Promise<void>;
@@ -174,6 +182,8 @@ interface AiState {
 }
 
 let contextCaptureRequestId = 0;
+let approvalBindingRequestId = 0;
+let approvalUpdateRequestId = 0;
 let aiChatRequestId = 0;
 let activeChatRequestId: number | null = null;
 let activeChatId: string | null = null;
@@ -191,6 +201,7 @@ export const useAiStore = create<AiState>((set, get) => ({
   conversations: [],
   activeConversationId: null,
   approvalMode: "safe",
+  approvalSessionId: null,
   messages: [],
   conversationPreviews: {},
   pendingInvocations: [],
@@ -204,7 +215,7 @@ export const useAiStore = create<AiState>((set, get) => ({
         conversations,
         activeConversationId: state.activeConversationId ?? conversations[0]?.id ?? null,
         approvalMode:
-          state.activeConversationId === null && conversations[0]?.approval_mode
+          state.approvalSessionId === null && state.activeConversationId === null && conversations[0]?.approval_mode
             ? conversations[0].approval_mode
             : state.approvalMode,
       }));
@@ -336,7 +347,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       const conversation = await invoke<AiConversation>("ai_conversation_get", { conversationId });
       set((state) => ({
         activeConversationId: conversation.id,
-        approvalMode: conversation.approval_mode ?? "safe",
+        approvalMode: state.approvalSessionId ? state.approvalMode : (conversation.approval_mode ?? "safe"),
         messages: conversation.messages,
         conversationPreviews: withConversationPreview(state.conversationPreviews, conversation),
         error: null,
@@ -378,8 +389,62 @@ export const useAiStore = create<AiState>((set, get) => ({
       }));
     }
   },
+  async bindApprovalModeToSession(savedSessionId) {
+    const normalizedSessionId = savedSessionId?.trim() || null;
+    const requestId = approvalBindingRequestId + 1;
+    approvalBindingRequestId = requestId;
+    approvalUpdateRequestId += 1;
+    if (!normalizedSessionId) {
+      const state = get();
+      const conversationMode = state.conversations.find(
+        (conversation) => conversation.id === state.activeConversationId,
+      )?.approval_mode;
+      set({
+        approvalSessionId: null,
+        approvalMode: conversationMode ?? "safe",
+        error: null,
+      });
+      return;
+    }
+    set({ approvalSessionId: normalizedSessionId, approvalMode: "safe", error: null });
+    try {
+      const policy = await invoke<AiConnectionApprovalPolicy>("ai_connection_approval_mode_get", {
+        savedSessionId: normalizedSessionId,
+      });
+      if (approvalBindingRequestId === requestId && get().approvalSessionId === normalizedSessionId) {
+        set({ approvalMode: policy.approval_mode, error: null });
+      }
+    } catch (error) {
+      if (approvalBindingRequestId === requestId && get().approvalSessionId === normalizedSessionId) {
+        set({ approvalMode: "safe", error: unknownErrorMessage(error, "AI 安全策略加载失败") });
+      }
+    }
+  },
   async setApprovalMode(mode) {
-    const conversationId = useAiStore.getState().activeConversationId;
+    const state = get();
+    const conversationId = state.activeConversationId;
+    const approvalSessionId = state.approvalSessionId;
+    if (approvalSessionId) {
+      approvalBindingRequestId += 1;
+      const requestId = approvalUpdateRequestId + 1;
+      approvalUpdateRequestId = requestId;
+      try {
+        const policy = await invoke<AiConnectionApprovalPolicy>("ai_connection_approval_mode_set", {
+          request: {
+            saved_session_id: approvalSessionId,
+            approval_mode: mode,
+          },
+        });
+        if (approvalUpdateRequestId === requestId && get().approvalSessionId === policy.saved_session_id) {
+          set({ approvalMode: policy.approval_mode, error: null });
+        }
+      } catch (error) {
+        if (approvalUpdateRequestId === requestId && get().approvalSessionId === approvalSessionId) {
+          set({ error: unknownErrorMessage(error, "AI 安全策略保存失败") });
+        }
+      }
+      return;
+    }
     if (!conversationId) {
       set({ approvalMode: mode });
       return;
@@ -403,7 +468,12 @@ export const useAiStore = create<AiState>((set, get) => ({
   },
   newConversation() {
     cancelActiveChatWithoutStoreMutation();
-    set({ activeConversationId: null, approvalMode: "safe", messages: [], error: null });
+    set((state) => ({
+      activeConversationId: null,
+      approvalMode: state.approvalSessionId ? state.approvalMode : "safe",
+      messages: [],
+      error: null,
+    }));
   },
   async deleteConversation(conversationId) {
     cancelActiveChatWithoutStoreMutation();
@@ -420,7 +490,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       set((state) => ({
         conversations,
         activeConversationId: nextConversationId,
-        approvalMode: nextConversationId ? state.approvalMode : "safe",
+        approvalMode: nextConversationId || state.approvalSessionId ? state.approvalMode : "safe",
         messages: nextConversationId ? state.messages : [],
         conversationPreviews: withoutConversationPreview(state.conversationPreviews, conversationId),
         pendingInvocations: state.pendingInvocations.filter((invocation) => invocation.conversation_id !== conversationId),
@@ -575,7 +645,9 @@ async function finishAiChatStream(payload: AiChatStreamDoneEvent) {
       useAiStore.setState((state) => ({
         activeConversationId: conversation.id,
         messages: conversation.messages,
-        approvalMode: conversation.approval_mode ?? state.approvalMode,
+        approvalMode: state.approvalSessionId
+          ? state.approvalMode
+          : (conversation.approval_mode ?? state.approvalMode),
         conversationPreviews: withConversationPreview(state.conversationPreviews, conversation),
         conversations,
         pendingInvocations,

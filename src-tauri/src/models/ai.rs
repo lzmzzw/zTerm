@@ -141,6 +141,19 @@ pub struct AiConversationApprovalModeUpdateRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiConnectionApprovalPolicy {
+    pub saved_session_id: String,
+    pub approval_mode: AiApprovalMode,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiConnectionApprovalPolicyUpdateRequest {
+    pub saved_session_id: String,
+    pub approval_mode: AiApprovalMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiConversationMessageAppendRequest {
     pub conversation_id: String,
     pub role: AiMessageRole,

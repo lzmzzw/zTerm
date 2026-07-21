@@ -54,6 +54,7 @@ fn migrations_create_all_phase_two_tables() {
         "credential_records",
         "ai_provider_profiles",
         "ai_conversations",
+        "ai_connection_approval_policies",
         "ai_conversation_messages",
         "ai_tool_pending",
         "ai_tool_audits",
@@ -89,6 +90,7 @@ fn migrations_are_idempotent() {
                 'credential_records',
                 'ai_provider_profiles',
                 'ai_conversations',
+                'ai_connection_approval_policies',
                 'ai_conversation_messages',
                 'ai_tool_pending',
                 'ai_tool_audits',
@@ -100,7 +102,7 @@ fn migrations_are_idempotent() {
         )
         .expect("table count query should run");
 
-    assert_eq!(table_count, 16);
+    assert_eq!(table_count, 17);
     assert!(index_exists(&connection, "idx_workspaces_sort"));
     assert!(index_exists(
         &connection,

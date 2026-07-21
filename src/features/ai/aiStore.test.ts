@@ -57,6 +57,7 @@ describe("aiStore", () => {
       conversations: [],
       activeConversationId: null,
       approvalMode: "safe",
+      approvalSessionId: null,
       messages: [],
       conversationPreviews: {},
       pendingInvocations: [],
@@ -82,6 +83,72 @@ describe("aiStore", () => {
     await staleRequest;
 
     expect(useAiStore.getState().contextSnapshot?.runtime_session_id).toBe("runtime-current");
+  });
+
+  it("restores and persists the approval mode for the active saved SSH connection", async () => {
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "ai_connection_approval_mode_get") {
+        return Promise.resolve({
+          saved_session_id: "session-1",
+          approval_mode: "full_access",
+          updated_at_ms: 10,
+        });
+      }
+      if (command === "ai_connection_approval_mode_set") {
+        return Promise.resolve({
+          saved_session_id: "session-1",
+          approval_mode: "request_approval",
+          updated_at_ms: 11,
+        });
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+
+    await useAiStore.getState().bindApprovalModeToSession("session-1");
+    expect(useAiStore.getState()).toEqual(
+      expect.objectContaining({ approvalSessionId: "session-1", approvalMode: "full_access" }),
+    );
+
+    await useAiStore.getState().setApprovalMode("request_approval");
+    expect(invokeMock).toHaveBeenLastCalledWith("ai_connection_approval_mode_set", {
+      request: {
+        saved_session_id: "session-1",
+        approval_mode: "request_approval",
+      },
+    });
+    expect(useAiStore.getState().approvalMode).toBe("request_approval");
+  });
+
+  it("does not let a stale connection policy load overwrite the newly focused SSH connection", async () => {
+    const stale = deferred<{ saved_session_id: string; approval_mode: "full_access"; updated_at_ms: number }>();
+    invokeMock
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce({ saved_session_id: "session-2", approval_mode: "safe", updated_at_ms: 2 });
+
+    const first = useAiStore.getState().bindApprovalModeToSession("session-1");
+    await useAiStore.getState().bindApprovalModeToSession("session-2");
+    stale.resolve({ saved_session_id: "session-1", approval_mode: "full_access", updated_at_ms: 1 });
+    await first;
+
+    expect(useAiStore.getState()).toEqual(
+      expect.objectContaining({ approvalSessionId: "session-2", approvalMode: "safe" }),
+    );
+  });
+
+  it("keeps a user policy update when the initial connection policy load finishes late", async () => {
+    const stale = deferred<{ saved_session_id: string; approval_mode: "safe"; updated_at_ms: number }>();
+    invokeMock
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValueOnce({ saved_session_id: "session-1", approval_mode: "full_access", updated_at_ms: 2 });
+
+    const binding = useAiStore.getState().bindApprovalModeToSession("session-1");
+    await useAiStore.getState().setApprovalMode("full_access");
+    stale.resolve({ saved_session_id: "session-1", approval_mode: "safe", updated_at_ms: 1 });
+    await binding;
+
+    expect(useAiStore.getState()).toEqual(
+      expect.objectContaining({ approvalSessionId: "session-1", approvalMode: "full_access" }),
+    );
   });
 
   it("shows the user message immediately and applies real backend stream chunks into the panel", async () => {

@@ -7,14 +7,17 @@ use crate::{
     models::ai::{
         AiChatRequest, AiChatResponse, AiChatStreamCancelResult, AiChatStreamCancelledEvent,
         AiChatStreamChunkEvent, AiChatStreamDoneEvent, AiChatStreamErrorEvent,
-        AiChatStreamStartResult, AiConversation, AiConversationApprovalModeUpdateRequest,
-        AiConversationCreateRequest, AiConversationListRequest, AiConversationMessage,
-        AiConversationMessageAppendRequest, AiConversationSummary, AiTerminalContextRequest,
-        AiTerminalContextSnapshot, AiToolAuditListRequest, AiToolAuditRecord, AiToolConfirmRequest,
-        AiToolDefinition, AiToolPendingInvocation, AiToolPrepareRequest,
+        AiChatStreamStartResult, AiConnectionApprovalPolicy,
+        AiConnectionApprovalPolicyUpdateRequest, AiConversation,
+        AiConversationApprovalModeUpdateRequest, AiConversationCreateRequest,
+        AiConversationListRequest, AiConversationMessage, AiConversationMessageAppendRequest,
+        AiConversationSummary, AiTerminalContextRequest, AiTerminalContextSnapshot,
+        AiToolAuditListRequest, AiToolAuditRecord, AiToolConfirmRequest, AiToolDefinition,
+        AiToolPendingInvocation, AiToolPrepareRequest,
     },
     services::ai_chat_service::AiChatStreamRunResult,
     state::AppState,
+    storage::ai::{get_ai_connection_approval_policy, upsert_ai_connection_approval_policy},
 };
 
 #[tauri::command]
@@ -249,6 +252,28 @@ pub fn ai_set_conversation_approval_mode(
     state
         .ai_conversation_service()
         .update_approval_mode(storage.as_ref(), request)
+}
+
+#[tauri::command]
+pub fn ai_connection_approval_mode_get(
+    state: State<'_, AppState>,
+    saved_session_id: String,
+) -> AppResult<AiConnectionApprovalPolicy> {
+    let storage = state.storage();
+    get_ai_connection_approval_policy(storage.as_ref(), &saved_session_id)
+}
+
+#[tauri::command]
+pub fn ai_connection_approval_mode_set(
+    state: State<'_, AppState>,
+    request: AiConnectionApprovalPolicyUpdateRequest,
+) -> AppResult<AiConnectionApprovalPolicy> {
+    let storage = state.storage();
+    upsert_ai_connection_approval_policy(
+        storage.as_ref(),
+        &request.saved_session_id,
+        request.approval_mode,
+    )
 }
 
 #[tauri::command]

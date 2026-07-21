@@ -313,6 +313,7 @@ export function AppShell() {
     captureContext,
     sendChat,
     cancelChat,
+    bindApprovalModeToSession,
     setApprovalMode,
     selectConversation,
     loadConversationPreview,
@@ -326,6 +327,7 @@ export function AppShell() {
       captureContext: state.captureContext,
       sendChat: state.sendChat,
       cancelChat: state.cancelChat,
+      bindApprovalModeToSession: state.bindApprovalModeToSession,
       setApprovalMode: state.setApprovalMode,
       selectConversation: state.selectConversation,
       loadConversationPreview: state.loadConversationPreview,
@@ -535,6 +537,7 @@ export function AppShell() {
   const activePaneTab = activeLeaf ? getActiveTerminalTab(activeLeaf) : null;
   const activeSavedSessionId = activePaneTab?.saved_session_id ?? null;
   const activeSavedSession = activeSavedSessionId ? sessions.find((session) => session.id === activeSavedSessionId) ?? null : null;
+  const aiApprovalSessionId = activeSavedSession?.type === "ssh" ? activeSavedSession.id : null;
   const activeExternalSshSession =
     activeSavedSessionId && isExternalSessionId(activeSavedSessionId) ? (externalSshSessions[activeSavedSessionId] ?? null) : null;
   const activeExternalSshOptions = activeExternalSshSession
@@ -656,6 +659,10 @@ export function AppShell() {
   );
 
   useDomI18n(language);
+
+  useEffect(() => {
+    void bindApprovalModeToSession(aiApprovalSessionId);
+  }, [aiApprovalSessionId, bindApprovalModeToSession]);
 
   const syncChannelCandidateKey = syncChannelCandidates
     .map((candidate) => `${candidate.id}:${candidate.runtimeSessionId}:${candidate.host}`)

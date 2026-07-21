@@ -22,7 +22,7 @@ use crate::{
         ai_tool_service::AiToolService,
         credential_service::{SecretStore, SystemSecretStore},
     },
-    storage::sqlite::SqliteStore,
+    storage::{ai::get_ai_connection_approval_mode, sqlite::SqliteStore},
 };
 
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
@@ -656,6 +656,7 @@ fn mcp_tool_call_result(
     name: &str,
     arguments: Value,
 ) -> AppResult<Value> {
+    let approval_mode = mcp_tool_approval_mode(store, tools, &arguments)?;
     let outcome = tools.execute_if_allowed(
         store,
         AiToolPrepareRequest {
@@ -667,7 +668,7 @@ fn mcp_tool_call_result(
             run_id: None,
             step_id: None,
         },
-        AiApprovalMode::Safe,
+        approval_mode,
     )?;
     if let Some(pending) = outcome.pending_invocation {
         return Ok(json!({
@@ -688,6 +689,32 @@ fn mcp_tool_call_result(
         .audit_record
         .ok_or_else(|| AppError::ai("MCP 工具调用未产生结果"))?;
     Ok(mcp_audit_result(audit, outcome.structured_content))
+}
+
+fn mcp_tool_approval_mode(
+    store: &SqliteStore,
+    tools: &AiToolService,
+    arguments: &Value,
+) -> AppResult<AiApprovalMode> {
+    if let Some(saved_session_id) = arguments
+        .get("saved_session_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return get_ai_connection_approval_mode(store, saved_session_id);
+    }
+    if let Some(runtime_session_id) = arguments
+        .get("runtime_session_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(saved_session_id) = tools.saved_session_id_for_runtime(runtime_session_id)? {
+            return get_ai_connection_approval_mode(store, &saved_session_id);
+        }
+    }
+    Ok(AiApprovalMode::Safe)
 }
 
 fn mcp_audit_result(audit: AiToolAuditRecord, structured_content: Option<Value>) -> Value {
