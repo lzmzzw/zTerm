@@ -487,6 +487,68 @@ pub fn mcp_tool_catalog() -> Vec<McpToolDefinition> {
             ),
         ),
         mcp_tool(
+            "ssh.upload",
+            "SSH 上传",
+            "基于已有 SSH 连接和认证，通过 SFTP 子系统上传本地文件或目录",
+            RiskLevel::High,
+            true,
+            file_transfer_schema("上传目标远程路径"),
+        ),
+        mcp_tool(
+            "ssh.download",
+            "SSH 下载",
+            "基于已有 SSH 连接和认证，通过 SFTP 子系统下载远程文件或目录",
+            RiskLevel::Medium,
+            true,
+            file_transfer_schema("下载来源远程路径"),
+        ),
+        mcp_tool(
+            "sftp.upload",
+            "SFTP 上传",
+            "基于已有 SSH/SFTP 连接和认证上传本地文件或目录",
+            RiskLevel::High,
+            true,
+            file_transfer_schema("上传目标远程路径"),
+        ),
+        mcp_tool(
+            "sftp.download",
+            "SFTP 下载",
+            "基于已有 SSH/SFTP 连接和认证下载远程文件或目录",
+            RiskLevel::Medium,
+            true,
+            file_transfer_schema("下载来源远程路径"),
+        ),
+        mcp_tool(
+            "ftp.upload",
+            "FTP 上传",
+            "基于已有 FTP 连接和认证上传本地文件或目录",
+            RiskLevel::High,
+            true,
+            file_transfer_schema("上传目标远程路径"),
+        ),
+        mcp_tool(
+            "ftp.download",
+            "FTP 下载",
+            "基于已有 FTP 连接和认证下载远程文件或目录",
+            RiskLevel::Medium,
+            true,
+            file_transfer_schema("下载来源远程路径"),
+        ),
+        mcp_tool(
+            "transfer.list",
+            "查询传输任务",
+            "查询已入队文件传输的状态、进度和脱敏错误",
+            RiskLevel::Low,
+            false,
+            object_schema(
+                json!({
+                    "saved_session_id": { "type": "string", "description": "可选的连接 ID 筛选。" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 1000 }
+                }),
+                &[],
+            ),
+        ),
+        mcp_tool(
             "llm_provider.list",
             "列出模型",
             "返回不含 API Key 的模型 Provider 列表",
@@ -556,6 +618,36 @@ fn object_schema(properties: Value, required: &[&str]) -> Value {
         schema["required"] = json!(required);
     }
     schema
+}
+
+fn file_transfer_schema(remote_path_description: &str) -> Value {
+    object_schema(
+        json!({
+            "saved_session_id": {
+                "type": "string",
+                "description": "zTerm 已保存连接的 ID；认证仅由 zTerm 本地读取。"
+            },
+            "local_path": {
+                "type": "string",
+                "description": "当前 zTerm 所在 Windows 主机上的绝对本地路径。"
+            },
+            "remote_path": {
+                "type": "string",
+                "description": remote_path_description
+            },
+            "kind": {
+                "type": "string",
+                "enum": ["file", "directory"],
+                "description": "可选；不提供时由传输服务探测。"
+            },
+            "conflict_policy": {
+                "type": "string",
+                "enum": ["overwrite", "skip", "rename"],
+                "default": "overwrite"
+            }
+        }),
+        &["saved_session_id", "local_path", "remote_path"],
+    )
 }
 
 fn mcp_tool_call_result(
@@ -656,6 +748,15 @@ fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), Stri
         "terminal.write" => &["runtime_session_id", "data"][..],
         "terminal.close" => &["runtime_session_id"][..],
         "ssh.execute" => &["saved_session_id", "script"][..],
+        "ssh.upload" | "ssh.download" | "sftp.upload" | "sftp.download" | "ftp.upload"
+        | "ftp.download" => &[
+            "saved_session_id",
+            "local_path",
+            "remote_path",
+            "kind",
+            "conflict_policy",
+        ][..],
+        "transfer.list" => &["saved_session_id", "limit"][..],
         "llm_provider.save" => &["draft"][..],
         _ => return Err(format!("tool not exposed by zTerm MCP: {tool_name}")),
     };

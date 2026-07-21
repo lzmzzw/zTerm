@@ -1,6 +1,8 @@
 // Author: Liz
 use std::{
     collections::HashMap,
+    future::Future,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -32,7 +34,7 @@ struct TransferRunControlInner {
 }
 
 impl TransferRunControl {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             inner: Arc::new(TransferRunControlInner {
                 cancelled: AtomicBool::new(false),
@@ -42,16 +44,16 @@ impl TransferRunControl {
         }
     }
 
-    fn pause(&self) {
+    pub(crate) fn pause(&self) {
         self.inner.paused.store(true, Ordering::SeqCst);
     }
 
-    fn resume(&self) {
+    pub(crate) fn resume(&self) {
         self.inner.paused.store(false, Ordering::SeqCst);
         self.inner.notify.notify_waiters();
     }
 
-    fn cancel(&self) {
+    pub(crate) fn cancel(&self) {
         self.inner.cancelled.store(true, Ordering::SeqCst);
         self.inner.paused.store(false, Ordering::SeqCst);
         self.inner.notify.notify_waiters();
@@ -68,6 +70,23 @@ impl TransferRunControl {
             }
             notified.await;
         }
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.inner.cancelled.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn is_paused(&self) -> bool {
+        self.inner.paused.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn wait_for_state_change(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> {
+        let inner = self.inner.clone();
+        Box::pin(async move {
+            inner.notify.notified().await;
+        })
     }
 }
 
@@ -498,7 +517,7 @@ impl TransferQueue {
                 })
                 .cloned(),
         );
-        tasks.sort_by(|left, right| right.created_at_ms.cmp(&left.created_at_ms));
+        tasks.sort_by_key(|task| std::cmp::Reverse(task.created_at_ms));
         tasks.truncate(limit);
         Ok(tasks)
     }

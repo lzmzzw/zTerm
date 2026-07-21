@@ -144,6 +144,13 @@ async fn mcp_http_handler_supports_initialize_tools_list_and_pending_tool_call()
             "terminal.write",
             "terminal.close",
             "ssh.execute",
+            "ssh.upload",
+            "ssh.download",
+            "sftp.upload",
+            "sftp.download",
+            "ftp.upload",
+            "ftp.download",
+            "transfer.list",
             "llm_provider.list",
             "llm_provider.save",
         ]
@@ -613,6 +620,72 @@ async fn mcp_ssh_execute_keeps_high_risk_scripts_pending() {
     assert_eq!(
         body["result"]["structuredContent"]["tool_id"],
         "ssh.execute"
+    );
+}
+
+#[tokio::test]
+async fn mcp_file_transfers_expose_complete_schemas_and_require_local_confirmation() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+    let list = handle_http_request(
+        Arc::clone(&store),
+        tools.clone(),
+        "token-1",
+        authed_request(json!({"jsonrpc": "2.0", "id": 20, "method": "tools/list"})),
+    )
+    .await
+    .expect("tools/list should handle");
+    let list_body: Value = serde_json::from_slice(&list.body).expect("json body");
+    for name in [
+        "ssh.upload",
+        "ssh.download",
+        "sftp.upload",
+        "sftp.download",
+        "ftp.upload",
+        "ftp.download",
+    ] {
+        let tool = list_body["result"]["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .expect("file transfer tool");
+        assert_eq!(
+            tool["inputSchema"]["required"],
+            json!(["saved_session_id", "local_path", "remote_path"])
+        );
+        assert_eq!(
+            tool["inputSchema"]["properties"]["conflict_policy"]["enum"],
+            json!(["overwrite", "skip", "rename"])
+        );
+    }
+
+    let response = handle_http_request(
+        store,
+        tools,
+        "token-1",
+        authed_request(json!({
+            "jsonrpc": "2.0",
+            "id": 21,
+            "method": "tools/call",
+            "params": {
+                "name": "ftp.download",
+                "arguments": {
+                    "saved_session_id": "ftp-1",
+                    "remote_path": "/exports/report.csv",
+                    "local_path": "C:\\Downloads\\report.csv",
+                    "conflict_policy": "rename"
+                }
+            }
+        })),
+    )
+    .await
+    .expect("ftp.download should create pending");
+    let body: Value = serde_json::from_slice(&response.body).expect("json body");
+    assert_eq!(body["result"]["structuredContent"]["status"], "pending");
+    assert_eq!(
+        body["result"]["structuredContent"]["tool_id"],
+        "ftp.download"
     );
 }
 

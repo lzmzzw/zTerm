@@ -18,6 +18,7 @@ panes in the center, and files/history/monitor/AI tools on the right.
 - Capture command history by session or local profile, search it, copy commands, and send commands back to the active terminal.
 - Store credentials and AI provider API keys in the operating system keyring instead of plain SQLite rows.
 - Use a local approval-based AI assistant panel for terminal context, risk hints, and candidate commands.
+- Let Codex use the local MCP server to upload or download files and directories through saved SSH, SFTP, and FTP connections after local approval, without exposing keyring credentials.
 - Monitor SSH server CPU, memory, disk, load, uptime, and network traffic snapshots.
 
 RDP sessions open in the Windows system Remote Desktop client. The workspace

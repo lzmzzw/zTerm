@@ -1,4 +1,6 @@
 // Author: Liz
+use std::time::{Duration, Instant};
+
 use tauri::{AppHandle, Emitter, State};
 
 use crate::{
@@ -25,6 +27,51 @@ use crate::{
     state::AppState,
     storage::sessions::{get_session, list_sessions},
 };
+
+const TRANSFER_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
+
+struct TransferProgressGate {
+    known_total_bytes: Option<u64>,
+    last_observed_bytes: Option<u64>,
+    last_emit_at: Option<Instant>,
+}
+
+impl TransferProgressGate {
+    fn new() -> Self {
+        Self {
+            known_total_bytes: None,
+            last_observed_bytes: None,
+            last_emit_at: None,
+        }
+    }
+
+    fn should_emit(&mut self, update: TransferProgressUpdate) -> bool {
+        self.should_emit_at(update, Instant::now())
+    }
+
+    fn should_emit_at(&mut self, update: TransferProgressUpdate, now: Instant) -> bool {
+        let total_changed = update
+            .total_bytes
+            .is_some_and(|total| self.known_total_bytes != Some(total));
+        if let Some(total) = update.total_bytes {
+            self.known_total_bytes = Some(total);
+        }
+
+        let repeated_or_rewound = self
+            .last_observed_bytes
+            .is_some_and(|previous| update.transferred_bytes <= previous);
+        self.last_observed_bytes = Some(update.transferred_bytes);
+
+        let interval_elapsed = self.last_emit_at.is_none_or(|last| {
+            now.saturating_duration_since(last) >= TRANSFER_PROGRESS_EMIT_INTERVAL
+        });
+        let should_emit = total_changed || repeated_or_rewound || interval_elapsed;
+        if should_emit {
+            self.last_emit_at = Some(now);
+        }
+        should_emit
+    }
+}
 
 #[tauri::command]
 pub async fn sftp_list(
@@ -570,7 +617,11 @@ fn spawn_transfer(
         let progress_queue = queue.clone();
         let progress_app = app.clone();
         let progress_task_id = task.id.clone();
+        let mut progress_gate = TransferProgressGate::new();
         let mut progress = move |update: TransferProgressUpdate| -> AppResult<()> {
+            if !progress_gate.should_emit(update) {
+                return Ok(());
+            }
             let updated = progress_queue.mark_progress_with_total(
                 &progress_task_id,
                 update.transferred_bytes,
@@ -682,7 +733,11 @@ fn spawn_file_transfer(
         let progress_queue = queue.clone();
         let progress_app = app.clone();
         let progress_task_id = task.id.clone();
+        let mut progress_gate = TransferProgressGate::new();
         let mut progress = move |update: TransferProgressUpdate| -> AppResult<()> {
+            if !progress_gate.should_emit(update) {
+                return Ok(());
+            }
             let updated = progress_queue.mark_progress_with_total(
                 &progress_task_id,
                 update.transferred_bytes,
@@ -903,4 +958,45 @@ fn ssh_session_context(
     }
     let session = get_session(storage.as_ref(), saved_session_id)?;
     Ok((session, all_sessions))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TransferProgressGate, TRANSFER_PROGRESS_EMIT_INTERVAL};
+    use crate::services::sftp_service::TransferProgressUpdate;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn progress_gate_limits_persistence_and_events_to_ten_hz() {
+        let start = Instant::now();
+        let mut gate = TransferProgressGate::new();
+
+        assert!(gate.should_emit_at(progress(64 * 1024, None), start));
+        assert!(!gate.should_emit_at(
+            progress(128 * 1024, None),
+            start + Duration::from_millis(99)
+        ));
+        assert!(gate.should_emit_at(
+            progress(192 * 1024, None),
+            start + TRANSFER_PROGRESS_EMIT_INTERVAL
+        ));
+    }
+
+    #[test]
+    fn progress_gate_immediately_emits_total_discovery_and_final_repeat() {
+        let start = Instant::now();
+        let mut gate = TransferProgressGate::new();
+
+        assert!(gate.should_emit_at(progress(0, None), start));
+        assert!(gate.should_emit_at(progress(0, Some(1024)), start + Duration::from_millis(1)));
+        assert!(!gate.should_emit_at(progress(512, None), start + Duration::from_millis(2)));
+        assert!(gate.should_emit_at(progress(512, None), start + Duration::from_millis(3)));
+    }
+
+    fn progress(transferred_bytes: u64, total_bytes: Option<u64>) -> TransferProgressUpdate {
+        TransferProgressUpdate {
+            total_bytes,
+            transferred_bytes,
+        }
+    }
 }

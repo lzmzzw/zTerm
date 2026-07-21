@@ -1,5 +1,6 @@
 // Author: Liz
 use std::{
+    path::Path,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -12,8 +13,9 @@ use uuid::Uuid;
 use crate::services::{
     command_history_service::CommandHistoryService,
     credential_service::CredentialService,
+    ftp_service,
     server_info_service::ServerInfoService,
-    sftp_service::SftpService,
+    sftp_service::{local_path_total_bytes, SftpService, TransferProgressUpdate},
     ssh_command_service::SshCommandService,
     ssh_container_service::{
         build_container_list_script, enabled_container_options, parse_container_ps_output,
@@ -34,6 +36,10 @@ use crate::{
         history::{HistoryScopeKind, HistorySearchOptions},
         server_info::{ServerInfoRequest, ServerInfoSnapshot},
         session::{AuthMode, SavedSession, SavedSessionDraft, SessionGroupDraft, SessionType},
+        sftp::{
+            TransferConflictPolicy, TransferDirection, TransferEndpoint, TransferEndpointKind,
+            TransferKind, TransferStatus, TransferTask, TransferTaskOrigin,
+        },
         terminal::RuntimeSessionInfo,
         terminal_profile::TerminalProfileDraft,
         workspace::{
@@ -744,9 +750,14 @@ impl AiToolService {
                 let saved_session_id = optional_string_arg(arguments, "saved_session_id");
                 let limit = optional_u32_arg(arguments, "limit").unwrap_or(200);
                 let tasks = list_transfer_tasks(store, saved_session_id.as_deref(), limit)?;
-                Ok(execution_result(
+                let sanitized_tasks = tasks
+                    .iter()
+                    .map(sanitized_transfer_task_value)
+                    .collect::<Vec<_>>();
+                Ok(structured_execution_result(
                     format!("传输任务已读取：{} 个。", tasks.len()),
                     ["transfer"],
+                    json!({ "tasks": sanitized_tasks }),
                 ))
             }
             "transfer.retry" => {
@@ -945,7 +956,20 @@ impl AiToolService {
                     }),
                 ))
             }
-            "sftp.upload" | "sftp.download" | "history.record" => {
+            "ssh.upload" | "sftp.upload" | "ftp.upload" => self.enqueue_saved_connection_transfer(
+                store,
+                tool_id,
+                arguments,
+                TransferDirection::Upload,
+            ),
+            "ssh.download" | "sftp.download" | "ftp.download" => self
+                .enqueue_saved_connection_transfer(
+                    store,
+                    tool_id,
+                    arguments,
+                    TransferDirection::Download,
+                ),
+            "history.record" => {
                 self.emit_frontend_action(tool_id, arguments, affected_domains_for_tool(tool_id))
             }
             _ => Err(AppError::validation(format!("不支持的 AI 工具: {tool_id}"))),
@@ -1292,6 +1316,80 @@ impl AiToolService {
             .ok_or_else(|| AppError::ai("AI 工具执行器未装配 SFTP 服务"))
     }
 
+    fn enqueue_saved_connection_transfer(
+        &self,
+        store: &SqliteStore,
+        tool_id: &str,
+        arguments: &Value,
+        direction: TransferDirection,
+    ) -> AppResult<AiToolExecutionResult> {
+        let saved_session_id = string_arg(arguments, "saved_session_id")?;
+        let local_path = string_arg(arguments, "local_path")?;
+        let remote_path = string_arg(arguments, "remote_path")?;
+        let kind = optional_transfer_kind_arg(arguments)?;
+        let conflict_policy = optional_transfer_conflict_policy_arg(arguments)?
+            .unwrap_or(TransferConflictPolicy::Overwrite);
+        let session = get_session(store, &saved_session_id)?;
+        validate_transfer_tool_session(tool_id, session.session_type)?;
+        let protocol_label = session_protocol_label(session.session_type);
+        let all_sessions = list_sessions(store)?.sessions;
+        let total_bytes = if direction == TransferDirection::Upload {
+            block_on_tool(local_path_total_bytes(&local_path))?
+        } else {
+            0
+        };
+        let source_endpoint = match direction {
+            TransferDirection::Upload => TransferEndpoint {
+                kind: TransferEndpointKind::Local,
+                saved_session_id: None,
+                path: local_path.clone(),
+            },
+            TransferDirection::Download => TransferEndpoint {
+                kind: TransferEndpointKind::SavedSession,
+                saved_session_id: Some(saved_session_id.clone()),
+                path: remote_path.clone(),
+            },
+        };
+        let destination_endpoint = match direction {
+            TransferDirection::Upload => TransferEndpoint {
+                kind: TransferEndpointKind::SavedSession,
+                saved_session_id: Some(saved_session_id.clone()),
+                path: remote_path.clone(),
+            },
+            TransferDirection::Download => TransferEndpoint {
+                kind: TransferEndpointKind::Local,
+                saved_session_id: None,
+                path: local_path.clone(),
+            },
+        };
+        let queue = self.transfer_queue()?;
+        let task = queue.enqueue_with_endpoints(
+            &saved_session_id,
+            direction,
+            &local_path,
+            &remote_path,
+            kind,
+            conflict_policy,
+            total_bytes,
+            TransferTaskOrigin::FileTransfer,
+            &source_endpoint,
+            &destination_endpoint,
+        )?;
+        spawn_ai_file_transfer(
+            self.sftp_service()?,
+            queue,
+            session,
+            all_sessions,
+            self.credential_service()?,
+            task.clone(),
+        )?;
+        Ok(structured_execution_result(
+            format!("{} 文件传输已入队：{}。", protocol_label, task.id),
+            ["files", "transfer"],
+            json!({ "task": task }),
+        ))
+    }
+
     fn server_info_service(&self) -> AppResult<ServerInfoService> {
         self.server_info_service
             .clone()
@@ -1522,6 +1620,20 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
             true,
         ),
         (
+            "ssh.upload",
+            "SSH 上传",
+            "通过 SSH 连接的 SFTP 子系统上传本地文件或目录",
+            RiskLevel::High,
+            true,
+        ),
+        (
+            "ssh.download",
+            "SSH 下载",
+            "通过 SSH 连接的 SFTP 子系统下载远程文件或目录",
+            RiskLevel::Medium,
+            true,
+        ),
+        (
             "sftp.list",
             "列出 SFTP 目录",
             "读取远程目录",
@@ -1561,6 +1673,20 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
             "SFTP 重命名",
             "重命名远程路径",
             RiskLevel::High,
+            true,
+        ),
+        (
+            "ftp.upload",
+            "FTP 上传",
+            "通过已保存 FTP 连接上传本地文件或目录",
+            RiskLevel::High,
+            true,
+        ),
+        (
+            "ftp.download",
+            "FTP 下载",
+            "通过已保存 FTP 连接下载远程文件或目录",
+            RiskLevel::Medium,
             true,
         ),
         (
@@ -1797,6 +1923,22 @@ fn validate_arguments(tool_id: &str, arguments: &Value) -> AppResult<()> {
         | "transfer.delete" => {
             let _ = string_arg(arguments, "task_id")?;
         }
+        "transfer.list" => {
+            if optional_u32_arg(arguments, "limit").is_some_and(|value| value > 1000) {
+                return Err(AppError::validation("传输任务 limit 不能超过 1000"));
+            }
+        }
+        "ssh.upload" | "ssh.download" | "sftp.upload" | "sftp.download" | "ftp.upload"
+        | "ftp.download" => {
+            let _ = string_arg(arguments, "saved_session_id")?;
+            let local_path = string_arg(arguments, "local_path")?;
+            if !Path::new(&local_path).is_absolute() {
+                return Err(AppError::validation("local_path 必须是绝对路径"));
+            }
+            let _ = string_arg(arguments, "remote_path")?;
+            let _ = optional_transfer_kind_arg(arguments)?;
+            let _ = optional_transfer_conflict_policy_arg(arguments)?;
+        }
         "sftp.delete" => {
             let _ = string_arg(arguments, "saved_session_id")?;
             let _ = string_arg(arguments, "path")?;
@@ -1984,6 +2126,12 @@ fn force_confirmation_tool(tool_id: &str) -> bool {
                 | "settings.update_ai_security"
                 | "llm_provider.delete"
                 | "sessions.delete"
+                | "ssh.upload"
+                | "ssh.download"
+                | "sftp.upload"
+                | "sftp.download"
+                | "ftp.upload"
+                | "ftp.download"
         )
 }
 
@@ -2440,6 +2588,54 @@ fn optional_bool_arg(arguments: &Value, key: &str) -> Option<bool> {
     arguments.get(key).and_then(Value::as_bool)
 }
 
+fn optional_transfer_kind_arg(arguments: &Value) -> AppResult<Option<TransferKind>> {
+    optional_string_arg(arguments, "kind")
+        .map(|value| {
+            TransferKind::from_db(&value)
+                .ok_or_else(|| AppError::validation("传输类型必须是 file 或 directory"))
+        })
+        .transpose()
+}
+
+fn optional_transfer_conflict_policy_arg(
+    arguments: &Value,
+) -> AppResult<Option<TransferConflictPolicy>> {
+    optional_string_arg(arguments, "conflict_policy")
+        .map(|value| {
+            TransferConflictPolicy::from_db(&value)
+                .ok_or_else(|| AppError::validation("冲突策略必须是 overwrite、skip 或 rename"))
+        })
+        .transpose()
+}
+
+fn validate_transfer_tool_session(tool_id: &str, session_type: SessionType) -> AppResult<()> {
+    let valid = match tool_id {
+        "ftp.upload" | "ftp.download" => session_type == SessionType::Ftp,
+        "ssh.upload" | "ssh.download" => session_type == SessionType::Ssh,
+        "sftp.upload" | "sftp.download" => {
+            matches!(session_type, SessionType::Ssh | SessionType::Sftp)
+        }
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(AppError::validation(format!(
+            "工具 {tool_id} 与连接类型 {} 不匹配",
+            session_type.as_str()
+        )))
+    }
+}
+
+fn session_protocol_label(session_type: SessionType) -> &'static str {
+    match session_type {
+        SessionType::Ftp => "FTP",
+        SessionType::Sftp => "SFTP",
+        SessionType::Ssh => "SSH/SFTP",
+        SessionType::Local | SessionType::Rdp => "不支持的协议",
+    }
+}
+
 fn block_on_tool<T>(future: impl std::future::Future<Output = AppResult<T>>) -> AppResult<T> {
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => tokio::task::block_in_place(|| handle.block_on(future)),
@@ -2522,7 +2718,8 @@ fn affected_domains_for_tool(tool_id: &str) -> Vec<String> {
         | "sessions.delete"
         | "session_groups.save"
         | "session_groups.delete" => &["sessions"],
-        tool if tool.starts_with("sftp.") => &["files", "transfer"],
+        tool if tool.starts_with("ssh.") && tool != "ssh.execute" => &["files", "transfer"],
+        tool if tool.starts_with("sftp.") || tool.starts_with("ftp.") => &["files", "transfer"],
         tool if tool.starts_with("history.") => &["history"],
         tool if tool.starts_with("workspace.") => &["workspace"],
         tool if tool.starts_with("terminal_profile.") => &["terminal", "settings"],
@@ -2864,6 +3061,27 @@ fn sanitized_provider_value(provider: &AiProviderProfile) -> Value {
     })
 }
 
+fn sanitized_transfer_task_value(task: &TransferTask) -> Value {
+    json!({
+        "id": task.id,
+        "saved_session_id": task.saved_session_id,
+        "direction": task.direction,
+        "local_path": task.local_path,
+        "remote_path": task.remote_path,
+        "kind": task.kind,
+        "conflict_policy": task.conflict_policy,
+        "total_bytes": task.total_bytes,
+        "transferred_bytes": task.transferred_bytes,
+        "status": task.status,
+        "error_message": task.error_message.as_deref().map(redact_sensitive),
+        "created_at_ms": task.created_at_ms,
+        "updated_at_ms": task.updated_at_ms,
+        "task_origin": task.task_origin,
+        "source_endpoint": task.source_endpoint,
+        "destination_endpoint": task.destination_endpoint
+    })
+}
+
 fn readable_terminal_command(command: &str) -> String {
     strip_terminal_controls(command)
         .replace("\r\n", "\n")
@@ -2967,6 +3185,125 @@ fn strip_terminal_controls(input: &str) -> String {
         output.push(ch);
     }
     output
+}
+
+fn spawn_ai_file_transfer(
+    service: SftpService,
+    queue: TransferQueue,
+    session: SavedSession,
+    all_sessions: Vec<SavedSession>,
+    credentials: CredentialService,
+    task: TransferTask,
+) -> AppResult<()> {
+    let control = match queue.register_control(&task.id) {
+        Ok(control) => control,
+        Err(error) => {
+            let error = redact_sensitive(&error.to_string());
+            let _ = queue.mark_failed(&task.id, &error);
+            return Err(AppError::ai(error));
+        }
+    };
+    tauri::async_runtime::spawn(async move {
+        let running = match queue.mark_running(&task.id) {
+            Ok(task) => task,
+            Err(_) => {
+                let _ = queue.unregister_control(&task.id);
+                return;
+            }
+        };
+        if matches!(
+            running.status,
+            TransferStatus::Cancelled | TransferStatus::Paused
+        ) {
+            let _ = queue.unregister_control(&task.id);
+            return;
+        }
+        let progress_queue = queue.clone();
+        let progress_task_id = task.id.clone();
+        let mut progress = move |update: TransferProgressUpdate| -> AppResult<()> {
+            progress_queue.mark_progress_with_total(
+                &progress_task_id,
+                update.transferred_bytes,
+                update.total_bytes,
+            )?;
+            Ok(())
+        };
+        let result = match (session.session_type, task.direction) {
+            (SessionType::Ftp, TransferDirection::Upload) => {
+                ftp_service::upload_path(
+                    &session,
+                    &credentials,
+                    None,
+                    &task.local_path,
+                    &task.remote_path,
+                    task.kind,
+                    task.conflict_policy,
+                    Some(control.clone()),
+                    &mut progress,
+                )
+                .await
+            }
+            (SessionType::Ftp, TransferDirection::Download) => {
+                ftp_service::download_path(
+                    &session,
+                    &credentials,
+                    None,
+                    &task.remote_path,
+                    &task.local_path,
+                    task.kind,
+                    task.conflict_policy,
+                    Some(control.clone()),
+                    &mut progress,
+                )
+                .await
+            }
+            (_, TransferDirection::Upload) => {
+                service
+                    .upload_path(
+                        &session,
+                        &all_sessions,
+                        &credentials,
+                        &task.local_path,
+                        &task.remote_path,
+                        task.kind,
+                        task.conflict_policy,
+                        Some(control.clone()),
+                        &mut progress,
+                    )
+                    .await
+            }
+            (_, TransferDirection::Download) => {
+                service
+                    .download_path(
+                        &session,
+                        &all_sessions,
+                        &credentials,
+                        &task.remote_path,
+                        &task.local_path,
+                        task.kind,
+                        task.conflict_policy,
+                        Some(control.clone()),
+                        &mut progress,
+                    )
+                    .await
+            }
+        };
+        match queue.get(&task.id) {
+            Ok(current) if current.status == TransferStatus::Cancelled => {}
+            Ok(_) => match result {
+                Ok(()) => {
+                    let _ = queue.mark_done(&task.id);
+                }
+                Err(error) => {
+                    let error = redact_sensitive(&error.to_string());
+                    let _ = queue.mark_failed(&task.id, &error);
+                }
+            },
+            Err(_) => {}
+        }
+        let _ = queue.unregister_control(&task.id);
+    });
+    Ok(())
 }
 
 fn now_ms() -> i64 {

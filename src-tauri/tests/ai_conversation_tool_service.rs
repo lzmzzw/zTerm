@@ -84,6 +84,49 @@ fn tool_catalog_exposes_workspace_snapshots_without_workspace_close() {
 }
 
 #[test]
+fn file_transfer_tools_stay_pending_even_in_full_access_mode() {
+    let store = SqliteStore::open_in_memory().expect("store should open");
+    let service = AiToolService::with_writer(Arc::new(FakeToolWriter::default()));
+
+    for tool_id in [
+        "ssh.upload",
+        "ssh.download",
+        "sftp.upload",
+        "sftp.download",
+        "ftp.upload",
+        "ftp.download",
+    ] {
+        let outcome = service
+            .execute_if_allowed(
+                &store,
+                AiToolPrepareRequest {
+                    tool_id: tool_id.to_string(),
+                    arguments: json!({
+                        "saved_session_id": "saved-connection",
+                        "local_path": "C:\\Transfers\\artifact.zip",
+                        "remote_path": "/srv/artifact.zip"
+                    }),
+                    reason: None,
+                    requested_by: Some("test".to_string()),
+                    conversation_id: None,
+                    run_id: None,
+                    step_id: None,
+                },
+                AiApprovalMode::FullAccess,
+            )
+            .expect("file transfer should prepare");
+        assert!(outcome.audit_record.is_none());
+        assert_eq!(
+            outcome
+                .pending_invocation
+                .expect("file transfer should stay pending")
+                .tool_id,
+            tool_id
+        );
+    }
+}
+
+#[test]
 fn conversation_service_persists_conversation_and_messages() {
     let store = SqliteStore::open_in_memory().expect("store should open");
     let service = AiConversationService;

@@ -2,19 +2,24 @@
 use std::{
     collections::HashMap,
     fmt,
+    future::Future,
+    io,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::{Arc, Mutex},
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
 use russh_sftp::{
     client::fs::File as SftpFile,
+    client::Config as SftpClientConfig,
     client::SftpSession as RusshSftpSession,
     protocol::{FileAttributes, FileType, OpenFlags},
 };
 use tokio::{
     fs,
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::Mutex as AsyncMutex,
 };
 
@@ -39,6 +44,7 @@ use crate::{
 };
 
 const TRANSFER_BUFFER_SIZE: usize = 64 * 1024;
+const SFTP_MAX_INFLIGHT_REQUESTS: usize = 64;
 const SFTP_CACHE_IDLE_TTL: Duration = Duration::from_secs(90);
 const SFTP_CACHE_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
 const SFTP_CACHE_MAX_ENTRIES: usize = 8;
@@ -58,11 +64,112 @@ fn progress_update(transferred_bytes: u64, total_bytes: Option<u64>) -> Transfer
     }
 }
 
+fn bulk_transfer_sftp_config() -> SftpClientConfig {
+    SftpClientConfig {
+        max_concurrent_writes: SFTP_MAX_INFLIGHT_REQUESTS,
+        ..Default::default()
+    }
+}
+
 async fn transfer_checkpoint(control: Option<&TransferRunControl>) -> AppResult<()> {
     if let Some(control) = control {
         control.checkpoint().await?;
     }
     Ok(())
+}
+
+struct TransferProgressWriter<'a, W, F> {
+    inner: &'a mut W,
+    control: Option<&'a TransferRunControl>,
+    on_progress: &'a mut F,
+    pause_wait: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    transferred_bytes: u64,
+}
+
+impl<'a, W, F> TransferProgressWriter<'a, W, F> {
+    fn new(
+        inner: &'a mut W,
+        transferred_bytes: u64,
+        control: Option<&'a TransferRunControl>,
+        on_progress: &'a mut F,
+    ) -> Self {
+        Self {
+            inner,
+            control,
+            on_progress,
+            pause_wait: None,
+            transferred_bytes,
+        }
+    }
+
+    fn transferred_bytes(&self) -> u64 {
+        self.transferred_bytes
+    }
+
+    fn poll_control(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let Some(control) = self.control else {
+            return Poll::Ready(Ok(()));
+        };
+        loop {
+            if control.is_cancelled() {
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "传输已取消",
+                )));
+            }
+            if !control.is_paused() {
+                self.pause_wait = None;
+                return Poll::Ready(Ok(()));
+            }
+
+            let wait = self
+                .pause_wait
+                .get_or_insert_with(|| control.wait_for_state_change());
+            match wait.as_mut().poll(cx) {
+                Poll::Ready(()) => self.pause_wait = None,
+                Poll::Pending if !control.is_paused() => self.pause_wait = None,
+                Poll::Pending => return Poll::Pending,
+            }
+        }
+    }
+}
+
+impl<W, F> AsyncWrite for TransferProgressWriter<'_, W, F>
+where
+    W: AsyncWrite + Unpin,
+    F: FnMut(TransferProgressUpdate) -> AppResult<()>,
+{
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        match self.poll_control(cx) {
+            Poll::Ready(Ok(())) => {}
+            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+            Poll::Pending => return Poll::Pending,
+        }
+
+        match Pin::new(&mut *self.inner).poll_write(cx, buffer) {
+            Poll::Ready(Ok(written)) => {
+                self.transferred_bytes = self.transferred_bytes.saturating_add(written as u64);
+                let update = progress_update(self.transferred_bytes, None);
+                if let Err(error) = (self.on_progress)(update) {
+                    return Poll::Ready(Err(io::Error::other(error.to_string())));
+                }
+                Poll::Ready(Ok(written))
+            }
+            other => other,
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.inner).poll_shutdown(cx)
+    }
 }
 
 #[derive(Clone)]
@@ -998,13 +1105,16 @@ async fn connect_sftp_execution(
         connection.disconnect("sftp subsystem failed").await;
         return Err(AppError::sftp(error.to_string()));
     }
-    let sftp = match RusshSftpSession::new(channel.into_stream()).await {
-        Ok(sftp) => sftp,
-        Err(error) => {
-            connection.disconnect("sftp session failed").await;
-            return Err(AppError::sftp(error.to_string()));
-        }
-    };
+    let sftp =
+        match RusshSftpSession::new_with_config(channel.into_stream(), bulk_transfer_sftp_config())
+            .await
+        {
+            Ok(sftp) => sftp,
+            Err(error) => {
+                connection.disconnect("sftp session failed").await;
+                return Err(AppError::sftp(error.to_string()));
+            }
+        };
     Ok(ConnectedSftpSession { connection, sftp })
 }
 
@@ -1023,10 +1133,13 @@ impl ConnectedSftpSession {
 #[cfg(test)]
 mod tests {
     use super::{
-        delete_local_path, rename_local_path, should_retry_sftp_list_error,
-        validate_destructive_local_path,
+        bulk_transfer_sftp_config, delete_local_path, rename_local_path,
+        should_retry_sftp_list_error, validate_destructive_local_path, TransferProgressWriter,
+        SFTP_MAX_INFLIGHT_REQUESTS,
     };
-    use crate::error::AppError;
+    use crate::{error::AppError, services::transfer_queue::TransferRunControl};
+    use std::{io::ErrorKind, time::Duration};
+    use tokio::io::AsyncWriteExt;
 
     #[test]
     fn retries_only_transient_ssh_and_sftp_directory_errors() {
@@ -1042,6 +1155,45 @@ mod tests {
         assert!(!should_retry_sftp_list_error(&AppError::validation(
             "invalid path"
         )));
+    }
+
+    #[test]
+    fn bulk_transfer_config_uses_a_large_sftp_request_window() {
+        let config = bulk_transfer_sftp_config();
+
+        assert_eq!(config.max_concurrent_writes, SFTP_MAX_INFLIGHT_REQUESTS);
+        assert_eq!(config.max_concurrent_writes, 64);
+    }
+
+    #[tokio::test]
+    async fn pipelined_writer_preserves_pause_resume_and_cancel() {
+        let control = TransferRunControl::new();
+        let mut output = tokio::io::sink();
+        let mut updates = Vec::new();
+        let mut on_progress = |update: super::TransferProgressUpdate| {
+            updates.push(update.transferred_bytes);
+            Ok(())
+        };
+
+        control.pause();
+        let mut writer =
+            TransferProgressWriter::new(&mut output, 0, Some(&control), &mut on_progress);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), writer.write_all(b"abc"))
+                .await
+                .is_err()
+        );
+
+        control.resume();
+        writer.write_all(b"abc").await.expect("transfer resumes");
+        control.cancel();
+        let error = writer
+            .write_all(b"d")
+            .await
+            .expect_err("cancelled transfer stops before another write");
+        assert_eq!(error.kind(), ErrorKind::Interrupted);
+        drop(writer);
+        assert_eq!(updates, vec![3]);
     }
 
     #[tokio::test]
@@ -1227,21 +1379,13 @@ where
         on_progress(progress_update(transferred, Some(transferred)))?;
         return Ok(transferred);
     };
-    let mut buffer = vec![0_u8; TRANSFER_BUFFER_SIZE];
-    loop {
-        transfer_checkpoint(control).await?;
-        let read = remote
-            .read(&mut buffer)
-            .await
-            .map_err(|error| AppError::sftp(error.to_string()))?;
-        if read == 0 {
-            break;
-        }
-        transfer_checkpoint(control).await?;
-        local.write_all(&buffer[..read]).await?;
-        transferred = transferred.saturating_add(read as u64);
-        on_progress(progress_update(transferred, None))?;
-    }
+    let mut writer = TransferProgressWriter::new(&mut local, transferred, control, on_progress);
+    remote
+        .read_to_writer_pipelined(&mut writer, SFTP_MAX_INFLIGHT_REQUESTS)
+        .await
+        .map_err(|error| AppError::sftp(error.to_string()))?;
+    transferred = writer.transferred_bytes();
+    drop(writer);
     transfer_checkpoint(control).await?;
     local.flush().await?;
     Ok(transferred)
@@ -1287,24 +1431,14 @@ where
         on_progress(progress_update(transferred, Some(transferred)))?;
         return Ok(transferred);
     };
-    let mut buffer = vec![0_u8; TRANSFER_BUFFER_SIZE];
-    loop {
-        transfer_checkpoint(control).await?;
-        let read = source
-            .read(&mut buffer)
-            .await
-            .map_err(|error| AppError::sftp(error.to_string()))?;
-        if read == 0 {
-            break;
-        }
-        transfer_checkpoint(control).await?;
-        destination
-            .write_all(&buffer[..read])
-            .await
-            .map_err(|error| AppError::sftp(error.to_string()))?;
-        transferred = transferred.saturating_add(read as u64);
-        on_progress(progress_update(transferred, None))?;
-    }
+    let mut writer =
+        TransferProgressWriter::new(&mut destination, transferred, control, on_progress);
+    source
+        .read_to_writer_pipelined(&mut writer, SFTP_MAX_INFLIGHT_REQUESTS)
+        .await
+        .map_err(|error| AppError::sftp(error.to_string()))?;
+    transferred = writer.transferred_bytes();
+    drop(writer);
     transfer_checkpoint(control).await?;
     destination
         .shutdown()
