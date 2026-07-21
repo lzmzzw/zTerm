@@ -17,6 +17,13 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
             updated_at_ms integer not null
         );
 
+        create table if not exists file_transfer_view_state (
+            id integer primary key check (id = 1),
+            state_json text not null,
+            created_at_ms integer not null,
+            updated_at_ms integer not null
+        );
+
         create table if not exists terminal_profiles (
             id text primary key,
             name text not null check (length(trim(name)) > 0),

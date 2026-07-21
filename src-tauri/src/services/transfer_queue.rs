@@ -10,7 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use tokio::sync::Notify;
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 use uuid::Uuid;
 
 use crate::{
@@ -21,6 +21,8 @@ use crate::{
     },
     storage::{sqlite::SqliteStore, transfers},
 };
+
+const MAX_CONCURRENT_TRANSFER_EXECUTIONS: usize = 1;
 
 #[derive(Clone)]
 pub struct TransferRunControl {
@@ -93,6 +95,7 @@ impl TransferRunControl {
 #[derive(Clone)]
 pub struct TransferQueue {
     controls: Arc<Mutex<HashMap<String, TransferRunControl>>>,
+    execution_slots: Arc<Semaphore>,
     store: Arc<SqliteStore>,
     transient_tasks: Arc<Mutex<HashMap<String, TransferTask>>>,
 }
@@ -101,8 +104,32 @@ impl TransferQueue {
     pub fn from_storage(store: Arc<SqliteStore>) -> Self {
         Self {
             controls: Arc::new(Mutex::new(HashMap::new())),
+            execution_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSFER_EXECUTIONS)),
             store,
             transient_tasks: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub(crate) async fn acquire_execution_slot(
+        &self,
+        control: &TransferRunControl,
+    ) -> AppResult<OwnedSemaphorePermit> {
+        loop {
+            control.checkpoint().await?;
+            let execution_slots = Arc::clone(&self.execution_slots);
+            let permit = tokio::select! {
+                permit = execution_slots.acquire_owned() => permit
+                    .map_err(|_| AppError::storage("传输执行队列已关闭"))?,
+                _ = control.wait_for_state_change() => continue,
+            };
+            if control.is_cancelled() {
+                return Err(AppError::sftp("传输已取消"));
+            }
+            if control.is_paused() {
+                drop(permit);
+                continue;
+            }
+            return Ok(permit);
         }
     }
 
@@ -712,4 +739,34 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use super::{TransferQueue, TransferRunControl};
+    use crate::storage::sqlite::SqliteStore;
+
+    #[tokio::test]
+    async fn limits_parallel_transfer_executions() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite store should open"));
+        let queue = TransferQueue::from_storage(store);
+        let first = queue
+            .acquire_execution_slot(&TransferRunControl::new())
+            .await
+            .expect("first transfer should start");
+        let second_control = TransferRunControl::new();
+        let second = queue.acquire_execution_slot(&second_control);
+        tokio::pin!(second);
+
+        assert!(tokio::time::timeout(Duration::from_millis(20), &mut second)
+            .await
+            .is_err());
+        drop(first);
+        let _second = tokio::time::timeout(Duration::from_millis(100), &mut second)
+            .await
+            .expect("second transfer should start after the slot is released")
+            .expect("second transfer slot should be available");
+    }
 }

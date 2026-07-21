@@ -120,7 +120,7 @@ function transferTask(): TransferTask {
   };
 }
 
-function sshSession(): SavedSession {
+function sshSession(overrides: Partial<SavedSession> = {}): SavedSession {
   return {
     id: "ssh-1",
     name: "Prod SSH",
@@ -140,6 +140,7 @@ function sshSession(): SavedSession {
     ssh_options: null,
     rdp_options: null,
     local_options: null,
+    ...overrides,
   };
 }
 
@@ -190,7 +191,75 @@ describe("FileTransferPanel", () => {
       conflictPolicy: "overwrite",
       defaultLocalPath: "",
       localRoots: [],
+      viewStateInitialized: true,
     });
+  });
+
+  it("restores the latest independent endpoints and paths when the panel opens", async () => {
+    useFileTransferStore.setState({ viewStateInitialized: false });
+    const restored = {
+      left: { kind: "local" as const, saved_session_id: null, path: "F:/Workspace/Deliverables" },
+      right: { kind: "saved_session" as const, saved_session_id: "ssh-remembered", path: "/srv/releases" },
+    };
+    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "sessions_list") {
+        return Promise.resolve({ groups: [], sessions: [sshSession({ id: "ssh-remembered", name: "Remembered" })] });
+      }
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_view_state_get") return Promise.resolve(restored);
+      if (command === "file_transfer_view_state_save") return Promise.resolve(args?.viewState);
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\", "F:\\"]);
+      if (command === "file_transfer_list" || command === "file_transfer_list_endpoint") return Promise.resolve([]);
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+    await flushEffects();
+
+    expect(useFileTransferStore.getState().left.endpoint).toEqual(restored.left);
+    expect(useFileTransferStore.getState().right.endpoint).toEqual(restored.right);
+    expect((view.container.querySelector('[aria-label="左侧路径"]') as HTMLInputElement).value).toBe(
+      "F:/Workspace/Deliverables",
+    );
+    expect((view.container.querySelector('[aria-label="右侧路径"]') as HTMLInputElement).value).toBe("/srv/releases");
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 280));
+    });
+    expect(invokeMock).toHaveBeenCalledWith("file_transfer_view_state_save", { viewState: restored });
+    view.unmount();
+  });
+
+  it("falls back when a remembered remote connection no longer exists", async () => {
+    useFileTransferStore.setState({ viewStateInitialized: false });
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_view_state_get") {
+        return Promise.resolve({
+          left: { kind: "local", saved_session_id: null, path: "C:/Remembered" },
+          right: { kind: "saved_session", saved_session_id: "deleted-session", path: "/old/path" },
+        });
+      }
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "file_transfer_list" || command === "file_transfer_list_endpoint") return Promise.resolve([]);
+      if (command === "file_transfer_view_state_save") return Promise.resolve(null);
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+    await flushEffects();
+
+    expect(useFileTransferStore.getState().right.endpoint).toEqual({
+      kind: "saved_session",
+      saved_session_id: "ssh-1",
+      path: "/",
+    });
+    view.unmount();
   });
 
   it("does not render a manual transfer task refresh button", async () => {
@@ -520,6 +589,60 @@ describe("FileTransferPanel", () => {
       conflictPolicy: "overwrite",
     });
 
+    view.unmount();
+  });
+
+  it("starts preparing a folder on the first drop and ignores a duplicate drop while scanning", async () => {
+    const localFolder = fileEntry("C:/Users/Ops/release", { kind: "directory", size: 0 });
+    const nestedFile = fileEntry("C:/Users/Ops/release/app.exe");
+    let resolveFolderEntries: (entries: FileEntry[]) => void = () => undefined;
+    const folderEntries = new Promise<FileEntry[]>((resolve) => {
+      resolveFolderEntries = resolve;
+    });
+    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list") return Promise.resolve([]);
+      if (command === "file_transfer_list_endpoint") {
+        const endpoint = args?.endpoint as { kind: string; path: string };
+        if (endpoint.kind !== "local") return Promise.resolve([]);
+        if (endpoint.path === localFolder.path) return folderEntries;
+        return Promise.resolve([localFolder]);
+      }
+      if (command === "file_transfer_check_conflicts") return Promise.resolve([]);
+      if (command === "file_transfer_enqueue") return Promise.resolve(transferTask());
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+    const row = Array.from(view.container.querySelectorAll('button[role="listitem"]')).find((item) =>
+      item.textContent?.includes("release"),
+    ) as HTMLElement;
+    const destinationPane = view.container.querySelector('[aria-label="右侧文件列表"]') as HTMLElement;
+
+    await pointerDragBetween(row, destinationPane);
+    expect(view.container.textContent).toContain("正在扫描文件夹并准备传输任务");
+    await pointerDragBetween(row, destinationPane);
+    expect(
+      invokeMock.mock.calls.filter(
+        ([command, args]) =>
+          command === "file_transfer_list_endpoint" &&
+          (args as { endpoint?: { path?: string } })?.endpoint?.path === localFolder.path,
+      ),
+    ).toHaveLength(1);
+
+    await act(async () => {
+      resolveFolderEntries([nestedFile]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    expect(invokeMock.mock.calls.filter(([command]) => command === "file_transfer_enqueue")).toHaveLength(1);
+    expect(view.container.textContent).not.toContain("正在扫描文件夹并准备传输任务");
     view.unmount();
   });
 

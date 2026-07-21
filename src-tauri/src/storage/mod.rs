@@ -1,6 +1,7 @@
 // Author: Liz
 pub mod ai;
 pub mod credentials;
+pub mod file_transfer_view_state;
 pub mod history;
 pub mod migrations;
 pub mod sessions;

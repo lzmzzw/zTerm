@@ -23,6 +23,7 @@ import { useShallow } from "zustand/react/shallow";
 import { ZtSelect } from "../../components/ZtSelect";
 import { ZtConfirmDialog, ZtContextMenu, ZtInlineError, ZtPromptDialog } from "../../components/ZtUi";
 import { formatBytes } from "../../lib/byteFormatters";
+import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 import type { AppLanguage } from "../settings/settingsStore";
 import { useSessionStore } from "../sessions/sessionStore";
 import {
@@ -95,6 +96,24 @@ const MIN_FILE_TRANSFER_PANES_HEIGHT = 200;
 const MIN_TRANSFER_DOCK_HEIGHT = 120;
 const POINTER_DRAG_THRESHOLD = 6;
 
+function availableFileTransferEndpoint(
+  endpoint: TransferEndpoint,
+  side: FileTransferSide,
+  defaultLocalPath: string,
+  remoteSessions: Array<{ id: string }>,
+): TransferEndpoint {
+  if (endpoint.kind === "local") {
+    return { kind: "local", saved_session_id: null, path: endpoint.path.trim() || defaultLocalPath };
+  }
+  if (endpoint.saved_session_id && remoteSessions.some((session) => session.id === endpoint.saved_session_id)) {
+    return { ...endpoint, path: endpoint.path.trim() || "/" };
+  }
+  if (side === "right" && remoteSessions[0]) {
+    return { kind: "saved_session", saved_session_id: remoteSessions[0].id, path: "/" };
+  }
+  return { kind: "local", saved_session_id: null, path: defaultLocalPath };
+}
+
 export function FileTransferPanel({ language: _language = "zhCN" }: FileTransferPanelProps) {
   const { groups, sessions, loadSessions } = useSessionStore(
     useShallow((state) => ({
@@ -127,6 +146,8 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     loadDefaultLocalPath,
     localRoots,
     loadLocalRoots,
+    restoreViewState,
+    saveViewState,
     setEndpoint,
     setPath,
     selectPath,
@@ -158,6 +179,8 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       loadDefaultLocalPath: state.loadDefaultLocalPath,
       localRoots: state.localRoots,
       loadLocalRoots: state.loadLocalRoots,
+      restoreViewState: state.restoreViewState,
+      saveViewState: state.saveViewState,
       setEndpoint: state.setEndpoint,
       setPath: state.setPath,
       selectPath: state.selectPath,
@@ -192,17 +215,51 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   const [deleteEntries, setDeleteEntries] = useState<{ side: FileTransferSide; entries: FileEntry[] } | null>(null);
   const [transferDockCollapsed, setTransferDockCollapsed] = useState(false);
   const [transferDockHeight, setTransferDockHeight] = useState<number | null>(null);
+  const [transferPreparing, setTransferPreparing] = useState(false);
+  const [transferPreparationError, setTransferPreparationError] = useState<string | null>(null);
+  const [viewStateReady, setViewStateReady] = useState(false);
   const [collapsedEndpointGroupKeys, setCollapsedEndpointGroupKeys] = useState<Set<string>>(() => new Set());
   const dragStateRef = useRef<DragState | null>(null);
   const pointerDragRef = useRef<PointerDragState | null>(null);
-
-  useEffect(() => {
-    void loadSessions();
-  }, [loadSessions]);
+  const transferPreparingRef = useRef(false);
 
   useEffect(() => {
     void loadLocalRoots();
   }, [loadLocalRoots]);
+
+  useEffect(() => {
+    let mounted = true;
+    void (async () => {
+      const [, localPath] = await Promise.all([loadSessions(), loadDefaultLocalPath()]);
+      if (!useFileTransferStore.getState().viewStateInitialized) {
+        await restoreViewState();
+      }
+      if (!mounted) return;
+
+      const sessionSnapshot = useSessionStore.getState();
+      const availableRemoteSessions = buildSessionTreeListItems({
+        groups: sessionSnapshot.groups,
+        sessions: sessionSnapshot.sessions.filter(
+          (session) => session.type === "ssh" || session.type === "sftp" || session.type === "ftp",
+        ),
+        hideEmptyGroups: true,
+      }).flatMap((item) => (item.kind === "session" ? [item.session] : []));
+      const current = useFileTransferStore.getState();
+      setEndpoint(
+        "left",
+        availableFileTransferEndpoint(current.left.endpoint, "left", localPath, availableRemoteSessions),
+      );
+      setEndpoint(
+        "right",
+        availableFileTransferEndpoint(current.right.endpoint, "right", localPath, availableRemoteSessions),
+      );
+      await Promise.all([loadEndpoint("left"), loadEndpoint("right")]);
+      if (mounted) setViewStateReady(true);
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [loadDefaultLocalPath, loadEndpoint, loadSessions, restoreViewState, setEndpoint]);
 
   useEffect(() => {
     let mounted = true;
@@ -222,18 +279,21 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   }, [bindTransferEvents, loadTransfers]);
 
   useEffect(() => {
-    if (!defaultLocalPath) {
-      void loadDefaultLocalPath().then(() => loadEndpoint("left"));
-    } else if (!left.endpoint.path) {
-      void loadEndpoint("left");
-    }
-  }, [defaultLocalPath, left.endpoint.path, loadDefaultLocalPath, loadEndpoint]);
-
-  useEffect(() => {
-    if (right.endpoint.kind !== "saved_session" || right.endpoint.saved_session_id || orderedRemoteSessions.length === 0) return;
-    setEndpoint("right", { kind: "saved_session", saved_session_id: orderedRemoteSessions[0].id, path: "/" });
-    void Promise.resolve().then(() => loadEndpoint("right"));
-  }, [loadEndpoint, orderedRemoteSessions, right.endpoint.kind, right.endpoint.saved_session_id, setEndpoint]);
+    if (!viewStateReady) return undefined;
+    const timeout = window.setTimeout(() => {
+      void saveViewState();
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [
+    left.endpoint.kind,
+    left.endpoint.path,
+    left.endpoint.saved_session_id,
+    right.endpoint.kind,
+    right.endpoint.path,
+    right.endpoint.saved_session_id,
+    saveViewState,
+    viewStateReady,
+  ]);
 
   useEffect(() => {
     if (!contextMenu) return undefined;
@@ -271,6 +331,21 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   }
 
   async function transferPaths(sourceSide: FileTransferSide, paths: string[]) {
+    if (transferPreparingRef.current) return;
+    transferPreparingRef.current = true;
+    setTransferPreparing(true);
+    setTransferPreparationError(null);
+    try {
+      await prepareTransferPaths(sourceSide, paths);
+    } catch (error) {
+      setTransferPreparationError(`准备传输任务失败：${unknownErrorMessage(error, "未知错误", { objectMessage: true })}`);
+    } finally {
+      transferPreparingRef.current = false;
+      setTransferPreparing(false);
+    }
+  }
+
+  async function prepareTransferPaths(sourceSide: FileTransferSide, paths: string[]) {
     const destinationSide = sourceSide === "left" ? "right" : "left";
     const sourcePane = sourceSide === "left" ? left : right;
     const destinationPane = destinationSide === "left" ? left : right;
@@ -489,9 +564,10 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
         />
       </div>
       <div className="zt-file-transfer-operation-status">
-        {transferError ? (
-          <ZtInlineError className="zt-file-transfer-error">{transferError}</ZtInlineError>
+        {transferPreparationError || transferError ? (
+          <ZtInlineError className="zt-file-transfer-error">{transferPreparationError || transferError}</ZtInlineError>
         ) : null}
+        {transferPreparing ? <div className="zt-empty-line">正在扫描文件夹并准备传输任务…</div> : null}
         {transferLoading ? <div className="zt-empty-line">传输任务加载中</div> : null}
       </div>
       <TransferPanel

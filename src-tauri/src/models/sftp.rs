@@ -188,6 +188,12 @@ pub struct TransferEndpoint {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileTransferViewState {
+    pub left: TransferEndpoint,
+    pub right: TransferEndpoint,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransferTask {
     pub id: String,
     pub group_id: Option<String>,

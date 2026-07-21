@@ -3442,8 +3442,9 @@ a[href]:focus-visible,
 }
 
 .zt-transfer-list {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 4px;
   min-height: 0;
   overflow-x: hidden;
@@ -4177,9 +4178,13 @@ a[href]:focus-visible,
   box-shadow: 0 0 0 2px var(--zt-focus-soft);
 }
 
+.zt-transfer-list > .zt-transfer-row {
+  flex: 0 0 auto;
+}
+
 .zt-transfer-group {
   display: grid;
-  min-height: max-content;
+  flex: 0 0 auto;
   border: 1px solid var(--zt-border);
   border-radius: var(--zt-radius-control);
   overflow: hidden;

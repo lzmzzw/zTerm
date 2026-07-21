@@ -15,6 +15,11 @@ import { nextSelectedFilePaths, type FileSelectionEvent } from "./fileSelectionM
 
 export type FileTransferSide = "left" | "right";
 
+export interface FileTransferViewState {
+  left: TransferEndpoint;
+  right: TransferEndpoint;
+}
+
 interface FileTransferPaneState {
   endpoint: TransferEndpoint;
   entries: FileEntry[];
@@ -42,8 +47,11 @@ interface FileTransferState {
   conflictPolicy: TransferConflictPolicy;
   defaultLocalPath: string;
   localRoots: string[];
+  viewStateInitialized: boolean;
   loadDefaultLocalPath: () => Promise<string>;
   loadLocalRoots: () => Promise<string[]>;
+  restoreViewState: () => Promise<FileTransferViewState | null>;
+  saveViewState: () => Promise<FileTransferViewState | null>;
   setConflictPolicy: (policy: TransferConflictPolicy) => void;
   setEndpoint: (side: FileTransferSide, endpoint: TransferEndpoint) => void;
   setPath: (side: FileTransferSide, path: string) => void;
@@ -109,6 +117,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   conflictPolicy: "overwrite",
   defaultLocalPath: "",
   localRoots: [],
+  viewStateInitialized: false,
   async loadDefaultLocalPath() {
     if (!localPathRequest) {
       localPathRequest = invoke<string>("file_transfer_default_local_path");
@@ -133,6 +142,34 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       return [];
     }
   },
+  async restoreViewState() {
+    try {
+      const viewState = await invoke<FileTransferViewState | null>("file_transfer_view_state_get");
+      if (viewState) {
+        set({
+          left: paneStateForEndpoint(viewState.left),
+          right: paneStateForEndpoint(viewState.right),
+          viewStateInitialized: true,
+        });
+      } else {
+        set({ viewStateInitialized: true });
+      }
+      return viewState;
+    } catch (error) {
+      set({ viewStateInitialized: true, transferError: fileTransferErrorMessage(error) });
+      return null;
+    }
+  },
+  async saveViewState() {
+    const viewState = { left: get().left.endpoint, right: get().right.endpoint };
+    if (!isPersistableEndpoint(viewState.left) || !isPersistableEndpoint(viewState.right)) return null;
+    try {
+      return await invoke<FileTransferViewState>("file_transfer_view_state_save", { viewState });
+    } catch (error) {
+      set({ transferError: fileTransferErrorMessage(error) });
+      return null;
+    }
+  },
   setConflictPolicy: (policy) => set({ conflictPolicy: policy }),
   setEndpoint(side, endpoint) {
     updatePane(set, side, {
@@ -147,10 +184,12 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     updatePane(set, side, (pane) => ({ endpoint: { ...pane.endpoint, path } }));
   },
   async prepareForSession(savedSessionId, remotePath = "/") {
+    set({ viewStateInitialized: true });
     const defaultLocalPath = get().defaultLocalPath || (await get().loadDefaultLocalPath());
     get().setEndpoint("left", { kind: "local", saved_session_id: null, path: defaultLocalPath });
     get().setEndpoint("right", { kind: "saved_session", saved_session_id: savedSessionId, path: remotePath || "/" });
     await Promise.all([get().loadEndpoint("left"), get().loadEndpoint("right")]);
+    await get().saveViewState();
   },
   selectPath(side, path, event) {
     if (!path) {
@@ -323,6 +362,22 @@ function updatePane(
     const next = typeof update === "function" ? update(pane) : update;
     return { [side]: { ...pane, ...next } };
   });
+}
+
+function paneStateForEndpoint(endpoint: TransferEndpoint): FileTransferPaneState {
+  return {
+    endpoint,
+    entries: [],
+    selectedPaths: [],
+    selectionAnchorPath: null,
+    loading: false,
+    error: null,
+  };
+}
+
+function isPersistableEndpoint(endpoint: TransferEndpoint) {
+  if (!endpoint.path.trim()) return false;
+  return endpoint.kind === "local" || Boolean(endpoint.saved_session_id?.trim());
 }
 
 function nextPaneRequestId(side: FileTransferSide) {

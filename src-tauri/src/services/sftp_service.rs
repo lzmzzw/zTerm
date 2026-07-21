@@ -48,8 +48,10 @@ const SFTP_MAX_INFLIGHT_REQUESTS: usize = 64;
 const SFTP_CACHE_IDLE_TTL: Duration = Duration::from_secs(90);
 const SFTP_CACHE_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
 const SFTP_CACHE_MAX_ENTRIES: usize = 8;
-const SFTP_LIST_MAX_ATTEMPTS: usize = 2;
+const SFTP_LIST_MAX_ATTEMPTS: usize = 3;
 const SFTP_LIST_RETRY_DELAY: Duration = Duration::from_millis(150);
+const SFTP_TRANSFER_CONNECT_MAX_ATTEMPTS: usize = 5;
+const SFTP_TRANSFER_CONNECT_RETRY_DELAY: Duration = Duration::from_millis(400);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransferProgressUpdate {
@@ -215,7 +217,7 @@ impl SftpService {
                     if attempt + 1 < SFTP_LIST_MAX_ATTEMPTS
                         && should_retry_sftp_list_error(&error) =>
                 {
-                    tokio::time::sleep(SFTP_LIST_RETRY_DELAY).await;
+                    sleep_sftp_list_retry_delay(attempt).await;
                 }
                 Err(error) => return Err(error),
             }
@@ -279,6 +281,31 @@ impl SftpService {
         path: &str,
     ) -> AppResult<bool> {
         let path = required_remote_path(path)?;
+        for attempt in 0..SFTP_LIST_MAX_ATTEMPTS {
+            match self
+                .exists_once(session, all_sessions, secrets, &path)
+                .await
+            {
+                Ok(exists) => return Ok(exists),
+                Err(error)
+                    if attempt + 1 < SFTP_LIST_MAX_ATTEMPTS
+                        && should_retry_sftp_list_error(&error) =>
+                {
+                    sleep_sftp_list_retry_delay(attempt).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("SFTP existence check must return from the retry loop")
+    }
+
+    async fn exists_once(
+        &self,
+        session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
+        path: &str,
+    ) -> AppResult<bool> {
         let lease = self
             .cached_sftp_session(session, all_sessions, secrets)
             .await?;
@@ -365,64 +392,75 @@ impl SftpService {
         let local_path = PathBuf::from(required_path(local_path)?);
         let remote_path = validate_destructive_remote_path(remote_path)?;
         let metadata = fs::metadata(&local_path).await?;
-        let connection = connect_sftp(session, all_sessions, secrets).await?;
-        let sftp = &connection.sftp;
-        let mut transferred = 0_u64;
-        transfer_checkpoint(control.as_ref()).await?;
+        let lease = self
+            .cached_sftp_session_for_transfer(session, all_sessions, secrets, control.as_ref())
+            .await?;
+        let sftp = lease.entry.sftp.lock().await;
+        let result = async {
+            let mut transferred = 0_u64;
+            transfer_checkpoint(control.as_ref()).await?;
 
-        if metadata.is_dir() {
-            let total_bytes = local_path_total_bytes(local_path.to_string_lossy().as_ref()).await?;
-            let Some(remote_root) =
-                prepare_remote_directory_root(sftp, &remote_path, conflict_policy).await?
-            else {
-                transferred = transferred.saturating_add(total_bytes);
-                on_progress(progress_update(transferred, None))?;
-                connection.close("sftp upload completed").await;
-                return Ok(());
-            };
-            let mut stack = vec![(local_path, remote_root)];
-            while let Some((local_dir, remote_dir)) = stack.pop() {
-                transfer_checkpoint(control.as_ref()).await?;
-                let mut entries = fs::read_dir(&local_dir).await?;
-                while let Some(entry) = entries.next_entry().await? {
+            if metadata.is_dir() {
+                let total_bytes =
+                    local_path_total_bytes(local_path.to_string_lossy().as_ref()).await?;
+                let Some(remote_root) =
+                    prepare_remote_directory_root(&sftp, &remote_path, conflict_policy).await?
+                else {
+                    transferred = transferred.saturating_add(total_bytes);
+                    on_progress(progress_update(transferred, None))?;
+                    return Ok(());
+                };
+                let mut stack = vec![(local_path, remote_root)];
+                while let Some((local_dir, remote_dir)) = stack.pop() {
                     transfer_checkpoint(control.as_ref()).await?;
-                    let entry_path = entry.path();
-                    let entry_name = entry.file_name().to_string_lossy().to_string();
-                    let remote_entry = join_remote_path(&remote_dir, &entry_name);
-                    let entry_metadata = entry.metadata().await?;
-                    if entry_metadata.is_dir() {
-                        ensure_remote_directory(sftp, &remote_entry).await?;
-                        stack.push((entry_path, remote_entry));
-                    } else {
-                        transferred = upload_file(
-                            sftp,
-                            &entry_path,
-                            &remote_entry,
-                            conflict_policy,
-                            transferred,
-                            control.as_ref(),
-                            &mut on_progress,
-                        )
-                        .await?;
+                    let mut entries = fs::read_dir(&local_dir).await?;
+                    while let Some(entry) = entries.next_entry().await? {
+                        transfer_checkpoint(control.as_ref()).await?;
+                        let entry_path = entry.path();
+                        let entry_name = entry.file_name().to_string_lossy().to_string();
+                        let remote_entry = join_remote_path(&remote_dir, &entry_name);
+                        let entry_metadata = entry.metadata().await?;
+                        if entry_metadata.is_dir() {
+                            ensure_remote_directory(&sftp, &remote_entry).await?;
+                            stack.push((entry_path, remote_entry));
+                        } else {
+                            transferred = upload_file(
+                                &sftp,
+                                &entry_path,
+                                &remote_entry,
+                                conflict_policy,
+                                transferred,
+                                control.as_ref(),
+                                &mut on_progress,
+                            )
+                            .await?;
+                        }
                     }
                 }
+            } else {
+                transferred = upload_file(
+                    &sftp,
+                    &local_path,
+                    &remote_path,
+                    conflict_policy,
+                    transferred,
+                    control.as_ref(),
+                    &mut on_progress,
+                )
+                .await?;
             }
-        } else {
-            transferred = upload_file(
-                sftp,
-                &local_path,
-                &remote_path,
-                conflict_policy,
-                transferred,
-                control.as_ref(),
-                &mut on_progress,
-            )
-            .await?;
-        }
 
-        on_progress(progress_update(transferred, None))?;
-        connection.close("sftp upload completed").await;
-        Ok(())
+            on_progress(progress_update(transferred, None))?;
+            Ok(())
+        }
+        .await;
+        drop(sftp);
+        if result.is_err() {
+            self.cache.remove_key_if_entry(&lease.key, &lease.entry);
+        } else {
+            lease.entry.touch();
+        }
+        result
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -443,66 +481,76 @@ impl SftpService {
     {
         let remote_path = required_remote_path(remote_path)?;
         let local_path = PathBuf::from(required_path(local_path)?);
-        let connection = connect_sftp(session, all_sessions, secrets).await?;
-        let sftp = &connection.sftp;
-        transfer_checkpoint(control.as_ref()).await?;
-        let metadata = sftp
-            .symlink_metadata(remote_path.clone())
-            .await
-            .map_err(|error| AppError::sftp(error.to_string()))?;
-        let mut transferred = 0_u64;
+        let lease = self
+            .cached_sftp_session_for_transfer(session, all_sessions, secrets, control.as_ref())
+            .await?;
+        let sftp = lease.entry.sftp.lock().await;
+        let result = async {
+            transfer_checkpoint(control.as_ref()).await?;
+            let metadata = sftp
+                .symlink_metadata(remote_path.clone())
+                .await
+                .map_err(|error| AppError::sftp(error.to_string()))?;
+            let mut transferred = 0_u64;
 
-        if metadata.file_type().is_dir() {
-            let Some(local_root) =
-                prepare_local_directory_root(&local_path, conflict_policy).await?
-            else {
-                connection.close("sftp download completed").await;
-                return Ok(());
-            };
-            let mut stack = vec![(remote_path, local_root)];
-            while let Some((remote_dir, local_dir)) = stack.pop() {
-                transfer_checkpoint(control.as_ref()).await?;
-                fs::create_dir_all(&local_dir).await?;
-                let entries = sftp
-                    .read_dir(remote_dir.clone())
-                    .await
-                    .map_err(|error| AppError::sftp(error.to_string()))?;
-                for entry in entries {
+            if metadata.file_type().is_dir() {
+                let Some(local_root) =
+                    prepare_local_directory_root(&local_path, conflict_policy).await?
+                else {
+                    return Ok(());
+                };
+                let mut stack = vec![(remote_path, local_root)];
+                while let Some((remote_dir, local_dir)) = stack.pop() {
                     transfer_checkpoint(control.as_ref()).await?;
-                    let remote_entry = entry.path();
-                    let local_entry = local_dir.join(entry.file_name());
-                    if entry.metadata().file_type().is_dir() {
-                        stack.push((remote_entry, local_entry));
-                    } else {
-                        transferred = download_file(
-                            sftp,
-                            &remote_entry,
-                            &local_entry,
-                            conflict_policy,
-                            transferred,
-                            control.as_ref(),
-                            &mut on_progress,
-                        )
-                        .await?;
+                    fs::create_dir_all(&local_dir).await?;
+                    let entries = sftp
+                        .read_dir(remote_dir.clone())
+                        .await
+                        .map_err(|error| AppError::sftp(error.to_string()))?;
+                    for entry in entries {
+                        transfer_checkpoint(control.as_ref()).await?;
+                        let remote_entry = entry.path();
+                        let local_entry = local_dir.join(entry.file_name());
+                        if entry.metadata().file_type().is_dir() {
+                            stack.push((remote_entry, local_entry));
+                        } else {
+                            transferred = download_file(
+                                &sftp,
+                                &remote_entry,
+                                &local_entry,
+                                conflict_policy,
+                                transferred,
+                                control.as_ref(),
+                                &mut on_progress,
+                            )
+                            .await?;
+                        }
                     }
                 }
+            } else {
+                transferred = download_file(
+                    &sftp,
+                    &remote_path,
+                    &local_path,
+                    conflict_policy,
+                    transferred,
+                    control.as_ref(),
+                    &mut on_progress,
+                )
+                .await?;
             }
-        } else {
-            transferred = download_file(
-                sftp,
-                &remote_path,
-                &local_path,
-                conflict_policy,
-                transferred,
-                control.as_ref(),
-                &mut on_progress,
-            )
-            .await?;
-        }
 
-        on_progress(progress_update(transferred, None))?;
-        connection.close("sftp download completed").await;
-        Ok(())
+            on_progress(progress_update(transferred, None))?;
+            Ok(())
+        }
+        .await;
+        drop(sftp);
+        if result.is_err() {
+            self.cache.remove_key_if_entry(&lease.key, &lease.entry);
+        } else {
+            lease.entry.touch();
+        }
+        result
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -525,9 +573,20 @@ impl SftpService {
     {
         let source_path = required_remote_path(source_path)?;
         let destination_path = validate_destructive_remote_path(destination_path)?;
-        let source_connection = connect_sftp(source_session, source_all_sessions, secrets).await?;
-        let destination_connection =
-            connect_sftp(destination_session, destination_all_sessions, secrets).await?;
+        let source_connection = connect_sftp_for_transfer(
+            source_session,
+            source_all_sessions,
+            secrets,
+            control.as_ref(),
+        )
+        .await?;
+        let destination_connection = connect_sftp_for_transfer(
+            destination_session,
+            destination_all_sessions,
+            secrets,
+            control.as_ref(),
+        )
+        .await?;
         let source_sftp = &source_connection.sftp;
         let destination_sftp = &destination_connection.sftp;
         transfer_checkpoint(control.as_ref()).await?;
@@ -677,6 +736,56 @@ impl SftpService {
         self.cache.insert(key.clone(), Arc::clone(&entry));
         Ok(CachedSftpLease { key, entry })
     }
+
+    async fn cached_sftp_session_for_transfer(
+        &self,
+        session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
+        control: Option<&TransferRunControl>,
+    ) -> AppResult<CachedSftpLease> {
+        for attempt in 0..SFTP_TRANSFER_CONNECT_MAX_ATTEMPTS {
+            transfer_checkpoint(control).await?;
+            let lease = match self
+                .cached_sftp_session(session, all_sessions, secrets)
+                .await
+            {
+                Ok(lease) => lease,
+                Err(error)
+                    if attempt + 1 < SFTP_TRANSFER_CONNECT_MAX_ATTEMPTS
+                        && should_retry_cached_transfer_session_error(&error) =>
+                {
+                    sleep_transfer_retry_delay(attempt).await;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+
+            let probe_result = {
+                let sftp = lease.entry.sftp.lock().await;
+                sftp.try_exists("/")
+                    .await
+                    .map_err(|error| AppError::sftp(error.to_string()))
+            };
+            match probe_result {
+                Ok(_) => {
+                    lease.entry.touch();
+                    return Ok(lease);
+                }
+                Err(error) => {
+                    self.cache.remove_key_if_entry(&lease.key, &lease.entry);
+                    if attempt + 1 < SFTP_TRANSFER_CONNECT_MAX_ATTEMPTS
+                        && should_retry_cached_transfer_session_error(&error)
+                    {
+                        sleep_transfer_retry_delay(attempt).await;
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        unreachable!("cached transfer session retry loop must return")
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -694,8 +803,10 @@ pub fn sftp_uses_cached_session_for(operation: SftpOperationKind) -> bool {
         operation,
         SftpOperationKind::CreateDir
             | SftpOperationKind::Delete
+            | SftpOperationKind::Download
             | SftpOperationKind::List
             | SftpOperationKind::Rename
+            | SftpOperationKind::Upload
     )
 }
 
@@ -909,7 +1020,59 @@ fn prune_sftp_entries(entries: &mut HashMap<SftpCacheKey, Arc<CachedSftpSession>
 }
 
 fn should_retry_sftp_list_error(error: &AppError) -> bool {
-    matches!(error, AppError::Ssh(_) | AppError::Sftp(_))
+    should_retry_cached_transfer_session_error(error)
+}
+
+fn should_retry_transfer_connect_error(error: &AppError) -> bool {
+    let AppError::Ssh(message) = error else {
+        return false;
+    };
+    is_retryable_connection_message(message)
+}
+
+fn should_retry_cached_transfer_session_error(error: &AppError) -> bool {
+    if should_retry_transfer_connect_error(error) {
+        return true;
+    }
+    let message = match error {
+        AppError::Ssh(message) | AppError::Sftp(message) => message,
+        _ => return false,
+    };
+    let normalized = message.to_ascii_lowercase();
+    is_retryable_connection_message(message)
+        || normalized.contains("session closed")
+        || normalized.contains("session is closed")
+        || normalized.contains("channel closed")
+        || normalized.contains("channel is closed")
+        || normalized.contains("connection closed")
+        || normalized.contains("connection is closed")
+        || normalized.contains("connection reset")
+        || normalized.contains("connection lost")
+        || normalized.contains("connection aborted")
+        || normalized.contains("unexpected eof")
+        || normalized.contains("broken pipe")
+}
+
+fn is_retryable_connection_message(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("10060")
+        || normalized.contains("10061")
+        || normalized.contains("connection refused")
+        || normalized.contains("actively refused")
+        || normalized.contains("connection timed out")
+        || normalized.contains("connect timed out")
+        || normalized.contains("timed out")
+        || normalized.contains("积极拒绝")
+}
+
+async fn sleep_sftp_list_retry_delay(attempt: usize) {
+    let multiplier = 1_u32 << attempt.min(2);
+    tokio::time::sleep(SFTP_LIST_RETRY_DELAY.saturating_mul(multiplier)).await;
+}
+
+async fn sleep_transfer_retry_delay(attempt: usize) {
+    let multiplier = 1_u32 << attempt.min(3);
+    tokio::time::sleep(SFTP_TRANSFER_CONNECT_RETRY_DELAY.saturating_mul(multiplier)).await;
 }
 
 pub fn validate_delete_request(path: &str, is_directory: bool, recursive: bool) -> AppResult<()> {
@@ -1090,6 +1253,48 @@ async fn connect_sftp(
     connect_sftp_execution(execution).await
 }
 
+async fn connect_sftp_for_transfer(
+    session: &SavedSession,
+    all_sessions: &[SavedSession],
+    secrets: &dyn SshCommandSecretResolver,
+    control: Option<&TransferRunControl>,
+) -> AppResult<ConnectedSftpSession> {
+    retry_transfer_connection(
+        control,
+        SFTP_TRANSFER_CONNECT_MAX_ATTEMPTS,
+        SFTP_TRANSFER_CONNECT_RETRY_DELAY,
+        || connect_sftp(session, all_sessions, secrets),
+    )
+    .await
+}
+
+async fn retry_transfer_connection<T, Connect, ConnectFuture>(
+    control: Option<&TransferRunControl>,
+    max_attempts: usize,
+    base_delay: Duration,
+    mut connect: Connect,
+) -> AppResult<T>
+where
+    Connect: FnMut() -> ConnectFuture,
+    ConnectFuture: Future<Output = AppResult<T>>,
+{
+    let max_attempts = max_attempts.max(1);
+    for attempt in 0..max_attempts {
+        transfer_checkpoint(control).await?;
+        match connect().await {
+            Ok(connection) => return Ok(connection),
+            Err(error)
+                if attempt + 1 < max_attempts && should_retry_transfer_connect_error(&error) =>
+            {
+                let multiplier = 1_u32 << attempt.min(3);
+                tokio::time::sleep(base_delay.saturating_mul(multiplier)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("transfer connection retry loop must return")
+}
+
 async fn connect_sftp_execution(
     execution: crate::services::ssh_command_service::SshCommandExecution,
 ) -> AppResult<ConnectedSftpSession> {
@@ -1133,12 +1338,20 @@ impl ConnectedSftpSession {
 #[cfg(test)]
 mod tests {
     use super::{
-        bulk_transfer_sftp_config, delete_local_path, rename_local_path,
-        should_retry_sftp_list_error, validate_destructive_local_path, TransferProgressWriter,
-        SFTP_MAX_INFLIGHT_REQUESTS,
+        bulk_transfer_sftp_config, delete_local_path, rename_local_path, retry_transfer_connection,
+        should_retry_cached_transfer_session_error, should_retry_sftp_list_error,
+        should_retry_transfer_connect_error, validate_destructive_local_path,
+        TransferProgressWriter, SFTP_MAX_INFLIGHT_REQUESTS,
     };
     use crate::{error::AppError, services::transfer_queue::TransferRunControl};
-    use std::{io::ErrorKind, time::Duration};
+    use std::{
+        io::ErrorKind,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+        time::Duration,
+    };
     use tokio::io::AsyncWriteExt;
 
     #[test]
@@ -1155,6 +1368,122 @@ mod tests {
         assert!(!should_retry_sftp_list_error(&AppError::validation(
             "invalid path"
         )));
+        assert!(!should_retry_sftp_list_error(&AppError::sftp(
+            "permission denied"
+        )));
+    }
+
+    #[test]
+    fn retries_only_closed_or_reset_cached_transfer_sessions() {
+        for message in [
+            "session closed",
+            "session is closed",
+            "channel closed",
+            "channel is closed",
+            "connection closed",
+            "connection reset by peer",
+            "connection timed out (os error 10060)",
+            "unexpected EOF",
+            "broken pipe",
+        ] {
+            assert!(should_retry_cached_transfer_session_error(&AppError::sftp(
+                message
+            ),));
+        }
+        assert!(should_retry_cached_transfer_session_error(&AppError::ssh(
+            "由于目标计算机积极拒绝，无法连接。 (os error 10061)",
+        )));
+        assert!(!should_retry_cached_transfer_session_error(
+            &AppError::sftp("permission denied"),
+        ));
+        assert!(!should_retry_cached_transfer_session_error(
+            &AppError::credential("invalid password"),
+        ));
+    }
+
+    #[test]
+    fn retries_only_refused_or_timed_out_transfer_connections() {
+        assert!(should_retry_transfer_connect_error(&AppError::ssh(
+            "由于目标计算机积极拒绝，无法连接。 (os error 10061)"
+        )));
+        assert!(should_retry_transfer_connect_error(&AppError::ssh(
+            "由于连接方在一段时间后没有正确答复，连接尝试失败。 (os error 10060)"
+        )));
+        assert!(should_retry_transfer_connect_error(&AppError::ssh(
+            "Connection refused"
+        )));
+        assert!(should_retry_transfer_connect_error(&AppError::ssh(
+            "connection timed out"
+        )));
+        assert!(!should_retry_transfer_connect_error(&AppError::ssh(
+            "authentication failed"
+        )));
+        assert!(!should_retry_transfer_connect_error(&AppError::credential(
+            "invalid password"
+        )));
+    }
+
+    #[tokio::test]
+    async fn retries_refused_transfer_connection_until_success() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let result = retry_transfer_connection(None, 5, Duration::ZERO, {
+            let attempts = Arc::clone(&attempts);
+            move || {
+                let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if attempt < 2 {
+                        Err(AppError::ssh("connection refused"))
+                    } else {
+                        Ok("connected")
+                    }
+                }
+            }
+        })
+        .await
+        .expect("third connection attempt should succeed");
+
+        assert_eq!(result, "connected");
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn retries_timed_out_transfer_connection_until_success() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let result = retry_transfer_connection(None, 3, Duration::ZERO, {
+            let attempts = Arc::clone(&attempts);
+            move || {
+                let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if attempt == 0 {
+                        Err(AppError::ssh("connection timed out (os error 10060)"))
+                    } else {
+                        Ok("connected")
+                    }
+                }
+            }
+        })
+        .await
+        .expect("second connection attempt should succeed");
+
+        assert_eq!(result, "connected");
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_non_transient_transfer_connection_error() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let error = retry_transfer_connection(None, 5, Duration::ZERO, {
+            let attempts = Arc::clone(&attempts);
+            move || {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                async { Err::<(), _>(AppError::credential("invalid password")) }
+            }
+        })
+        .await
+        .expect_err("credential error should fail immediately");
+
+        assert!(matches!(error, AppError::Credential(_)));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 
     #[test]

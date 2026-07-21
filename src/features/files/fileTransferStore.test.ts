@@ -78,7 +78,27 @@ describe("fileTransferStore", () => {
       conflictPolicy: "overwrite",
       defaultLocalPath: "",
       localRoots: [],
+      viewStateInitialized: false,
     });
+  });
+
+  it("restores and saves the latest left and right endpoint paths", async () => {
+    const restored = {
+      left: { kind: "local" as const, saved_session_id: null, path: "F:/Workspace/Deliverables" },
+      right: { kind: "saved_session" as const, saved_session_id: "ssh-prod", path: "/srv/releases" },
+    };
+    invokeMock.mockResolvedValueOnce(restored).mockResolvedValueOnce(restored);
+
+    await expect(useFileTransferStore.getState().restoreViewState()).resolves.toEqual(restored);
+    await expect(useFileTransferStore.getState().saveViewState()).resolves.toEqual(restored);
+
+    expect(useFileTransferStore.getState()).toMatchObject({
+      left: { endpoint: restored.left },
+      right: { endpoint: restored.right },
+      viewStateInitialized: true,
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "file_transfer_view_state_get");
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "file_transfer_view_state_save", { viewState: restored });
   });
 
   it("loads a local endpoint through the file transfer IPC with the default local path", async () => {

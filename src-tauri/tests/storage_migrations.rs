@@ -44,6 +44,7 @@ fn migrations_create_all_phase_two_tables() {
 
     for table_name in [
         "app_settings",
+        "file_transfer_view_state",
         "terminal_profiles",
         "session_groups",
         "saved_sessions",
@@ -80,6 +81,7 @@ fn migrations_are_idempotent() {
         .query_row(
             "select count(*) from sqlite_master where type = 'table' and name in (
                 'app_settings',
+                'file_transfer_view_state',
                 'terminal_profiles',
                 'session_groups',
                 'saved_sessions',
@@ -102,7 +104,7 @@ fn migrations_are_idempotent() {
         )
         .expect("table count query should run");
 
-    assert_eq!(table_count, 17);
+    assert_eq!(table_count, 18);
     assert!(index_exists(&connection, "idx_workspaces_sort"));
     assert!(index_exists(
         &connection,

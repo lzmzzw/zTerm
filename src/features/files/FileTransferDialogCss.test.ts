@@ -61,11 +61,14 @@ describe("file transfer dialog styles", () => {
     const groupStyles = ruleBody(".zt-transfer-group");
 
     expect(ruleStart).toBeGreaterThanOrEqual(0);
+    expect(styles).toContain("display: flex");
+    expect(styles).toContain("flex-direction: column");
     expect(styles).toContain("min-height: 0");
     expect(styles).toContain("overflow-x: hidden");
     expect(styles).toContain("overflow-y: auto");
     expect(styles).toContain("scrollbar-gutter: stable");
-    expect(groupStyles).toContain("min-height: max-content");
+    expect(groupStyles).toContain("flex: 0 0 auto");
+    expect(ruleBody(".zt-transfer-list > .zt-transfer-row")).toContain("flex: 0 0 auto");
   });
 
   it("keeps file lists and the transfer dock in their flexible grid rows when status messages are absent", () => {

@@ -8,10 +8,11 @@ use crate::{
     models::{
         session::SessionType,
         sftp::{
-            FileEntry, LocalPathInfo, SftpDeleteResult, SftpMkdirResult, SftpRenameResult,
-            TransferConflict, TransferConflictCheckItem, TransferConflictPolicy, TransferDirection,
-            TransferEndpoint, TransferEndpointConflict, TransferEndpointConflictCheckItem,
-            TransferEndpointKind, TransferKind, TransferTask, TransferTaskOrigin,
+            FileEntry, FileTransferViewState, LocalPathInfo, SftpDeleteResult, SftpMkdirResult,
+            SftpRenameResult, TransferConflict, TransferConflictCheckItem, TransferConflictPolicy,
+            TransferDirection, TransferEndpoint, TransferEndpointConflict,
+            TransferEndpointConflictCheckItem, TransferEndpointKind, TransferKind, TransferTask,
+            TransferTaskOrigin,
         },
     },
     services::{
@@ -25,7 +26,10 @@ use crate::{
         transfer_queue::TransferQueue,
     },
     state::AppState,
-    storage::sessions::{get_session, list_sessions},
+    storage::{
+        file_transfer_view_state::{get_file_transfer_view_state, save_file_transfer_view_state},
+        sessions::{get_session, list_sessions},
+    },
 };
 
 const TRANSFER_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
@@ -252,6 +256,21 @@ pub fn file_transfer_default_local_path() -> AppResult<String> {
 #[tauri::command]
 pub fn file_transfer_local_roots() -> AppResult<Vec<String>> {
     local_root_directories()
+}
+
+#[tauri::command]
+pub fn file_transfer_view_state_get(
+    state: State<'_, AppState>,
+) -> AppResult<Option<FileTransferViewState>> {
+    get_file_transfer_view_state(state.storage().as_ref())
+}
+
+#[tauri::command]
+pub fn file_transfer_view_state_save(
+    state: State<'_, AppState>,
+    view_state: FileTransferViewState,
+) -> AppResult<FileTransferViewState> {
+    save_file_transfer_view_state(state.storage().as_ref(), view_state)
 }
 
 #[tauri::command]
@@ -620,6 +639,13 @@ fn spawn_transfer(
         }
     };
     tauri::async_runtime::spawn(async move {
+        let _execution_slot = match queue.acquire_execution_slot(&control).await {
+            Ok(slot) => slot,
+            Err(_) => {
+                let _ = queue.unregister_control(&task.id);
+                return;
+            }
+        };
         let running = match queue.mark_running(&task.id) {
             Ok(task) => task,
             Err(error) => {
@@ -736,6 +762,13 @@ fn spawn_file_transfer(
         }
     };
     tauri::async_runtime::spawn(async move {
+        let _execution_slot = match queue.acquire_execution_slot(&control).await {
+            Ok(slot) => slot,
+            Err(_) => {
+                let _ = queue.unregister_control(&task.id);
+                return;
+            }
+        };
         let running = match queue.mark_running(&task.id) {
             Ok(task) => task,
             Err(error) => {

@@ -56,13 +56,13 @@ fn sftp_cache_key_tracks_safe_session_fingerprint_without_secrets() {
 }
 
 #[test]
-fn sftp_short_operations_use_cache_but_transfers_use_dedicated_sessions() {
+fn sftp_short_operations_and_single_endpoint_transfers_reuse_cached_sessions() {
     assert!(sftp_uses_cached_session_for(SftpOperationKind::List));
     assert!(sftp_uses_cached_session_for(SftpOperationKind::CreateDir));
     assert!(sftp_uses_cached_session_for(SftpOperationKind::Rename));
     assert!(sftp_uses_cached_session_for(SftpOperationKind::Delete));
-    assert!(!sftp_uses_cached_session_for(SftpOperationKind::Upload));
-    assert!(!sftp_uses_cached_session_for(SftpOperationKind::Download));
+    assert!(sftp_uses_cached_session_for(SftpOperationKind::Upload));
+    assert!(sftp_uses_cached_session_for(SftpOperationKind::Download));
 }
 
 #[test]
