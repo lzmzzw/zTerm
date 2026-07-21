@@ -175,6 +175,34 @@ fn transfer_queue_records_file_transfer_endpoints_without_polluting_sftp_panel_l
 }
 
 #[test]
+fn transfer_queue_persists_task_group_metadata() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite store should open"));
+    let session = save_session(store.as_ref(), ssh_draft()).expect("session should save");
+    let queue = TransferQueue::from_storage(Arc::clone(&store));
+
+    let task = queue
+        .enqueue_grouped(
+            &session.id,
+            TransferDirection::Upload,
+            "C:/tmp/app.exe",
+            "/tmp/release/app.exe",
+            Some(TransferKind::File),
+            TransferConflictPolicy::Overwrite,
+            10,
+            Some("group-1"),
+            Some("上传 2 个文件"),
+        )
+        .expect("grouped transfer should enqueue");
+
+    assert_eq!(task.group_id.as_deref(), Some("group-1"));
+    assert_eq!(task.group_name.as_deref(), Some("上传 2 个文件"));
+    assert_eq!(
+        queue.get(&task.id).expect("grouped transfer should read"),
+        task
+    );
+}
+
+#[test]
 fn external_file_transfers_stay_in_memory_and_disappear_after_restart() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite store should open"));
     let queue = TransferQueue::from_storage(Arc::clone(&store));

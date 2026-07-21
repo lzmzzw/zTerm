@@ -120,7 +120,9 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
             source_path text not null default '',
             destination_kind text not null default 'ssh' check (destination_kind in ('local', 'ssh')),
             destination_session_id text null,
-            destination_path text not null default ''
+            destination_path text not null default '',
+            group_id text null,
+            group_name text null
         );
 
         create table if not exists credential_records (
@@ -417,6 +419,18 @@ fn ensure_transfer_task_strategy_columns(transaction: &rusqlite::Transaction<'_>
     if !sqlite_column_exists(transaction, "transfer_tasks", "destination_path")? {
         transaction.execute(
             "alter table transfer_tasks add column destination_path text not null default ''",
+            [],
+        )?;
+    }
+    if !sqlite_column_exists(transaction, "transfer_tasks", "group_id")? {
+        transaction.execute(
+            "alter table transfer_tasks add column group_id text null",
+            [],
+        )?;
+    }
+    if !sqlite_column_exists(transaction, "transfer_tasks", "group_name")? {
+        transaction.execute(
+            "alter table transfer_tasks add column group_name text null",
             [],
         )?;
     }

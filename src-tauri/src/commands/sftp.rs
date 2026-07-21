@@ -141,6 +141,7 @@ pub async fn sftp_rename(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn sftp_upload(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -149,12 +150,14 @@ pub async fn sftp_upload(
     remote_path: String,
     kind: Option<TransferKind>,
     conflict_policy: Option<TransferConflictPolicy>,
+    group_id: Option<String>,
+    group_name: Option<String>,
 ) -> AppResult<TransferTask> {
     let (session, all_sessions) = ssh_session_context(&state, &saved_session_id)?;
     let queue = state.transfer_queue();
     let total_bytes = local_path_total_bytes(&local_path).await?;
     let conflict_policy = conflict_policy.unwrap_or(TransferConflictPolicy::Overwrite);
-    let task = queue.enqueue(
+    let task = queue.enqueue_grouped(
         &saved_session_id,
         TransferDirection::Upload,
         &local_path,
@@ -162,6 +165,8 @@ pub async fn sftp_upload(
         kind,
         conflict_policy,
         total_bytes,
+        group_id.as_deref(),
+        group_name.as_deref(),
     )?;
     spawn_transfer(
         app,
@@ -178,6 +183,7 @@ pub async fn sftp_upload(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn sftp_download(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -186,11 +192,13 @@ pub async fn sftp_download(
     local_path: String,
     kind: Option<TransferKind>,
     conflict_policy: Option<TransferConflictPolicy>,
+    group_id: Option<String>,
+    group_name: Option<String>,
 ) -> AppResult<TransferTask> {
     let (session, all_sessions) = ssh_session_context(&state, &saved_session_id)?;
     let queue = state.transfer_queue();
     let conflict_policy = conflict_policy.unwrap_or(TransferConflictPolicy::Overwrite);
-    let task = queue.enqueue(
+    let task = queue.enqueue_grouped(
         &saved_session_id,
         TransferDirection::Download,
         &local_path,
@@ -198,6 +206,8 @@ pub async fn sftp_download(
         kind,
         conflict_policy,
         0,
+        group_id.as_deref(),
+        group_name.as_deref(),
     )?;
     spawn_transfer(
         app,
@@ -402,6 +412,7 @@ pub async fn file_transfer_check_conflicts(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn file_transfer_enqueue(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -409,6 +420,8 @@ pub async fn file_transfer_enqueue(
     destination: TransferEndpoint,
     kind: Option<TransferKind>,
     conflict_policy: Option<TransferConflictPolicy>,
+    group_id: Option<String>,
+    group_name: Option<String>,
 ) -> AppResult<TransferTask> {
     if source.kind == TransferEndpointKind::Local && destination.kind == TransferEndpointKind::Local
     {
@@ -464,7 +477,7 @@ pub async fn file_transfer_enqueue(
     };
     let conflict_policy = conflict_policy.unwrap_or(TransferConflictPolicy::Overwrite);
     let queue = state.transfer_queue();
-    let task = queue.enqueue_with_endpoints(
+    let task = queue.enqueue_with_endpoints_grouped(
         saved_session_id,
         direction,
         local_path,
@@ -475,6 +488,8 @@ pub async fn file_transfer_enqueue(
         TransferTaskOrigin::FileTransfer,
         &source,
         &destination,
+        group_id.as_deref(),
+        group_name.as_deref(),
     )?;
     let ftp_secret = transient_ftp_secret(
         &state,

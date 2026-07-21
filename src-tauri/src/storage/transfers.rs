@@ -62,6 +62,8 @@ pub fn insert_transfer_task(
         TransferTaskOrigin::SftpPanel,
         &source_endpoint,
         &destination_endpoint,
+        None,
+        None,
     )
 }
 
@@ -78,6 +80,8 @@ pub fn insert_transfer_task_with_endpoints(
     task_origin: TransferTaskOrigin,
     source_endpoint: &TransferEndpoint,
     destination_endpoint: &TransferEndpoint,
+    group_id: Option<&str>,
+    group_name: Option<&str>,
 ) -> AppResult<TransferTask> {
     let saved_session_id = required_text("会话 ID", saved_session_id)?;
     let local_path = required_text("本地路径", local_path)?;
@@ -96,11 +100,12 @@ pub fn insert_transfer_task_with_endpoints(
               kind, conflict_policy, total_bytes, transferred_bytes, status,
               error_message, created_at_ms, updated_at_ms,
               task_origin, source_kind, source_session_id, source_path,
-              destination_kind, destination_session_id, destination_path
+              destination_kind, destination_session_id, destination_path,
+              group_id, group_name
             )
             values (
               ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, null, ?10, ?11,
-              ?12, ?13, ?14, ?15, ?16, ?17, ?18
+              ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20
             )
             ",
             params![
@@ -122,6 +127,8 @@ pub fn insert_transfer_task_with_endpoints(
                 destination_endpoint.kind.as_str(),
                 destination_endpoint.saved_session_id.as_deref(),
                 destination_endpoint.path,
+                group_id,
+                group_name,
             ],
         )?;
         get_transfer_task_in_transaction(transaction, &id)
@@ -138,7 +145,8 @@ pub fn get_transfer_task(store: &SqliteStore, id: &str) -> AppResult<TransferTas
                        kind, conflict_policy, total_bytes, transferred_bytes, status, error_message,
                        created_at_ms, updated_at_ms,
                        task_origin, source_kind, source_session_id, source_path,
-                       destination_kind, destination_session_id, destination_path
+                       destination_kind, destination_session_id, destination_path,
+                       group_id, group_name
                 from transfer_tasks
                 where id = ?1
                 ",
@@ -165,7 +173,8 @@ pub fn list_transfer_tasks(
                        kind, conflict_policy, total_bytes, transferred_bytes, status, error_message,
                        created_at_ms, updated_at_ms,
                        task_origin, source_kind, source_session_id, source_path,
-                       destination_kind, destination_session_id, destination_path
+                       destination_kind, destination_session_id, destination_path,
+                       group_id, group_name
                 from transfer_tasks
                 where saved_session_id = ?1
                   and task_origin = 'sftp_panel'
@@ -185,7 +194,8 @@ pub fn list_transfer_tasks(
                        kind, conflict_policy, total_bytes, transferred_bytes, status, error_message,
                        created_at_ms, updated_at_ms,
                        task_origin, source_kind, source_session_id, source_path,
-                       destination_kind, destination_session_id, destination_path
+                       destination_kind, destination_session_id, destination_path,
+                       group_id, group_name
                 from transfer_tasks
                 where saved_session_id not like 'external:%'
                   and coalesce(source_session_id, '') not like 'external:%'
@@ -374,7 +384,8 @@ fn get_transfer_task_in_transaction(
                    kind, conflict_policy, total_bytes, transferred_bytes, status, error_message,
                    created_at_ms, updated_at_ms,
                    task_origin, source_kind, source_session_id, source_path,
-                   destination_kind, destination_session_id, destination_path
+                   destination_kind, destination_session_id, destination_path,
+                   group_id, group_name
             from transfer_tasks
             where id = ?1
             ",
@@ -395,6 +406,8 @@ fn map_transfer_task(row: &Row<'_>) -> rusqlite::Result<TransferTask> {
     let destination_kind_value: String = row.get(17)?;
     Ok(TransferTask {
         id: row.get(0)?,
+        group_id: row.get(20)?,
+        group_name: row.get(21)?,
         saved_session_id: row.get(1)?,
         direction: TransferDirection::from_db(&direction_value)
             .ok_or_else(|| conversion_error(2, format!("invalid direction: {direction_value}")))?,

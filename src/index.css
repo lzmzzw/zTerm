@@ -4175,6 +4175,58 @@ a[href]:focus-visible,
   box-shadow: 0 0 0 2px var(--zt-focus-soft);
 }
 
+.zt-transfer-group {
+  display: grid;
+  border: 1px solid var(--zt-border);
+  border-radius: var(--zt-radius-control);
+  overflow: hidden;
+}
+
+.zt-transfer-group-header {
+  display: grid;
+  grid-template-columns: 16px minmax(120px, 1fr) auto 76px 40px 58px;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 6px;
+  border: 0;
+  background: var(--zt-bg-elevated);
+  color: var(--zt-text-primary);
+  font: inherit;
+  text-align: left;
+}
+
+.zt-transfer-group-header:hover,
+.zt-transfer-group-header:focus-visible {
+  background: var(--zt-bg-hover);
+}
+
+.zt-transfer-group-header > strong,
+.zt-transfer-group-header > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zt-transfer-group-header > span,
+.zt-transfer-group-header > small {
+  color: var(--zt-text-muted);
+}
+
+.zt-transfer-group-children {
+  display: grid;
+  border-top: 1px solid var(--zt-border);
+}
+
+.zt-transfer-child-row {
+  border-radius: 0;
+  padding-left: 22px;
+}
+
+.zt-transfer-child-row + .zt-transfer-child-row {
+  border-top: 1px solid color-mix(in srgb, var(--zt-border) 68%, transparent);
+}
+
 .zt-ai-approval-select .zt-select-chevron {
   right: 2px;
   width: 6px;

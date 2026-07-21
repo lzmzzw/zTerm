@@ -1,10 +1,11 @@
 // Author: Liz
-import { ChevronDown, ChevronUp, Pause, Play, RotateCcw, Trash2, XCircle } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, Pause, Play, RotateCcw, Trash2, XCircle } from "lucide-react";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 
 import { ZtConfirmDialog } from "../../components/ZtUi";
 import type { TransferStatus, TransferTask } from "./fileStore";
 import { legacyTransferDestinationPath, legacyTransferSourcePath } from "./fileTransferPaths";
+import { groupTransferTasks } from "./transferTaskGroups";
 
 interface TransferPanelProps {
   collapsible?: boolean;
@@ -46,6 +47,7 @@ export function TransferPanel({
   const allTaskIds = tasks.map((task) => task.id);
   const hasBulkActions = Boolean(onPauseAll || onResumeAll || onClearAll);
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(() => new Set());
   const dockRef = useRef<HTMLElement | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<{
     title: string;
@@ -67,7 +69,22 @@ export function TransferPanel({
     });
   };
 
-  const list = renderTransferList(tasks, onRetry, onPause, onResume, onCancel, requestDelete);
+  const list = renderTransferList(
+    tasks,
+    collapsedGroupIds,
+    (groupId) =>
+      setCollapsedGroupIds((current) => {
+        const next = new Set(current);
+        if (next.has(groupId)) next.delete(groupId);
+        else next.add(groupId);
+        return next;
+      }),
+    onRetry,
+    onPause,
+    onResume,
+    onCancel,
+    requestDelete,
+  );
 
   useEffect(() => {
     onCollapsedChange?.(collapsed);
@@ -206,6 +223,8 @@ export function TransferPanel({
 
 function renderTransferList(
   tasks: TransferTask[],
+  collapsedGroupIds: ReadonlySet<string>,
+  onToggleGroup: (groupId: string) => void,
   onRetry: TransferPanelProps["onRetry"],
   onPause: TransferPanelProps["onPause"],
   onResume: TransferPanelProps["onResume"],
@@ -218,56 +237,107 @@ function renderTransferList(
 
   return (
     <div className="zt-transfer-list" aria-label="传输任务列表">
-      {tasks.map((task) => {
-        const percent = task.total_bytes > 0 ? Math.min(100, Math.round((task.transferred_bytes / task.total_bytes) * 100)) : null;
-        const sourcePath = task.source_endpoint?.path ?? legacyTransferSourcePath(task);
-        const destinationPath = task.destination_endpoint?.path ?? legacyTransferDestinationPath(task);
+      {groupTransferTasks(tasks).map((group) => {
+        if (!group.id) return renderTransferRow(group.tasks[0], false, onRetry, onPause, onResume, onCancel, onDelete);
+        const collapsed = collapsedGroupIds.has(group.id);
+        const totalBytes = group.tasks.reduce((total, task) => total + task.total_bytes, 0);
+        const transferredBytes = group.tasks.reduce((total, task) => total + task.transferred_bytes, 0);
+        const percent = totalBytes > 0 ? Math.min(100, Math.round((transferredBytes / totalBytes) * 100)) : null;
+        const status = aggregateGroupStatus(group.tasks);
         return (
-          <div className="zt-transfer-row" key={task.id}>
-            <div className="zt-transfer-main">
-              <strong>{sourcePath}</strong>
-              <span>{destinationPath}</span>
-            </div>
-            <div className="zt-transfer-progress" aria-label={`${task.id} 进度`}>
-              <span style={{ width: `${percent ?? 0}%` }} />
-            </div>
-            <small>{percent === null ? `${task.transferred_bytes} B` : `${percent}%`}</small>
-            <span className={`zt-transfer-status ${task.status}`}>{task.status}</span>
-            <div className="zt-transfer-actions">
-              {task.status === "queued" || task.status === "running" ? (
-                <button type="button" aria-label={`暂停 ${task.id}`} title="暂停" onClick={() => void onPause(task.id)}>
-                  <Pause size={14} aria-hidden="true" />
-                </button>
-              ) : null}
-              {task.status === "paused" ? (
-                <button type="button" aria-label={`恢复 ${task.id}`} title="恢复" onClick={() => void onResume(task.id)}>
-                  <Play size={14} aria-hidden="true" />
-                </button>
-              ) : null}
-              {activeTransferStatuses.has(task.status) ? (
-                <button type="button" aria-label={`取消 ${task.id}`} title="取消" onClick={() => void onCancel(task.id)}>
-                  <XCircle size={14} aria-hidden="true" />
-                </button>
-              ) : null}
-              {task.status === "failed" ? (
-                <button type="button" aria-label={`重试 ${task.id}`} title="重试" onClick={() => void onRetry(task.id)}>
-                  <RotateCcw size={14} aria-hidden="true" />
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="zt-delete-button"
-                aria-label={`删除 ${task.id}`}
-                title="删除"
-                onClick={() => onDelete(task)}
-              >
-                <Trash2 size={14} aria-hidden="true" />
-              </button>
-            </div>
-            {task.error_message ? <em>{task.error_message}</em> : null}
-          </div>
+          <section className="zt-transfer-group" key={group.id} aria-label={`任务组 ${group.name}`}>
+            <button
+              type="button"
+              className="zt-transfer-group-header"
+              aria-label={`${collapsed ? "展开" : "折叠"}任务组 ${group.name}`}
+              aria-expanded={!collapsed}
+              onClick={() => onToggleGroup(group.id as string)}
+            >
+              {collapsed ? <ChevronRight size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+              <strong>{group.name}</strong>
+              <span>{group.tasks.length} 个子任务</span>
+              <span className="zt-transfer-progress" aria-label={`${group.id} 聚合进度`}>
+                <span style={{ width: `${percent ?? 0}%` }} />
+              </span>
+              <small>{percent === null ? `${transferredBytes} B` : `${percent}%`}</small>
+              <span className={`zt-transfer-status ${status}`}>{status}</span>
+            </button>
+            {collapsed ? null : (
+              <div className="zt-transfer-group-children">
+                {group.tasks.map((task) => renderTransferRow(task, true, onRetry, onPause, onResume, onCancel, onDelete))}
+              </div>
+            )}
+          </section>
         );
       })}
     </div>
   );
+}
+
+function renderTransferRow(
+  task: TransferTask,
+  child: boolean,
+  onRetry: TransferPanelProps["onRetry"],
+  onPause: TransferPanelProps["onPause"],
+  onResume: TransferPanelProps["onResume"],
+  onCancel: TransferPanelProps["onCancel"],
+  onDelete: (task: TransferTask) => void,
+) {
+  const percent = task.total_bytes > 0 ? Math.min(100, Math.round((task.transferred_bytes / task.total_bytes) * 100)) : null;
+  const sourcePath = task.source_endpoint?.path ?? legacyTransferSourcePath(task);
+  const destinationPath = task.destination_endpoint?.path ?? legacyTransferDestinationPath(task);
+  return (
+    <div className={child ? "zt-transfer-row zt-transfer-child-row" : "zt-transfer-row"} key={task.id}>
+      <div className="zt-transfer-main">
+        <strong>{sourcePath}</strong>
+        <span>{destinationPath}</span>
+      </div>
+      <div className="zt-transfer-progress" aria-label={`${task.id} 进度`}>
+        <span style={{ width: `${percent ?? 0}%` }} />
+      </div>
+      <small>{percent === null ? `${task.transferred_bytes} B` : `${percent}%`}</small>
+      <span className={`zt-transfer-status ${task.status}`}>{task.status}</span>
+      <div className="zt-transfer-actions">
+        {task.status === "queued" || task.status === "running" ? (
+          <button type="button" aria-label={`暂停 ${task.id}`} title="暂停" onClick={() => void onPause(task.id)}>
+            <Pause size={14} aria-hidden="true" />
+          </button>
+        ) : null}
+        {task.status === "paused" ? (
+          <button type="button" aria-label={`恢复 ${task.id}`} title="恢复" onClick={() => void onResume(task.id)}>
+            <Play size={14} aria-hidden="true" />
+          </button>
+        ) : null}
+        {activeTransferStatuses.has(task.status) ? (
+          <button type="button" aria-label={`取消 ${task.id}`} title="取消" onClick={() => void onCancel(task.id)}>
+            <XCircle size={14} aria-hidden="true" />
+          </button>
+        ) : null}
+        {task.status === "failed" ? (
+          <button type="button" aria-label={`重试 ${task.id}`} title="重试" onClick={() => void onRetry(task.id)}>
+            <RotateCcw size={14} aria-hidden="true" />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="zt-delete-button"
+          aria-label={`删除 ${task.id}`}
+          title="删除"
+          onClick={() => onDelete(task)}
+        >
+          <Trash2 size={14} aria-hidden="true" />
+        </button>
+      </div>
+      {task.error_message ? <em>{task.error_message}</em> : null}
+    </div>
+  );
+}
+
+function aggregateGroupStatus(tasks: TransferTask[]): TransferStatus {
+  if (tasks.some((task) => task.status === "failed")) return "failed";
+  if (tasks.some((task) => task.status === "running")) return "running";
+  if (tasks.some((task) => task.status === "paused")) return "paused";
+  if (tasks.some((task) => task.status === "queued")) return "queued";
+  if (tasks.every((task) => task.status === "done")) return "done";
+  return "cancelled";
 }

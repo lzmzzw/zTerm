@@ -1,5 +1,6 @@
 // Author: Liz
 import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 
 import type {
   FileEntry,
@@ -10,6 +11,11 @@ import type {
   TransferKind,
 } from "../features/files/fileStore";
 import { buildDownloadTransferPlans, buildUploadTransferPlans } from "../features/files/fileTransferPlanner";
+import {
+  createTransferTaskGroupMeta,
+  expandTransferPlans,
+  type TransferSourcePlan,
+} from "../features/files/transferTaskGroups";
 import { joinRemotePath, parentRemotePath, remoteFileName } from "../features/files/remotePath";
 
 interface TextInputOptions {
@@ -32,18 +38,29 @@ interface RemoteFileActionDependencies {
     savedSessionId: string,
     localPath: string,
     remotePath: string,
-    options?: { kind?: TransferKind; conflictPolicy?: TransferConflictPolicy },
+    options?: {
+      kind?: TransferKind;
+      conflictPolicy?: TransferConflictPolicy;
+      groupId?: string;
+      groupName?: string;
+    },
   ) => Promise<unknown> | unknown;
   download: (
     savedSessionId: string,
     remotePath: string,
     localPath: string,
-    options?: { kind?: TransferKind; conflictPolicy?: TransferConflictPolicy },
+    options?: {
+      kind?: TransferKind;
+      conflictPolicy?: TransferConflictPolicy;
+      groupId?: string;
+      groupName?: string;
+    },
   ) => Promise<unknown> | unknown;
   deletePath: (savedSessionId: string, path: string, recursive: boolean) => Promise<unknown> | unknown;
   renamePath: (savedSessionId: string, from: string, to: string) => Promise<unknown> | unknown;
   classifyLocalPaths: (paths: string[]) => Promise<LocalPathInfo[]>;
   checkTransferConflicts: (savedSessionId: string, items: TransferConflictCheckItem[]) => Promise<TransferConflict[]>;
+  listTransferEndpoint?: (endpoint: TransferSourcePlan["source"]) => Promise<FileEntry[]>;
   selectUploadPaths?: () => Promise<string[]>;
   selectDownloadDirectory?: () => Promise<string | null>;
 }
@@ -62,6 +79,7 @@ export function createRemoteFileActions({
   renamePath,
   classifyLocalPaths,
   checkTransferConflicts,
+  listTransferEndpoint = defaultListTransferEndpoint,
   selectUploadPaths = defaultSelectUploadPaths,
   selectDownloadDirectory = defaultSelectDownloadDirectory,
 }: RemoteFileActionDependencies) {
@@ -103,16 +121,27 @@ export function createRemoteFileActions({
     const localPaths = await classifyLocalPaths(paths);
     if (localPaths.length === 0) return;
     const initialPlans = buildUploadTransferPlans({ currentRemotePath: filePath, localPaths });
-    const conflictPolicy = await resolveConflictPolicy(activeSshSessionId, "upload", initialPlans);
+    const sourcePlans: TransferSourcePlan[] = initialPlans.map((plan) => ({
+      source: { kind: "local", saved_session_id: null, path: plan.localPath },
+      destination: { kind: "saved_session", saved_session_id: activeSshSessionId, path: plan.remotePath },
+      kind: plan.kind,
+    }));
+    const expandedPlans = await expandTransferPlans(sourcePlans, listTransferEndpoint);
+    if (expandedPlans.length === 0) return;
+    const conflictPlans = expandedPlans.map((plan) => ({
+      localPath: plan.source.path,
+      remotePath: plan.destination.path,
+      kind: plan.kind,
+      conflictPolicy: "overwrite" as const,
+    }));
+    const conflictPolicy = await resolveConflictPolicy(activeSshSessionId, "upload", conflictPlans);
     if (!conflictPolicy) return;
-    const plans =
-      conflictPolicy === "overwrite"
-        ? initialPlans
-        : buildUploadTransferPlans({ currentRemotePath: filePath, localPaths, conflictPolicy });
-    for (const plan of plans) {
-      await upload(activeSshSessionId, plan.localPath, plan.remotePath, {
-        kind: plan.kind,
-        conflictPolicy: plan.conflictPolicy,
+    const groupMeta = createTransferTaskGroupMeta(sourcePlans, expandedPlans, "上传");
+    for (const plan of expandedPlans) {
+      await upload(activeSshSessionId, plan.source.path, plan.destination.path, {
+        kind: "file",
+        conflictPolicy,
+        ...groupMeta,
       });
     }
   }
@@ -123,16 +152,27 @@ export function createRemoteFileActions({
     if (!localDirectory) return;
     const initialPlans = buildDownloadTransferPlans({ selectedEntries: entries, localDirectory });
     if (initialPlans.length === 0) return;
-    const conflictPolicy = await resolveConflictPolicy(activeSshSessionId, "download", initialPlans);
+    const sourcePlans: TransferSourcePlan[] = initialPlans.map((plan) => ({
+      source: { kind: "saved_session", saved_session_id: activeSshSessionId, path: plan.remotePath },
+      destination: { kind: "local", saved_session_id: null, path: plan.localPath },
+      kind: plan.kind,
+    }));
+    const expandedPlans = await expandTransferPlans(sourcePlans, listTransferEndpoint);
+    if (expandedPlans.length === 0) return;
+    const conflictPlans = expandedPlans.map((plan) => ({
+      remotePath: plan.source.path,
+      localPath: plan.destination.path,
+      kind: plan.kind,
+      conflictPolicy: "overwrite" as const,
+    }));
+    const conflictPolicy = await resolveConflictPolicy(activeSshSessionId, "download", conflictPlans);
     if (!conflictPolicy) return;
-    const plans =
-      conflictPolicy === "overwrite"
-        ? initialPlans
-        : buildDownloadTransferPlans({ selectedEntries: entries, localDirectory, conflictPolicy });
-    for (const plan of plans) {
-      await download(activeSshSessionId, plan.remotePath, plan.localPath, {
-        kind: plan.kind,
-        conflictPolicy: plan.conflictPolicy,
+    const groupMeta = createTransferTaskGroupMeta(sourcePlans, expandedPlans, "下载");
+    for (const plan of expandedPlans) {
+      await download(activeSshSessionId, plan.source.path, plan.destination.path, {
+        kind: "file",
+        conflictPolicy,
+        ...groupMeta,
       });
     }
   }
@@ -205,6 +245,10 @@ async function defaultSelectDownloadDirectory() {
     directory: true,
   });
   return typeof selected === "string" ? selected : null;
+}
+
+function defaultListTransferEndpoint(endpoint: TransferSourcePlan["source"]) {
+  return invoke<FileEntry[]>("file_transfer_list_endpoint", { endpoint });
 }
 
 function normalizeDialogSelection(selected: string | string[] | null) {

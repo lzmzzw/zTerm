@@ -171,6 +171,8 @@ fn transfer_tasks_schema_adds_strategy_and_endpoint_columns() {
         "destination_kind",
         "destination_session_id",
         "destination_path",
+        "group_id",
+        "group_name",
     ] {
         assert!(
             column_exists(&connection, "transfer_tasks", column),

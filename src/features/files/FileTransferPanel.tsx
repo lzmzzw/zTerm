@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Server,
 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { type CSSProperties, type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
@@ -39,6 +40,11 @@ import {
 } from "./fileTransferPaths";
 import { useFileTransferStore, type FileTransferSide } from "./fileTransferStore";
 import { formatFileModifiedTime, resolveFileIcon } from "./fileExplorerPresentation";
+import {
+  createTransferTaskGroupMeta,
+  expandTransferPlans,
+  type TransferTaskGroupMeta,
+} from "./transferTaskGroups";
 
 interface FileTransferPanelProps {
   language?: AppLanguage;
@@ -176,7 +182,11 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   const [showHidden, setShowHidden] = useState<Record<FileTransferSide, boolean>>({ left: false, right: false });
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [dragPreview, setDragPreview] = useState<DragPreviewState | null>(null);
-  const [pendingOverwrite, setPendingOverwrite] = useState<{ count: number; plans: TransferPlan[] } | null>(null);
+  const [pendingOverwrite, setPendingOverwrite] = useState<{
+    count: number;
+    plans: TransferPlan[];
+    groupMeta: TransferTaskGroupMeta;
+  } | null>(null);
   const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
   const [renameEntry, setRenameEntry] = useState<{ side: FileTransferSide; entry: FileEntry } | null>(null);
   const [deleteEntries, setDeleteEntries] = useState<{ side: FileTransferSide; entries: FileEntry[] } | null>(null);
@@ -249,9 +259,13 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     await transferPaths(sourceSide, sourcePane.selectedPaths);
   }
 
-  async function enqueuePlans(plans: TransferPlan[]) {
+  async function enqueuePlans(plans: TransferPlan[], groupMeta: TransferTaskGroupMeta = {}) {
     for (const plan of plans) {
-      await enqueueTransfer(plan.source, plan.destination, { kind: plan.kind, conflictPolicy });
+      await enqueueTransfer(plan.source, plan.destination, {
+        kind: plan.kind,
+        conflictPolicy,
+        ...groupMeta,
+      });
     }
     await loadTransfers();
   }
@@ -261,7 +275,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
     const sourcePane = sourceSide === "left" ? left : right;
     const destinationPane = destinationSide === "left" ? left : right;
     const entries = sourcePane.entries.filter((entry) => paths.includes(entry.path));
-    const plans = entries.flatMap((entry) => {
+    const sourcePlans = entries.flatMap((entry) => {
       const kind = transferKindFromFileKind(entry.kind);
       if (!kind) return [];
       const source: TransferEndpoint = { ...sourcePane.endpoint, path: entry.path };
@@ -271,13 +285,22 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       };
       return [{ source, destination, kind }];
     });
+    if (sourcePlans.length === 0) return;
+    const plans = await expandTransferPlans(sourcePlans, (endpoint) =>
+      invoke<FileEntry[]>("file_transfer_list_endpoint", { endpoint }),
+    );
     if (plans.length === 0) return;
+    const groupMeta = createTransferTaskGroupMeta(
+      sourcePlans,
+      plans,
+      destinationSide === "right" ? "传输到右侧" : "传输到左侧",
+    );
     const conflicts = await checkConflicts(plans.map((plan) => ({ destination: plan.destination, kind: plan.kind })));
     if (conflicts.length > 0 && conflictPolicy === "overwrite") {
-      setPendingOverwrite({ count: conflicts.length, plans });
+      setPendingOverwrite({ count: conflicts.length, plans, groupMeta });
       return;
     }
-    await enqueuePlans(plans);
+    await enqueuePlans(plans, groupMeta);
   }
 
   function beginDrag(sourceSide: FileTransferSide, path: string) {
@@ -509,8 +532,9 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
           onCancel={() => setPendingOverwrite(null)}
           onConfirm={() => {
             const plans = pendingOverwrite.plans;
+            const groupMeta = pendingOverwrite.groupMeta;
             setPendingOverwrite(null);
-            void enqueuePlans(plans);
+            void enqueuePlans(plans, groupMeta);
           }}
         />
       ) : null}

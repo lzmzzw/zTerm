@@ -57,7 +57,12 @@ interface FileTransferState {
   enqueueTransfer: (
     source: TransferEndpoint,
     destination: TransferEndpoint,
-    options?: { kind?: TransferKind; conflictPolicy?: TransferConflictPolicy },
+    options?: {
+      kind?: TransferKind;
+      conflictPolicy?: TransferConflictPolicy;
+      groupId?: string;
+      groupName?: string;
+    },
   ) => Promise<TransferTask>;
   loadTransfers: () => Promise<void>;
   retryTransfer: (taskId: string) => Promise<void>;
@@ -223,6 +228,8 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       destination,
       kind: options.kind,
       conflictPolicy: options.conflictPolicy,
+      groupId: options.groupId,
+      groupName: options.groupName,
     });
     upsertTransfer(set, task);
     return task;
@@ -232,7 +239,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     transferListRequestId = requestId;
     set({ transferLoading: true, transferError: null });
     try {
-      const transfers = await invoke<TransferTask[]>("file_transfer_list", { limit: 200 });
+      const transfers = await invoke<TransferTask[]>("file_transfer_list", { limit: 1000 });
       if (transferListRequestId === requestId) {
         set({ transfers, transferLoading: false });
       }

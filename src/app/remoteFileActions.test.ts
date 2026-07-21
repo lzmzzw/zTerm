@@ -53,25 +53,29 @@ describe("remoteFileActions", () => {
       },
       {
         direction: "upload",
-        localPath: "C:\\build\\release-folder",
-        remotePath: "/tmp/release-folder",
-        kind: "directory",
+        localPath: "C:\\build\\release-folder\\app.exe",
+        remotePath: "/tmp/release-folder/app.exe",
+        kind: "file",
       },
     ]);
-    expect(deps.upload).toHaveBeenCalledWith("session-1", "C:\\build\\bundle.zip", "/tmp/bundle.zip", {
+    expect(deps.upload).toHaveBeenCalledWith("session-1", "C:\\build\\bundle.zip", "/tmp/bundle.zip", expect.objectContaining({
       kind: "file",
       conflictPolicy: "overwrite",
-    });
-    expect(deps.upload).toHaveBeenCalledWith("session-1", "C:\\build\\release-folder", "/tmp/release-folder", {
-      kind: "directory",
+      groupId: expect.any(String),
+      groupName: "上传 2 个文件",
+    }));
+    expect(deps.upload).toHaveBeenCalledWith("session-1", "C:\\build\\release-folder\\app.exe", "/tmp/release-folder/app.exe", expect.objectContaining({
+      kind: "file",
       conflictPolicy: "overwrite",
-    });
+      groupId: expect.any(String),
+      groupName: "上传 2 个文件",
+    }));
   });
 
   it("uses a batch conflict policy for downloads", async () => {
     const deps = dependencies({
       downloadDirectory: "D:\\Downloads",
-      conflicts: [{ direction: "download", path: "D:\\Downloads\\logs" }],
+      conflicts: [{ direction: "download", path: "D:\\Downloads\\logs\\app.log" }],
       conflictPolicy: "rename",
     });
     const actions = createRemoteFileActions(deps);
@@ -87,11 +91,12 @@ describe("remoteFileActions", () => {
       },
     ]);
 
-    expect(deps.requestConflictPolicy).toHaveBeenCalledWith([{ direction: "download", path: "D:\\Downloads\\logs" }]);
-    expect(deps.download).toHaveBeenCalledWith("session-1", "/var/logs", "D:\\Downloads\\logs", {
-      kind: "directory",
+    expect(deps.requestConflictPolicy).toHaveBeenCalledWith([{ direction: "download", path: "D:\\Downloads\\logs\\app.log" }]);
+    expect(deps.download).toHaveBeenCalledWith("session-1", "/var/logs/app.log", "D:\\Downloads\\logs\\app.log", expect.objectContaining({
+      kind: "file",
       conflictPolicy: "rename",
-    });
+      groupName: "下载 1 个文件",
+    }));
   });
 
   it("does not prompt or mutate when there is no active SSH session", async () => {
@@ -150,6 +155,15 @@ function dependencies({
       })),
     ),
     checkTransferConflicts: vi.fn(async () => conflicts),
+    listTransferEndpoint: vi.fn(async (endpoint: { path: string }) => {
+      if (endpoint.path === "C:\\build\\release-folder") {
+        return [{ name: "app.exe", path: "C:\\build\\release-folder\\app.exe", kind: "file" as const, size: 8, modified_at_ms: null, permissions: null }];
+      }
+      if (endpoint.path === "/var/logs") {
+        return [{ name: "app.log", path: "/var/logs/app.log", kind: "file" as const, size: 12, modified_at_ms: null, permissions: null }];
+      }
+      return [];
+    }),
     selectUploadPaths: vi.fn(async () => uploadPaths),
     selectDownloadDirectory: vi.fn(async () => downloadDirectory),
   };

@@ -345,6 +345,11 @@ async fn upload_file<F>(
 where
     F: FnMut(TransferProgressUpdate) -> AppResult<()>,
 {
+    if let Some((parent, _)) = remote.rsplit_once('/') {
+        if !parent.is_empty() {
+            ensure_directory(ftp, parent).await?;
+        }
+    }
     let Some(remote) = conflict_path(ftp, remote, policy).await? else {
         return Ok(transferred);
     };

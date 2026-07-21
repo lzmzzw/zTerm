@@ -32,6 +32,8 @@ export interface TransferEndpoint {
 
 export interface TransferTask {
   id: string;
+  group_id?: string | null;
+  group_name?: string | null;
   saved_session_id: string;
   direction: TransferDirection;
   local_path: string;
@@ -69,6 +71,8 @@ export interface TransferConflict {
 interface TransferOptions {
   kind?: TransferKind;
   conflictPolicy?: TransferConflictPolicy;
+  groupId?: string;
+  groupName?: string;
 }
 
 interface FileState {
@@ -171,6 +175,8 @@ export const useFileStore = create<FileState>((set, get) => ({
       remotePath,
       kind: options.kind,
       conflictPolicy: options.conflictPolicy,
+      groupId: options.groupId,
+      groupName: options.groupName,
     });
     upsertTransfer(set, task);
   },
@@ -181,6 +187,8 @@ export const useFileStore = create<FileState>((set, get) => ({
       localPath,
       kind: options.kind,
       conflictPolicy: options.conflictPolicy,
+      groupId: options.groupId,
+      groupName: options.groupName,
     });
     upsertTransfer(set, task);
   },
@@ -207,7 +215,7 @@ export const useFileStore = create<FileState>((set, get) => ({
     }
     set({ transferLoading: true, transferSessionId: savedSessionId });
     try {
-      const transfers = await invoke<TransferTask[]>("transfer_list", { savedSessionId, limit: 200 });
+      const transfers = await invoke<TransferTask[]>("transfer_list", { savedSessionId, limit: 1000 });
       if (transferListRequestId !== requestId) {
         return;
       }

@@ -180,7 +180,7 @@ describe("fileTransferStore", () => {
     await useFileTransferStore.getState().bindTransferEvents();
 
     const progressHandler = listenMock.mock.calls.find(([eventName]) => eventName === "transfer:progress")?.[1];
-    expect(invokeMock).toHaveBeenCalledWith("file_transfer_list", { limit: 200 });
+    expect(invokeMock).toHaveBeenCalledWith("file_transfer_list", { limit: 1000 });
     expect(useFileTransferStore.getState().transfers).toEqual([oldTask]);
 
     progressHandler?.({ payload: progressTask });

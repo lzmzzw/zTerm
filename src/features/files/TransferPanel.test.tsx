@@ -185,6 +185,33 @@ describe("TransferPanel", () => {
     view.unmount();
   });
 
+  it("renders a two-level task group and toggles all children from the group row", async () => {
+    const groupedTasks = [
+      { ...tasks[0], id: "group-child-1", group_id: "group-1", group_name: "上传 2 个文件" },
+      { ...tasks[2], id: "group-child-2", group_id: "group-1", group_name: "上传 2 个文件" },
+    ];
+    const view = render(
+      <TransferPanel
+        tasks={groupedTasks}
+        onRetry={vi.fn()}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(view.container.querySelectorAll(".zt-transfer-group")).toHaveLength(1);
+    expect(view.container.querySelectorAll(".zt-transfer-child-row")).toHaveLength(2);
+    expect(view.container.textContent).toContain("2 个子任务");
+
+    await click(button(view.container, "折叠任务组 上传 2 个文件"));
+    expect(view.container.querySelectorAll(".zt-transfer-child-row")).toHaveLength(0);
+    expect(button(view.container, "展开任务组 上传 2 个文件")).toBeTruthy();
+
+    view.unmount();
+  });
+
   it("prefers endpoint snapshot paths for file transfer tasks", () => {
     const view = render(
       <TransferPanel

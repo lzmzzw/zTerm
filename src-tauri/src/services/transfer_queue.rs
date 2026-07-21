@@ -117,31 +117,57 @@ impl TransferQueue {
         conflict_policy: TransferConflictPolicy,
         total_bytes: u64,
     ) -> AppResult<TransferTask> {
+        self.enqueue_grouped(
+            saved_session_id,
+            direction,
+            local_path,
+            remote_path,
+            kind,
+            conflict_policy,
+            total_bytes,
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn enqueue_grouped(
+        &self,
+        saved_session_id: &str,
+        direction: TransferDirection,
+        local_path: &str,
+        remote_path: &str,
+        kind: Option<TransferKind>,
+        conflict_policy: TransferConflictPolicy,
+        total_bytes: u64,
+        group_id: Option<&str>,
+        group_name: Option<&str>,
+    ) -> AppResult<TransferTask> {
+        let source_endpoint = match direction {
+            TransferDirection::Upload => TransferEndpoint {
+                kind: crate::models::sftp::TransferEndpointKind::Local,
+                saved_session_id: None,
+                path: local_path.to_string(),
+            },
+            TransferDirection::Download => TransferEndpoint {
+                kind: crate::models::sftp::TransferEndpointKind::SavedSession,
+                saved_session_id: Some(saved_session_id.to_string()),
+                path: remote_path.to_string(),
+            },
+        };
+        let destination_endpoint = match direction {
+            TransferDirection::Upload => TransferEndpoint {
+                kind: crate::models::sftp::TransferEndpointKind::SavedSession,
+                saved_session_id: Some(saved_session_id.to_string()),
+                path: remote_path.to_string(),
+            },
+            TransferDirection::Download => TransferEndpoint {
+                kind: crate::models::sftp::TransferEndpointKind::Local,
+                saved_session_id: None,
+                path: local_path.to_string(),
+            },
+        };
         if is_external_session_id(saved_session_id) {
-            let source_endpoint = match direction {
-                TransferDirection::Upload => TransferEndpoint {
-                    kind: crate::models::sftp::TransferEndpointKind::Local,
-                    saved_session_id: None,
-                    path: local_path.to_string(),
-                },
-                TransferDirection::Download => TransferEndpoint {
-                    kind: crate::models::sftp::TransferEndpointKind::SavedSession,
-                    saved_session_id: Some(saved_session_id.to_string()),
-                    path: remote_path.to_string(),
-                },
-            };
-            let destination_endpoint = match direction {
-                TransferDirection::Upload => TransferEndpoint {
-                    kind: crate::models::sftp::TransferEndpointKind::SavedSession,
-                    saved_session_id: Some(saved_session_id.to_string()),
-                    path: remote_path.to_string(),
-                },
-                TransferDirection::Download => TransferEndpoint {
-                    kind: crate::models::sftp::TransferEndpointKind::Local,
-                    saved_session_id: None,
-                    path: local_path.to_string(),
-                },
-            };
             return self.enqueue_transient(
                 saved_session_id,
                 direction,
@@ -153,9 +179,11 @@ impl TransferQueue {
                 TransferTaskOrigin::SftpPanel,
                 &source_endpoint,
                 &destination_endpoint,
+                group_id,
+                group_name,
             );
         }
-        transfers::insert_transfer_task(
+        transfers::insert_transfer_task_with_endpoints(
             self.store.as_ref(),
             saved_session_id,
             direction,
@@ -164,6 +192,11 @@ impl TransferQueue {
             kind,
             conflict_policy,
             total_bytes,
+            TransferTaskOrigin::SftpPanel,
+            &source_endpoint,
+            &destination_endpoint,
+            group_id,
+            group_name,
         )
     }
 
@@ -181,6 +214,38 @@ impl TransferQueue {
         source_endpoint: &TransferEndpoint,
         destination_endpoint: &TransferEndpoint,
     ) -> AppResult<TransferTask> {
+        self.enqueue_with_endpoints_grouped(
+            saved_session_id,
+            direction,
+            local_path,
+            remote_path,
+            kind,
+            conflict_policy,
+            total_bytes,
+            task_origin,
+            source_endpoint,
+            destination_endpoint,
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn enqueue_with_endpoints_grouped(
+        &self,
+        saved_session_id: &str,
+        direction: TransferDirection,
+        local_path: &str,
+        remote_path: &str,
+        kind: Option<TransferKind>,
+        conflict_policy: TransferConflictPolicy,
+        total_bytes: u64,
+        task_origin: TransferTaskOrigin,
+        source_endpoint: &TransferEndpoint,
+        destination_endpoint: &TransferEndpoint,
+        group_id: Option<&str>,
+        group_name: Option<&str>,
+    ) -> AppResult<TransferTask> {
         if is_external_session_id(saved_session_id)
             || endpoint_uses_external_session(source_endpoint)
             || endpoint_uses_external_session(destination_endpoint)
@@ -196,6 +261,8 @@ impl TransferQueue {
                 task_origin,
                 source_endpoint,
                 destination_endpoint,
+                group_id,
+                group_name,
             );
         }
         transfers::insert_transfer_task_with_endpoints(
@@ -210,6 +277,8 @@ impl TransferQueue {
             task_origin,
             source_endpoint,
             destination_endpoint,
+            group_id,
+            group_name,
         )
     }
 
@@ -535,6 +604,8 @@ impl TransferQueue {
         task_origin: TransferTaskOrigin,
         source_endpoint: &TransferEndpoint,
         destination_endpoint: &TransferEndpoint,
+        group_id: Option<&str>,
+        group_name: Option<&str>,
     ) -> AppResult<TransferTask> {
         if saved_session_id.trim().is_empty()
             || local_path.trim().is_empty()
@@ -545,6 +616,8 @@ impl TransferQueue {
         let now = now_ms();
         let task = TransferTask {
             id: Uuid::new_v4().to_string(),
+            group_id: group_id.map(str::to_string),
+            group_name: group_name.map(str::to_string),
             saved_session_id: saved_session_id.to_string(),
             direction,
             local_path: local_path.to_string(),
