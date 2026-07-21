@@ -55,6 +55,19 @@ describe("file transfer dialog styles", () => {
     expect(ruleBody(".zt-transfer-dock-header")).toContain("background: var(--zt-bg-elevated)");
   });
 
+  it("scrolls the transfer task list vertically when it exceeds the dock", () => {
+    const ruleStart = css.lastIndexOf("\n.zt-transfer-list {");
+    const styles = css.slice(ruleStart, css.indexOf("}", ruleStart));
+    const groupStyles = ruleBody(".zt-transfer-group");
+
+    expect(ruleStart).toBeGreaterThanOrEqual(0);
+    expect(styles).toContain("min-height: 0");
+    expect(styles).toContain("overflow-x: hidden");
+    expect(styles).toContain("overflow-y: auto");
+    expect(styles).toContain("scrollbar-gutter: stable");
+    expect(groupStyles).toContain("min-height: max-content");
+  });
+
   it("keeps file lists and the transfer dock in their flexible grid rows when status messages are absent", () => {
     expect(css).toContain(".zt-file-transfer-operation-status");
     expect(css).toContain(".zt-file-transfer-pane-status");

@@ -3446,7 +3446,9 @@ a[href]:focus-visible,
   align-content: start;
   gap: 4px;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 8px;
 }
 
@@ -4177,6 +4179,7 @@ a[href]:focus-visible,
 
 .zt-transfer-group {
   display: grid;
+  min-height: max-content;
   border: 1px solid var(--zt-border);
   border-radius: var(--zt-radius-control);
   overflow: hidden;
