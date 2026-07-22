@@ -131,6 +131,25 @@ describe("TitleBar", () => {
     view.unmount();
   });
 
+  it("hides the app logo from the macOS traffic-light titlebar", () => {
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, "platform");
+    Object.defineProperty(navigator, "platform", { configurable: true, value: "MacIntel" });
+    try {
+      const view = render(<TitleBar />);
+
+      expect(view.container.querySelector(".zt-titlebar-macos")).not.toBeNull();
+      expect(view.container.querySelector(".zt-titlebar-logo")).toBeNull();
+
+      view.unmount();
+    } finally {
+      if (descriptor) {
+        Object.defineProperty(navigator, "platform", descriptor);
+      } else {
+        Reflect.deleteProperty(navigator, "platform");
+      }
+    }
+  });
+
   it("renders active connection context in the center and omits it when unavailable", () => {
     const sshView = render(<TitleBar centerContent="192.168.10.24" />);
 

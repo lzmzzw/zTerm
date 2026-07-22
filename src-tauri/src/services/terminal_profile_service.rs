@@ -25,6 +25,41 @@ pub struct TerminalProfileCandidate {
 }
 
 pub fn terminal_profile_candidates() -> &'static [TerminalProfileCandidate] {
+    #[cfg(target_os = "macos")]
+    {
+        return &[
+            TerminalProfileCandidate {
+                id: "zsh",
+                name: "Zsh",
+                executable: "zsh",
+                args: &["-l"],
+                windows_paths: &["/bin/zsh"],
+            },
+            TerminalProfileCandidate {
+                id: "bash",
+                name: "Bash",
+                executable: "bash",
+                args: &["-l"],
+                windows_paths: &["/bin/bash"],
+            },
+            TerminalProfileCandidate {
+                id: "fish",
+                name: "Fish",
+                executable: "fish",
+                args: &[],
+                windows_paths: &[("/opt/homebrew/bin/fish")],
+            },
+            TerminalProfileCandidate {
+                id: "pwsh",
+                name: "PowerShell 7",
+                executable: "pwsh",
+                args: &[],
+                windows_paths: &[("/opt/homebrew/bin/pwsh")],
+            },
+        ];
+    }
+
+    #[cfg(not(target_os = "macos"))]
     &[
         TerminalProfileCandidate {
             id: "pwsh",

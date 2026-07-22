@@ -173,23 +173,40 @@ impl AppSettings {
 }
 
 pub fn shortcut_registry() -> Vec<ShortcutDefinition> {
+    let primary = if cfg!(target_os = "macos") {
+        "Meta"
+    } else {
+        "Ctrl"
+    };
     vec![
-        ShortcutDefinition::new("settings.open", "打开设置", "Ctrl+,"),
-        ShortcutDefinition::new("terminal.new_tab", "新建终端标签", "Ctrl+N"),
-        ShortcutDefinition::new("terminal.close_tab", "关闭终端标签", "Ctrl+W"),
-        ShortcutDefinition::new("sync_channel.open", "创建同步频道", "Ctrl+Shift+M"),
+        ShortcutDefinition::new("settings.open", "打开设置", format!("{primary}+,")),
+        ShortcutDefinition::new("terminal.new_tab", "新建终端标签", format!("{primary}+T")),
+        ShortcutDefinition::new("terminal.close_tab", "关闭终端标签", format!("{primary}+W")),
+        ShortcutDefinition::new(
+            "sync_channel.open",
+            "创建同步频道",
+            format!("{primary}+Shift+M"),
+        ),
         ShortcutDefinition::new(
             "terminal.split_horizontal",
             "水平分屏",
-            "Ctrl+Shift+Arrowright",
+            format!("{primary}+Shift+Arrowright"),
         ),
         ShortcutDefinition::new(
             "terminal.split_vertical",
             "垂直分屏",
-            "Ctrl+Shift+Arrowdown",
+            format!("{primary}+Shift+Arrowdown"),
         ),
-        ShortcutDefinition::new("right_tool.files", "打开 SFTP", "Ctrl+Shift+S"),
-        ShortcutDefinition::new("right_tool.history", "打开历史命令", "Ctrl+H"),
+        ShortcutDefinition::new(
+            "right_tool.files",
+            "打开 SFTP",
+            format!("{primary}+Shift+S"),
+        ),
+        ShortcutDefinition::new(
+            "right_tool.history",
+            "打开历史命令",
+            format!("{primary}+Shift+H"),
+        ),
     ]
 }
 
@@ -296,7 +313,7 @@ mod tests {
             defaults,
             vec![
                 ("settings.open".to_string(), "Ctrl+,".to_string()),
-                ("terminal.new_tab".to_string(), "Ctrl+N".to_string()),
+                ("terminal.new_tab".to_string(), "Ctrl+T".to_string()),
                 ("terminal.close_tab".to_string(), "Ctrl+W".to_string()),
                 ("sync_channel.open".to_string(), "Ctrl+Shift+M".to_string()),
                 (
@@ -308,7 +325,7 @@ mod tests {
                     "Ctrl+Shift+Arrowdown".to_string()
                 ),
                 ("right_tool.files".to_string(), "Ctrl+Shift+S".to_string()),
-                ("right_tool.history".to_string(), "Ctrl+H".to_string()),
+                ("right_tool.history".to_string(), "Ctrl+Shift+H".to_string()),
             ]
         );
     }

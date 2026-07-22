@@ -1349,6 +1349,39 @@ a[href]:focus-visible,
   overflow: hidden;
 }
 
+.zt-titlebar-macos {
+  grid-template-columns: var(--zt-window-actions-width) minmax(var(--zt-rail-width), 1fr);
+}
+
+.zt-window-actions-macos {
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+  padding-left: 14px;
+}
+
+.zt-window-actions-macos button {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border-radius: 50%;
+  background: #28c840;
+}
+
+.zt-window-actions-macos button:nth-child(2) {
+  background: #ffbd2e;
+}
+
+.zt-window-actions-macos button.danger {
+  background: #ff5f57;
+}
+
+.zt-window-actions-macos button:hover,
+.zt-window-actions-macos .danger:hover {
+  background: currentColor;
+  color: transparent;
+}
+
 .zt-container-panel {
   display: flex;
   flex-direction: column;
