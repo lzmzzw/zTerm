@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import packageJson from "../../../package.json";
 
 import { acceleratorFromKeyboardEvent, bindingsWithDefaults, detectShortcutConflicts } from "./shortcutManager";
+import { displayAccelerator } from "../../app/platform";
 import { t } from "./i18n";
 import { useDomI18n } from "./domI18n";
 import {
@@ -497,7 +498,7 @@ function ShortcutSettings({
               <strong>{definition.label}</strong>
               <input
                 aria-label={`${t(language, "shortcutAriaPrefix")} ${definition.label}`}
-                value={binding.accelerator}
+                value={displayAccelerator(binding.accelerator)}
                 readOnly
                 placeholder={t(language, "captureShortcutPlaceholder")}
                 onKeyDown={(event) => {

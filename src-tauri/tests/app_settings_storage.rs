@@ -34,13 +34,13 @@ fn app_settings_have_expected_defaults() {
             .collect::<Vec<_>>(),
         vec![
             ("settings.open", "Ctrl+,"),
-            ("terminal.new_tab", "Ctrl+N"),
+            ("terminal.new_tab", "Ctrl+T"),
             ("terminal.close_tab", "Ctrl+W"),
             ("sync_channel.open", "Ctrl+Shift+M"),
             ("terminal.split_horizontal", "Ctrl+Shift+Arrowright"),
             ("terminal.split_vertical", "Ctrl+Shift+Arrowdown"),
             ("right_tool.files", "Ctrl+Shift+S"),
-            ("right_tool.history", "Ctrl+H"),
+            ("right_tool.history", "Ctrl+Shift+H"),
         ]
     );
 }

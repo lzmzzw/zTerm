@@ -1140,8 +1140,8 @@ pub async fn local_path_total_bytes(path: &str) -> AppResult<u64> {
 }
 
 pub fn default_local_directory() -> AppResult<String> {
-    dirs::home_dir()
-        .or_else(dirs::download_dir)
+    dirs::download_dir()
+        .or_else(dirs::home_dir)
         .unwrap_or_else(std::env::temp_dir)
         .to_str()
         .map(|value| value.to_string())

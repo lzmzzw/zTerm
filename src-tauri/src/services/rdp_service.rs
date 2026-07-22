@@ -56,26 +56,39 @@ pub fn build_mstsc_arguments(session: &SavedSession) -> AppResult<RdpLaunchComma
 }
 
 pub fn launch_mstsc(session: &SavedSession) -> AppResult<RdpProcess> {
-    let password = match session.credential_ref.as_deref() {
-        Some(credential_ref) if session.auth_mode == crate::models::session::AuthMode::Password => {
-            Some(read_system_secret(credential_ref)?)
-        }
-        _ => None,
-    };
-    write_rdp_password_credential(session, password.as_deref())?;
-    let rdp_content = build_rdp_file_content(session)?;
-    let file_path = std::env::temp_dir().join(format!(
-        "zterm-{}-{}.rdp",
-        sanitize_file_token(&session.name),
-        Uuid::new_v4()
-    ));
-    fs::write(&file_path, rdp_content)?;
-    try_sign_rdp_file(&file_path);
-    let child = Command::new("mstsc.exe")
-        .arg(&file_path)
-        .spawn()
-        .map_err(|error| AppError::terminal(format!("failed to launch mstsc: {error}")))?;
-    Ok(RdpProcess { child, file_path })
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = session;
+        return Err(AppError::unsupported(
+            "当前平台暂不支持 RDP 启动；请使用系统的远程桌面客户端",
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let password = match session.credential_ref.as_deref() {
+            Some(credential_ref)
+                if session.auth_mode == crate::models::session::AuthMode::Password =>
+            {
+                Some(read_system_secret(credential_ref)?)
+            }
+            _ => None,
+        };
+        write_rdp_password_credential(session, password.as_deref())?;
+        let rdp_content = build_rdp_file_content(session)?;
+        let file_path = std::env::temp_dir().join(format!(
+            "zterm-{}-{}.rdp",
+            sanitize_file_token(&session.name),
+            Uuid::new_v4()
+        ));
+        fs::write(&file_path, rdp_content)?;
+        try_sign_rdp_file(&file_path);
+        let child = Command::new("mstsc.exe")
+            .arg(&file_path)
+            .spawn()
+            .map_err(|error| AppError::terminal(format!("failed to launch mstsc: {error}")))?;
+        Ok(RdpProcess { child, file_path })
+    }
 }
 
 fn try_sign_rdp_file(file_path: &Path) -> bool {
