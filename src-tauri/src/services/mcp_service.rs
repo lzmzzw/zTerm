@@ -433,31 +433,18 @@ pub fn mcp_tool_catalog() -> Vec<McpToolDefinition> {
         mcp_tool(
             "terminal.read",
             "读取终端",
-            "读取运行终端的输出尾部或指定 cursor 之后的增量输出",
+            "按 runtime_session_id 或当前 zTerm 编号（如 A1）读取终端输出；编号只定位既有终端，不改变标签或焦点",
             RiskLevel::Low,
             false,
-            object_schema(
-                json!({
-                    "runtime_session_id": { "type": "string" },
-                    "cursor": { "type": "integer", "minimum": 0 },
-                    "max_chars": { "type": "integer", "minimum": 1, "maximum": 4000 }
-                }),
-                &["runtime_session_id"],
-            ),
+            terminal_read_schema(),
         ),
         mcp_tool(
             "terminal.write",
             "写入终端",
-            "向运行终端写入数据并回读本次产生的输出",
+            "按 runtime_session_id 或当前 zTerm 编号（如 A1）向既有终端写入数据并回读输出；不改变标签或焦点",
             RiskLevel::High,
             true,
-            object_schema(
-                json!({
-                    "runtime_session_id": { "type": "string" },
-                    "data": { "type": "string", "description": "写入终端的数据，命令通常以回车结尾。" }
-                }),
-                &["runtime_session_id", "data"],
-            ),
+            terminal_write_schema(),
         ),
         mcp_tool(
             "terminal.close",
@@ -620,6 +607,39 @@ fn object_schema(properties: Value, required: &[&str]) -> Value {
     schema
 }
 
+fn terminal_read_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "runtime_session_id": { "type": "string", "description": "既有 runtime ID；与 terminal_ref 二选一。" },
+            "terminal_ref": { "type": "string", "pattern": "^[A-Z]+[1-9][0-9]*$", "description": "当前 zTerm 工作台中的终端编号，例如 A1；与 runtime_session_id 二选一。" },
+            "cursor": { "type": "integer", "minimum": 0 },
+            "max_chars": { "type": "integer", "minimum": 1, "maximum": 4000 }
+        },
+        "oneOf": [
+            { "required": ["runtime_session_id"] },
+            { "required": ["terminal_ref"] }
+        ],
+        "additionalProperties": false
+    })
+}
+
+fn terminal_write_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "runtime_session_id": { "type": "string", "description": "既有 runtime ID；与 terminal_ref 二选一。" },
+            "terminal_ref": { "type": "string", "pattern": "^[A-Z]+[1-9][0-9]*$", "description": "当前 zTerm 工作台中的终端编号，例如 A1；与 runtime_session_id 二选一。" },
+            "data": { "type": "string", "description": "写入终端的数据，命令通常以回车结尾。" }
+        },
+        "oneOf": [
+            { "required": ["runtime_session_id", "data"] },
+            { "required": ["terminal_ref", "data"] }
+        ],
+        "additionalProperties": false
+    })
+}
+
 fn file_transfer_schema(remote_path_description: &str) -> Value {
     object_schema(
         json!({
@@ -656,6 +676,7 @@ fn mcp_tool_call_result(
     name: &str,
     arguments: Value,
 ) -> AppResult<Value> {
+    let arguments = tools.resolve_terminal_target_arguments(name, arguments)?;
     let approval_mode = mcp_tool_approval_mode(store, tools, &arguments)?;
     let outcome = tools.execute_if_allowed(
         store,
@@ -771,8 +792,8 @@ fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), Stri
         "sessions.save" => &["draft", "reuse_auth_from_session_id"][..],
         "terminal.list" => &["saved_session_id"][..],
         "terminal.open" => &["saved_session_id"][..],
-        "terminal.read" => &["runtime_session_id", "cursor", "max_chars"][..],
-        "terminal.write" => &["runtime_session_id", "data"][..],
+        "terminal.read" => &["runtime_session_id", "terminal_ref", "cursor", "max_chars"][..],
+        "terminal.write" => &["runtime_session_id", "terminal_ref", "data"][..],
         "terminal.close" => &["runtime_session_id"][..],
         "ssh.execute" => &["saved_session_id", "script"][..],
         "ssh.upload" | "ssh.download" | "sftp.upload" | "sftp.download" | "ftp.upload"
@@ -788,6 +809,9 @@ fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), Stri
         _ => return Err(format!("tool not exposed by zTerm MCP: {tool_name}")),
     };
     reject_unknown_mcp_keys(object, allowed, "arguments")?;
+    if matches!(tool_name, "terminal.read" | "terminal.write") {
+        validate_terminal_target_selector(object)?;
+    }
 
     if let Some(draft) = object.get("draft").and_then(Value::as_object) {
         let draft_allowed = if tool_name == "sessions.save" {
@@ -819,6 +843,27 @@ fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), Stri
         reject_unknown_mcp_keys(draft, draft_allowed, "arguments.draft")?;
     }
     Ok(())
+}
+
+fn validate_terminal_target_selector(
+    object: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    let runtime_session_id = object
+        .get("runtime_session_id")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    let terminal_ref = object
+        .get("terminal_ref")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    match (runtime_session_id, terminal_ref) {
+        (true, false) | (false, true) => Ok(()),
+        (false, false) => Err(
+            "terminal.read 和 terminal.write 必须提供 runtime_session_id 或 terminal_ref"
+                .to_string(),
+        ),
+        (true, true) => Err("runtime_session_id 与 terminal_ref 只能提供其中之一".to_string()),
+    }
 }
 
 fn reject_unknown_mcp_keys(

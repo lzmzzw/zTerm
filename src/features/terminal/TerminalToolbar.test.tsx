@@ -33,6 +33,29 @@ describe("TerminalToolbar", () => {
     view.unmount();
   });
 
+  it("disables only the split direction that has reached its pane limit", () => {
+    const onSplitPane = vi.fn();
+    const view = render(
+      <TerminalToolbar
+        onSplitPane={onSplitPane}
+        onClosePane={vi.fn()}
+        canSplitHorizontal={false}
+        canSplitVertical
+      />,
+    );
+
+    const horizontal = view.container.querySelector('[aria-label="横向分栏"]') as HTMLButtonElement;
+    const vertical = view.container.querySelector('[aria-label="纵向分栏"]') as HTMLButtonElement;
+    horizontal.click();
+    vertical.click();
+
+    expect(horizontal.disabled).toBe(true);
+    expect(horizontal.title).toContain("宽度小于页面的 1/4");
+    expect(vertical.disabled).toBe(false);
+    expect(onSplitPane).toHaveBeenCalledWith("vertical");
+    view.unmount();
+  });
+
   it("shows channel controls only for a channel member and keeps leave separate from close", () => {
     const onLeaveSyncChannel = vi.fn();
     const onCloseSyncChannel = vi.fn();

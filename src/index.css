@@ -1994,7 +1994,7 @@ a[href]:focus-visible,
 
 .zt-pane-tabs {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: stretch;
   min-width: 0;
   height: var(--zt-workbar-height);
@@ -2018,6 +2018,20 @@ a[href]:focus-visible,
   margin: 0 10px;
   border-radius: 50%;
   background: var(--zt-accent);
+}
+
+.zt-pane-identifier {
+  align-self: center;
+  margin: 0 10px 0 0;
+  color: var(--zt-text-secondary);
+  font-size: var(--zt-font-size-ui);
+  font-weight: inherit;
+  line-height: var(--zt-workbar-control-size);
+  white-space: nowrap;
+}
+
+.zt-pane-identifier.active {
+  color: var(--zt-accent);
 }
 
 .zt-pane-tab {
@@ -2167,6 +2181,11 @@ a[href]:focus-visible,
 .zt-terminal-toolbar button:hover {
   background: var(--zt-bg-hover);
   color: var(--zt-text-primary);
+}
+
+.zt-terminal-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
 }
 
 .zt-terminal-toolbar-separator {

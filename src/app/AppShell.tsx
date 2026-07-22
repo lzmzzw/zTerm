@@ -1,5 +1,6 @@
 // Author: Liz
 import { ArrowLeftRight, Bot, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -64,7 +65,12 @@ import {
   workspaceSave,
   workspaceSaveDefaultSnapshot,
 } from "../features/workspace/workspacePersistence";
-import { findPane, getActiveTerminalTab, getLeafTerminalTabs } from "../features/workspace/workspaceLayout";
+import {
+  findPane,
+  getActiveTerminalTab,
+  getLeafTerminalTabs,
+  getTerminalReferences,
+} from "../features/workspace/workspaceLayout";
 import { markWorkspaceRestoreQueued, runWorkspaceRestoreQueue } from "../features/workspace/workspaceRestoreScheduler";
 import { DEFAULT_WORKSPACE_ID } from "../features/workspace/workspaceConstants";
 import {
@@ -532,6 +538,13 @@ export function AppShell() {
     })),
   );
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
+  const terminalReferences = useMemo(
+    () => (activeTab ? getTerminalReferences(activeTab.root) : []),
+    [activeTab],
+  );
+  useEffect(() => {
+    void invoke("mcp_terminal_refs_set", { references: terminalReferences }).catch(() => undefined);
+  }, [terminalReferences]);
   const activePane = activeTab ? findPane(activeTab.root, activeTab.active_pane_id) : null;
   const activeLeaf = activePane?.kind === "leaf" ? activePane : null;
   const activePaneTab = activeLeaf ? getActiveTerminalTab(activeLeaf) : null;

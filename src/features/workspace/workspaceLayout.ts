@@ -1,7 +1,22 @@
 // Author: Liz
 import type { PaneNode, PaneSplitDirection, PaneTerminalTab } from "./types";
+import { MIN_PANE_FRACTION } from "./workspaceConstants";
 
 type LeafPane = Extract<PaneNode, { kind: "leaf" }>;
+
+export interface TerminalReference {
+  terminal_ref: string;
+  runtime_session_id: string;
+}
+
+interface PaneGeometry {
+  pane: LeafPane;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  order: number;
+}
 
 const MIN_RATIO = 0.2;
 const MAX_RATIO = 0.8;
@@ -27,6 +42,93 @@ export function findLeafPane(root: PaneNode, paneId: string): LeafPane | null {
 export function firstLeafPaneId(root: PaneNode): string | null {
   if (root.kind === "leaf") return root.id;
   return firstLeafPaneId(root.first) ?? firstLeafPaneId(root.second);
+}
+
+/** Returns pane ids in visual reading order, not binary-tree implementation order. */
+export function getLeafPaneIdsInVisualOrder(root: PaneNode): string[] {
+  return collectPaneGeometry(root)
+    .sort((left, right) => left.top - right.top || left.left - right.left || left.order - right.order)
+    .map((item) => item.pane.id);
+}
+
+export function getPaneDisplayLabels(root: PaneNode): Record<string, string> {
+  return Object.fromEntries(
+    getLeafPaneIdsInVisualOrder(root).map((paneId, index) => [paneId, alphabeticPaneLabel(index)]),
+  );
+}
+
+export function getTerminalReferences(root: PaneNode): TerminalReference[] {
+  const paneLabels = getPaneDisplayLabels(root);
+  return getLeafPaneIdsInVisualOrder(root).flatMap((paneId) => {
+    const leaf = findLeafPane(root, paneId);
+    if (!leaf) return [];
+    return getLeafTerminalTabs(leaf)
+      .filter(isVisibleTerminalTab)
+      .flatMap((terminalTab, index) =>
+        terminalTab.runtime_session_id
+          ? [{ terminal_ref: `${paneLabels[paneId]}${index + 1}`, runtime_session_id: terminalTab.runtime_session_id }]
+          : [],
+      );
+  });
+}
+
+export function isVisibleTerminalTab(terminalTab: PaneTerminalTab): boolean {
+  return !(
+    terminalTab.title === "新建终端" &&
+    !terminalTab.runtime_session_id &&
+    !terminalTab.saved_session_id &&
+    !terminalTab.restore_status &&
+    terminalTab.connection_source !== "missing"
+  );
+}
+
+/**
+ * The default split is 50/50.  Permit it only when both resulting panes retain
+ * at least a quarter of the full workspace along the split axis.
+ */
+export function canSplitPane(root: PaneNode, targetPaneId: string, direction: PaneSplitDirection): boolean {
+  const panes = collectPaneGeometry(root);
+  const target = panes.find((item) => item.pane.id === targetPaneId);
+  if (!target) return false;
+
+  const targetSize = direction === "horizontal" ? target.width : target.height;
+  const inheritedSize = direction === "horizontal" ? target.height : target.width;
+  return inheritedSize >= MIN_PANE_FRACTION && targetSize * 0.5 >= MIN_PANE_FRACTION;
+}
+
+function alphabeticPaneLabel(index: number): string {
+  let value = index + 1;
+  let label = "";
+  while (value > 0) {
+    value -= 1;
+    label = String.fromCharCode(65 + (value % 26)) + label;
+    value = Math.floor(value / 26);
+  }
+  return label;
+}
+
+function collectPaneGeometry(root: PaneNode): PaneGeometry[] {
+  const panes: PaneGeometry[] = [];
+  let order = 0;
+
+  function visit(node: PaneNode, left: number, top: number, width: number, height: number) {
+    if (node.kind === "leaf") {
+      panes.push({ pane: node, left, top, width, height, order: order++ });
+      return;
+    }
+    if (node.direction === "horizontal") {
+      const firstWidth = width * node.ratio;
+      visit(node.first, left, top, firstWidth, height);
+      visit(node.second, left + firstWidth, top, width - firstWidth, height);
+      return;
+    }
+    const firstHeight = height * node.ratio;
+    visit(node.first, left, top, width, firstHeight);
+    visit(node.second, left, top + firstHeight, width, height - firstHeight);
+  }
+
+  visit(root, 0, 0, 1, 1);
+  return panes;
 }
 
 export function normalizeWorkspaceTabsPaneIds<T extends { active_pane_id: string; root: PaneNode }>(

@@ -1,11 +1,13 @@
 // Author: Liz
 use std::{
+    collections::{HashMap, HashSet},
     path::Path,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use tauri::Emitter;
 use uuid::Uuid;
@@ -117,9 +119,16 @@ struct AiToolExecutionResult {
     structured_content: Option<Value>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct TerminalReference {
+    pub terminal_ref: String,
+    pub runtime_session_id: String,
+}
+
 #[derive(Clone)]
 pub struct AiToolService {
     writer: Arc<dyn AiToolCommandWriter>,
+    terminal_references: Arc<Mutex<HashMap<String, String>>>,
     credential_service: Option<CredentialService>,
     transfer_queue: Option<TransferQueue>,
     sftp_service: Option<SftpService>,
@@ -210,6 +219,7 @@ impl AiToolService {
     pub fn with_writer(writer: Arc<dyn AiToolCommandWriter>) -> Self {
         Self {
             writer,
+            terminal_references: Arc::new(Mutex::new(HashMap::new())),
             credential_service: None,
             transfer_queue: None,
             sftp_service: None,
@@ -224,6 +234,7 @@ impl AiToolService {
     ) -> Self {
         Self {
             writer,
+            terminal_references: Arc::new(Mutex::new(HashMap::new())),
             credential_service: Some(credential_service),
             transfer_queue: None,
             sftp_service: None,
@@ -242,6 +253,7 @@ impl AiToolService {
     ) -> Self {
         Self {
             writer,
+            terminal_references: Arc::new(Mutex::new(HashMap::new())),
             credential_service: Some(credential_service),
             transfer_queue: Some(transfer_queue),
             sftp_service: Some(sftp_service),
@@ -265,6 +277,111 @@ impl AiToolService {
             .into_iter()
             .find(|runtime| runtime.runtime_session_id == runtime_session_id)
             .and_then(|runtime| runtime.saved_session_id))
+    }
+
+    /// Replaces the in-memory UI numbering map. The map is deliberately
+    /// transient: it is never stored with MCP settings, pending calls, or audits.
+    /// A resolved request still retains its supplied label in the existing
+    /// pending/audit summary path for human-readable target confirmation.
+    pub fn set_terminal_references(&self, references: Vec<TerminalReference>) -> AppResult<()> {
+        let active_runtime_ids = self
+            .writer
+            .list_terminals()?
+            .into_iter()
+            .map(|runtime| runtime.runtime_session_id)
+            .collect::<HashSet<_>>();
+        let mut next = HashMap::new();
+        let mut mapped_runtime_ids = HashSet::new();
+
+        for reference in references {
+            let terminal_ref = validate_terminal_reference(&reference.terminal_ref)?;
+            let runtime_session_id = required_text("运行时会话 ID", &reference.runtime_session_id)?;
+            if !active_runtime_ids.contains(&runtime_session_id) {
+                return Err(AppError::validation(format!(
+                    "终端编号 {terminal_ref} 指向的运行终端不存在"
+                )));
+            }
+            if next
+                .insert(terminal_ref.clone(), runtime_session_id.clone())
+                .is_some()
+            {
+                return Err(AppError::validation(format!(
+                    "终端编号重复: {terminal_ref}"
+                )));
+            }
+            if !mapped_runtime_ids.insert(runtime_session_id) {
+                return Err(AppError::validation("同一运行终端不能映射多个终端编号"));
+            }
+        }
+
+        *self
+            .terminal_references
+            .lock()
+            .map_err(|_| AppError::ai("终端编号映射锁已损坏"))? = next;
+        Ok(())
+    }
+
+    /// Resolves only terminal read/write aliases. The returned arguments retain
+    /// `terminal_ref` for human-readable pending/audit summaries and add the
+    /// established runtime ID for the existing execution path.
+    pub fn resolve_terminal_target_arguments(
+        &self,
+        tool_id: &str,
+        mut arguments: Value,
+    ) -> AppResult<Value> {
+        if !matches!(tool_id, "terminal.read" | "terminal.write") {
+            return Ok(arguments);
+        }
+        let object = arguments
+            .as_object_mut()
+            .ok_or_else(|| AppError::validation("终端工具参数必须是对象"))?;
+        let terminal_ref = object
+            .get("terminal_ref")
+            .and_then(Value::as_str)
+            .map(validate_terminal_reference)
+            .transpose()?;
+        let runtime_session_id = object
+            .get("runtime_session_id")
+            .and_then(Value::as_str)
+            .map(|value| required_text("运行时会话 ID", value))
+            .transpose()?;
+
+        match (terminal_ref, runtime_session_id) {
+            (Some(terminal_ref), Some(runtime_session_id)) => {
+                let resolved = self.runtime_id_for_terminal_reference(&terminal_ref)?;
+                if resolved != runtime_session_id {
+                    return Err(AppError::validation(
+                        "terminal_ref 与 runtime_session_id 指向不同终端",
+                    ));
+                }
+            }
+            (Some(terminal_ref), None) => {
+                let runtime_session_id = self.runtime_id_for_terminal_reference(&terminal_ref)?;
+                object.insert(
+                    "runtime_session_id".to_string(),
+                    Value::String(runtime_session_id),
+                );
+            }
+            (None, Some(_)) => {}
+            (None, None) => {
+                return Err(AppError::validation(
+                    "terminal.read 和 terminal.write 必须提供 runtime_session_id 或 terminal_ref",
+                ));
+            }
+        }
+        Ok(arguments)
+    }
+
+    fn runtime_id_for_terminal_reference(&self, terminal_ref: &str) -> AppResult<String> {
+        let terminal_ref = validate_terminal_reference(terminal_ref)?;
+        self.terminal_references
+            .lock()
+            .map_err(|_| AppError::ai("终端编号映射锁已损坏"))?
+            .get(&terminal_ref)
+            .cloned()
+            .ok_or_else(|| {
+                AppError::validation(format!("终端编号未关联当前运行终端: {terminal_ref}"))
+            })
     }
 
     pub fn prepare(
@@ -2152,6 +2269,7 @@ fn target_summary(arguments: &Value) -> Option<String> {
     let object = arguments.as_object()?;
     let mut parts = Vec::new();
     for key in [
+        "terminal_ref",
         "target_title",
         "pane_id",
         "runtime_session_id",
@@ -2547,6 +2665,28 @@ fn summarize_value(key: &str, value: &Value) -> String {
         Value::Array(value) => format!("[{} 项]", value.len()),
         Value::Object(value) => format!("{{{} 项}}", value.len()),
     }
+}
+
+fn validate_terminal_reference(value: &str) -> AppResult<String> {
+    let value = value.trim().to_ascii_uppercase();
+    let first_digit = value
+        .char_indices()
+        .find_map(|(index, character)| character.is_ascii_digit().then_some(index))
+        .ok_or_else(|| AppError::validation("terminal_ref 必须采用 A1 形式"))?;
+    let (pane_label, tab_index) = value.split_at(first_digit);
+    if pane_label.is_empty()
+        || !pane_label
+            .chars()
+            .all(|character| character.is_ascii_uppercase())
+        || tab_index.is_empty()
+        || !tab_index
+            .chars()
+            .all(|character| character.is_ascii_digit())
+        || tab_index.starts_with('0')
+    {
+        return Err(AppError::validation("terminal_ref 必须采用 A1 形式"));
+    }
+    Ok(value)
 }
 
 fn string_arg(arguments: &Value, key: &str) -> AppResult<String> {

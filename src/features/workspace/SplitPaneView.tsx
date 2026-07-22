@@ -12,7 +12,13 @@ import { routeSyncTerminalInput, useSyncInputStore, type TerminalInputSource } f
 import { scheduleAfterPaintDelay } from "../../lib/renderScheduling";
 import { DragOverlay, type DragOverlayHandle } from "../../components/drag/DragOverlay";
 import { useFlipLayout } from "../../components/drag/useFlipLayout";
-import { getActiveTerminalTab, getLeafTerminalTabs } from "./workspaceLayout";
+import {
+  canSplitPane,
+  getActiveTerminalTab,
+  getLeafTerminalTabs,
+  getPaneDisplayLabels,
+  isVisibleTerminalTab,
+} from "./workspaceLayout";
 import type { PaneNode, PaneSplitDirection } from "./types";
 
 const ACTIVE_XTERM_MOUNT_DELAY_MS = 48;
@@ -47,6 +53,8 @@ interface SplitPaneViewProps {
   dragState?: PaneTabDragState | null;
   dragStateRef?: MutableRefObject<PaneTabDragState | null>;
   onDragStateChange?: (dragState: PaneTabDragState | null) => void;
+  paneLabels?: Record<string, string>;
+  splitAvailability?: PaneSplitAvailability;
 }
 
 interface PaneTabDragState {
@@ -71,6 +79,8 @@ interface PaneTabPointerDragState extends PaneTabDragState {
   active: boolean;
 }
 
+type PaneSplitAvailability = Record<string, Record<PaneSplitDirection, boolean>>;
+
 export function SplitPaneView({
   root,
   activePaneId,
@@ -90,6 +100,8 @@ export function SplitPaneView({
   dragState: inheritedDragState,
   dragStateRef: inheritedDragStateRef,
   onDragStateChange: inheritedDragStateChange,
+  paneLabels: inheritedPaneLabels,
+  splitAvailability: inheritedSplitAvailability,
 }: SplitPaneViewProps) {
   const [localDragState, setLocalDragState] = useState<PaneTabDragState | null>(null);
   const localDragStateRef = useRef<PaneTabDragState | null>(null);
@@ -99,6 +111,16 @@ export function SplitPaneView({
     localDragStateRef.current = nextDragState;
     setLocalDragState(nextDragState);
   });
+  const paneLabels = inheritedPaneLabels ?? getPaneDisplayLabels(root);
+  const splitAvailability = inheritedSplitAvailability ?? Object.fromEntries(
+    Object.keys(paneLabels).map((paneId) => [
+      paneId,
+      {
+        horizontal: canSplitPane(root, paneId, "horizontal"),
+        vertical: canSplitPane(root, paneId, "vertical"),
+      },
+    ]),
+  ) as PaneSplitAvailability;
   const handleSplitDividerPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>, split: Extract<PaneNode, { kind: "split" }>) => {
       if (!onResizeSplit) return;
@@ -191,6 +213,8 @@ export function SplitPaneView({
           dragState={dragState}
           dragStateRef={dragStateRef}
           onDragStateChange={onDragStateChange}
+          paneLabels={paneLabels}
+          splitAvailability={splitAvailability}
         />
         <div
           className="zt-split-divider"
@@ -217,6 +241,8 @@ export function SplitPaneView({
           dragState={dragState}
           dragStateRef={dragStateRef}
           onDragStateChange={onDragStateChange}
+          paneLabels={paneLabels}
+          splitAvailability={splitAvailability}
         />
       </div>
     );
@@ -241,6 +267,8 @@ export function SplitPaneView({
       dragState={dragState}
       dragStateRef={dragStateRef}
       onDragStateChange={onDragStateChange}
+      paneLabel={paneLabels[root.id] ?? "A"}
+      splitAvailability={splitAvailability[root.id] ?? { horizontal: false, vertical: false }}
     />
   );
 }
@@ -263,6 +291,8 @@ function LeafPane({
   dragState,
   dragStateRef,
   onDragStateChange,
+  paneLabel,
+  splitAvailability,
 }: {
   root: Extract<PaneNode, { kind: "leaf" }>;
   active: boolean;
@@ -281,6 +311,8 @@ function LeafPane({
   dragState: PaneTabDragState | null;
   dragStateRef: MutableRefObject<PaneTabDragState | null>;
   onDragStateChange: (dragState: PaneTabDragState | null) => void;
+  paneLabel: string;
+  splitAvailability: Record<PaneSplitDirection, boolean>;
 }) {
   const terminalTabs = getLeafTerminalTabs(root);
   const activeTerminalTab = getActiveTerminalTab(root);
@@ -325,7 +357,12 @@ function LeafPane({
   );
 
   const activatePane = useCallback(() => onActivatePane(root.id), [onActivatePane, root.id]);
-  const visibleTerminalTabs = terminalTabs.filter((terminalTab) => !isEmptyPaneTerminalTab(terminalTab));
+  const visibleTerminalTabs = terminalTabs.filter(isVisibleTerminalTab);
+  const terminalTabIdentifiers = new Map(
+    visibleTerminalTabs.map((terminalTab, index) => [terminalTab.id, `${paneLabel}${index + 1}`]),
+  );
+  const activePaneIdentifier = terminalTabIdentifiers.get(activeTerminalTab.id) ?? paneLabel;
+  const paneIdentifier = active ? activePaneIdentifier : paneLabel;
 
   useLayoutEffect(() => {
     scheduledRuntimeSessionIdRef.current = null;
@@ -707,9 +744,18 @@ function LeafPane({
           </button>
         </div>
         {active ? <span className="zt-pane-active-indicator" aria-hidden="true" /> : null}
+        <span
+          className={`zt-pane-identifier ${active ? "active" : ""}`}
+          aria-label={`分栏标签 ${paneIdentifier}`}
+          data-pane-identifier={paneIdentifier}
+        >
+          {paneIdentifier}
+        </span>
         <TerminalToolbar
           onSplitPane={handleSplitPane}
           onClosePane={handleClosePane}
+          canSplitHorizontal={splitAvailability.horizontal}
+          canSplitVertical={splitAvailability.vertical}
           syncChannelMember={activeSyncChannelMember}
           onLeaveSyncChannel={() => leaveSyncChannel(activeTerminalTab.id)}
           onCloseSyncChannel={closeSyncChannel}
@@ -801,15 +847,5 @@ function LeafPane({
         />
       )}
     </section>
-  );
-}
-
-function isEmptyPaneTerminalTab(terminalTab: ReturnType<typeof getLeafTerminalTabs>[number]) {
-  return (
-    terminalTab.title === "新建终端" &&
-    !terminalTab.runtime_session_id &&
-    !terminalTab.saved_session_id &&
-    !terminalTab.restore_status &&
-    terminalTab.connection_source !== "missing"
   );
 }

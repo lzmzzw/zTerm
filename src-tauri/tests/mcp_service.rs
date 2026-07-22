@@ -7,17 +7,18 @@ use zterm_lib::{
     commands::mcp::start_mcp_if_enabled,
     error::AppResult,
     models::{
+        ai::AiToolPrepareRequest,
         session::{AuthMode, SavedSessionDraft, SessionType},
         settings::McpSettings,
         terminal::{RuntimeSessionInfo, RuntimeSessionKind},
     },
     services::{
-        ai_tool_service::{AiToolCommandWriter, AiToolService},
+        ai_tool_service::{AiToolCommandWriter, AiToolService, TerminalReference},
         credential_service::{CredentialService, MemorySecretStore},
         mcp_service::{handle_http_request, McpHttpRequest, McpService, DEFAULT_MCP_PORT},
     },
     storage::{
-        ai::upsert_ai_connection_approval_policy,
+        ai::{get_ai_tool_pending_state, upsert_ai_connection_approval_policy},
         sessions::save_session,
         settings::{get_app_settings, save_app_settings},
         sqlite::SqliteStore,
@@ -167,8 +168,11 @@ async fn mcp_http_handler_supports_initialize_tools_list_and_pending_tool_call()
         .find(|tool| tool["name"] == "terminal.write")
         .expect("terminal.write schema");
     assert_eq!(
-        terminal_write["inputSchema"]["required"],
-        json!(["runtime_session_id", "data"])
+        terminal_write["inputSchema"]["oneOf"],
+        json!([
+            { "required": ["runtime_session_id", "data"] },
+            { "required": ["terminal_ref", "data"] }
+        ])
     );
 
     let call = handle_http_request(
@@ -458,6 +462,137 @@ async fn mcp_terminal_read_and_write_return_output_with_cursor() {
 }
 
 #[tokio::test]
+async fn mcp_terminal_read_and_write_resolve_current_terminal_reference_without_ui_mutation() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+    tools
+        .set_terminal_references(vec![TerminalReference {
+            terminal_ref: "A1".to_string(),
+            runtime_session_id: "runtime-1".to_string(),
+        }])
+        .expect("current workspace reference should register");
+
+    let read = handle_http_request(
+        Arc::clone(&store),
+        tools.clone(),
+        "token-1",
+        authed_request(json!({
+            "jsonrpc": "2.0",
+            "id": 70,
+            "method": "tools/call",
+            "params": { "name": "terminal.read", "arguments": { "terminal_ref": "A1" } }
+        })),
+    )
+    .await
+    .expect("terminal.read should resolve A1");
+    let read_body: Value = serde_json::from_slice(&read.body).expect("json body");
+    assert_eq!(
+        read_body["result"]["structuredContent"]["status"],
+        "succeeded"
+    );
+    assert_eq!(
+        read_body["result"]["structuredContent"]["result"]["runtime_session_id"],
+        "runtime-1"
+    );
+
+    let write = handle_http_request(
+        store,
+        tools,
+        "token-1",
+        authed_request(json!({
+            "jsonrpc": "2.0",
+            "id": 71,
+            "method": "tools/call",
+            "params": { "name": "terminal.write", "arguments": { "terminal_ref": "A1", "data": "pwd\\r" } }
+        })),
+    )
+    .await
+    .expect("terminal.write should resolve A1");
+    let write_body: Value = serde_json::from_slice(&write.body).expect("json body");
+    assert_eq!(
+        write_body["result"]["structuredContent"]["status"],
+        "succeeded"
+    );
+    assert_eq!(
+        write_body["result"]["structuredContent"]["result"]["runtime_session_id"],
+        "runtime-1"
+    );
+}
+
+#[test]
+fn terminal_reference_is_limited_to_mcp_terminal_calls() {
+    let store = SqliteStore::open_in_memory().expect("store should open");
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+    tools
+        .set_terminal_references(vec![TerminalReference {
+            terminal_ref: "A1".to_string(),
+            runtime_session_id: "runtime-1".to_string(),
+        }])
+        .expect("current workspace reference should register");
+
+    let error = tools
+        .prepare(
+            &store,
+            AiToolPrepareRequest {
+                tool_id: "terminal.read".to_string(),
+                arguments: json!({ "terminal_ref": "A1" }),
+                reason: None,
+                requested_by: Some("ai".to_string()),
+                conversation_id: None,
+                run_id: None,
+                step_id: None,
+            },
+        )
+        .expect_err("non-MCP terminal calls must keep their runtime ID contract");
+
+    assert!(error.to_string().contains("runtime_session_id"));
+}
+
+#[tokio::test]
+async fn mcp_terminal_reference_rejects_ambiguous_or_stale_targets() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+    let ambiguous = handle_http_request(
+        Arc::clone(&store),
+        tools.clone(),
+        "token-1",
+        authed_request(json!({
+            "jsonrpc": "2.0",
+            "id": 72,
+            "method": "tools/call",
+            "params": {
+                "name": "terminal.read",
+                "arguments": { "terminal_ref": "A1", "runtime_session_id": "runtime-1" }
+            }
+        })),
+    )
+    .await
+    .expect("ambiguous target should be a JSON-RPC response");
+    let ambiguous_body: Value = serde_json::from_slice(&ambiguous.body).expect("json body");
+    assert_eq!(ambiguous_body["error"]["code"], -32602);
+
+    let stale = handle_http_request(
+        store,
+        tools,
+        "token-1",
+        authed_request(json!({
+            "jsonrpc": "2.0",
+            "id": 73,
+            "method": "tools/call",
+            "params": { "name": "terminal.read", "arguments": { "terminal_ref": "A1" } }
+        })),
+    )
+    .await
+    .expect("stale target should be a JSON-RPC response");
+    let stale_body: Value = serde_json::from_slice(&stale.body).expect("json body");
+    assert_eq!(stale_body["error"]["code"], -32602);
+    assert!(stale_body["error"]["message"]
+        .as_str()
+        .expect("error message")
+        .contains("未关联"));
+}
+
+#[tokio::test]
 async fn mcp_uses_the_target_ssh_connection_approval_policy() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
     save_session(
@@ -489,6 +624,12 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
     )
     .expect("connection policy should save");
     let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+    tools
+        .set_terminal_references(vec![TerminalReference {
+            terminal_ref: "A1".to_string(),
+            runtime_session_id: "runtime-1".to_string(),
+        }])
+        .expect("current workspace reference should register");
 
     let pending = handle_http_request(
         Arc::clone(&store),
@@ -500,7 +641,7 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
             "method": "tools/call",
             "params": {
                 "name": "terminal.read",
-                "arguments": { "runtime_session_id": "runtime-1" }
+                "arguments": { "terminal_ref": "A1" }
             }
         })),
     )
@@ -511,6 +652,18 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
         pending_body["result"]["structuredContent"]["status"],
         "pending"
     );
+    let pending_id = pending_body["result"]["structuredContent"]["invocation_id"]
+        .as_str()
+        .expect("pending invocation ID");
+    let (pending, arguments) = get_ai_tool_pending_state(store.as_ref(), pending_id)
+        .expect("resolved MCP pending arguments should persist");
+    assert!(pending
+        .target_summary
+        .as_deref()
+        .expect("terminal target summary")
+        .contains("terminal_ref=A1"));
+    assert_eq!(arguments["terminal_ref"], "A1");
+    assert_eq!(arguments["runtime_session_id"], "runtime-1");
 
     upsert_ai_connection_approval_policy(
         store.as_ref(),
@@ -528,7 +681,7 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
             "method": "tools/call",
             "params": {
                 "name": "terminal.read",
-                "arguments": { "runtime_session_id": "runtime-1" }
+                "arguments": { "terminal_ref": "A1" }
             }
         })),
     )

@@ -656,6 +656,65 @@ describe("workspaceStore pane tabs", () => {
     expect(workspaceTab.active_pane_id).not.toBe("pane-2");
   });
 
+  it("stops splitting a pane once another horizontal split would fall below quarter width", () => {
+    const root: PaneNode = {
+      kind: "split",
+      id: "split-1",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: {
+        kind: "split",
+        id: "split-2",
+        direction: "horizontal",
+        ratio: 0.5,
+        first: {
+          kind: "split",
+          id: "split-3",
+          direction: "horizontal",
+          ratio: 0.5,
+          first: { kind: "leaf", id: "pane-a", title: "A", runtime_session_id: null, saved_session_id: null },
+          second: { kind: "leaf", id: "pane-b", title: "B", runtime_session_id: null, saved_session_id: null },
+        },
+        second: { kind: "leaf", id: "pane-c", title: "C", runtime_session_id: null, saved_session_id: null },
+      },
+      second: { kind: "leaf", id: "pane-d", title: "D", runtime_session_id: null, saved_session_id: null },
+    };
+    const workspace: WorkspaceRuntime = {
+      id: DEFAULT_WORKSPACE_ID,
+      name: "默认工作区",
+      status: "running",
+      active_tab_id: "tab-1",
+      activeTabId: "tab-1",
+      sort_order: 0,
+      created_at_ms: 1,
+      updated_at_ms: 1,
+      tabs: [{
+        id: "tab-1",
+        title: "终端",
+        active_pane_id: "pane-d",
+        root,
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+      }],
+    };
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      tabs: workspace.tabs,
+      activeTabId: workspace.activeTabId,
+    });
+
+    useWorkspaceStore.getState().splitActivePane("horizontal");
+    expect(leafPaneIds(useWorkspaceStore.getState().tabs[0].root)).toHaveLength(5);
+
+    useWorkspaceStore.getState().splitActivePane("horizontal");
+    expect(leafPaneIds(useWorkspaceStore.getState().tabs[0].root)).toHaveLength(5);
+
+    useWorkspaceStore.getState().splitActivePane("vertical");
+    expect(leafPaneIds(useWorkspaceStore.getState().tabs[0].root)).toHaveLength(6);
+  });
+
   it("returns the created pane tab and binds a runtime to that exact tab even after focus changes", () => {
     const workspaceA = runtimeWorkspace("workspace-a", "runtime-a");
     if (workspaceA.tabs[0].root.kind === "leaf") {

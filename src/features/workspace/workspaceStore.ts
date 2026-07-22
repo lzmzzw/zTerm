@@ -3,6 +3,7 @@ import { create } from "zustand";
 
 import type { RuntimeSessionInfo } from "../terminal/terminalStore";
 import {
+  canSplitPane,
   findLeafPane,
   firstLeafPaneId,
   getActiveTerminalTab,
@@ -363,20 +364,26 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       };
     }),
   splitActivePane: (direction) =>
-    set((state) => updateActiveWorkspace(state, (workspace) => ({
-      ...workspace,
-      tabs: workspace.tabs.map((tab) => {
-        if (tab.id !== workspace.activeTabId) return tab;
-        const newPane = createPane(tab.root);
-        return {
-          ...tab,
-          active_pane_id: newPane.id,
-          root: splitPane(tab.root, tab.active_pane_id, direction, newPane),
-          updated_at_ms: Date.now(),
-        };
-      }),
-      updated_at_ms: Date.now(),
-    }))),
+    set((state) => updateActiveWorkspace(state, (workspace) => {
+      const activeTab = workspace.tabs.find((tab) => tab.id === workspace.activeTabId);
+      if (!activeTab || !canSplitPane(activeTab.root, activeTab.active_pane_id, direction)) return workspace;
+
+      const newPane = createPane(activeTab.root);
+      return {
+        ...workspace,
+        tabs: workspace.tabs.map((tab) =>
+          tab.id === activeTab.id
+            ? {
+                ...tab,
+                active_pane_id: newPane.id,
+                root: splitPane(tab.root, tab.active_pane_id, direction, newPane),
+                updated_at_ms: Date.now(),
+              }
+            : tab,
+        ),
+        updated_at_ms: Date.now(),
+      };
+    })),
   resizeSplitPane: (splitId, ratio) =>
     set((state) => updateActiveWorkspace(state, (workspace) => ({
       ...workspace,

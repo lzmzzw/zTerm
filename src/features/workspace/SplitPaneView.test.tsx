@@ -147,6 +147,54 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
+  it("renders dynamic pane identifiers without adding identifiers to tabs", () => {
+    const root: PaneNode = {
+      kind: "split",
+      id: "split-root",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: {
+        kind: "leaf",
+        id: "pane-a",
+        runtime_session_id: null,
+        saved_session_id: null,
+        title: "连接二",
+        active_terminal_tab_id: "pane-a-tab-2",
+        terminal_tabs: [
+          { id: "pane-a-tab-1", title: "连接一", runtime_session_id: null, saved_session_id: null },
+          { id: "pane-a-tab-2", title: "连接二", runtime_session_id: null, saved_session_id: null },
+        ],
+      },
+      second: {
+        kind: "split",
+        id: "split-right",
+        direction: "vertical",
+        ratio: 0.5,
+        first: leaf("pane-b", "连接三"),
+        second: leaf("pane-c", "新建终端"),
+      },
+    };
+    const view = render(
+      <SplitPaneView
+        root={root}
+        activePaneId="pane-a"
+        onActivatePane={vi.fn()}
+        onAddPaneTab={vi.fn()}
+        onSelectPaneTab={vi.fn()}
+        onClosePaneTab={vi.fn()}
+        onSplitPane={vi.fn()}
+        onClosePane={vi.fn()}
+      />,
+    );
+
+    const activeIdentifier = view.container.querySelector('[data-pane-identifier="A2"]');
+    expect(activeIdentifier?.classList.contains("active")).toBe(true);
+    expect(view.container.querySelector('[data-pane-identifier="B"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-pane-identifier="C"]')).not.toBeNull();
+    expect(view.container.querySelector(".zt-pane-tab-identifier")).toBeNull();
+    view.unmount();
+  });
+
   it("hides empty unconnected pane tabs while keeping the add button", () => {
     const root: PaneNode = leaf("pane-a", "新建终端");
     const view = render(

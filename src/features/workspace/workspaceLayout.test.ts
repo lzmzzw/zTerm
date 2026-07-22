@@ -2,9 +2,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canSplitPane,
   findLeafPane,
   findPane,
   firstLeafPaneId,
+  getLeafPaneIdsInVisualOrder,
+  getPaneDisplayLabels,
+  getTerminalReferences,
   removePane,
   splitPane,
   updateLeafPane,
@@ -103,6 +107,147 @@ describe("workspaceLayout", () => {
 
   it("returns null when removing the last pane", () => {
     expect(removePane(leaf("pane-a"), "pane-a")).toBeNull();
+  });
+
+  it("labels panes in visual reading order instead of binary-tree order", () => {
+    const root: PaneNode = {
+      kind: "split",
+      id: "split-columns",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: {
+        kind: "split",
+        id: "split-left",
+        direction: "vertical",
+        ratio: 0.5,
+        first: leaf("pane-a"),
+        second: leaf("pane-c"),
+      },
+      second: {
+        kind: "split",
+        id: "split-right",
+        direction: "vertical",
+        ratio: 0.5,
+        first: leaf("pane-b"),
+        second: leaf("pane-d"),
+      },
+    };
+
+    expect(getLeafPaneIdsInVisualOrder(root)).toEqual(["pane-a", "pane-b", "pane-c", "pane-d"]);
+    expect(getPaneDisplayLabels(root)).toEqual({
+      "pane-a": "A",
+      "pane-b": "B",
+      "pane-c": "C",
+      "pane-d": "D",
+    });
+  });
+
+  it("builds transient MCP terminal references from the visible tab order", () => {
+    const root: PaneNode = {
+      kind: "split",
+      id: "split-root",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: {
+        kind: "leaf",
+        id: "pane-a",
+        title: "生产机",
+        runtime_session_id: null,
+        saved_session_id: null,
+        active_terminal_tab_id: "pane-a-tab-2",
+        terminal_tabs: [
+          { id: "pane-a-tab-1", title: "新建终端", runtime_session_id: null, saved_session_id: null },
+          { id: "pane-a-tab-2", title: "生产机", runtime_session_id: "runtime-a", saved_session_id: "ssh-a" },
+        ],
+      },
+      second: {
+        kind: "leaf",
+        id: "pane-b",
+        title: "本地终端",
+        runtime_session_id: "runtime-b",
+        saved_session_id: null,
+      },
+    };
+
+    expect(getTerminalReferences(root)).toEqual([
+      { terminal_ref: "A1", runtime_session_id: "runtime-a" },
+      { terminal_ref: "B1", runtime_session_id: "runtime-b" },
+    ]);
+  });
+
+  it("uses the target pane dimensions instead of the total number of panes", () => {
+    const fullRow: PaneNode = {
+      kind: "split",
+      id: "split-row-1",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: {
+        kind: "split",
+        id: "split-row-2",
+        direction: "horizontal",
+        ratio: 0.5,
+        first: {
+          kind: "split",
+          id: "split-row-3",
+          direction: "horizontal",
+          ratio: 0.5,
+          first: leaf("pane-a"),
+          second: leaf("pane-b"),
+        },
+        second: leaf("pane-c"),
+      },
+      second: leaf("pane-d"),
+    };
+    const root: PaneNode = {
+      kind: "split",
+      id: "split-rows",
+      direction: "vertical",
+      ratio: 0.5,
+      first: fullRow,
+      second: leaf("pane-e"),
+    };
+
+    expect(canSplitPane(root, "pane-a", "horizontal")).toBe(false);
+    expect(canSplitPane(root, "pane-e", "horizontal")).toBe(true);
+    expect(canSplitPane(root, "pane-a", "vertical")).toBe(false);
+  });
+
+  it("allows a half-width pane to become two quarter-width panes, then stops", () => {
+    const root: PaneNode = {
+      kind: "split",
+      id: "split-root",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: leaf("pane-a"),
+      second: leaf("pane-b"),
+    };
+    const afterSplit = splitPane(root, "pane-a", "horizontal", leaf("pane-c"));
+
+    expect(canSplitPane(root, "pane-a", "horizontal")).toBe(true);
+    expect(canSplitPane(afterSplit, "pane-a", "horizontal")).toBe(false);
+    expect(canSplitPane(afterSplit, "pane-c", "horizontal")).toBe(false);
+    expect(canSplitPane(afterSplit, "pane-b", "horizontal")).toBe(true);
+  });
+
+  it("allows either split direction for the half-size pane in a three-pane layout", () => {
+    const root: PaneNode = {
+      kind: "split",
+      id: "split-root",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: leaf("pane-a"),
+      second: {
+        kind: "split",
+        id: "split-right",
+        direction: "vertical",
+        ratio: 0.5,
+        first: leaf("pane-b"),
+        second: leaf("pane-c"),
+      },
+    };
+
+    expect(canSplitPane(root, "pane-a", "horizontal")).toBe(true);
+    expect(canSplitPane(root, "pane-a", "vertical")).toBe(true);
   });
 
   it("updates only the targeted leaf pane runtime binding", () => {

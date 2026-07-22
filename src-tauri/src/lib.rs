@@ -43,6 +43,7 @@ pub fn run() {
             commands::mcp::mcp_server_set_enabled,
             commands::mcp::mcp_server_rotate_token,
             commands::mcp::mcp_tool_catalog_list,
+            commands::mcp::mcp_terminal_refs_set,
             commands::terminal_profile::terminal_profile_list,
             commands::terminal_profile::terminal_profile_detect,
             commands::terminal_profile::terminal_profile_set_default,

@@ -36,12 +36,15 @@
 | `mcp_server_set_enabled` | `{ enabled, port? }` | `McpServerStatus` | 启用或关闭本机 MCP Streamable HTTP 服务，并同步保存 `AppSettings.mcp` |
 | `mcp_server_rotate_token` | 无 | `McpServerStatus` | 轮换当前运行期 Bearer token；token 不写入 `AppSettings` |
 | `mcp_tool_catalog_list` | 无 | `McpToolDefinition[]` | 返回 MCP 专用 allowlist、风险信息和输入 schema，供设置页展示 |
+| `mcp_terminal_refs_set` | `{ references: [{ terminal_ref, runtime_session_id }] }` | `null` | 主界面内部命令：整体替换当前工作台的内存编号映射；不对外暴露为 MCP 工具，不写入设置、SQLite 或日志 |
 
 `AppSettings.workspace_restore_strategy` 支持 `visible_first`、`connect_all`、`layout_only`，旧设置 JSON 缺字段时默认 `visible_first`。`visible_first` 先显示布局，再优先恢复当前可见 pane/tab；`connect_all` 显示布局后尽快低并发连接全部标签；`layout_only` 只恢复布局和 queued 状态，不自动打开终端。`settings_get` 和 `settings_reset` 返回的 `AppSettings.shortcuts` 会合并当前 `shortcut_registry_list` 中缺失的动作，调用方应以返回值作为 UI 展示和后续保存的有效配置。
 
 `AppSettings.mcp` 为 `{ enabled, port? }`，旧设置缺字段时默认 `{ enabled: false, port: null }`；`port=null` 优先使用稳定默认端口 `9419`。启用状态会在 zTerm 启动时恢复监听，不依赖打开设置页；多开实例发现目标端口已占用时自动监听系统分配的本机可用端口，实际地址以该实例返回的 `McpServerStatus.endpoint` 为准，保存的首选端口不被覆盖。MCP token 只写入 OS keyring，不写入 SQLite settings JSON；首次升级且 keyring 尚无 MCP token 时可从 `ZTERM_MCP_TOKEN` 环境变量迁移，之后以 keyring 为准。token 只通过 `McpServerStatus.token` 返回给本地设置页复制或轮换。`McpServerStatus` 为 `{ enabled, endpoint?, token? }`，关闭时 `endpoint/token=null`。
 
 MCP 设置页的工具详情默认折叠，首次展开时通过只读命令 `mcp_tool_catalog_list` 读取 MCP 专用 allowlist；结果按工具 ID 命名空间分组展示，并缓存到本次设置页会话。加载过程提供 loading、空清单、失败和重试状态，不读取或展示 MCP Bearer token 之外的 secret。
+
+MCP 的 `terminal.read` 与 `terminal.write` 保持原有 `runtime_session_id` 参数和执行路径不变；仅额外接受二选一的 `terminal_ref`（如 `A1`）。编号只来自当前实时工作台、只在进程内保存，工作台重排、关闭标签或终端关闭后的旧编号会被拒绝；调用方不能同时提供两个定位参数。zTerm 会先将编号解析为当前已有 runtime，再沿用原有读写、保存连接审批、pending、审计与脱敏链路；解析不创建、关闭、移动、重命名或聚焦任何标签/分栏。为完成确认，单次已解析请求会在既有 pending 参数和 audit 摘要中保留编号及 runtime 目标；完整编号映射不持久化，`terminal.list` 的原有返回不变。
 
 ## Terminal Profiles
 
