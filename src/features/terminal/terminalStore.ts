@@ -7,6 +7,7 @@ import {
   consumeTerminalZmodemData,
   releaseTerminalZmodemRuntime,
 } from "./zmodemTransfer";
+import { TerminalReplayBuffer, type TerminalReplayResult } from "./terminalReplay";
 
 type RuntimeSessionKind = "local" | "ssh" | "ssh_container" | "rdp_placeholder";
 type HistoryScopeKind = "saved_session" | "local_profile";
@@ -92,6 +93,7 @@ interface TerminalState {
   closeTerminal: (runtimeSessionId: string, options?: { releaseExternalSession?: boolean }) => Promise<void>;
   appendOutput: (runtimeSessionId: string, data: string) => void;
   getOutputTail: (runtimeSessionId: string) => string;
+  getReplayOutput: (runtimeSessionId: string) => TerminalReplayResult;
   getVisualOutputTail: (runtimeSessionId: string) => string;
   getVisualOutputTailSnapshot: () => Record<string, string>;
   beginLiveOutput: (runtimeSessionId: string) => () => void;
@@ -102,11 +104,13 @@ let terminalEventSubscribers = 0;
 const outputTailByRuntime: Record<string, string> = {};
 const visualOutputTailByRuntime: Record<string, string> = {};
 const liveOutputSubscriptions: Record<string, number> = {};
+const replayBuffersByRuntime: Record<string, TerminalReplayBuffer> = {};
 
 export function resetTerminalOutputCachesForTest() {
   clearRecord(outputTailByRuntime);
   clearRecord(visualOutputTailByRuntime);
   clearRecord(liveOutputSubscriptions);
+  clearReplayBuffers();
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -235,6 +239,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
   async resizeTerminal(runtimeSessionId, cols, rows) {
     await invoke("terminal_resize", { runtimeSessionId, cols, rows });
+    replayBuffersByRuntime[runtimeSessionId]?.resize(cols, rows);
     set((state) => {
       const runtime = state.runtimes[runtimeSessionId];
       if (!runtime) return state;
@@ -259,6 +264,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       delete outputTailByRuntime[runtimeSessionId];
       delete visualOutputTailByRuntime[runtimeSessionId];
       delete liveOutputSubscriptions[runtimeSessionId];
+      disposeReplayBuffer(runtimeSessionId);
       return { runtimes, outputChunks, inputSerialByRuntime };
     });
   },
@@ -267,6 +273,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     visualOutputTailByRuntime[runtimeSessionId] = trimTerminalVisualTail(
       `${visualOutputTailByRuntime[runtimeSessionId] ?? ""}${data}`,
     );
+    replayBufferFor(runtimeSessionId, get().runtimes[runtimeSessionId])?.append(data);
     if ((liveOutputSubscriptions[runtimeSessionId] ?? 0) <= 0) {
       return;
     }
@@ -282,6 +289,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
   getOutputTail(runtimeSessionId) {
     return outputTailByRuntime[runtimeSessionId] ?? "";
+  },
+  getReplayOutput(runtimeSessionId) {
+    const rawOutput = outputTailByRuntime[runtimeSessionId] ?? "";
+    return replayBuffersByRuntime[runtimeSessionId]?.replay(rawOutput) ?? { data: rawOutput, kind: "raw" };
   },
   getVisualOutputTail(runtimeSessionId) {
     return visualOutputTailByRuntime[runtimeSessionId] ?? "";
@@ -327,5 +338,25 @@ function trimTerminalVisualTail(output: string) {
 function clearRecord(record: Record<string, unknown>) {
   for (const key of Object.keys(record)) {
     delete record[key];
+  }
+}
+
+function replayBufferFor(runtimeSessionId: string, runtime: RuntimeSessionInfo | undefined) {
+  if (replayBuffersByRuntime[runtimeSessionId]) {
+    return replayBuffersByRuntime[runtimeSessionId];
+  }
+  const buffer = new TerminalReplayBuffer(runtime?.cols, runtime?.rows);
+  replayBuffersByRuntime[runtimeSessionId] = buffer;
+  return buffer;
+}
+
+function disposeReplayBuffer(runtimeSessionId: string) {
+  replayBuffersByRuntime[runtimeSessionId]?.dispose();
+  delete replayBuffersByRuntime[runtimeSessionId];
+}
+
+function clearReplayBuffers() {
+  for (const runtimeSessionId of Object.keys(replayBuffersByRuntime)) {
+    disposeReplayBuffer(runtimeSessionId);
   }
 }

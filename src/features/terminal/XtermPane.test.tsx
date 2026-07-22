@@ -887,6 +887,17 @@ describe("XtermPane", () => {
     view.unmount();
   });
 
+  it("does not truncate a serialized screen replay", async () => {
+    const replay = `${"a".repeat(20_000)}TAIL`;
+    const view = render(<XtermPane data={replay} replayKind="screen" streamId="runtime-1" />);
+    const terminal = terminalMock.instances[0];
+
+    await flushQueuedTerminalWrites();
+
+    expect(writtenTerminalText(terminal)).toBe(replay);
+    view.unmount();
+  });
+
   it("marks input generated while parsing live output as a terminal response", () => {
     const onInput = vi.fn();
     const view = render(<XtermPane data="" streamId="runtime-1" onInput={onInput} />);

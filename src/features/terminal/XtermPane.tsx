@@ -17,6 +17,7 @@ import {
   type TerminalSemanticHighlighter,
 } from "./terminalSemanticHighlight";
 import type { CommandCompletionCandidate } from "./terminalStore";
+import type { TerminalReplayKind } from "./terminalReplay";
 import type { TerminalInputSource } from "./syncInputStore";
 
 interface XtermPaneProps {
@@ -25,6 +26,7 @@ interface XtermPaneProps {
   liveData?: string | null;
   liveSerial?: number | null;
   replayKey?: number | string | null;
+  replayKind?: TerminalReplayKind;
   streamId?: string | null;
   contextMenuEnabled?: boolean;
   onCompletionRequest?: (input: string, cursor: number) => Promise<CommandCompletionCandidate[]>;
@@ -97,6 +99,7 @@ export function XtermPane({
   liveData = null,
   liveSerial,
   replayKey = null,
+  replayKind = "raw",
   streamId = null,
   contextMenuEnabled = true,
   onCompletionRequest,
@@ -194,7 +197,7 @@ export function XtermPane({
 
   const enqueueTerminalOutput = useCallback(
     (data: string, suppressGeneratedInput: boolean) => {
-      const output = suppressGeneratedInput ? prepareReplayOutput(data) : data;
+      const output = suppressGeneratedInput ? prepareReplayOutput(data, replayKind) : data;
       if (!output) {
         replayingOutputRef.current = false;
         return;
@@ -205,7 +208,7 @@ export function XtermPane({
       });
       drainQueuedOutputWrites();
     },
-    [drainQueuedOutputWrites],
+    [drainQueuedOutputWrites, replayKind],
   );
 
   useEffect(() => {
@@ -583,8 +586,10 @@ function applyTerminalInput(current: string, value: string) {
   return next;
 }
 
-function prepareReplayOutput(data: string) {
-  const tail = data.length > MAX_REPLAY_OUTPUT_CHARS ? data.slice(-MAX_REPLAY_OUTPUT_CHARS) : data;
+function prepareReplayOutput(data: string, replayKind: TerminalReplayKind) {
+  const tail = replayKind === "screen" || data.length <= MAX_REPLAY_OUTPUT_CHARS
+    ? data
+    : data.slice(-MAX_REPLAY_OUTPUT_CHARS);
   return tail.replace(TERMINAL_STATUS_QUERY_PATTERN, "");
 }
 

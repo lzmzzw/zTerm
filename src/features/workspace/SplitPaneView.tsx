@@ -8,6 +8,7 @@ import { TerminalSnapshotPane } from "../terminal/TerminalSnapshotPane";
 import { useTerminalStore } from "../terminal/terminalStore";
 import { TerminalToolbar } from "../terminal/TerminalToolbar";
 import { XtermPane } from "../terminal/XtermPane";
+import type { TerminalReplayKind, TerminalReplayOutput, TerminalReplayResult } from "../terminal/terminalReplay";
 import { routeSyncTerminalInput, useSyncInputStore, type TerminalInputSource } from "../terminal/syncInputStore";
 import { scheduleAfterPaintDelay } from "../../lib/renderScheduling";
 import { DragOverlay, type DragOverlayHandle } from "../../components/drag/DragOverlay";
@@ -318,9 +319,15 @@ function LeafPane({
   const activeTerminalTab = getActiveTerminalTab(root);
   const activeRuntimeSessionId = activeTerminalTab.runtime_session_id ?? null;
   const [xtermRuntimeSessionId, setXtermRuntimeSessionId] = useState<string | null>(null);
-  const [xtermReplay, setXtermReplay] = useState<{ data: string; key: number; runtimeSessionId: string | null }>({
+  const [xtermReplay, setXtermReplay] = useState<{
+    data: string;
+    key: number;
+    kind: TerminalReplayKind;
+    runtimeSessionId: string | null;
+  }>({
     data: "",
     key: 0,
+    kind: "raw",
     runtimeSessionId: null,
   });
   const scheduledRuntimeSessionIdRef = useRef<string | null>(null);
@@ -385,13 +392,17 @@ function LeafPane({
     const delayMs = active ? ACTIVE_XTERM_MOUNT_DELAY_MS : INACTIVE_XTERM_MOUNT_DELAY_MS;
     return scheduleAfterPaintDelay(() => {
       if (scheduledRuntimeSessionIdRef.current === activeRuntimeSessionId) {
-        const replayData = useTerminalStore.getState().getOutputTail(activeRuntimeSessionId);
-        setXtermReplay((current) => ({
-          data: replayData,
-          key: current.runtimeSessionId === activeRuntimeSessionId ? current.key + 1 : 1,
-          runtimeSessionId: activeRuntimeSessionId,
-        }));
-        setXtermRuntimeSessionId(activeRuntimeSessionId);
+        const applyReplay = (replay: TerminalReplayOutput) => {
+          if (scheduledRuntimeSessionIdRef.current !== activeRuntimeSessionId) return;
+          setXtermReplay((current) => ({
+            data: replay.data,
+            key: current.runtimeSessionId === activeRuntimeSessionId ? current.key + 1 : 1,
+            kind: replay.kind,
+            runtimeSessionId: activeRuntimeSessionId,
+          }));
+          setXtermRuntimeSessionId(activeRuntimeSessionId);
+        };
+        applyTerminalReplay(useTerminalStore.getState().getReplayOutput(activeRuntimeSessionId), applyReplay);
       }
     }, delayMs);
   }, [active, activeRuntimeSessionId, allowXterm, xtermRuntimeSessionId]);
@@ -399,12 +410,20 @@ function LeafPane({
   useEffect(() => {
     if (!xtermLive || !activeRuntimeSessionId) return;
     if (xtermReplay.runtimeSessionId === activeRuntimeSessionId) return;
-    const replayData = useTerminalStore.getState().getOutputTail(activeRuntimeSessionId);
-    setXtermReplay((current) => ({
-      data: replayData,
-      key: current.runtimeSessionId === activeRuntimeSessionId ? current.key + 1 : 1,
-      runtimeSessionId: activeRuntimeSessionId,
-    }));
+    let cancelled = false;
+    const applyReplay = (replay: TerminalReplayOutput) => {
+      if (cancelled) return;
+      setXtermReplay((current) => ({
+        data: replay.data,
+        key: current.runtimeSessionId === activeRuntimeSessionId ? current.key + 1 : 1,
+        kind: replay.kind,
+        runtimeSessionId: activeRuntimeSessionId,
+      }));
+    };
+    applyTerminalReplay(useTerminalStore.getState().getReplayOutput(activeRuntimeSessionId), applyReplay);
+    return () => {
+      cancelled = true;
+    };
   }, [activeRuntimeSessionId, xtermLive, xtermReplay.runtimeSessionId]);
 
   useEffect(() => {
@@ -780,6 +799,7 @@ function LeafPane({
           liveData={outputChunk?.data ?? null}
           liveSerial={outputChunk?.serial ?? null}
           replayKey={xtermReplay.key}
+          replayKind={xtermReplay.kind}
           streamId={runtime.runtime_session_id}
           onCompletionRequest={handleCompletionRequest}
           onDisconnect={
@@ -848,4 +868,12 @@ function LeafPane({
       )}
     </section>
   );
+}
+
+function applyTerminalReplay(replay: TerminalReplayResult, apply: (output: TerminalReplayOutput) => void) {
+  if (replay instanceof Promise) {
+    void replay.then(apply);
+  } else {
+    apply(replay);
+  }
 }
