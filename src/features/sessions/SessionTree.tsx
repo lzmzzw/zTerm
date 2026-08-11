@@ -64,6 +64,7 @@ interface SessionTreeProps {
   onDeleteGroup?: (groupId: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
   onOpenSession?: (session: SavedSession) => void;
+  onExportCsv?: () => Promise<void> | void;
 }
 
 export function SessionTree({
@@ -79,6 +80,7 @@ export function SessionTree({
   onDeleteGroup,
   onDeleteSession,
   onOpenSession,
+  onExportCsv,
 }: SessionTreeProps) {
   const sessionTree = buildSessionTreeModel({ groups, sessions });
   const [dialogType, setDialogType] = useState<SessionType | null>(null);
@@ -86,6 +88,7 @@ export function SessionTree({
   const [initialGroupId, setInitialGroupId] = useState<string | null>(null);
   const [groupDialog, setGroupDialog] = useState<{ group?: SessionGroup; parentId: string | null } | null>(null);
   const [pendingDeleteSession, setPendingDeleteSession] = useState<SavedSession | null>(null);
+  const [pendingCsvExport, setPendingCsvExport] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<SessionTreeContextMenu | null>(null);
   const [draggedSessionId, setDraggedSessionId] = useState<string | null>(null);
@@ -200,6 +203,17 @@ export function SessionTree({
   function openRootMenu(event: React.MouseEvent<HTMLElement>) {
     event.preventDefault();
     setContextMenu({ kind: "root", x: event.clientX, y: event.clientY });
+  }
+
+  async function handleExportCsv() {
+    setPendingCsvExport(false);
+    setContextMenu(null);
+    setActionError(null);
+    try {
+      await onExportCsv?.();
+    } catch (error) {
+      setActionError(fallbackOnlyErrorMessage(error, "导出 CSV 失败"));
+    }
   }
 
   useEffect(() => {
@@ -392,6 +406,7 @@ export function SessionTree({
           onCopySession={handleCopySession}
           onDeleteSession={setPendingDeleteSession}
           onOpenSession={onOpenSession}
+          onExportCsv={() => setPendingCsvExport(true)}
         />
       ) : null}
 
@@ -411,6 +426,15 @@ export function SessionTree({
           confirmLabel="确认删除"
           onCancel={() => setPendingDeleteSession(null)}
           onConfirm={() => void handleDeleteSession(pendingDeleteSession)}
+        />
+      ) : null}
+      {pendingCsvExport ? (
+        <ConfirmDialog
+          title="导出明文密码"
+          message="CSV 将包含全部保存连接的账号和明文密码。请仅保存到受保护的位置，导出后请妥善加密或删除该文件。"
+          confirmLabel="继续导出"
+          onCancel={() => setPendingCsvExport(false)}
+          onConfirm={() => void handleExportCsv()}
         />
       ) : null}
     </section>

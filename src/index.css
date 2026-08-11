@@ -4803,13 +4803,21 @@ a[href]:focus-visible,
 }
 
 .zt-ai-tool-secret input {
+  box-sizing: border-box;
   width: 100%;
   min-width: 0;
   height: 30px;
   padding: 0 9px;
+  border: 1px solid var(--zt-border-strong);
   border-radius: var(--zt-radius-control);
+  background: var(--zt-bg-elevated);
   color: var(--zt-text-primary);
   font-size: var(--zt-font-size-ui);
+}
+
+.zt-ai-tool-secret input:focus {
+  border-color: var(--zt-accent);
+  outline: 1px solid var(--zt-focus-soft);
 }
 
 .zt-ai-tool-card footer button {

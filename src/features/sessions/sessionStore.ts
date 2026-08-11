@@ -24,6 +24,7 @@ interface SessionState extends SessionTreeSnapshot {
   saveSession: (draft: SavedSessionDraft) => Promise<SavedSession>;
   deleteSession: (sessionId: string) => Promise<void>;
   testSession: (request: SessionTestRequest) => Promise<SessionTestResult>;
+  exportCsv: (targetPath: string) => Promise<{ path: string; exported_records: number }>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -64,5 +65,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       draft: request.draft,
       secret: request.secret ?? null,
     });
+  },
+  async exportCsv(targetPath) {
+    return invoke("sessions_export_csv", { targetPath });
   },
 }));

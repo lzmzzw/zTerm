@@ -466,6 +466,8 @@ describe("AiPanel", () => {
 
     const approve = button(view.container, "批准");
     expect(approve.disabled).toBe(true);
+    expect(approve.title).toBe("请先输入 API Key，再批准");
+    expect(input(view.container, "API Key").getAttribute("aria-required")).toBe("true");
 
     changeTextInput(input(view.container, "API Key") as unknown as HTMLInputElement, "sk-local-only");
     expect(approve.disabled).toBe(false);

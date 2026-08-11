@@ -2,6 +2,7 @@
 import { ArrowLeftRight, Bot, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
@@ -214,6 +215,7 @@ export function AppShell() {
     loadSessions,
     saveGroup,
     saveSession,
+    exportCsv,
     testSession,
     deleteGroup,
     deleteSession,
@@ -225,6 +227,7 @@ export function AppShell() {
       loadSessions: state.loadSessions,
       saveGroup: state.saveGroup,
       saveSession: state.saveSession,
+      exportCsv: state.exportCsv,
       testSession: state.testSession,
       deleteGroup: state.deleteGroup,
       deleteSession: state.deleteSession,
@@ -1727,6 +1730,17 @@ export function AppShell() {
     }
   }
 
+  async function exportSessionsCsv() {
+    const targetPath = await save({
+      title: "导出连接 CSV（含明文密码）",
+      defaultPath: "zterm-connections.csv",
+      filters: [{ name: "CSV 文件", extensions: ["csv"] }],
+    });
+    if (typeof targetPath === "string") {
+      await exportCsv(targetPath);
+    }
+  }
+
   const remoteFileActions = createRemoteFileActions({
     activeSshSessionId,
     filePath,
@@ -1908,6 +1922,7 @@ export function AppShell() {
                   onDeleteGroup={deleteGroup}
                   onDeleteSession={deleteSession}
                   onOpenSession={openSavedSession}
+                  onExportCsv={exportSessionsCsv}
                 />
               </section>
             ) : null}

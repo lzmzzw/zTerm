@@ -34,6 +34,7 @@ pub fn run() {
             commands::sessions::sessions_delete_group,
             commands::sessions::sessions_save_session,
             commands::sessions::sessions_delete_session,
+            commands::sessions::sessions_export_csv,
             commands::sessions::sessions_test_connection,
             commands::settings::settings_get,
             commands::settings::settings_save,

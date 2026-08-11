@@ -1,6 +1,7 @@
 // Author: Liz
-use std::{path::Path, time::Duration};
+use std::{collections::HashMap, fs, path::Path, time::Duration};
 
+use serde::Serialize;
 use tauri::State;
 use tokio::net::TcpStream;
 
@@ -25,6 +26,12 @@ const SESSION_TEST_SCRIPT: &str = "printf zterm-session-test";
 const SESSION_TEST_EXPECTED_OUTPUT: &str = "zterm-session-test";
 const TRANSIENT_SESSION_TEST_CREDENTIAL_REF: &str = "__zterm_session_test_secret__";
 const RDP_TEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Serialize)]
+pub struct SessionsExportResult {
+    pub path: String,
+    pub exported_records: usize,
+}
 
 #[tauri::command]
 pub fn sessions_list(state: State<'_, AppState>) -> AppResult<SessionsList> {
@@ -72,6 +79,137 @@ pub fn sessions_delete_session(state: State<'_, AppState>, id: String) -> AppRes
         .evict_reusable_connections_for_session(&id);
     state.sftp_service().evict_cached_sessions_for_session(&id);
     Ok(result)
+}
+
+/// Reads secrets only while writing the selected CSV. They never cross IPC or enter logs.
+#[tauri::command]
+pub fn sessions_export_csv(
+    state: State<'_, AppState>,
+    target_path: String,
+) -> AppResult<SessionsExportResult> {
+    let path = Path::new(target_path.trim());
+    if path
+        .extension()
+        .is_none_or(|extension| !extension.eq_ignore_ascii_case("csv"))
+    {
+        return Err(AppError::validation("导出文件必须使用 .csv 扩展名"));
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| parent.is_dir())
+        .ok_or_else(|| AppError::validation("导出目录不存在"))?;
+    let canonical_parent = fs::canonicalize(parent)
+        .map_err(|error| AppError::terminal(format!("无法访问导出目录: {error}")))?;
+    let file_name = path
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| AppError::validation("导出文件名不能为空"))?;
+    let output_path = canonical_parent.join(file_name);
+    let snapshot = list_sessions(state.storage().as_ref())?;
+    let credential_service = state.credential_service();
+    let csv = build_sessions_csv(&snapshot, |credential_ref| {
+        credential_service.read_secret(credential_ref)
+    })?;
+    fs::write(&output_path, csv)
+        .map_err(|error| AppError::terminal(format!("写入 CSV 导出文件失败: {error}")))?;
+    Ok(SessionsExportResult {
+        path: output_path.to_string_lossy().to_string(),
+        exported_records: snapshot.groups.len() + snapshot.sessions.len(),
+    })
+}
+
+fn build_sessions_csv(
+    snapshot: &SessionsList,
+    mut read_secret: impl FnMut(&str) -> AppResult<String>,
+) -> AppResult<String> {
+    let groups = snapshot
+        .groups
+        .iter()
+        .map(|group| {
+            (
+                group.id.as_str(),
+                (group.name.as_str(), group.parent_id.as_deref()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let mut csv =
+        String::from("\u{feff}记录类型,分组,连接,操作系统,账户,密码,主机,端口,认证方式\r\n");
+    for group in &snapshot.groups {
+        write_csv_row(
+            &mut csv,
+            [
+                "分组".to_string(),
+                group_path(&group.id, &groups),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+                String::new(),
+            ],
+        );
+    }
+    for session in &snapshot.sessions {
+        let password = match session
+            .credential_ref
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            Some(credential_ref) => read_secret(credential_ref).map_err(|error| {
+                AppError::credential(format!("无法导出连接“{}”的密码: {error}", session.name))
+            })?,
+            None => String::new(),
+        };
+        write_csv_row(
+            &mut csv,
+            [
+                "连接".to_string(),
+                session
+                    .group_id
+                    .as_deref()
+                    .map(|id| group_path(id, &groups))
+                    .unwrap_or_default(),
+                session.name.clone(),
+                session.session_type.as_str().to_ascii_uppercase(),
+                session.username.clone(),
+                password,
+                session.host.clone(),
+                session.port.to_string(),
+                session.auth_mode.as_str().to_string(),
+            ],
+        );
+    }
+    Ok(csv)
+}
+
+fn group_path(group_id: &str, groups: &HashMap<&str, (&str, Option<&str>)>) -> String {
+    let mut names = Vec::new();
+    let mut current = Some(group_id);
+    let mut visited = std::collections::HashSet::new();
+    while let Some(id) = current {
+        if !visited.insert(id) {
+            break;
+        }
+        let Some((name, parent_id)) = groups.get(id) else {
+            break;
+        };
+        names.push(*name);
+        current = *parent_id;
+    }
+    names.reverse();
+    names.join("/")
+}
+
+fn write_csv_row<const N: usize>(output: &mut String, values: [String; N]) {
+    output.push_str(
+        &values
+            .into_iter()
+            .map(|value| format!("\"{}\"", value.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    output.push_str("\r\n");
 }
 
 #[tauri::command]
@@ -387,7 +525,10 @@ mod tests {
 
     use crate::{
         error::AppError,
-        models::session::{AuthMode, RdpOptions, SavedSessionDraft, SessionType, SshOptions},
+        models::session::{
+            AuthMode, RdpOptions, SavedSessionDraft, SessionGroup, SessionType, SessionsList,
+            SshOptions,
+        },
         services::{
             credential_service::CredentialService, ssh_command_service::SshCommandSecretResolver,
         },
@@ -414,6 +555,63 @@ mod tests {
             .secret_for(TRANSIENT_SESSION_TEST_CREDENTIAL_REF)
             .expect_err("missing transient secret should fail");
         assert!(matches!(error, AppError::Credential(_)));
+    }
+
+    #[test]
+    fn csv_export_includes_groups_connections_and_keyring_secrets() {
+        let session = save_preview_session(SavedSessionDraft {
+            id: Some("session-1".to_string()),
+            name: "主机,一".to_string(),
+            session_type: SessionType::Ssh,
+            group_id: Some("child".to_string()),
+            host: "host.example.test".to_string(),
+            port: 22,
+            username: "ops".to_string(),
+            auth_mode: AuthMode::Password,
+            credential_ref: Some("credential:session-1".to_string()),
+            description: None,
+            tags: Vec::new(),
+            sort_order: 0,
+            ssh_options: None,
+            rdp_options: None,
+            local_options: None,
+            ftp_options: None,
+        })
+        .expect("session should build");
+        let snapshot = SessionsList {
+            groups: vec![
+                SessionGroup {
+                    id: "root".to_string(),
+                    parent_id: None,
+                    name: "生产".to_string(),
+                    expanded: true,
+                    sort_order: 0,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                },
+                SessionGroup {
+                    id: "child".to_string(),
+                    parent_id: Some("root".to_string()),
+                    name: "数据库".to_string(),
+                    expanded: true,
+                    sort_order: 1,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                },
+            ],
+            sessions: vec![session],
+        };
+
+        let csv = build_sessions_csv(&snapshot, |credential_ref| {
+            assert_eq!(credential_ref, "credential:session-1");
+            Ok("p@ss\"word".to_string())
+        })
+        .expect("CSV should build");
+
+        assert!(csv.starts_with('\u{feff}'));
+        assert!(csv.contains("\"生产/数据库\""));
+        assert!(csv.contains("\"主机,一\""));
+        assert!(csv.contains("\"p@ss\"\"word\""));
     }
 
     #[tokio::test]

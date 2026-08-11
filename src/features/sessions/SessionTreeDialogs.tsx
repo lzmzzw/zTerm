@@ -19,6 +19,7 @@ export function SessionContextMenu({
   onCopySession,
   onDeleteSession,
   onOpenSession,
+  onExportCsv,
 }: {
   menu: SessionTreeContextMenu;
   onCreateGroup: (parentId?: string | null) => void;
@@ -29,6 +30,7 @@ export function SessionContextMenu({
   onCopySession: (session: SavedSession) => Promise<void>;
   onDeleteSession: (session: SavedSession) => void;
   onOpenSession?: (session: SavedSession) => void;
+  onExportCsv: () => void;
 }) {
   return (
     <ZtContextMenu className="zt-session-context-menu" role="menu" x={menu.x} y={menu.y}>
@@ -39,6 +41,9 @@ export function SessionContextMenu({
           </button>
           <button type="button" role="menuitem" onClick={() => onCreateGroup(null)}>
             新建分组
+          </button>
+          <button type="button" role="menuitem" onClick={onExportCsv}>
+            导出 CSV（含明文密码）
           </button>
         </>
       ) : null}

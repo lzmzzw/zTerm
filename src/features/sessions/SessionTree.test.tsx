@@ -344,7 +344,7 @@ describe("SessionTree", () => {
 
     await contextMenu(view.container.querySelector(".zt-session-tree") as HTMLElement);
     const rootMenuItems = Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim());
-    expect(rootMenuItems).toEqual(["添加连接", "新建分组"]);
+    expect(rootMenuItems).toEqual(["添加连接", "新建分组", "导出 CSV（含明文密码）"]);
     expect(view.container.textContent).not.toContain("编辑");
     expect(view.container.textContent).not.toContain("删除");
     expect(view.container.textContent).not.toContain("建立新连接");

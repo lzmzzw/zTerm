@@ -270,6 +270,8 @@ export function AiPanel({
             <div className="zt-ai-tools" aria-label="AI 工具调用">
               {pendingInvocations.map((invocation) => {
                 const toolSummary = summarizeToolInvocation(invocation, language);
+                const secretInputLabel = invocation.secret_input_label || t(language, "aiToolSecretInput");
+                const secretInputMissing = Boolean(invocation.requires_secret_input) && !toolSecretInputs[invocation.id]?.trim();
                 return (
                   <section className={`zt-ai-tool-card risk-${invocation.risk_level}`} title={toolSummary.rawDetails} key={invocation.id}>
                     <header>
@@ -293,13 +295,14 @@ export function AiPanel({
                     {invocation.risk_summary ? <small className="zt-ai-tool-risk-note">{invocation.risk_summary}</small> : null}
                     {invocation.requires_secret_input ? (
                       <label className="zt-ai-tool-secret">
-                        <span>{invocation.secret_input_label || t(language, "aiToolSecretInput")}</span>
+                        <span>{secretInputLabel}</span>
                         <input
                           type="password"
                           autoComplete="off"
                           value={toolSecretInputs[invocation.id] ?? ""}
                           placeholder={t(language, "aiToolSecretRequired")}
-                          aria-label={invocation.secret_input_label || t(language, "aiToolSecretInput")}
+                          aria-label={secretInputLabel}
+                          aria-required="true"
                           disabled={loading}
                           onChange={(event) => updateToolSecretInput(invocation.id, event.currentTarget.value)}
                         />
@@ -308,7 +311,8 @@ export function AiPanel({
                     <footer>
                       <button
                         type="button"
-                        disabled={loading || (Boolean(invocation.requires_secret_input) && !toolSecretInputs[invocation.id]?.trim())}
+                        disabled={loading || secretInputMissing}
+                        title={secretInputMissing ? t(language, "aiToolSecretRequiredBeforeApprove", { label: secretInputLabel }) : undefined}
                         onClick={() => confirmToolInvocation(invocation, true)}
                       >
                         {t(language, "approve")}
