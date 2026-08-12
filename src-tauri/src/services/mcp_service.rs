@@ -55,11 +55,27 @@ struct McpContext {
     storage: Arc<SqliteStore>,
     tools: AiToolService,
     token: Arc<Mutex<String>>,
+    agent_bindings: Arc<Mutex<HashMap<String, AgentMcpBinding>>>,
 }
 
 pub struct McpService {
     runtime: Mutex<Option<McpRuntime>>,
     secret_store: Arc<dyn SecretStore>,
+    agent_bindings: Arc<Mutex<HashMap<String, AgentMcpBinding>>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentMcpBinding {
+    pub agent_session_id: String,
+    pub runtime_session_id: String,
+    pub saved_session_id: Option<String>,
+    pub target_label: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct AgentMcpAccess {
+    pub endpoint: String,
+    pub token: String,
 }
 
 struct McpRuntime {
@@ -88,6 +104,7 @@ impl McpService {
         Self {
             runtime: Mutex::new(None),
             secret_store,
+            agent_bindings: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -114,6 +131,7 @@ impl McpService {
             storage,
             tools,
             token: Arc::clone(&token),
+            agent_bindings: Arc::clone(&self.agent_bindings),
         };
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
         tokio::spawn(async move {
@@ -221,6 +239,29 @@ impl McpService {
             token: Some(token),
         })
     }
+
+    pub fn register_agent_binding(&self, binding: AgentMcpBinding) -> AppResult<AgentMcpAccess> {
+        let endpoint = self
+            .status()
+            .and_then(|status| status.endpoint)
+            .ok_or_else(|| AppError::ai("zTerm MCP 服务未启动"))?;
+        let token = generate_token();
+        let mut bindings = self
+            .agent_bindings
+            .lock()
+            .map_err(|_| AppError::ai("Agent MCP 绑定锁已损坏"))?;
+        bindings.retain(|_, existing| existing.agent_session_id != binding.agent_session_id);
+        bindings.insert(token.clone(), binding);
+        Ok(AgentMcpAccess { endpoint, token })
+    }
+
+    pub fn unregister_agent_binding(&self, agent_session_id: &str) -> AppResult<()> {
+        self.agent_bindings
+            .lock()
+            .map_err(|_| AppError::ai("Agent MCP 绑定锁已损坏"))?
+            .retain(|_, binding| binding.agent_session_id != agent_session_id);
+        Ok(())
+    }
 }
 
 impl Default for McpService {
@@ -251,6 +292,9 @@ pub async fn handle_http_request(
     }
     let body = serde_json::from_slice::<Value>(&request.body)
         .map_err(|error| AppError::ai(format!("MCP 请求不是有效 JSON: {error}")))?;
+    if body.get("id").is_none() {
+        return Ok(accepted_response());
+    }
     let response = handle_json_rpc(storage.as_ref(), &tools, body)?;
     Ok(json_response(200, response))
 }
@@ -433,7 +477,7 @@ pub fn mcp_tool_catalog() -> Vec<McpToolDefinition> {
         mcp_tool(
             "terminal.read",
             "读取终端",
-            "按 runtime_session_id 或当前 zTerm 编号（如 A1）读取终端输出；编号只定位既有终端，不改变标签或焦点",
+            "按 runtime_session_id 读取既有 zTerm 终端输出；不改变标签或焦点",
             RiskLevel::Low,
             false,
             terminal_read_schema(),
@@ -441,7 +485,7 @@ pub fn mcp_tool_catalog() -> Vec<McpToolDefinition> {
         mcp_tool(
             "terminal.write",
             "写入终端",
-            "按 runtime_session_id 或当前 zTerm 编号（如 A1）向既有终端写入数据并回读输出；不改变标签或焦点",
+            "按 runtime_session_id 向既有 zTerm 终端写入数据并回读输出；不改变标签或焦点",
             RiskLevel::High,
             true,
             terminal_write_schema(),
@@ -608,34 +652,24 @@ fn object_schema(properties: Value, required: &[&str]) -> Value {
 }
 
 fn terminal_read_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "runtime_session_id": { "type": "string", "description": "既有 runtime ID；与 terminal_ref 二选一。" },
-            "terminal_ref": { "type": "string", "pattern": "^[A-Z]+[1-9][0-9]*$", "description": "当前 zTerm 工作台中的终端编号，例如 A1；与 runtime_session_id 二选一。" },
+    object_schema(
+        json!({
+            "runtime_session_id": { "type": "string", "description": "既有 zTerm 终端 runtime ID。" },
             "cursor": { "type": "integer", "minimum": 0 },
             "max_chars": { "type": "integer", "minimum": 1, "maximum": 4000 }
-        },
-        "oneOf": [
-            { "required": ["runtime_session_id"] },
-            { "required": ["terminal_ref"] }
-        ],
-        "additionalProperties": false
-    })
+        }),
+        &["runtime_session_id"],
+    )
 }
 
 fn terminal_write_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "runtime_session_id": { "type": "string", "description": "既有 runtime ID；与 terminal_ref 二选一。" },
-            "terminal_ref": { "type": "string", "pattern": "^[A-Z]+[1-9][0-9]*$", "description": "当前 zTerm 工作台中的终端编号，例如 A1；与 runtime_session_id 二选一。" },
+            "runtime_session_id": { "type": "string", "description": "既有 zTerm 终端 runtime ID。" },
             "data": { "type": "string", "description": "写入终端的数据，命令通常以回车结尾。" }
         },
-        "oneOf": [
-            { "required": ["runtime_session_id", "data"] },
-            { "required": ["terminal_ref", "data"] }
-        ],
+        "required": ["runtime_session_id", "data"],
         "additionalProperties": false
     })
 }
@@ -676,7 +710,6 @@ fn mcp_tool_call_result(
     name: &str,
     arguments: Value,
 ) -> AppResult<Value> {
-    let arguments = tools.resolve_terminal_target_arguments(name, arguments)?;
     let approval_mode = mcp_tool_approval_mode(store, tools, &arguments)?;
     let outcome = tools.execute_if_allowed(
         store,
@@ -792,8 +825,8 @@ fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), Stri
         "sessions.save" => &["draft", "reuse_auth_from_session_id"][..],
         "terminal.list" => &["saved_session_id"][..],
         "terminal.open" => &["saved_session_id"][..],
-        "terminal.read" => &["runtime_session_id", "terminal_ref", "cursor", "max_chars"][..],
-        "terminal.write" => &["runtime_session_id", "terminal_ref", "data"][..],
+        "terminal.read" => &["runtime_session_id", "cursor", "max_chars"][..],
+        "terminal.write" => &["runtime_session_id", "data"][..],
         "terminal.close" => &["runtime_session_id"][..],
         "ssh.execute" => &["saved_session_id", "script"][..],
         "ssh.upload" | "ssh.download" | "sftp.upload" | "sftp.download" | "ftp.upload"
@@ -852,18 +885,9 @@ fn validate_terminal_target_selector(
         .get("runtime_session_id")
         .and_then(Value::as_str)
         .is_some_and(|value| !value.trim().is_empty());
-    let terminal_ref = object
-        .get("terminal_ref")
-        .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty());
-    match (runtime_session_id, terminal_ref) {
-        (true, false) | (false, true) => Ok(()),
-        (false, false) => Err(
-            "terminal.read 和 terminal.write 必须提供 runtime_session_id 或 terminal_ref"
-                .to_string(),
-        ),
-        (true, true) => Err("runtime_session_id 与 terminal_ref 只能提供其中之一".to_string()),
-    }
+    runtime_session_id
+        .then_some(())
+        .ok_or_else(|| "terminal.read 和 terminal.write 必须提供 runtime_session_id".to_string())
 }
 
 fn reject_unknown_mcp_keys(
@@ -884,8 +908,138 @@ async fn handle_connection(mut stream: TcpStream, context: McpContext) -> AppRes
         .lock()
         .map_err(|_| AppError::ai("MCP token lock was poisoned"))?
         .clone();
-    let response = handle_http_request(context.storage, context.tools, &token, request).await?;
+    let authorization = header(&request.headers, "authorization");
+    let response = if authorization.as_deref() == Some(format!("Bearer {token}").as_str()) {
+        handle_http_request(context.storage, context.tools, &token, request).await?
+    } else {
+        let scoped_token = authorization
+            .as_deref()
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .unwrap_or_default();
+        let binding = context
+            .agent_bindings
+            .lock()
+            .map_err(|_| AppError::ai("Agent MCP 绑定锁已损坏"))?
+            .get(scoped_token)
+            .cloned();
+        match binding {
+            Some(binding) => {
+                handle_agent_http_request(context.storage, context.tools, binding, request).await?
+            }
+            None => json_response(401, json!({ "error": "unauthorized" })),
+        }
+    };
     write_http_response(&mut stream, response).await
+}
+
+async fn handle_agent_http_request(
+    storage: Arc<SqliteStore>,
+    tools: AiToolService,
+    binding: AgentMcpBinding,
+    request: McpHttpRequest,
+) -> AppResult<McpHttpResponse> {
+    if request.path != MCP_PATH {
+        return Ok(json_response(404, json!({ "error": "not_found" })));
+    }
+    if !origin_is_allowed(header(&request.headers, "origin")) {
+        return Ok(json_response(403, json!({ "error": "origin_forbidden" })));
+    }
+    if request.method != "POST" {
+        return Ok(json_response(405, json!({ "error": "method_not_allowed" })));
+    }
+    let body = serde_json::from_slice::<Value>(&request.body)
+        .map_err(|error| AppError::ai(format!("MCP 请求不是有效 JSON: {error}")))?;
+    if body.get("id").is_none() {
+        return Ok(accepted_response());
+    }
+    let response = handle_agent_json_rpc(storage.as_ref(), &tools, &binding, body)?;
+    Ok(json_response(200, response))
+}
+
+fn handle_agent_json_rpc(
+    store: &SqliteStore,
+    tools: &AiToolService,
+    binding: &AgentMcpBinding,
+    body: Value,
+) -> AppResult<Value> {
+    let id = body.get("id").cloned().unwrap_or(Value::Null);
+    let method = body
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let result = match method {
+        "initialize" => json!({
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": { "tools": {} },
+            "serverInfo": { "name": "zTerm Agent", "version": env!("CARGO_PKG_VERSION") }
+        }),
+        "ping" => json!({}),
+        "tools/list" => json!({
+            "tools": [
+                {
+                    "name": "terminal.read",
+                    "title": "读取当前终端",
+                    "description": format!("读取与本 Codex 会话绑定的 zTerm 终端输出：{}", binding.target_label),
+                    "inputSchema": object_schema(json!({
+                        "cursor": { "type": "integer", "minimum": 0 },
+                        "max_chars": { "type": "integer", "minimum": 1, "maximum": 4000 }
+                    }), &[])
+                },
+                {
+                    "name": "terminal.write",
+                    "title": "操作当前终端",
+                    "description": "将数据写入已绑定的 zTerm 终端页面并回读输出；SSH 操作不会新建独立连接。",
+                    "inputSchema": object_schema(json!({
+                        "data": { "type": "string", "minLength": 1, "maxLength": 16384 }
+                    }), &["data"])
+                }
+            ]
+        }),
+        "tools/call" => {
+            let params = body.get("params").cloned().unwrap_or_else(|| json!({}));
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !matches!(name, "terminal.read" | "terminal.write") {
+                return Ok(json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "error": { "code": -32601, "message": "sidebar Codex may only read or write its bound zTerm terminal" }
+                }));
+            }
+            let mut arguments = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let object = arguments
+                .as_object_mut()
+                .ok_or_else(|| AppError::validation("MCP tool arguments must be an object"))?;
+            let allowed = if name == "terminal.read" {
+                &["cursor", "max_chars"][..]
+            } else {
+                &["data"][..]
+            };
+            reject_unknown_mcp_keys(object, allowed, "arguments").map_err(AppError::validation)?;
+            if name == "terminal.write" && object.get("data").and_then(Value::as_str).is_none() {
+                return Ok(json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "error": { "code": -32602, "message": "terminal.write requires data" }
+                }));
+            }
+            object.insert(
+                "runtime_session_id".to_string(),
+                Value::String(binding.runtime_session_id.clone()),
+            );
+            mcp_tool_call_result(store, tools, name, arguments)?
+        }
+        _ => {
+            return Ok(json!({
+                "jsonrpc": "2.0", "id": id,
+                "error": { "code": -32601, "message": "method not found" }
+            }))
+        }
+    };
+    Ok(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
 }
 
 async fn read_http_request(stream: &mut TcpStream) -> AppResult<McpHttpRequest> {
@@ -952,6 +1106,7 @@ async fn read_http_request(stream: &mut TcpStream) -> AppResult<McpHttpRequest> 
 async fn write_http_response(stream: &mut TcpStream, response: McpHttpResponse) -> AppResult<()> {
     let status_text = match response.status {
         200 => "OK",
+        202 => "Accepted",
         401 => "Unauthorized",
         403 => "Forbidden",
         404 => "Not Found",
@@ -981,6 +1136,14 @@ fn json_response(status: u16, body: Value) -> McpHttpResponse {
         status,
         content_type: "application/json".to_string(),
         body: serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec()),
+    }
+}
+
+fn accepted_response() -> McpHttpResponse {
+    McpHttpResponse {
+        status: 202,
+        content_type: "application/json".to_string(),
+        body: Vec::new(),
     }
 }
 

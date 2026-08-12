@@ -7,8 +7,6 @@ import {
   findPane,
   firstLeafPaneId,
   getLeafPaneIdsInVisualOrder,
-  getPaneDisplayLabels,
-  getTerminalReferences,
   removePane,
   splitPane,
   updateLeafPane,
@@ -134,45 +132,6 @@ describe("workspaceLayout", () => {
     };
 
     expect(getLeafPaneIdsInVisualOrder(root)).toEqual(["pane-a", "pane-b", "pane-c", "pane-d"]);
-    expect(getPaneDisplayLabels(root)).toEqual({
-      "pane-a": "A",
-      "pane-b": "B",
-      "pane-c": "C",
-      "pane-d": "D",
-    });
-  });
-
-  it("builds transient MCP terminal references from the visible tab order", () => {
-    const root: PaneNode = {
-      kind: "split",
-      id: "split-root",
-      direction: "horizontal",
-      ratio: 0.5,
-      first: {
-        kind: "leaf",
-        id: "pane-a",
-        title: "生产机",
-        runtime_session_id: null,
-        saved_session_id: null,
-        active_terminal_tab_id: "pane-a-tab-2",
-        terminal_tabs: [
-          { id: "pane-a-tab-1", title: "新建终端", runtime_session_id: null, saved_session_id: null },
-          { id: "pane-a-tab-2", title: "生产机", runtime_session_id: "runtime-a", saved_session_id: "ssh-a" },
-        ],
-      },
-      second: {
-        kind: "leaf",
-        id: "pane-b",
-        title: "本地终端",
-        runtime_session_id: "runtime-b",
-        saved_session_id: null,
-      },
-    };
-
-    expect(getTerminalReferences(root)).toEqual([
-      { terminal_ref: "A1", runtime_session_id: "runtime-a" },
-      { terminal_ref: "B1", runtime_session_id: "runtime-b" },
-    ]);
   });
 
   it("uses the target pane dimensions instead of the total number of panes", () => {

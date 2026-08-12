@@ -1,0 +1,136 @@
+// Author: Liz
+import { Bot, LoaderCircle, ShieldCheck } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+
+import { ZtSelect } from "../../components/ZtSelect";
+import { XtermPane } from "../terminal/XtermPane";
+import { useTerminalStore } from "../terminal/terminalStore";
+import type { AiApprovalMode, AiToolSecretInputs } from "./aiStore";
+import type { AgentCodexSession, AgentPendingInvocation } from "./agentCodexApi";
+
+export function AgentCodexPanel({
+  session,
+  loading,
+  error,
+  approvalMode,
+  pendingInvocations,
+  onApprovalModeChange,
+  onConfirmTool,
+}: {
+  session: AgentCodexSession | null;
+  loading: boolean;
+  error: string | null;
+  approvalMode: AiApprovalMode;
+  pendingInvocations: AgentPendingInvocation[];
+  onApprovalModeChange: (mode: AiApprovalMode) => Promise<unknown> | unknown;
+  onConfirmTool: (invocationId: string, approved: boolean, secretInputs?: AiToolSecretInputs) => Promise<unknown> | unknown;
+}) {
+  const [secretInputs, setSecretInputs] = useState<Record<string, string>>({});
+  const runtimeSessionId = session?.runtime.runtime_session_id ?? null;
+  const outputChunk = useTerminalStore((state) =>
+    runtimeSessionId ? (state.outputChunks[runtimeSessionId] ?? null) : null,
+  );
+  const writeTerminal = useTerminalStore((state) => state.writeTerminal);
+  const resizeTerminal = useTerminalStore((state) => state.resizeTerminal);
+  const initialOutput = useMemo(
+    () => (runtimeSessionId ? useTerminalStore.getState().getOutputTail(runtimeSessionId) : ""),
+    [runtimeSessionId],
+  );
+
+  useEffect(() => {
+    if (!runtimeSessionId) return undefined;
+    return useTerminalStore.getState().beginLiveOutput(runtimeSessionId);
+  }, [runtimeSessionId]);
+
+  return (
+    <div className="zt-agent-codex-panel">
+      <header className="zt-agent-codex-header">
+        <div className="zt-agent-codex-target">
+          <Bot size={16} aria-hidden="true" />
+          <div>
+            <strong>Codex CLI</strong>
+            <span>{session?.target_label ?? "当前终端"}</span>
+          </div>
+        </div>
+        <label className={`zt-ai-approval-mode mode-${approvalMode}`}>
+          <ShieldCheck size={14} aria-hidden="true" />
+          <ZtSelect
+            ariaLabel="审批模式"
+            className={`zt-ai-approval-select mode-${approvalMode}`}
+            value={approvalMode}
+            options={approvalOptions}
+            onChange={(value) => void onApprovalModeChange(value as AiApprovalMode)}
+          />
+        </label>
+      </header>
+
+      {pendingInvocations.length > 0 ? (
+        <div className="zt-agent-codex-approvals" aria-label="待审批操作">
+          {pendingInvocations.map((invocation) => (
+            <section key={invocation.id} className={`zt-ai-tool-card risk-${invocation.risk_level}`}>
+              <strong>{invocation.tool_id}</strong>
+              <span>{invocation.risk_summary || invocation.reason || "Codex 请求操作当前终端"}</span>
+              {invocation.requires_secret_input ? (
+                <label className="zt-ai-tool-secret">
+                  <span>{invocation.secret_input_label || "本次操作所需密码"}</span>
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    aria-required="true"
+                    value={secretInputs[invocation.id] ?? ""}
+                    onChange={(event) =>
+                      setSecretInputs((current) => ({ ...current, [invocation.id]: event.currentTarget.value }))
+                    }
+                  />
+                </label>
+              ) : null}
+              <footer>
+                <button
+                  type="button"
+                  disabled={Boolean(invocation.requires_secret_input) && !secretInputs[invocation.id]?.trim()}
+                  onClick={() =>
+                    void onConfirmTool(
+                      invocation.id,
+                      true,
+                      invocation.requires_secret_input ? { api_key: secretInputs[invocation.id] } : undefined,
+                    )
+                  }
+                >批准</button>
+                <button type="button" onClick={() => void onConfirmTool(invocation.id, false)}>拒绝</button>
+              </footer>
+            </section>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="zt-agent-codex-terminal">
+        {loading ? (
+          <div className="zt-agent-codex-state"><LoaderCircle className="zt-spin" size={18} />正在启动本机 Codex CLI...</div>
+        ) : error ? (
+          <div className="zt-agent-codex-state is-error">{error}</div>
+        ) : session && runtimeSessionId ? (
+          <XtermPane
+            autoFocus
+            contextMenuEnabled
+            data={initialOutput}
+            replayKind="raw"
+            replayKey={runtimeSessionId}
+            streamId={runtimeSessionId}
+            liveData={outputChunk?.data ?? null}
+            liveSerial={outputChunk?.serial ?? null}
+            onInput={(data) => void writeTerminal(runtimeSessionId, data)}
+            onResize={(cols, rows) => void resizeTerminal(runtimeSessionId, cols, rows)}
+          />
+        ) : (
+          <div className="zt-agent-codex-state">请先打开一个可操作的终端标签页。</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const approvalOptions = [
+  { value: "request_approval", label: "请求批准" },
+  { value: "safe", label: "安全审批" },
+  { value: "full_access", label: "完全访问" },
+];

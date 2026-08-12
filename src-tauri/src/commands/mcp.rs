@@ -7,7 +7,7 @@ use crate::{
     error::AppResult,
     models::settings::McpSettings,
     services::{
-        ai_tool_service::{AiToolService, TerminalReference},
+        ai_tool_service::AiToolService,
         mcp_service::{mcp_tool_catalog, McpServerStatus, McpService, McpToolDefinition},
     },
     state::AppState,
@@ -18,14 +18,6 @@ use crate::{
 #[tauri::command]
 pub fn mcp_tool_catalog_list() -> AppResult<Vec<McpToolDefinition>> {
     Ok(mcp_tool_catalog())
-}
-
-#[tauri::command]
-pub fn mcp_terminal_refs_set(
-    state: State<'_, AppState>,
-    references: Vec<TerminalReference>,
-) -> AppResult<()> {
-    state.ai_tool_service().set_terminal_references(references)
 }
 
 #[tauri::command]

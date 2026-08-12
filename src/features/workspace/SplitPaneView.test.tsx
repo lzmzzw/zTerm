@@ -147,7 +147,7 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
-  it("renders dynamic pane identifiers without adding identifiers to tabs", () => {
+  it("does not render legacy pane or terminal identifiers", () => {
     const root: PaneNode = {
       kind: "split",
       id: "split-root",
@@ -187,10 +187,8 @@ describe("SplitPaneView", () => {
       />,
     );
 
-    const activeIdentifier = view.container.querySelector('[data-pane-identifier="A2"]');
-    expect(activeIdentifier?.classList.contains("active")).toBe(true);
-    expect(view.container.querySelector('[data-pane-identifier="B"]')).not.toBeNull();
-    expect(view.container.querySelector('[data-pane-identifier="C"]')).not.toBeNull();
+    expect(view.container.querySelector("[data-pane-identifier]")).toBeNull();
+    expect(view.container.querySelector(".zt-pane-identifier")).toBeNull();
     expect(view.container.querySelector(".zt-pane-tab-identifier")).toBeNull();
     view.unmount();
   });

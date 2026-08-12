@@ -4,11 +4,6 @@ import { MIN_PANE_FRACTION } from "./workspaceConstants";
 
 type LeafPane = Extract<PaneNode, { kind: "leaf" }>;
 
-export interface TerminalReference {
-  terminal_ref: string;
-  runtime_session_id: string;
-}
-
 interface PaneGeometry {
   pane: LeafPane;
   left: number;
@@ -51,27 +46,6 @@ export function getLeafPaneIdsInVisualOrder(root: PaneNode): string[] {
     .map((item) => item.pane.id);
 }
 
-export function getPaneDisplayLabels(root: PaneNode): Record<string, string> {
-  return Object.fromEntries(
-    getLeafPaneIdsInVisualOrder(root).map((paneId, index) => [paneId, alphabeticPaneLabel(index)]),
-  );
-}
-
-export function getTerminalReferences(root: PaneNode): TerminalReference[] {
-  const paneLabels = getPaneDisplayLabels(root);
-  return getLeafPaneIdsInVisualOrder(root).flatMap((paneId) => {
-    const leaf = findLeafPane(root, paneId);
-    if (!leaf) return [];
-    return getLeafTerminalTabs(leaf)
-      .filter(isVisibleTerminalTab)
-      .flatMap((terminalTab, index) =>
-        terminalTab.runtime_session_id
-          ? [{ terminal_ref: `${paneLabels[paneId]}${index + 1}`, runtime_session_id: terminalTab.runtime_session_id }]
-          : [],
-      );
-  });
-}
-
 export function isVisibleTerminalTab(terminalTab: PaneTerminalTab): boolean {
   return !(
     terminalTab.title === "新建终端" &&
@@ -94,17 +68,6 @@ export function canSplitPane(root: PaneNode, targetPaneId: string, direction: Pa
   const targetSize = direction === "horizontal" ? target.width : target.height;
   const inheritedSize = direction === "horizontal" ? target.height : target.width;
   return inheritedSize >= MIN_PANE_FRACTION && targetSize * 0.5 >= MIN_PANE_FRACTION;
-}
-
-function alphabeticPaneLabel(index: number): string {
-  let value = index + 1;
-  let label = "";
-  while (value > 0) {
-    value -= 1;
-    label = String.fromCharCode(65 + (value % 26)) + label;
-    value = Math.floor(value / 26);
-  }
-  return label;
 }
 
 function collectPaneGeometry(root: PaneNode): PaneGeometry[] {

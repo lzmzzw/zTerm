@@ -3,9 +3,9 @@
 [中文](README.zh-CN.md)
 
 zTerm is a Tauri desktop terminal workspace for SSH, SFTP, command history,
-server monitoring, and AI-assisted operations. It is designed for a dense,
+server monitoring, and Codex-assisted operations. It is designed for a dense,
 keyboard-friendly workstation layout: sessions on the left, split terminal
-panes in the center, and files/history/monitor/AI tools on the right.
+panes in the center, and files/history/monitor/Codex tools on the right.
 
 ![zTerm workbench](assets/screenshots/workbench.png)
 
@@ -17,7 +17,8 @@ panes in the center, and files/history/monitor/AI tools on the right.
 - Browse SFTP directories, create folders, upload, download, rename, delete, and retry transfers.
 - Capture command history by session or local profile, search it, copy commands, and send commands back to the active terminal.
 - Store credentials and AI provider API keys in the operating system keyring instead of plain SQLite rows.
-- Use a local approval-based AI assistant panel for terminal context, risk hints, and candidate commands.
+- Launch the locally authenticated Codex CLI in the Agent sidebar, with one retained process per terminal tab.
+- Restrict sidebar Codex sessions to session-scoped MCP tools that read and write the bound terminal page; SSH commands reuse the visible SSH terminal instead of opening another SSH connection.
 - Let Codex use the local MCP server to upload or download files and directories through saved SSH, SFTP, and FTP connections after local approval, without exposing keyring credentials.
 - Monitor SSH server CPU, memory, disk, load, uptime, and network traffic snapshots.
 

@@ -584,10 +584,13 @@ fn tool_service_request_approval_requires_confirmation_for_low_risk_and_full_acc
             terminal_write_request("rm -rf /tmp/demo\r", None, None),
             AiApprovalMode::FullAccess,
         )
-        .expect("full access should still prepare high risk terminal write");
-    assert!(full_access.audit_record.is_none());
-    assert!(full_access.pending_invocation.is_some());
-    assert!(writer.writes().is_empty());
+        .expect("full access should execute high risk terminal write without approval");
+    assert!(full_access.audit_record.is_some());
+    assert!(full_access.pending_invocation.is_none());
+    assert_eq!(
+        writer.writes(),
+        vec![("runtime-1".to_string(), "rm -rf /tmp/demo\r".to_string())]
+    );
 }
 
 #[test]

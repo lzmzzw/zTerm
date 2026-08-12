@@ -34,7 +34,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct AuthPromptSecret {
+pub(crate) struct AuthPromptSecret {
     target: String,
     secret: String,
 }
@@ -459,7 +459,7 @@ pub fn terminal_zmodem_save_file(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_terminal_reader(
+pub(crate) fn spawn_terminal_reader(
     app: AppHandle,
     manager: Arc<TerminalManager>,
     output_dispatcher: TerminalOutputDispatcher,

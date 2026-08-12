@@ -1,6 +1,5 @@
 // Author: Liz
 import { ArrowLeftRight, Bot, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -25,7 +24,7 @@ import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
 import { ZtCenteredPageLayout, ZtConfirmDialog, ZtInlineError, ZtModalOverlay, ZtSurfaceFrame } from "../components/ZtUi";
 import { setAiAffectedDomainsHandler, useAiStore } from "../features/ai/aiStore";
-import { buildAiTerminalContext } from "../features/ai/aiTerminalContextModel";
+import { openAgentCodex, unbindAgentCodex, type AgentCodexSession } from "../features/ai/agentCodexApi";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
 import { useFileTransferStore } from "../features/files/fileTransferStore";
 import { useFileStore, type TransferConflict, type TransferConflictPolicy } from "../features/files/fileStore";
@@ -70,7 +69,6 @@ import {
   findPane,
   getActiveTerminalTab,
   getLeafTerminalTabs,
-  getTerminalReferences,
 } from "../features/workspace/workspaceLayout";
 import { markWorkspaceRestoreQueued, runWorkspaceRestoreQueue } from "../features/workspace/workspaceRestoreScheduler";
 import { DEFAULT_WORKSPACE_ID } from "../features/workspace/workspaceConstants";
@@ -82,6 +80,7 @@ import {
 } from "../features/workspace/workspaceShellModel";
 import { useWorkspaceStore } from "../features/workspace/workspaceStore";
 import type {
+  PaneNode,
   WorkspaceDefinition,
   WorkspaceDefinitionDraft,
   WorkspaceSummary,
@@ -114,13 +113,8 @@ type ZtermToolActionEvent = {
 };
 
 const EMPTY_AI_PANEL_STATE = {
-  aiConversations: [],
-  aiConversationPreviews: {},
-  activeConversationId: null,
   aiApprovalMode: "safe" as const,
-  aiMessages: [],
   aiPendingInvocations: [],
-  aiContextSnapshot: null,
   agentLoading: false,
   agentError: null,
 };
@@ -287,6 +281,10 @@ export function AppShell() {
   const [viewMode, setViewMode] = useState<"workbench" | "settings">("workbench");
   const [activeLeftTool, setActiveLeftTool] = useState<LeftTool | null>(null);
   const [activeTool, setActiveTool] = useState<RightTool | null>(null);
+  const [agentSessionsByTabId, setAgentSessionsByTabId] = useState<Record<string, AgentCodexSession>>({});
+  const [agentOpeningTabId, setAgentOpeningTabId] = useState<string | null>(null);
+  const [agentOpenError, setAgentOpenError] = useState<string | null>(null);
+  const previousAgentTabIdRef = useRef<string | null>(null);
   const [containerPanelState, setContainerPanelState] = useState(EMPTY_CONTAINER_PANEL_STATE);
   const [workspaceSummaries, setWorkspaceSummaries] = useState<WorkspaceSummary[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
@@ -312,60 +310,33 @@ export function AppShell() {
   const workspaceRestoreEpochRef = useRef(0);
   const processedExternalLaunchIdsRef = useRef<Set<string>>(new Set());
   const workspaceSummaryIdsRef = useRef<Set<string>>(new Set());
-  const activeContextTokenRef = useRef(0);
   const [historyView, setHistoryView] = useState<CommandHistoryView>("history");
   const [deduplicateHistory, setDeduplicateHistory] = useState(true);
   const [historyQuery, setHistoryQuery] = useState("");
   const {
-    loadConversations,
     loadPendingInvocations,
-    captureContext,
-    sendChat,
-    cancelChat,
     bindApprovalModeToSession,
     setApprovalMode,
-    selectConversation,
-    loadConversationPreview,
-    newConversation,
-    deleteConversation,
     confirmTool,
   } = useAiStore(
     useShallow((state) => ({
-      loadConversations: state.loadConversations,
       loadPendingInvocations: state.loadPendingInvocations,
-      captureContext: state.captureContext,
-      sendChat: state.sendChat,
-      cancelChat: state.cancelChat,
       bindApprovalModeToSession: state.bindApprovalModeToSession,
       setApprovalMode: state.setApprovalMode,
-      selectConversation: state.selectConversation,
-      loadConversationPreview: state.loadConversationPreview,
-      newConversation: state.newConversation,
-      deleteConversation: state.deleteConversation,
       confirmTool: state.confirmTool,
     })),
   );
   const {
-    aiConversations,
-    aiConversationPreviews,
-    activeConversationId,
     aiApprovalMode,
-    aiMessages,
     aiPendingInvocations,
-    aiContextSnapshot,
     agentLoading,
     agentError,
   } = useAiStore(
     useShallow((state) =>
       activeTool === "agent"
         ? {
-            aiConversations: state.conversations,
-            aiConversationPreviews: state.conversationPreviews,
-            activeConversationId: state.activeConversationId,
             aiApprovalMode: state.approvalMode,
-            aiMessages: state.messages,
             aiPendingInvocations: state.pendingInvocations,
-            aiContextSnapshot: state.contextSnapshot,
             agentLoading: state.loading,
             agentError: state.error,
           }
@@ -505,7 +476,6 @@ export function AppShell() {
     getWorkspaceRuntimeSessionIds,
     removeWorkspace,
     updatePaneTerminalTab,
-    selectTab,
     addPaneTab,
     addPaneTabAfter,
     closePaneTab,
@@ -527,7 +497,6 @@ export function AppShell() {
       getWorkspaceRuntimeSessionIds: state.getWorkspaceRuntimeSessionIds,
       removeWorkspace: state.removeWorkspace,
       updatePaneTerminalTab: state.updatePaneTerminalTab,
-      selectTab: state.selectTab,
       addPaneTab: state.addPaneTab,
       addPaneTabAfter: state.addPaneTabAfter,
       closePaneTab: state.closePaneTab,
@@ -541,13 +510,6 @@ export function AppShell() {
     })),
   );
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
-  const terminalReferences = useMemo(
-    () => (activeTab ? getTerminalReferences(activeTab.root) : []),
-    [activeTab],
-  );
-  useEffect(() => {
-    void invoke("mcp_terminal_refs_set", { references: terminalReferences }).catch(() => undefined);
-  }, [terminalReferences]);
   const activePane = activeTab ? findPane(activeTab.root, activeTab.active_pane_id) : null;
   const activeLeaf = activePane?.kind === "leaf" ? activePane : null;
   const activePaneTab = activeLeaf ? getActiveTerminalTab(activeLeaf) : null;
@@ -573,6 +535,8 @@ export function AppShell() {
       ? activeSavedSession.ssh_options?.container?.enabled === true
       : activeExternalSshOptions?.container?.enabled === true && activeExternalSshMultiChannel;
   const activeRuntimeSessionId = activePaneTab?.runtime_session_id ?? null;
+  const activeAgentTabId = activeRuntimeSessionId ? (activePaneTab?.id ?? null) : null;
+  const activeAgentSession = activeAgentTabId ? (agentSessionsByTabId[activeAgentTabId] ?? null) : null;
   const syncChannelCandidates = collectSyncChannelCandidates(
     tabs,
     useTerminalStore.getState().runtimes,
@@ -604,7 +568,6 @@ export function AppShell() {
   const openDefaultLocalTerminal = useTerminalStore((state) => state.openDefaultLocalTerminal);
   const closeTerminal = useTerminalStore((state) => state.closeTerminal);
   const writeTerminal = useTerminalStore((state) => state.writeTerminal);
-  const getTerminalOutputTail = useTerminalStore((state) => state.getOutputTail);
   const activeRuntimeInfo = useTerminalStore((state) =>
     activeRuntimeSessionId ? (state.runtimes[activeRuntimeSessionId] ?? null) : null,
   );
@@ -645,40 +608,34 @@ export function AppShell() {
   const workspaceRestoreStrategy = appSettings?.workspace_restore_strategy ?? "visible_first";
   const defaultWorkspaceRestoreStartedRef = useRef(false);
   const defaultWorkspaceRestoreReadyRef = useRef(false);
-  const recentTerminalOutput =
-    activeTool === "agent" && activeRuntimeSessionId
-      ? getTerminalOutputTail(activeRuntimeSessionId).slice(-4000)
-      : "";
-  const aiTerminalContext = useMemo(
-    () => {
-      if (!activeRuntimeSessionId) return null;
-      return buildAiTerminalContext({
-        runtimeSessionId: activeRuntimeSessionId,
-        savedSessionId: activeSavedSessionId,
-        paneId: activeTab?.active_pane_id ?? null,
-        title: activePaneTab?.title ?? activePane?.id ?? null,
-        cwd: activePaneTab?.path ?? null,
-        recentOutput: recentTerminalOutput,
-        activeTool,
-      });
-    },
-    [
-      activePane?.id,
-      activePaneTab?.path,
-      activePaneTab?.title,
-      activeRuntimeSessionId,
-      activeSavedSessionId,
-      activeTab?.active_pane_id,
-      activeTool,
-      recentTerminalOutput,
-    ],
-  );
-
   useDomI18n(language);
 
   useEffect(() => {
     void bindApprovalModeToSession(aiApprovalSessionId);
   }, [aiApprovalSessionId, bindApprovalModeToSession]);
+
+  useEffect(() => {
+    if (previousAgentTabIdRef.current === activeAgentTabId) return;
+    previousAgentTabIdRef.current = activeAgentTabId;
+    setAgentOpenError(null);
+    setActiveTool((current) => {
+      if (activeAgentTabId && agentSessionsByTabId[activeAgentTabId]) return "agent";
+      return current === "agent" ? null : current;
+    });
+  }, [activeAgentTabId, agentSessionsByTabId]);
+
+  useEffect(() => {
+    const liveTabIds = new Set(tabs.flatMap((tab) => collectTerminalTabIds(tab.root)));
+    const removed = Object.entries(agentSessionsByTabId).filter(([tabId]) => !liveTabIds.has(tabId));
+    if (removed.length === 0) return;
+    for (const [, session] of removed) {
+      void closeTerminal(session.runtime.runtime_session_id).catch(() => undefined);
+      void unbindAgentCodex(session.agent_session_id).catch(() => undefined);
+    }
+    setAgentSessionsByTabId((current) =>
+      Object.fromEntries(Object.entries(current).filter(([tabId]) => liveTabIds.has(tabId))),
+    );
+  }, [agentSessionsByTabId, closeTerminal, tabs]);
 
   const syncChannelCandidateKey = syncChannelCandidates
     .map((candidate) => `${candidate.id}:${candidate.runtimeSessionId}:${candidate.host}`)
@@ -690,10 +647,9 @@ export function AppShell() {
   useEffect(() => {
     void loadSessions().finally(() => setInitialSessionsLoaded(true));
     void loadSettings();
-    void loadConversations();
     void loadPendingInvocations();
     void refreshWorkspaceSummaries();
-  }, [loadConversations, loadPendingInvocations, loadSessions, loadSettings]);
+  }, [loadPendingInvocations, loadSessions, loadSettings]);
 
   useEffect(() => {
     if (!appSettings) return;
@@ -857,36 +813,6 @@ export function AppShell() {
       void loadTransfers(activeSshSessionId);
     }
   }, [activeSshSessionId, activeTool, loadTransfers]);
-
-  useEffect(() => {
-    if (activeTool !== "agent") {
-      activeContextTokenRef.current += 1;
-      return undefined;
-    }
-
-    const token = activeContextTokenRef.current + 1;
-    activeContextTokenRef.current = token;
-    const context = aiTerminalContext;
-    if (!context) {
-      activeContextTokenRef.current += 1;
-      return undefined;
-    }
-    const timer = window.setTimeout(() => {
-      if (activeContextTokenRef.current !== token) return;
-      void captureContext(context);
-    }, 120);
-
-    return () => {
-      window.clearTimeout(timer);
-      if (activeContextTokenRef.current === token) {
-        activeContextTokenRef.current += 1;
-      }
-    };
-  }, [
-    aiTerminalContext,
-    activeTool,
-    captureContext,
-  ]);
 
   useAppShortcutKeys(
     appSettings?.shortcuts ?? [],
@@ -1426,7 +1352,46 @@ export function AppShell() {
   }
 
   function toggleRightTool(tool: RightTool) {
-    setActiveTool((current) => (current === tool ? null : tool));
+    if (tool !== "agent") {
+      setActiveTool((current) => (current === tool ? null : tool));
+      return;
+    }
+    if (activeTool === "agent") {
+      setActiveTool(null);
+      return;
+    }
+    setActiveTool("agent");
+    void ensureActiveAgentCodex();
+  }
+
+  async function ensureActiveAgentCodex() {
+    if (!activeAgentTabId || !activeRuntimeSessionId || !activePaneTab) {
+      setAgentOpenError("请先打开一个可操作的终端标签页。");
+      return;
+    }
+    if (agentSessionsByTabId[activeAgentTabId] || agentOpeningTabId === activeAgentTabId) return;
+    const tabId = activeAgentTabId;
+    setAgentOpeningTabId(tabId);
+    setAgentOpenError(null);
+    try {
+      const session = await openAgentCodex({
+        tabId,
+        targetRuntimeSessionId: activeRuntimeSessionId,
+        targetSavedSessionId: activeSavedSessionId,
+        targetLabel: activePaneTab.title || activeSavedSession?.name || "当前终端",
+      });
+      useTerminalStore.setState((state) => ({
+        runtimes: {
+          ...state.runtimes,
+          [session.runtime.runtime_session_id]: session.runtime,
+        },
+      }));
+      setAgentSessionsByTabId((current) => ({ ...current, [tabId]: session }));
+    } catch (error) {
+      setAgentOpenError(unknownErrorMessage(error, "Codex CLI 启动失败"));
+    } finally {
+      setAgentOpeningTabId((current) => (current === tabId ? null : current));
+    }
   }
 
   async function loadSshContainers(
@@ -2098,30 +2063,13 @@ export function AppShell() {
         activeTool={activeTool}
         activeConnectionKind={activeConnectionKind}
         agent={{
-          activeRuntimeSessionId,
-          activePaneId: activeTab?.active_pane_id ?? null,
-          activePaneTitle: activeRuntimeSessionId ? (activePaneTab?.title ?? activePane?.id ?? null) : null,
-          activeSavedSessionId,
+          session: activeAgentSession,
           approvalMode: aiApprovalMode,
-          error: agentError,
-          loading: agentLoading,
-          providersAvailable: providers.some((provider) => provider.enabled),
-          recentTerminalOutput,
-          conversations: aiConversations,
-          conversationPreviews: aiConversationPreviews,
-          activeConversationId,
-          messages: aiMessages,
-          contextSnapshot: aiContextSnapshot,
+          error: agentOpenError ?? agentError,
+          loading: agentLoading || agentOpeningTabId === activeAgentTabId,
           pendingInvocations: aiPendingInvocations,
-          language: appSettings?.language ?? "zhCN",
           onApprovalModeChange: setApprovalMode,
           onConfirmTool: confirmTool,
-          onDeleteConversation: deleteConversation,
-          onLoadConversationPreview: loadConversationPreview,
-          onNewConversation: newConversation,
-          onSelectConversation: selectConversation,
-          onSendChat: (message) => sendChat(message, aiTerminalContext),
-          onCancelChat: cancelChat,
         }}
         files={{
           entries: fileEntries,
@@ -2319,6 +2267,13 @@ function ExternalSshTunnelEditorDialog({
       </ZtSurfaceFrame>
     </ZtModalOverlay>
   );
+}
+
+function collectTerminalTabIds(root: PaneNode): string[] {
+  if (root.kind === "leaf") {
+    return getLeafTerminalTabs(root).map((tab) => tab.id);
+  }
+  return [...collectTerminalTabIds(root.first), ...collectTerminalTabIds(root.second)];
 }
 
 function SshTunnelEditorDialog({

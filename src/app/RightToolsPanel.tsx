@@ -2,15 +2,9 @@
 import { Activity, Box, Cable, Clock3, Folder, LogIn, MessageSquareMore, Plus, RefreshCw, type LucideIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { AiPanel } from "../features/ai/AiPanel";
-import type {
-  AiApprovalMode,
-  AiConversationMessage,
-  AiConversationPreviewState,
-  AiConversationSummary,
-  AiTerminalContextSnapshot,
-  AiToolPendingInvocation,
-} from "../features/ai/aiStore";
+import { AgentCodexPanel } from "../features/ai/AgentCodexPanel";
+import type { AgentCodexSession } from "../features/ai/agentCodexApi";
+import type { AiApprovalMode, AiToolPendingInvocation, AiToolSecretInputs } from "../features/ai/aiStore";
 import { FileExplorerPanel } from "../features/files/FileExplorerPanel";
 import { TransferPanel } from "../features/files/TransferPanel";
 import type { FileEntry, TransferTask } from "../features/files/fileStore";
@@ -49,30 +43,13 @@ interface RightToolsPanelProps {
   activeTool: RightTool | null;
   activeConnectionKind: ActiveConnectionKind;
   agent: {
-    activeRuntimeSessionId: string | null;
-    activePaneId: string | null;
-    activePaneTitle: string | null;
-    activeSavedSessionId: string | null;
+    session: AgentCodexSession | null;
     approvalMode: AiApprovalMode;
     error: string | null;
     loading: boolean;
-    providersAvailable: boolean;
-    recentTerminalOutput: string;
-    conversations: AiConversationSummary[];
-    conversationPreviews: Record<string, AiConversationPreviewState>;
-    activeConversationId: string | null;
-    messages: AiConversationMessage[];
-    contextSnapshot: AiTerminalContextSnapshot | null;
     pendingInvocations: AiToolPendingInvocation[];
-    language?: AppLanguage;
     onApprovalModeChange: (mode: AiApprovalMode) => Promise<unknown> | unknown;
-    onConfirmTool: (invocationId: string, approved: boolean) => Promise<unknown> | unknown;
-    onDeleteConversation: (conversationId: string) => Promise<unknown> | unknown;
-    onLoadConversationPreview: (conversationId: string) => Promise<unknown> | unknown;
-    onNewConversation: () => Promise<unknown> | unknown;
-    onSelectConversation: (conversationId: string) => Promise<unknown> | unknown;
-    onSendChat: (message: string) => Promise<unknown> | unknown;
-    onCancelChat: () => void;
+    onConfirmTool: (invocationId: string, approved: boolean, secretInputs?: AiToolSecretInputs) => Promise<unknown> | unknown;
   };
   files: {
     entries: FileEntry[];
@@ -190,31 +167,14 @@ export function RightToolsPanel({
           {activeTool === "agent" ? (
             <>
               <PanelHeader title={t(language, "agent")} />
-              <AiPanel
-                activeRuntimeSessionId={agent.activeRuntimeSessionId}
-                activePaneId={agent.activePaneId}
-                activePaneTitle={agent.activePaneTitle}
-                activeSavedSessionId={agent.activeSavedSessionId}
-                providersAvailable={agent.providersAvailable}
-                recentOutput={agent.recentTerminalOutput}
-                conversations={agent.conversations}
-                conversationPreviews={agent.conversationPreviews}
-                activeConversationId={agent.activeConversationId}
+              <AgentCodexPanel
+                session={agent.session}
                 approvalMode={agent.approvalMode}
-                messages={agent.messages}
-                contextSnapshot={agent.contextSnapshot}
                 pendingInvocations={agent.pendingInvocations}
-                language={agent.language}
                 loading={agent.loading}
                 error={agent.error}
                 onApprovalModeChange={agent.onApprovalModeChange}
-                onSendChat={agent.onSendChat}
-                onSelectConversation={agent.onSelectConversation}
-                onLoadConversationPreview={agent.onLoadConversationPreview}
-                onNewConversation={agent.onNewConversation}
-                onDeleteConversation={agent.onDeleteConversation}
                 onConfirmTool={agent.onConfirmTool}
-                onCancelChat={agent.onCancelChat}
               />
             </>
           ) : null}

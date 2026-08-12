@@ -243,11 +243,33 @@ vi.mock("../features/terminal/externalLaunchApi", () => ({
   updateExternalSshOptions: storeMocks.updateExternalSshOptions,
 }));
 
-vi.mock("../features/ai/AiPanel", () => ({
-  AiPanel: (props: Record<string, unknown>) => {
+vi.mock("../features/ai/AgentCodexPanel", () => ({
+  AgentCodexPanel: (props: Record<string, unknown>) => {
     storeMocks.aiPanelProps = props;
     return <section aria-label="AI 面板" />;
   },
+}));
+
+vi.mock("../features/ai/agentCodexApi", () => ({
+  openAgentCodex: vi.fn(async (request: { tabId: string; targetRuntimeSessionId: string; targetSavedSessionId: string | null; targetLabel: string }) => ({
+    agent_session_id: `agent-${request.tabId}`,
+    target_runtime_session_id: request.targetRuntimeSessionId,
+    target_saved_session_id: request.targetSavedSessionId,
+    target_label: request.targetLabel,
+    approval_mode: "safe",
+    runtime: {
+      runtime_session_id: `agent-runtime-${request.tabId}`,
+      saved_session_id: null,
+      history_scope_kind: null,
+      history_scope_id: null,
+      pane_id: `agent:${request.tabId}`,
+      title: `Codex · ${request.targetLabel}`,
+      kind: "local",
+      cols: 80,
+      rows: 30,
+    },
+  })),
+  unbindAgentCodex: vi.fn(async () => undefined),
 }));
 
 vi.mock("../features/files/FileExplorerPanel", () => ({
@@ -633,6 +655,7 @@ vi.mock("../features/terminal/terminalStore", () => {
     const state = terminalState(true);
     return selector ? selector(state) : state;
   };
+  (useTerminalStore as unknown as { setState: (updater: unknown) => void }).setState = vi.fn();
   useTerminalStore.getState = () => terminalState(false);
   return { useTerminalStore };
 });
@@ -3230,7 +3253,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("does not read active terminal output while the AI tool is collapsed", async () => {
+  it("starts a bound Codex session without capturing target output in the React agent layer", async () => {
     storeMocks.workspaceState.tabs = [
       {
         id: "tab-1",
@@ -3267,14 +3290,14 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    expect(storeMocks.terminalOutputAccesses).toBeGreaterThan(0);
+    expect(storeMocks.terminalOutputAccesses).toBe(0);
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 140));
     });
-    expect(storeMocks.captureContext).toHaveBeenCalledWith(
+    expect(storeMocks.captureContext).not.toHaveBeenCalled();
+    expect(storeMocks.aiPanelProps).toEqual(
       expect.objectContaining({
-        runtime_session_id: "runtime-1",
-        recent_output_tail: expect.stringContaining("line"),
+        session: expect.objectContaining({ target_runtime_session_id: "runtime-1" }),
       }),
     );
 
@@ -3310,7 +3333,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("does not bind the AI panel or capture terminal context for the startup placeholder pane", async () => {
+  it("shows a no-target Codex panel for the startup placeholder pane", async () => {
     const view = render(<AppShell />);
 
     const agentButton = view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement;
@@ -3321,8 +3344,7 @@ describe("AppShell", () => {
 
     expect(storeMocks.aiPanelProps).toEqual(
       expect.objectContaining({
-        activeRuntimeSessionId: null,
-        activePaneTitle: null,
+        session: null,
       }),
     );
 

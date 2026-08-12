@@ -1,21 +1,24 @@
 // Author: Liz
-use std::sync::Arc;
+use std::{fs, sync::Arc, time::Duration};
 
 use reqwest::StatusCode;
 use serde_json::{json, Value};
+use tokio::{process::Command, time::timeout};
+use uuid::Uuid;
 use zterm_lib::{
     commands::mcp::start_mcp_if_enabled,
     error::AppResult,
     models::{
-        ai::AiToolPrepareRequest,
         session::{AuthMode, SavedSessionDraft, SessionType},
         settings::McpSettings,
         terminal::{RuntimeSessionInfo, RuntimeSessionKind},
     },
     services::{
-        ai_tool_service::{AiToolCommandWriter, AiToolService, TerminalReference},
+        ai_tool_service::{AiToolCommandWriter, AiToolService},
         credential_service::{CredentialService, MemorySecretStore},
-        mcp_service::{handle_http_request, McpHttpRequest, McpService, DEFAULT_MCP_PORT},
+        mcp_service::{
+            handle_http_request, AgentMcpBinding, McpHttpRequest, McpService, DEFAULT_MCP_PORT,
+        },
     },
     storage::{
         ai::{get_ai_tool_pending_state, upsert_ai_connection_approval_policy},
@@ -120,6 +123,20 @@ async fn mcp_http_handler_supports_initialize_tools_list_and_pending_tool_call()
     let initialize_body: Value = serde_json::from_slice(&initialize.body).expect("json body");
     assert_eq!(initialize_body["result"]["protocolVersion"], "2025-11-25");
 
+    let initialized = handle_http_request(
+        Arc::clone(&store),
+        tools.clone(),
+        "token-1",
+        authed_request(json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        })),
+    )
+    .await
+    .expect("initialized notification should handle");
+    assert_eq!(initialized.status, 202);
+    assert!(initialized.body.is_empty());
+
     let list = handle_http_request(
         Arc::clone(&store),
         tools.clone(),
@@ -168,11 +185,8 @@ async fn mcp_http_handler_supports_initialize_tools_list_and_pending_tool_call()
         .find(|tool| tool["name"] == "terminal.write")
         .expect("terminal.write schema");
     assert_eq!(
-        terminal_write["inputSchema"]["oneOf"],
-        json!([
-            { "required": ["runtime_session_id", "data"] },
-            { "required": ["terminal_ref", "data"] }
-        ])
+        terminal_write["inputSchema"]["required"],
+        json!(["runtime_session_id", "data"])
     );
 
     let call = handle_http_request(
@@ -229,6 +243,220 @@ async fn mcp_service_binds_localhost_and_serves_json_rpc() {
         .any(|tool| tool["name"] == "ssh.execute"));
 
     service.stop().expect("service should stop");
+}
+
+#[tokio::test]
+async fn sidebar_agent_token_is_scoped_to_its_bound_page_terminal() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+    let service = McpService::with_secret_store(Arc::new(MemorySecretStore::default()));
+    service
+        .start(store, tools, Some(0))
+        .await
+        .expect("mcp service should start");
+    let access = service
+        .register_agent_binding(AgentMcpBinding {
+            agent_session_id: "agent-1".to_string(),
+            runtime_session_id: "runtime-1".to_string(),
+            saved_session_id: Some("session-1".to_string()),
+            target_label: "Production".to_string(),
+        })
+        .expect("agent binding should register");
+
+    let client = reqwest::Client::new();
+    let initialize = client
+        .post(&access.endpoint)
+        .bearer_auth(&access.token)
+        .json(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize"}))
+        .send()
+        .await
+        .expect("initialize should send");
+    assert_eq!(initialize.status(), StatusCode::OK);
+
+    let initialized = client
+        .post(&access.endpoint)
+        .bearer_auth(&access.token)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        }))
+        .send()
+        .await
+        .expect("initialized notification should send");
+    assert_eq!(initialized.status(), StatusCode::ACCEPTED);
+    assert_eq!(initialized.bytes().await.expect("empty body").len(), 0);
+
+    let listed = client
+        .post(&access.endpoint)
+        .bearer_auth(&access.token)
+        .json(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+        .send()
+        .await
+        .expect("tools/list should send")
+        .json::<Value>()
+        .await
+        .expect("tools/list JSON");
+    let names = listed["result"]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("tool name"))
+        .collect::<Vec<_>>();
+    assert_eq!(names, vec!["terminal.read", "terminal.write"]);
+
+    let read = client
+        .post(&access.endpoint)
+        .bearer_auth(&access.token)
+        .json(&json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": { "name": "terminal.read", "arguments": {} }
+        }))
+        .send()
+        .await
+        .expect("terminal.read should send")
+        .json::<Value>()
+        .await
+        .expect("terminal.read JSON");
+    assert_eq!(
+        read["result"]["structuredContent"]["result"]["runtime_session_id"],
+        "runtime-1"
+    );
+
+    let rejected = client
+        .post(&access.endpoint)
+        .bearer_auth(&access.token)
+        .json(&json!({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": { "name": "ssh.execute", "arguments": { "script": "pwd" } }
+        }))
+        .send()
+        .await
+        .expect("ssh.execute rejection should send")
+        .json::<Value>()
+        .await
+        .expect("ssh.execute rejection JSON");
+    assert_eq!(rejected["error"]["code"], -32601);
+
+    service.stop().expect("service should stop");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a locally logged-in Codex CLI and performs one model request"]
+async fn codex_cli_discovers_sidebar_tools_with_non_lite_model_catalog() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+    let service = McpService::with_secret_store(Arc::new(MemorySecretStore::default()));
+    service
+        .start(store, tools, Some(0))
+        .await
+        .expect("mcp service should start");
+    let access = service
+        .register_agent_binding(AgentMcpBinding {
+            agent_session_id: "agent-codex-smoke".to_string(),
+            runtime_session_id: "runtime-1".to_string(),
+            saved_session_id: Some("session-1".to_string()),
+            target_label: "Codex smoke terminal".to_string(),
+        })
+        .expect("agent binding should register");
+
+    let smoke_root = std::env::temp_dir().join(format!("zterm-codex-smoke-{}", Uuid::new_v4()));
+    fs::create_dir_all(&smoke_root).expect("smoke directory should create");
+    let catalog_output = codex_command()
+        .args(["debug", "models"])
+        .output()
+        .await
+        .expect("Codex model catalog should load");
+    assert!(catalog_output.status.success());
+    let mut catalog: Value =
+        serde_json::from_slice(&catalog_output.stdout).expect("Codex model catalog JSON");
+    for model in catalog["models"].as_array_mut().expect("models") {
+        model["use_responses_lite"] = Value::Bool(false);
+    }
+    let catalog_path = smoke_root.join("models.json");
+    fs::write(
+        &catalog_path,
+        serde_json::to_vec_pretty(&catalog).expect("catalog bytes"),
+    )
+    .expect("catalog should write");
+
+    let endpoint_config = format!("mcp_servers.zterm.url={}", toml_string(&access.endpoint));
+    let token_config =
+        "mcp_servers.zterm.bearer_token_env_var=\"ZTERM_AGENT_MCP_TOKEN\"".to_string();
+    let approval_config = "mcp_servers.zterm.default_tools_approval_mode=\"approve\"".to_string();
+    let catalog_config = format!(
+        "model_catalog_json={}",
+        toml_string(&catalog_path.to_string_lossy())
+    );
+    let mut command = codex_command();
+    command
+        .current_dir(&smoke_root)
+        .env("ZTERM_AGENT_MCP_TOKEN", &access.token)
+        .args([
+            "-m",
+            "gpt-5.6-sol",
+            "-s",
+            "read-only",
+            "-a",
+            "never",
+            "-c",
+            &endpoint_config,
+            "-c",
+            &token_config,
+            "-c",
+            &approval_config,
+            "-c",
+            &catalog_config,
+            "exec",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--skip-git-repo-check",
+            "--json",
+            "Call the zterm terminal.read MCP tool exactly once and report its output. Do not use shell tools.",
+        ]);
+    let output = timeout(Duration::from_secs(120), command.output())
+        .await
+        .expect("Codex smoke should finish before timeout")
+        .expect("Codex smoke should launch");
+    service.stop().expect("service should stop");
+    fs::remove_dir_all(&smoke_root).expect("smoke directory should remove");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "Codex smoke failed");
+    let events = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect::<Vec<_>>();
+    let tool_call = events.iter().find(|event| {
+        event["type"] == "item.completed"
+            && event["item"]["type"] == "mcp_tool_call"
+            && event["item"]["server"] == "zterm"
+            && event["item"]["tool"] == "terminal.read"
+    });
+    assert!(
+        tool_call.is_some(),
+        "Codex did not call zterm terminal.read"
+    );
+    let tool_call = tool_call.expect("tool call");
+    assert_eq!(
+        tool_call["item"]["status"],
+        "completed",
+        "tool call: {}",
+        serde_json::to_string(&tool_call["item"]).expect("tool call JSON")
+    );
+}
+
+fn codex_command() -> Command {
+    if cfg!(windows) {
+        let mut command = Command::new("cmd.exe");
+        command.args(["/D", "/S", "/C", "codex"]);
+        command
+    } else {
+        Command::new("codex")
+    }
+}
+
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[test]
@@ -462,137 +690,6 @@ async fn mcp_terminal_read_and_write_return_output_with_cursor() {
 }
 
 #[tokio::test]
-async fn mcp_terminal_read_and_write_resolve_current_terminal_reference_without_ui_mutation() {
-    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
-    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
-    tools
-        .set_terminal_references(vec![TerminalReference {
-            terminal_ref: "A1".to_string(),
-            runtime_session_id: "runtime-1".to_string(),
-        }])
-        .expect("current workspace reference should register");
-
-    let read = handle_http_request(
-        Arc::clone(&store),
-        tools.clone(),
-        "token-1",
-        authed_request(json!({
-            "jsonrpc": "2.0",
-            "id": 70,
-            "method": "tools/call",
-            "params": { "name": "terminal.read", "arguments": { "terminal_ref": "A1" } }
-        })),
-    )
-    .await
-    .expect("terminal.read should resolve A1");
-    let read_body: Value = serde_json::from_slice(&read.body).expect("json body");
-    assert_eq!(
-        read_body["result"]["structuredContent"]["status"],
-        "succeeded"
-    );
-    assert_eq!(
-        read_body["result"]["structuredContent"]["result"]["runtime_session_id"],
-        "runtime-1"
-    );
-
-    let write = handle_http_request(
-        store,
-        tools,
-        "token-1",
-        authed_request(json!({
-            "jsonrpc": "2.0",
-            "id": 71,
-            "method": "tools/call",
-            "params": { "name": "terminal.write", "arguments": { "terminal_ref": "A1", "data": "pwd\\r" } }
-        })),
-    )
-    .await
-    .expect("terminal.write should resolve A1");
-    let write_body: Value = serde_json::from_slice(&write.body).expect("json body");
-    assert_eq!(
-        write_body["result"]["structuredContent"]["status"],
-        "succeeded"
-    );
-    assert_eq!(
-        write_body["result"]["structuredContent"]["result"]["runtime_session_id"],
-        "runtime-1"
-    );
-}
-
-#[test]
-fn terminal_reference_is_limited_to_mcp_terminal_calls() {
-    let store = SqliteStore::open_in_memory().expect("store should open");
-    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
-    tools
-        .set_terminal_references(vec![TerminalReference {
-            terminal_ref: "A1".to_string(),
-            runtime_session_id: "runtime-1".to_string(),
-        }])
-        .expect("current workspace reference should register");
-
-    let error = tools
-        .prepare(
-            &store,
-            AiToolPrepareRequest {
-                tool_id: "terminal.read".to_string(),
-                arguments: json!({ "terminal_ref": "A1" }),
-                reason: None,
-                requested_by: Some("ai".to_string()),
-                conversation_id: None,
-                run_id: None,
-                step_id: None,
-            },
-        )
-        .expect_err("non-MCP terminal calls must keep their runtime ID contract");
-
-    assert!(error.to_string().contains("runtime_session_id"));
-}
-
-#[tokio::test]
-async fn mcp_terminal_reference_rejects_ambiguous_or_stale_targets() {
-    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
-    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
-    let ambiguous = handle_http_request(
-        Arc::clone(&store),
-        tools.clone(),
-        "token-1",
-        authed_request(json!({
-            "jsonrpc": "2.0",
-            "id": 72,
-            "method": "tools/call",
-            "params": {
-                "name": "terminal.read",
-                "arguments": { "terminal_ref": "A1", "runtime_session_id": "runtime-1" }
-            }
-        })),
-    )
-    .await
-    .expect("ambiguous target should be a JSON-RPC response");
-    let ambiguous_body: Value = serde_json::from_slice(&ambiguous.body).expect("json body");
-    assert_eq!(ambiguous_body["error"]["code"], -32602);
-
-    let stale = handle_http_request(
-        store,
-        tools,
-        "token-1",
-        authed_request(json!({
-            "jsonrpc": "2.0",
-            "id": 73,
-            "method": "tools/call",
-            "params": { "name": "terminal.read", "arguments": { "terminal_ref": "A1" } }
-        })),
-    )
-    .await
-    .expect("stale target should be a JSON-RPC response");
-    let stale_body: Value = serde_json::from_slice(&stale.body).expect("json body");
-    assert_eq!(stale_body["error"]["code"], -32602);
-    assert!(stale_body["error"]["message"]
-        .as_str()
-        .expect("error message")
-        .contains("未关联"));
-}
-
-#[tokio::test]
 async fn mcp_uses_the_target_ssh_connection_approval_policy() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
     save_session(
@@ -624,13 +721,6 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
     )
     .expect("connection policy should save");
     let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
-    tools
-        .set_terminal_references(vec![TerminalReference {
-            terminal_ref: "A1".to_string(),
-            runtime_session_id: "runtime-1".to_string(),
-        }])
-        .expect("current workspace reference should register");
-
     let pending = handle_http_request(
         Arc::clone(&store),
         tools.clone(),
@@ -641,7 +731,7 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
             "method": "tools/call",
             "params": {
                 "name": "terminal.read",
-                "arguments": { "terminal_ref": "A1" }
+                "arguments": { "runtime_session_id": "runtime-1" }
             }
         })),
     )
@@ -661,8 +751,7 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
         .target_summary
         .as_deref()
         .expect("terminal target summary")
-        .contains("terminal_ref=A1"));
-    assert_eq!(arguments["terminal_ref"], "A1");
+        .contains("runtime_session_id=runtime-1"));
     assert_eq!(arguments["runtime_session_id"], "runtime-1");
 
     upsert_ai_connection_approval_policy(
@@ -681,7 +770,7 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
             "method": "tools/call",
             "params": {
                 "name": "terminal.read",
-                "arguments": { "terminal_ref": "A1" }
+                "arguments": { "runtime_session_id": "runtime-1" }
             }
         })),
     )

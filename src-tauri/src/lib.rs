@@ -29,6 +29,8 @@ pub fn run() {
         .plugin(updater_plugin())
         .setup(setup_app_state)
         .invoke_handler(tauri::generate_handler![
+            commands::agent::agent_codex_open,
+            commands::agent::agent_codex_unbind,
             commands::sessions::sessions_list,
             commands::sessions::sessions_save_group,
             commands::sessions::sessions_delete_group,
@@ -44,7 +46,6 @@ pub fn run() {
             commands::mcp::mcp_server_set_enabled,
             commands::mcp::mcp_server_rotate_token,
             commands::mcp::mcp_tool_catalog_list,
-            commands::mcp::mcp_terminal_refs_set,
             commands::terminal_profile::terminal_profile_list,
             commands::terminal_profile::terminal_profile_detect,
             commands::terminal_profile::terminal_profile_set_default,
@@ -291,7 +292,7 @@ mod tests {
     #[test]
     fn crate_metadata_matches_project() {
         assert_eq!(env!("CARGO_PKG_NAME"), "zterm");
-        assert_eq!(env!("CARGO_PKG_VERSION"), "0.3.0");
+        assert_eq!(env!("CARGO_PKG_VERSION"), "0.3.1");
     }
 
     #[test]

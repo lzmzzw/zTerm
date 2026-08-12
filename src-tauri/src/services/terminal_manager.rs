@@ -46,6 +46,17 @@ pub struct OpenedPtySession {
     pub shell_history_integration: bool,
 }
 
+pub struct AgentCodexPtyOptions {
+    pub command_path: String,
+    pub args: Vec<String>,
+    pub cwd: PathBuf,
+    pub environment: Vec<(String, String)>,
+    pub pane_id: String,
+    pub title: String,
+    pub cols: u16,
+    pub rows: u16,
+}
+
 enum RuntimeSession {
     Placeholder,
     Rdp(RdpRuntime),
@@ -82,6 +93,58 @@ struct OutputSuppression {
 }
 
 impl TerminalManager {
+    pub fn open_agent_codex_session(
+        &self,
+        options: AgentCodexPtyOptions,
+    ) -> AppResult<OpenedPtySession> {
+        let mut command = CommandBuilder::new(&options.command_path);
+        for arg in &options.args {
+            command.arg(arg);
+        }
+        command.cwd(&options.cwd);
+        for (name, value) in &options.environment {
+            if !name.trim().is_empty() {
+                command.env(name, value);
+            }
+        }
+        let pty = crate::services::local_pty_service::spawn_pty_command(
+            command,
+            options.cols,
+            options.rows,
+        )?;
+        let info = RuntimeSessionInfo {
+            runtime_session_id: Uuid::new_v4().to_string(),
+            saved_session_id: None,
+            history_scope_kind: None,
+            history_scope_id: None,
+            pane_id: options.pane_id,
+            title: options.title,
+            kind: RuntimeSessionKind::Local,
+            cols: options.cols,
+            rows: options.rows,
+        };
+        let runtime = PtyRuntime {
+            master: Mutex::new(pty.master),
+            writer: Mutex::new(pty.writer),
+            child: Mutex::new(pty.child),
+        };
+        self.sessions
+            .lock()
+            .map_err(|_| AppError::terminal("terminal session lock was poisoned"))?
+            .insert(
+                info.runtime_session_id.clone(),
+                Arc::new(RuntimeSession::Pty(runtime)),
+            );
+        self.record_runtime_info(&info)?;
+        self.ensure_output_buffer(&info.runtime_session_id)?;
+        Ok(OpenedPtySession {
+            info,
+            reader: pty.reader,
+            auth_secret: None,
+            shell_history_integration: false,
+        })
+    }
+
     pub fn open_rdp_session(
         &self,
         saved_session_id: String,
