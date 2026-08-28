@@ -46,6 +46,13 @@ interface WorkspaceStore {
   buildActiveWorkspaceDraft: () => WorkspaceDefinitionDraft | null;
   restoreWorkbenchDefinition: (workspace: WorkspaceDefinition) => void;
   clearRuntimeSession: (runtimeSessionId: string) => void;
+  markRuntimeExited: (runtimeSessionId: string, message: string, snapshotText?: string | null) => void;
+  hasPaneTerminalTab: (
+    workspaceId: string,
+    workspaceTabId: string,
+    paneId: string,
+    paneTabId: string,
+  ) => boolean;
   getWorkspaceRuntimeSessionIds: (workspaceId: string) => string[];
   removeWorkspace: (workspaceId: string) => void;
   updatePaneTerminalTab: (
@@ -158,6 +165,25 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         updated_at_ms: Date.now(),
       })),
     ),
+  markRuntimeExited: (runtimeSessionId, message, snapshotText) =>
+    set((state) =>
+      updateActiveWorkspace(state, (workspace) => ({
+        ...workspace,
+        tabs: workspace.tabs.map((tab) => ({
+          ...tab,
+          root: markRuntimeExitedInRoot(tab.root, runtimeSessionId, message, snapshotText),
+          updated_at_ms: Date.now(),
+        })),
+        updated_at_ms: Date.now(),
+      })),
+    ),
+  hasPaneTerminalTab: (workspaceId, workspaceTabId, paneId, paneTabId) => {
+    const state = get();
+    const workspace = state.workspaces.find((item) => item.id === workspaceId);
+    const workspaceTab = workspace?.tabs.find((item) => item.id === workspaceTabId);
+    const pane = workspaceTab ? findLeafPane(workspaceTab.root, paneId) : null;
+    return Boolean(pane && getLeafTerminalTabs(pane).some((item) => item.id === paneTabId));
+  },
   getWorkspaceRuntimeSessionIds: (workspaceId) => {
     const workspace = get().workspaces.find((item) => item.id === workspaceId);
     return workspace ? collectRuntimeSessionIds(workspace.tabs) : [];
@@ -602,6 +628,48 @@ function clearRuntimeSessionFromRoot(root: PaneNode, runtimeSessionId: string): 
           runtime_session_id: null,
           restore_status: null,
           restore_error: null,
+        }
+      : tab,
+  );
+  const activeTerminalTab = terminalTabs.find((tab) => tab.id === root.active_terminal_tab_id) ?? terminalTabs[0];
+  return {
+    ...root,
+    runtime_session_id: activeTerminalTab?.runtime_session_id ?? null,
+    saved_session_id: activeTerminalTab?.saved_session_id ?? root.saved_session_id,
+    title: activeTerminalTab?.title ?? root.title,
+    terminal_tabs: terminalTabs,
+  };
+}
+
+function markRuntimeExitedInRoot(
+  root: PaneNode,
+  runtimeSessionId: string,
+  message: string,
+  snapshotText?: string | null,
+): PaneNode {
+  if (root.kind === "split") {
+    return {
+      ...root,
+      first: markRuntimeExitedInRoot(root.first, runtimeSessionId, message, snapshotText),
+      second: markRuntimeExitedInRoot(root.second, runtimeSessionId, message, snapshotText),
+    };
+  }
+
+  const terminalTabs = getLeafTerminalTabs(root).map((tab) =>
+    tab.runtime_session_id === runtimeSessionId
+      ? {
+          ...stripTerminalVisualSnapshot(tab),
+          runtime_session_id: null,
+          restore_status: "failed" as const,
+          restore_error: message,
+          visual_snapshot: snapshotText
+            ? {
+                kind: "terminal_tail" as const,
+                text: snapshotText,
+                captured_at_ms: Date.now(),
+                runtime_session_id: null,
+              }
+            : null,
         }
       : tab,
   );

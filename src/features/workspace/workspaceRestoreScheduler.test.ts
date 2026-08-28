@@ -419,4 +419,43 @@ describe("workspaceRestoreScheduler", () => {
     expect(openDefaultLocalTerminal).not.toHaveBeenCalled();
     expect(updatePaneTerminalTab).not.toHaveBeenCalled();
   });
+
+  it("closes a runtime when its restore target disappears while opening", async () => {
+    const source = workspace();
+    const sourceRoot = source.tabs[0].root;
+    if (sourceRoot.kind !== "split") throw new Error("test workspace shape changed");
+    const singleTargetWorkspace: WorkspaceDefinition = {
+      ...source,
+      tabs: [{
+        ...source.tabs[0],
+        active_pane_id: "pane-a",
+        root: sourceRoot.first,
+      }],
+    };
+    let resolveRuntime!: (runtimeInfo: RuntimeSessionInfo) => void;
+    let targetAvailable = true;
+    const closeTerminal = vi.fn().mockResolvedValue(undefined);
+
+    const restoring = runWorkspaceRestoreQueue({
+      workspace: singleTargetWorkspace,
+      sessions,
+      strategy: "visible_first",
+      openTerminal: vi.fn(() => new Promise<RuntimeSessionInfo>((resolve) => {
+        resolveRuntime = resolve;
+      })),
+      openDefaultLocalTerminal: vi.fn(),
+      openSshContainerTerminal: vi.fn(),
+      writeTerminal: vi.fn(),
+      closeTerminal,
+      isTargetAvailable: () => targetAvailable,
+      updatePaneTerminalTab: vi.fn(),
+    });
+
+    await Promise.resolve();
+    targetAvailable = false;
+    resolveRuntime(runtime("runtime-late", "pane-a", "ssh", "ssh-a"));
+    await restoring;
+
+    expect(closeTerminal).toHaveBeenCalledWith("runtime-late");
+  });
 });

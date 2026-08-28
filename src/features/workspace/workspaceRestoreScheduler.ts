@@ -47,6 +47,7 @@ interface WorkspaceRestoreQueueOptions {
   writeTerminal: (runtimeSessionId: string, data: string) => Promise<unknown>;
   closeTerminal: (runtimeSessionId: string) => Promise<unknown>;
   isCancelled?: () => boolean;
+  isTargetAvailable?: (workspaceId: string, workspaceTabId: string, paneId: string, paneTabId: string) => boolean;
   updatePaneTerminalTab: (
     workspaceId: string,
     workspaceTabId: string,
@@ -299,14 +300,14 @@ async function runSingleTarget(
   target: WorkspaceRestoreTarget,
 ): Promise<boolean> {
   let runtime: RuntimeSessionInfo | null = null;
-  if (options.isCancelled?.()) return false;
+  if (restoreTargetUnavailable(options, target)) return false;
   options.updatePaneTerminalTab(target.workspaceId, target.workspaceTabId, target.paneId, target.paneTabId, {
     restore_status: "pending",
     restore_error: null,
   });
 
   try {
-    if (options.isCancelled?.()) return false;
+    if (restoreTargetUnavailable(options, target)) return false;
     runtime = await openWorkspaceTerminal(
       target,
       options.sessions,
@@ -314,7 +315,7 @@ async function runSingleTarget(
       options.openDefaultLocalTerminal,
       options.openSshContainerTerminal,
     );
-    if (options.isCancelled?.()) {
+    if (restoreTargetUnavailable(options, target)) {
       await options.closeTerminal(runtime.runtime_session_id).catch(() => undefined);
       return false;
     }
@@ -323,7 +324,7 @@ async function runSingleTarget(
     if (startupCommand && runtime.kind !== "rdp_placeholder") {
       await options.writeTerminal(runtime.runtime_session_id, startupCommand);
     }
-    if (options.isCancelled?.()) {
+    if (restoreTargetUnavailable(options, target)) {
       await options.closeTerminal(runtime.runtime_session_id).catch(() => undefined);
       return false;
     }
@@ -337,7 +338,7 @@ async function runSingleTarget(
     });
     return true;
   } catch (error) {
-    if (options.isCancelled?.()) {
+    if (restoreTargetUnavailable(options, target)) {
       if (runtime) {
         await options.closeTerminal(runtime.runtime_session_id).catch(() => undefined);
       }
@@ -352,6 +353,14 @@ async function runSingleTarget(
     }
     return false;
   }
+}
+
+function restoreTargetUnavailable(options: WorkspaceRestoreQueueOptions, target: WorkspaceRestoreTarget) {
+  return Boolean(
+    options.isCancelled?.() ||
+      (options.isTargetAvailable &&
+        !options.isTargetAvailable(target.workspaceId, target.workspaceTabId, target.paneId, target.paneTabId)),
+  );
 }
 
 async function openWorkspaceTerminal(

@@ -42,6 +42,26 @@ describe("terminalActions", () => {
     );
   });
 
+  it("closes a runtime that finishes opening after its target tab was removed", async () => {
+    let resolveRuntime!: (runtime: RuntimeSessionInfo) => void;
+    let targetAvailable = true;
+    const deps = dependencies({
+      openTerminal: vi.fn(() => new Promise<RuntimeSessionInfo>((resolve) => {
+        resolveRuntime = resolve;
+      })),
+      hasPaneTerminalTab: vi.fn(() => targetAvailable),
+    });
+    const actions = createTerminalActions(deps);
+
+    const opening = actions.openSession(savedSession());
+    targetAvailable = false;
+    resolveRuntime(runtimeInfo());
+    await opening;
+
+    expect(deps.bindRuntimeToPaneTab).not.toHaveBeenCalled();
+    expect(deps.closeTerminal).toHaveBeenCalledWith("runtime-1");
+  });
+
   it("disconnects a runtime and marks the pane tab as failed", async () => {
     const deps = dependencies();
     const actions = createTerminalActions(deps);
@@ -191,6 +211,7 @@ function dependencies({
   openTerminal = vi.fn(async () => runtimeInfo()),
   openSshContainerTerminal = vi.fn(async () => runtimeInfo({ kind: "ssh_container", title: "容器: api" })),
   writeTerminal = vi.fn(async () => undefined),
+  hasPaneTerminalTab = vi.fn(() => true),
 }: {
   activePaneTab?: PaneTerminalTab | null;
   addedPaneTab?: PaneTerminalTab;
@@ -203,6 +224,7 @@ function dependencies({
     containerName?: string | null,
   ) => Promise<RuntimeSessionInfo>;
   writeTerminal?: (runtimeSessionId: string, data: string) => Promise<void>;
+  hasPaneTerminalTab?: (workspaceId: string, workspaceTabId: string, paneId: string, paneTabId: string) => boolean;
 } = {}) {
   return {
     workbenchId: "live-workbench",
@@ -216,6 +238,7 @@ function dependencies({
     openTerminal,
     openSshContainerTerminal,
     closeTerminal: vi.fn(async () => undefined),
+    hasPaneTerminalTab,
     writeTerminal,
     activeRuntimeSessionId,
   };

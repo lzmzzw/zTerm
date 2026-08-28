@@ -348,7 +348,6 @@ function LeafPane({
   const suggestCompletion = useTerminalStore((state) => state.suggestCompletion);
   const resolveCwd = useTerminalStore((state) => state.resolveCwd);
   const resizeTerminal = useTerminalStore((state) => state.resizeTerminal);
-  const closeTerminal = useTerminalStore((state) => state.closeTerminal);
   const syncChannel = useSyncInputStore((state) => state.channel);
   const leaveSyncChannel = useSyncInputStore((state) => state.leaveChannel);
   const closeSyncChannel = useSyncInputStore((state) => state.closeChannel);
@@ -463,14 +462,8 @@ function LeafPane({
   );
 
   const handleClosePane = useCallback(() => {
-    if (activeTerminalTab.runtime_session_id) {
-      void closeTerminal(activeTerminalTab.runtime_session_id)
-        .catch(() => undefined)
-        .finally(() => onClosePane(root.id));
-      return;
-    }
     onClosePane(root.id);
-  }, [activeTerminalTab.runtime_session_id, closeTerminal, onClosePane, root.id]);
+  }, [onClosePane, root.id]);
 
   const handleSplitPane = useCallback(
     (direction: PaneSplitDirection) => {
@@ -481,17 +474,11 @@ function LeafPane({
   );
 
   const handleClosePaneTab = useCallback(
-    (terminalTabId: string, runtimeSessionId: string | null) => {
+    (terminalTabId: string) => {
       onActivatePane(root.id);
-      if (runtimeSessionId) {
-        void closeTerminal(runtimeSessionId)
-          .catch(() => undefined)
-          .finally(() => onClosePaneTab(root.id, terminalTabId));
-        return;
-      }
       onClosePaneTab(root.id, terminalTabId);
     },
-    [closeTerminal, onActivatePane, onClosePaneTab, root.id],
+    [onActivatePane, onClosePaneTab, root.id],
   );
 
   const clearPaneTabDrag = useCallback(() => onDragStateChange(null), [onDragStateChange]);
@@ -679,7 +666,7 @@ function LeafPane({
                   if (event.button !== 1) return;
                   event.preventDefault();
                   event.stopPropagation();
-                  handleClosePaneTab(terminalTab.id, terminalTab.runtime_session_id);
+                  handleClosePaneTab(terminalTab.id);
                 }}
               >
                 <button
@@ -729,7 +716,7 @@ function LeafPane({
                   title="关闭标签"
                   onClick={(event) => {
                     event.stopPropagation();
-                    handleClosePaneTab(terminalTab.id, terminalTab.runtime_session_id);
+                    handleClosePaneTab(terminalTab.id);
                   }}
                 >
                   <X size={14} aria-hidden="true" />

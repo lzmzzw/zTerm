@@ -374,7 +374,11 @@ pub fn terminal_close(
         .terminal_manager()
         .runtime_info(&runtime_session_id)
         .ok();
-    let result = state.terminal_manager().close(&runtime_session_id)?;
+    let result = match state.terminal_manager().close(&runtime_session_id) {
+        Ok(result) => result,
+        Err(AppError::NotFound(_)) => TerminalClosed { closed: false },
+        Err(error) => return Err(error),
+    };
     state
         .command_history_service()
         .unregister_runtime(&runtime_session_id);

@@ -18,6 +18,7 @@ import { TitleBar } from "./TitleBar";
 import { WorkspaceStage } from "./WorkspaceStage";
 import { createRemoteFileActions } from "./remoteFileActions";
 import { createTerminalActions } from "./terminalActions";
+import { closeTerminalRuntimes } from "./terminalLifecycle";
 import { openSavedSessionTarget } from "./savedSessionActions";
 import { visibleRightTools, type ActiveConnectionKind, type RightTool } from "./rightTools";
 import { useAppShortcutKeys } from "./useAppShortcutKeys";
@@ -53,7 +54,7 @@ import {
   updateExternalSshOptions,
   type ExternalSshLaunchEvent,
 } from "../features/terminal/externalLaunchApi";
-import { useTerminalStore } from "../features/terminal/terminalStore";
+import { useTerminalStore, type RuntimeSessionInfo } from "../features/terminal/terminalStore";
 import { collectSyncChannelCandidates, useSyncInputStore } from "../features/terminal/syncInputStore";
 import { WorkspaceManagerPanel } from "../features/workspace/WorkspaceManagerPanel";
 import { WorkspacePreviewDialog } from "../features/workspace/WorkspacePreviewDialog";
@@ -609,6 +610,24 @@ export function AppShell() {
     }
     return "none";
   })();
+
+  const bindOpenedTerminalRuntime = useCallback(
+    async (
+      workspaceId: string,
+      workspaceTabId: string,
+      paneId: string,
+      paneTabId: string,
+      runtime: RuntimeSessionInfo,
+    ) => {
+      if (!useWorkspaceStore.getState().hasPaneTerminalTab(workspaceId, workspaceTabId, paneId, paneTabId)) {
+        await closeTerminal(runtime.runtime_session_id);
+        return false;
+      }
+      bindRuntimeToPaneTab(workspaceId, workspaceTabId, paneId, paneTabId, runtime);
+      return true;
+    },
+    [bindRuntimeToPaneTab, closeTerminal],
+  );
   const activeRuntimeInputSerial = useTerminalStore((state) =>
     activeTool === "history" && activeRuntimeSessionId
       ? (state.inputSerialByRuntime[activeRuntimeSessionId] ?? 0)
@@ -689,13 +708,20 @@ export function AppShell() {
     }
     defaultWorkspaceRestoreStartedRef.current = true;
     let disposed = false;
+    const epoch = workspaceRestoreEpochRef.current + 1;
+    workspaceRestoreEpochRef.current = epoch;
 
     void workspaceGet(DEFAULT_WORKSPACE_ID)
       .then(async (snapshot) => {
-        if (disposed || snapshot.id !== DEFAULT_WORKSPACE_ID || snapshot.tabs.length === 0) return;
+        if (
+          disposed ||
+          workspaceRestoreEpochRef.current !== epoch ||
+          snapshot.id !== DEFAULT_WORKSPACE_ID ||
+          snapshot.tabs.length === 0
+        ) return;
         const queuedSnapshot = markWorkspaceRestoreQueued({ ...snapshot, status: "running" });
         restoreWorkbenchDefinition(queuedSnapshot);
-        await restoreWorkspaceTerminals(queuedSnapshot);
+        await restoreWorkspaceTerminals(queuedSnapshot, epoch);
       })
       .catch((error) => {
         if (!disposed) setWorkspaceActionError(fallbackOnlyErrorMessage(error, "恢复上次终端失败"));
@@ -706,6 +732,9 @@ export function AppShell() {
 
     return () => {
       disposed = true;
+      if (workspaceRestoreEpochRef.current === epoch) {
+        workspaceRestoreEpochRef.current += 1;
+      }
     };
   }, [activeWorkspaceId, appSettings, initialSessionsLoaded, restoreWorkbenchDefinition]);
 
@@ -902,7 +931,13 @@ export function AppShell() {
       setTerminalError(null);
       try {
         const runtime = await openTerminal(launch.id, targetPaneId);
-        bindRuntimeToPaneTab(targetWorkspaceId, targetWorkspaceTab.id, targetPaneId, targetPaneTab.id, runtime);
+        await bindOpenedTerminalRuntime(
+          targetWorkspaceId,
+          targetWorkspaceTab.id,
+          targetPaneId,
+          targetPaneTab.id,
+          runtime,
+        );
       } catch (error) {
         const message = fallbackOnlyErrorMessage(error, "打开外部 SSH 连接失败");
         updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTab.id, targetPaneId, targetPaneTab.id, {
@@ -912,7 +947,7 @@ export function AppShell() {
         setTerminalError(message);
       }
     },
-    [addPaneTab, bindRuntimeToPaneTab, openTerminal, updatePaneTerminalTab],
+    [addPaneTab, bindOpenedTerminalRuntime, openTerminal, updatePaneTerminalTab],
   );
 
   const drainPendingExternalLaunches = useCallback(async () => {
@@ -1208,17 +1243,8 @@ export function AppShell() {
 
   async function closeCurrentWorkbenchRuntimes(): Promise<boolean> {
     const runtimeSessionIds = getWorkspaceRuntimeSessionIds(DEFAULT_WORKSPACE_ID);
-    const closeResults = await Promise.allSettled(
-      runtimeSessionIds.map((runtimeSessionId) => closeTerminal(runtimeSessionId)),
-    );
-    let failedReason: unknown = null;
-    closeResults.forEach((result, index) => {
-      if (result.status === "fulfilled") {
-        clearRuntimeSession(runtimeSessionIds[index]);
-      } else if (failedReason === null) {
-        failedReason = result.reason;
-      }
-    });
+    const { closedRuntimeSessionIds, failedReason } = await closeTerminalRuntimes(runtimeSessionIds, closeTerminal);
+    closedRuntimeSessionIds.forEach((runtimeSessionId) => clearRuntimeSession(runtimeSessionId));
     if (failedReason !== null) {
       setWorkspaceActionError(fallbackOnlyErrorMessage(failedReason, "关闭当前工作台终端失败"));
       return false;
@@ -1263,6 +1289,8 @@ export function AppShell() {
       sessions,
       strategy: workspaceRestoreStrategy,
       isCancelled: () => switchEpoch !== undefined && workspaceRestoreEpochRef.current !== switchEpoch,
+      isTargetAvailable: (workspaceId, workspaceTabId, paneId, paneTabId) =>
+        useWorkspaceStore.getState().hasPaneTerminalTab(workspaceId, workspaceTabId, paneId, paneTabId),
       openTerminal,
       openDefaultLocalTerminal,
       openSshContainerTerminal,
@@ -1318,7 +1346,7 @@ export function AppShell() {
               sourceTab.container_target.name ?? null,
             )
           : await openTerminal(sourceTab.saved_session_id!, paneId, workingDirectory);
-      bindRuntimeToPaneTab(targetWorkspaceId, targetWorkspaceTabId, paneId, targetPaneTab.id, runtime);
+      await bindOpenedTerminalRuntime(targetWorkspaceId, targetWorkspaceTabId, paneId, targetPaneTab.id, runtime);
     } catch (error) {
       const message = fallbackOnlyErrorMessage(error, "复制当前连接失败");
       updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTabId, paneId, targetPaneTab.id, {
@@ -1354,8 +1382,14 @@ export function AppShell() {
         ? activeTargetPaneTab
         : addPaneTab(target.paneId);
       const runtime = await openTerminal(choice.session.id, target.paneId);
-      bindRuntimeToPaneTab(target.workspaceId, target.workspaceTabId, target.paneId, targetPaneTab.id, runtime);
-      setConnectionDialogTarget(null);
+      const bound = await bindOpenedTerminalRuntime(
+        target.workspaceId,
+        target.workspaceTabId,
+        target.paneId,
+        targetPaneTab.id,
+        runtime,
+      );
+      if (bound) setConnectionDialogTarget(null);
     } catch (openError) {
       const message = fallbackOnlyErrorMessage(openError, "打开终端失败");
       setConnectionDialogError(message);
@@ -1365,7 +1399,42 @@ export function AppShell() {
     }
   }
 
+  async function handleClosePaneTab(paneId: string, paneTabId: string) {
+    const workspaceState = useWorkspaceStore.getState();
+    const targetTab = workspaceState.tabs.find((tab) => tab.id === workspaceState.activeTabId);
+    const targetPane = targetTab ? findPane(targetTab.root, paneId) : null;
+    const terminalTab = targetPane?.kind === "leaf"
+      ? getLeafTerminalTabs(targetPane).find((tab) => tab.id === paneTabId)
+      : null;
+    if (!terminalTab) return;
+
+    setTerminalError(null);
+    try {
+      if (terminalTab.runtime_session_id) {
+        await closeTerminal(terminalTab.runtime_session_id);
+      }
+      closePaneTab(paneId, paneTabId);
+    } catch (error) {
+      setTerminalError(fallbackOnlyErrorMessage(error, "关闭终端标签失败"));
+    }
+  }
+
   async function handleClosePane(paneId: string) {
+    const workspaceState = useWorkspaceStore.getState();
+    const targetTab = workspaceState.tabs.find((tab) => tab.id === workspaceState.activeTabId);
+    const targetPane = targetTab ? findPane(targetTab.root, paneId) : null;
+    if (targetPane?.kind !== "leaf") return;
+
+    const runtimeSessionIds = getLeafTerminalTabs(targetPane)
+      .map((tab) => tab.runtime_session_id)
+      .filter((runtimeSessionId): runtimeSessionId is string => Boolean(runtimeSessionId));
+    setTerminalError(null);
+    const { closedRuntimeSessionIds, failedReason } = await closeTerminalRuntimes(runtimeSessionIds, closeTerminal);
+    closedRuntimeSessionIds.forEach((runtimeSessionId) => clearRuntimeSession(runtimeSessionId));
+    if (failedReason !== null) {
+      setTerminalError(fallbackOnlyErrorMessage(failedReason, "关闭分栏失败"));
+      return;
+    }
     closePane(paneId);
   }
 
@@ -1688,7 +1757,7 @@ export function AppShell() {
     });
     try {
       const runtime = await openSshContainerTerminal(targetSavedSessionId, targetPaneId, container.id, container.name);
-      bindRuntimeToPaneTab(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, runtime);
+      await bindOpenedTerminalRuntime(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, runtime);
     } catch (error) {
       const message = fallbackOnlyErrorMessage(error, "进入容器失败");
       updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, {
@@ -1726,6 +1795,8 @@ export function AppShell() {
     openTerminal,
     openSshContainerTerminal,
     closeTerminal,
+    hasPaneTerminalTab: (workspaceId, workspaceTabId, paneId, paneTabId) =>
+      useWorkspaceStore.getState().hasPaneTerminalTab(workspaceId, workspaceTabId, paneId, paneTabId),
     writeTerminal,
     activeRuntimeSessionId,
   });
@@ -2118,7 +2189,7 @@ export function AppShell() {
           onAddPaneTab={handleRequestPaneConnection}
           onDuplicatePaneTab={(paneId, paneTabId) => void handleDuplicatePaneConnection(paneId, paneTabId)}
           onSelectPaneTab={selectPaneTab}
-          onClosePaneTab={(paneId, paneTabId) => closePaneTab(paneId, paneTabId)}
+          onClosePaneTab={(paneId, paneTabId) => void handleClosePaneTab(paneId, paneTabId)}
           onMovePaneTab={movePaneTab}
           onSplitPane={handleSplitPane}
           onResizeSplit={resizeSplitPane}

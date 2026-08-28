@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
+import { useWorkspaceStore } from "../workspace/workspaceStore";
 import {
   consumeTerminalZmodemData,
   releaseTerminalZmodemRuntime,
@@ -102,6 +103,7 @@ interface TerminalState {
   ) => Promise<string | null>;
   resizeTerminal: (runtimeSessionId: string, cols: number, rows: number) => Promise<void>;
   closeTerminal: (runtimeSessionId: string, options?: { releaseExternalSession?: boolean }) => Promise<void>;
+  forgetTerminalRuntime: (runtimeSessionId: string) => void;
   appendOutput: (runtimeSessionId: string, data: string) => void;
   getOutputTail: (runtimeSessionId: string) => string;
   getReplayOutput: (runtimeSessionId: string) => TerminalReplayResult;
@@ -147,8 +149,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           );
         }),
         listen<TerminalExitEvent>("terminal:exit", (event) => {
-          const suffix = event.payload.message ? `\r\n[已断开] ${event.payload.message}\r\n` : "\r\n[已断开]\r\n";
-          get().appendOutput(event.payload.runtime_session_id, suffix);
+          const message = terminalExitMessage(event.payload);
+          get().appendOutput(event.payload.runtime_session_id, `\r\n[已断开] ${message}\r\n`);
+          useWorkspaceStore.getState().markRuntimeExited(
+            event.payload.runtime_session_id,
+            message,
+            get().getVisualOutputTail(event.payload.runtime_session_id),
+          );
+          get().forgetTerminalRuntime(event.payload.runtime_session_id);
         }),
         listen<TerminalHistoryChangedEvent>("terminal:history-changed", (event) => {
           set((state) => ({
@@ -296,6 +304,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       runtimeSessionId,
       releaseExternalSession: options?.releaseExternalSession,
     });
+    get().forgetTerminalRuntime(runtimeSessionId);
+  },
+  forgetTerminalRuntime(runtimeSessionId) {
     releaseTerminalZmodemRuntime(runtimeSessionId);
     set((state) => {
       const { [runtimeSessionId]: _runtime, ...runtimes } = state.runtimes;
@@ -369,6 +380,12 @@ function delay(milliseconds: number) {
 
 function isSubmittedTerminalInput(data: string) {
   return data.includes("\r") || data.includes("\n");
+}
+
+function terminalExitMessage(event: TerminalExitEvent) {
+  const message = event.message?.trim();
+  if (message) return message;
+  return event.exit_code === null ? "终端已退出" : `终端已退出（退出码 ${event.exit_code}）`;
 }
 
 function trimTerminalOutput(output: string) {

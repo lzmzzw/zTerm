@@ -33,6 +33,12 @@ interface TerminalActionDependencies {
     containerName?: string | null,
   ) => Promise<RuntimeSessionInfo>;
   closeTerminal: (runtimeSessionId: string, options?: { releaseExternalSession?: boolean }) => Promise<void>;
+  hasPaneTerminalTab: (
+    workspaceId: string,
+    workspaceTabId: string,
+    paneId: string,
+    paneTabId: string,
+  ) => boolean;
   writeTerminal: (runtimeSessionId: string, data: string) => Promise<void>;
   activeRuntimeSessionId: string | null;
 }
@@ -49,6 +55,7 @@ export function createTerminalActions({
   openTerminal,
   openSshContainerTerminal,
   closeTerminal,
+  hasPaneTerminalTab,
   writeTerminal,
   activeRuntimeSessionId,
 }: TerminalActionDependencies) {
@@ -61,6 +68,10 @@ export function createTerminalActions({
     setTerminalError(null);
     try {
       const runtime = await openTerminal(session.id, targetPaneId);
+      if (!hasPaneTerminalTab(targetWorkbenchId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id)) {
+        await closeTerminal(runtime.runtime_session_id);
+        return;
+      }
       bindRuntimeToPaneTab(targetWorkbenchId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, runtime);
     } catch (openError) {
       setTerminalError(fallbackOnlyErrorMessage(openError, "打开终端失败"));
@@ -99,6 +110,7 @@ export function createTerminalActions({
         restore_status: "pending",
         restore_error: null,
       });
+      if (!hasPaneTerminalTab(workbenchId, workbenchTabId, paneId, paneTabId)) return;
       const runtime =
         activePaneTab?.connection_source === "ssh_container" && activePaneTab.container_target?.id
           ? await openSshContainerTerminal(
@@ -108,6 +120,10 @@ export function createTerminalActions({
               activePaneTab.container_target.name ?? null,
             )
           : await openTerminal(savedSessionId, paneId);
+      if (!hasPaneTerminalTab(workbenchId, workbenchTabId, paneId, paneTabId)) {
+        await closeTerminal(runtime.runtime_session_id, { releaseExternalSession: !isExternalSessionId(savedSessionId) });
+        return;
+      }
       updatePaneTerminalTab(workbenchId, workbenchTabId, paneId, paneTabId, {
         runtime_session_id: runtime.runtime_session_id,
         saved_session_id: runtime.saved_session_id,
