@@ -131,10 +131,6 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       }),
     [groups, sessions],
   );
-  const orderedRemoteSessions = useMemo(
-    () => remoteSessionTreeItems.flatMap((item) => (item.kind === "session" ? [item.session] : [])),
-    [remoteSessionTreeItems],
-  );
   const {
     left,
     right,

@@ -49,6 +49,7 @@ const storeMocks = vi.hoisted(() => ({
   },
   terminalOutputAccesses: 0,
   tauriEventHandlers: new Map<string, (event: { payload: unknown }) => void>(),
+  tauriEventListenCounts: new Map<string, number>(),
   pendingExternalLaunches: [] as Array<Record<string, unknown>>,
   externalSshOptions: {
     connect_timeout_ms: null,
@@ -89,6 +90,7 @@ const storeMocks = vi.hoisted(() => ({
   fileTransferPanelProps: null as Record<string, unknown> | null,
   aiPanelProps: null as Record<string, unknown> | null,
   aiAffectedDomainsHandler: null as ((domains: string[]) => Promise<void> | void) | null,
+  aiAffectedDomainsHandlerSetCount: 0,
   loadCommandGroups: vi.fn().mockResolvedValue(undefined),
   saveCommandGroup: vi.fn().mockResolvedValue(undefined),
   searchHistory: vi.fn().mockResolvedValue(undefined),
@@ -206,6 +208,7 @@ vi.mock("./TitleBar", () => ({
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (eventName: string, handler: (event: { payload: unknown }) => void) => {
+    storeMocks.tauriEventListenCounts.set(eventName, (storeMocks.tauriEventListenCounts.get(eventName) ?? 0) + 1);
     storeMocks.tauriEventHandlers.set(eventName, handler);
     return () => {
       storeMocks.tauriEventHandlers.delete(eventName);
@@ -552,6 +555,7 @@ vi.mock("../features/ai/aiStore", () => {
     return state;
   };
   const setAiAffectedDomainsHandler = vi.fn((handler: ((domains: string[]) => Promise<void> | void) | null) => {
+    storeMocks.aiAffectedDomainsHandlerSetCount += 1;
     storeMocks.aiAffectedDomainsHandler = handler;
   });
   return { setAiAffectedDomainsHandler, useAiStore };
@@ -928,47 +932,6 @@ function workspaceSplitRoot() {
   } as const;
 }
 
-function runningWorkspace(id: string, sortOrder: number, updatedAtMs: number, runtimeSessionId: string) {
-  return {
-    id,
-    name: `工作区 ${id}`,
-    status: "running",
-    active_tab_id: `${id}-tab-1`,
-    activeTabId: `${id}-tab-1`,
-    tab_count: 1,
-    sort_order: sortOrder,
-    created_at_ms: updatedAtMs,
-    updated_at_ms: updatedAtMs,
-    tabs: [
-      {
-        id: `${id}-tab-1`,
-        title: "主工作台",
-        active_pane_id: `${id}-pane-1`,
-        sort_order: 0,
-        created_at_ms: updatedAtMs,
-        updated_at_ms: updatedAtMs,
-        root: {
-          kind: "leaf",
-          id: `${id}-pane-1`,
-          title: `终端 ${id}`,
-          runtime_session_id: runtimeSessionId,
-          saved_session_id: null,
-          active_terminal_tab_id: `${id}-pane-1-tab-1`,
-          terminal_tabs: [
-            {
-              id: `${id}-pane-1-tab-1`,
-              title: `终端 ${id}`,
-              runtime_session_id: runtimeSessionId,
-              saved_session_id: null,
-              connection_source: "default_local",
-            },
-          ],
-        },
-      },
-    ],
-  };
-}
-
 function activeTerminalWorkspaceTab() {
   return {
     id: "tab-1",
@@ -999,7 +962,9 @@ describe("AppShell", () => {
     useFileTransferStore.setState({ prepareForSession: originalPrepareForSession });
     useSyncInputStore.getState().closeChannel();
     storeMocks.aiAffectedDomainsHandler = null;
+    storeMocks.aiAffectedDomainsHandlerSetCount = 0;
     storeMocks.tauriEventHandlers.clear();
+    storeMocks.tauriEventListenCounts.clear();
     storeMocks.pendingExternalLaunches = [];
     storeMocks.takePendingExternalLaunches.mockImplementation(async () =>
       storeMocks.pendingExternalLaunches.splice(0),
@@ -1260,6 +1225,27 @@ describe("AppShell", () => {
         },
       ],
     });
+  });
+
+  it("keeps global tool listeners stable across rerenders", async () => {
+    const view = render(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.tauriEventListenCounts.get("zterm:tool-action")).toBe(1);
+    expect(storeMocks.aiAffectedDomainsHandlerSetCount).toBe(1);
+
+    view.rerender(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(storeMocks.tauriEventListenCounts.get("zterm:tool-action")).toBe(1);
+    expect(storeMocks.aiAffectedDomainsHandlerSetCount).toBe(1);
+    view.unmount();
   });
 
   it("shows the active SSH host in the titlebar", () => {

@@ -206,6 +206,12 @@ async function stopAgentCodexSession(session: AgentCodexSession) {
   await closeAgentCodex(session);
 }
 
+function useLatestRef<T>(value: T) {
+  const ref = useRef(value);
+  ref.current = value;
+  return ref;
+}
+
 export function AppShell() {
   const {
     groups,
@@ -863,12 +869,15 @@ export function AppShell() {
     },
   );
 
+  const refreshAffectedDomainsRef = useLatestRef(refreshAffectedDomains);
+  const handleZtermToolActionRef = useLatestRef(handleZtermToolAction);
+
   useEffect(() => {
     setAiAffectedDomainsHandler((domains) => {
-      void refreshAffectedDomains(domains);
+      void refreshAffectedDomainsRef.current(domains);
     });
     return () => setAiAffectedDomainsHandler(null);
-  });
+  }, [refreshAffectedDomainsRef]);
 
   const handleExternalSshLaunch = useCallback(
     async (launch: ExternalSshLaunchEvent) => {
@@ -970,7 +979,7 @@ export function AppShell() {
     let disposed = false;
     let cleanup: (() => void) | null = null;
     void listen<ZtermToolActionEvent>("zterm:tool-action", (event) => {
-      void handleZtermToolAction(event.payload);
+      void handleZtermToolActionRef.current(event.payload);
     }).then((unlisten) => {
       if (disposed) {
         unlisten();
@@ -982,7 +991,7 @@ export function AppShell() {
       disposed = true;
       cleanup?.();
     };
-  });
+  }, [handleZtermToolActionRef]);
 
   async function refreshWorkspaceSummaries() {
     try {

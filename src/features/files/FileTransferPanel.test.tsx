@@ -263,7 +263,7 @@ describe("FileTransferPanel", () => {
   });
 
   it("does not render a manual transfer task refresh button", async () => {
-    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+    invokeMock.mockImplementation((command: string) => {
       if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
       if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
       if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
@@ -647,7 +647,7 @@ describe("FileTransferPanel", () => {
   });
 
   it("switches a local endpoint to a selected Windows drive root", async () => {
-    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+    invokeMock.mockImplementation((command: string) => {
       if (command === "file_transfer_local_roots") {
         return Promise.resolve(["C:\\", "D:\\"]);
       }
