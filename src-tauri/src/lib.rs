@@ -271,6 +271,7 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     }
     let storage = storage::sqlite::SqliteStore::open(paths.db_path())?;
     let state = state::AppState::new_with_app_handle(storage, app.handle().clone());
+    state.transfer_queue().reconcile_interrupted_tasks()?;
     let _ = state
         .external_launch_service()
         .register_from_args(env::args())

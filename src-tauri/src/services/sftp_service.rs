@@ -53,6 +53,8 @@ const SFTP_COMPLETION_LIST_MAX_ENTRIES: usize = 5_000;
 const SFTP_LIST_RETRY_DELAY: Duration = Duration::from_millis(150);
 const SFTP_TRANSFER_CONNECT_MAX_ATTEMPTS: usize = 5;
 const SFTP_TRANSFER_CONNECT_RETRY_DELAY: Duration = Duration::from_millis(400);
+const SFTP_TRANSFER_STALL_TIMEOUT: Duration = Duration::from_secs(60);
+const SFTP_TRANSFER_WATCHDOG_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TransferProgressUpdate {
@@ -87,6 +89,7 @@ struct TransferProgressWriter<'a, W, F> {
     on_progress: &'a mut F,
     pause_wait: Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     transferred_bytes: u64,
+    last_activity: Arc<Mutex<Instant>>,
 }
 
 impl<'a, W, F> TransferProgressWriter<'a, W, F> {
@@ -95,6 +98,7 @@ impl<'a, W, F> TransferProgressWriter<'a, W, F> {
         transferred_bytes: u64,
         control: Option<&'a TransferRunControl>,
         on_progress: &'a mut F,
+        last_activity: Arc<Mutex<Instant>>,
     ) -> Self {
         Self {
             inner,
@@ -102,6 +106,7 @@ impl<'a, W, F> TransferProgressWriter<'a, W, F> {
             on_progress,
             pause_wait: None,
             transferred_bytes,
+            last_activity,
         }
     }
 
@@ -156,6 +161,9 @@ where
         match Pin::new(&mut *self.inner).poll_write(cx, buffer) {
             Poll::Ready(Ok(written)) => {
                 self.transferred_bytes = self.transferred_bytes.saturating_add(written as u64);
+                if written > 0 {
+                    touch_transfer_activity(&self.last_activity);
+                }
                 let update = progress_update(self.transferred_bytes, None);
                 if let Err(error) = (self.on_progress)(update) {
                     return Poll::Ready(Err(io::Error::other(error.to_string())));
@@ -172,6 +180,46 @@ where
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut *self.inner).poll_shutdown(cx)
+    }
+}
+
+fn touch_transfer_activity(last_activity: &Mutex<Instant>) {
+    if let Ok(mut activity) = last_activity.lock() {
+        *activity = Instant::now();
+    }
+}
+
+async fn await_transfer_io<T, F>(
+    operation: F,
+    control: Option<&TransferRunControl>,
+    last_activity: Arc<Mutex<Instant>>,
+    stall_timeout: Duration,
+) -> AppResult<T>
+where
+    F: Future<Output = AppResult<T>>,
+{
+    tokio::pin!(operation);
+    loop {
+        let state_change: Pin<Box<dyn Future<Output = ()> + Send>> = match control {
+            Some(control) => control.wait_for_state_change(),
+            None => Box::pin(std::future::pending()),
+        };
+        tokio::select! {
+            result = &mut operation => return result,
+            _ = state_change => {
+                transfer_checkpoint(control).await?;
+                touch_transfer_activity(&last_activity);
+            }
+            _ = tokio::time::sleep(SFTP_TRANSFER_WATCHDOG_INTERVAL.min(stall_timeout)) => {
+                let stalled = last_activity
+                    .lock()
+                    .map(|activity| activity.elapsed() >= stall_timeout)
+                    .unwrap_or(true);
+                if stalled {
+                    return Err(AppError::sftp("远端文件传输长时间无响应，已停止任务"));
+                }
+            }
+        }
     }
 }
 
@@ -1395,10 +1443,10 @@ impl ConnectedSftpSession {
 #[cfg(test)]
 mod tests {
     use super::{
-        bulk_transfer_sftp_config, delete_local_path, rename_local_path, retry_transfer_connection,
-        should_retry_cached_transfer_session_error, should_retry_sftp_list_error,
-        should_retry_transfer_connect_error, validate_destructive_local_path,
-        TransferProgressWriter, SFTP_MAX_INFLIGHT_REQUESTS,
+        await_transfer_io, bulk_transfer_sftp_config, delete_local_path, rename_local_path,
+        retry_transfer_connection, should_retry_cached_transfer_session_error,
+        should_retry_sftp_list_error, should_retry_transfer_connect_error,
+        validate_destructive_local_path, TransferProgressWriter, SFTP_MAX_INFLIGHT_REQUESTS,
     };
     use crate::{error::AppError, services::transfer_queue::TransferRunControl};
     use std::{
@@ -1562,8 +1610,13 @@ mod tests {
         };
 
         control.pause();
-        let mut writer =
-            TransferProgressWriter::new(&mut output, 0, Some(&control), &mut on_progress);
+        let mut writer = TransferProgressWriter::new(
+            &mut output,
+            0,
+            Some(&control),
+            &mut on_progress,
+            Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
+        );
         assert!(
             tokio::time::timeout(Duration::from_millis(10), writer.write_all(b"abc"))
                 .await
@@ -1580,6 +1633,41 @@ mod tests {
         assert_eq!(error.kind(), ErrorKind::Interrupted);
         drop(writer);
         assert_eq!(updates, vec![3]);
+    }
+
+    #[tokio::test]
+    async fn stalled_transfer_can_be_cancelled_without_waiting_for_timeout() {
+        let control = TransferRunControl::new();
+        let cancel = control.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            cancel.cancel();
+        });
+
+        let error = await_transfer_io(
+            std::future::pending::<crate::error::AppResult<()>>(),
+            Some(&control),
+            Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
+            Duration::from_secs(10),
+        )
+        .await
+        .expect_err("cancel should interrupt stalled remote I/O");
+
+        assert!(error.to_string().contains("取消"));
+    }
+
+    #[tokio::test]
+    async fn stalled_transfer_fails_after_inactivity_timeout() {
+        let error = await_transfer_io(
+            std::future::pending::<crate::error::AppResult<()>>(),
+            None,
+            Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
+            Duration::from_millis(10),
+        )
+        .await
+        .expect_err("stalled remote I/O should time out");
+
+        assert!(error.to_string().contains("长时间无响应"));
     }
 
     #[tokio::test]
@@ -1714,18 +1802,35 @@ where
             break;
         }
         transfer_checkpoint(control).await?;
-        remote
-            .write_all(&buffer[..read])
-            .await
-            .map_err(|error| AppError::sftp(error.to_string()))?;
+        let last_activity = Arc::new(Mutex::new(Instant::now()));
+        await_transfer_io(
+            async {
+                remote
+                    .write_all(&buffer[..read])
+                    .await
+                    .map_err(|error| AppError::sftp(error.to_string()))
+            },
+            control,
+            last_activity,
+            SFTP_TRANSFER_STALL_TIMEOUT,
+        )
+        .await?;
         transferred = transferred.saturating_add(read as u64);
         on_progress(progress_update(transferred, None))?;
     }
     transfer_checkpoint(control).await?;
-    remote
-        .shutdown()
-        .await
-        .map_err(|error| AppError::sftp(error.to_string()))?;
+    await_transfer_io(
+        async {
+            remote
+                .shutdown()
+                .await
+                .map_err(|error| AppError::sftp(error.to_string()))
+        },
+        control,
+        Arc::new(Mutex::new(Instant::now())),
+        SFTP_TRANSFER_STALL_TIMEOUT,
+    )
+    .await?;
     Ok(transferred)
 }
 
@@ -1765,11 +1870,26 @@ where
         on_progress(progress_update(transferred, Some(transferred)))?;
         return Ok(transferred);
     };
-    let mut writer = TransferProgressWriter::new(&mut local, transferred, control, on_progress);
-    remote
-        .read_to_writer_pipelined(&mut writer, SFTP_MAX_INFLIGHT_REQUESTS)
-        .await
-        .map_err(|error| AppError::sftp(error.to_string()))?;
+    let last_activity = Arc::new(Mutex::new(Instant::now()));
+    let mut writer = TransferProgressWriter::new(
+        &mut local,
+        transferred,
+        control,
+        on_progress,
+        last_activity.clone(),
+    );
+    await_transfer_io(
+        async {
+            remote
+                .read_to_writer_pipelined(&mut writer, SFTP_MAX_INFLIGHT_REQUESTS)
+                .await
+                .map_err(|error| AppError::sftp(error.to_string()))
+        },
+        control,
+        last_activity,
+        SFTP_TRANSFER_STALL_TIMEOUT,
+    )
+    .await?;
     transferred = writer.transferred_bytes();
     drop(writer);
     transfer_checkpoint(control).await?;
@@ -1817,19 +1937,41 @@ where
         on_progress(progress_update(transferred, Some(transferred)))?;
         return Ok(transferred);
     };
-    let mut writer =
-        TransferProgressWriter::new(&mut destination, transferred, control, on_progress);
-    source
-        .read_to_writer_pipelined(&mut writer, SFTP_MAX_INFLIGHT_REQUESTS)
-        .await
-        .map_err(|error| AppError::sftp(error.to_string()))?;
+    let last_activity = Arc::new(Mutex::new(Instant::now()));
+    let mut writer = TransferProgressWriter::new(
+        &mut destination,
+        transferred,
+        control,
+        on_progress,
+        last_activity.clone(),
+    );
+    await_transfer_io(
+        async {
+            source
+                .read_to_writer_pipelined(&mut writer, SFTP_MAX_INFLIGHT_REQUESTS)
+                .await
+                .map_err(|error| AppError::sftp(error.to_string()))
+        },
+        control,
+        last_activity,
+        SFTP_TRANSFER_STALL_TIMEOUT,
+    )
+    .await?;
     transferred = writer.transferred_bytes();
     drop(writer);
     transfer_checkpoint(control).await?;
-    destination
-        .shutdown()
-        .await
-        .map_err(|error| AppError::sftp(error.to_string()))?;
+    await_transfer_io(
+        async {
+            destination
+                .shutdown()
+                .await
+                .map_err(|error| AppError::sftp(error.to_string()))
+        },
+        control,
+        Arc::new(Mutex::new(Instant::now())),
+        SFTP_TRANSFER_STALL_TIMEOUT,
+    )
+    .await?;
     Ok(transferred)
 }
 

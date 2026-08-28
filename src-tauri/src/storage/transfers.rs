@@ -212,6 +212,30 @@ pub fn list_transfer_tasks(
     })
 }
 
+pub fn fail_interrupted_transfer_tasks(store: &SqliteStore) -> AppResult<usize> {
+    let now = now_ms();
+    store.write_transaction(|transaction| {
+        let changed = transaction.execute(
+            "
+            update transfer_tasks
+            set status = ?1,
+                error_message = ?2,
+                updated_at_ms = ?3
+            where status in (?4, ?5, ?6)
+            ",
+            params![
+                TransferStatus::Failed.as_str(),
+                "应用已重启，传输任务已中断",
+                now,
+                TransferStatus::Queued.as_str(),
+                TransferStatus::Running.as_str(),
+                TransferStatus::Paused.as_str(),
+            ],
+        )?;
+        Ok(changed)
+    })
+}
+
 pub fn update_transfer_task(
     store: &SqliteStore,
     id: &str,

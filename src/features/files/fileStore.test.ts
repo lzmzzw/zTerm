@@ -287,6 +287,22 @@ describe("fileStore", () => {
     expect(useFileStore.getState().transfers).toEqual([updatedCurrent]);
   });
 
+  it("surfaces a transfer completion error even when no task snapshot is available", async () => {
+    await useFileStore.getState().bindTransferEvents();
+    const doneHandler = listenMock.mock.calls.find(([eventName]) => eventName === "transfer:done")?.[1];
+    expect(doneHandler).toBeTypeOf("function");
+
+    doneHandler?.({
+      payload: {
+        task_id: "task-missing",
+        task: null,
+        error: "远端文件传输长时间无响应，已停止任务",
+      },
+    });
+
+    expect(useFileStore.getState().error).toBe("远端文件传输长时间无响应，已停止任务");
+  });
+
   it("refreshes the active SFTP list after an upload task completes", async () => {
     invokeMock.mockResolvedValueOnce([entry("/srv/old.txt")]);
     await useFileStore.getState().listFiles("session-1", "/srv");
@@ -299,19 +315,23 @@ describe("fileStore", () => {
     invokeMock.mockResolvedValueOnce([entry("/srv/new.txt")]);
     doneHandler?.({
       payload: {
-        id: "task-1",
-        saved_session_id: "session-1",
-        direction: "upload",
-        local_path: "C:/tmp/new.txt",
-        remote_path: "/srv/new.txt",
-        kind: "file",
-        conflict_policy: "overwrite",
-        total_bytes: 1,
-        transferred_bytes: 1,
-        status: "done",
-        error_message: null,
-        created_at_ms: 1,
-        updated_at_ms: 2,
+        task_id: "task-1",
+        error: null,
+        task: {
+          id: "task-1",
+          saved_session_id: "session-1",
+          direction: "upload",
+          local_path: "C:/tmp/new.txt",
+          remote_path: "/srv/new.txt",
+          kind: "file",
+          conflict_policy: "overwrite",
+          total_bytes: 1,
+          transferred_bytes: 1,
+          status: "done",
+          error_message: null,
+          created_at_ms: 1,
+          updated_at_ms: 2,
+        },
       },
     });
     await Promise.resolve();
@@ -333,19 +353,23 @@ describe("fileStore", () => {
 
     doneHandler?.({
       payload: {
-        id: "task-stale",
-        saved_session_id: "session-stale",
-        direction: "upload",
-        local_path: "C:/tmp/stale.txt",
-        remote_path: "/srv/stale.txt",
-        kind: "file",
-        conflict_policy: "overwrite",
-        total_bytes: 1,
-        transferred_bytes: 1,
-        status: "done",
-        error_message: null,
-        created_at_ms: 1,
-        updated_at_ms: 2,
+        task_id: "task-stale",
+        error: null,
+        task: {
+          id: "task-stale",
+          saved_session_id: "session-stale",
+          direction: "upload",
+          local_path: "C:/tmp/stale.txt",
+          remote_path: "/srv/stale.txt",
+          kind: "file",
+          conflict_policy: "overwrite",
+          total_bytes: 1,
+          transferred_bytes: 1,
+          status: "done",
+          error_message: null,
+          created_at_ms: 1,
+          updated_at_ms: 2,
+        },
       },
     });
     await Promise.resolve();

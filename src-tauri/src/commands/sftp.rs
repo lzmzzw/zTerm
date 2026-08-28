@@ -4,17 +4,18 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::{
-    error::AppResult,
+    error::{AppError, AppResult},
     models::{
         session::SessionType,
         sftp::{
             FileEntry, FileTransferViewState, LocalPathInfo, SftpDeleteResult, SftpMkdirResult,
             SftpRenameResult, TransferConflict, TransferConflictCheckItem, TransferConflictPolicy,
-            TransferDirection, TransferEndpoint, TransferEndpointConflict,
-            TransferEndpointConflictCheckItem, TransferEndpointKind, TransferKind, TransferTask,
-            TransferTaskOrigin,
+            TransferDirection, TransferDoneEvent, TransferEndpoint, TransferEndpointConflict,
+            TransferEndpointConflictCheckItem, TransferEndpointKind, TransferKind, TransferStatus,
+            TransferTask, TransferTaskOrigin,
         },
     },
+    security::redaction::redact_sensitive,
     services::{
         external_launch_service::CompositeSshSecretResolver,
         ftp_service,
@@ -33,6 +34,52 @@ use crate::{
 };
 
 const TRANSFER_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
+
+struct TransferControlRegistration {
+    queue: TransferQueue,
+    task_id: String,
+}
+
+impl TransferControlRegistration {
+    fn new(queue: TransferQueue, task_id: String) -> Self {
+        Self { queue, task_id }
+    }
+}
+
+impl Drop for TransferControlRegistration {
+    fn drop(&mut self) {
+        let _ = self.queue.unregister_control(&self.task_id);
+    }
+}
+
+fn emit_transfer_done(app: &AppHandle, task_id: &str, result: AppResult<TransferTask>) {
+    let event = match result {
+        Ok(task) => TransferDoneEvent {
+            task_id: task_id.to_string(),
+            task: Some(task),
+            error: None,
+        },
+        Err(error) => TransferDoneEvent {
+            task_id: task_id.to_string(),
+            task: None,
+            error: Some(redact_sensitive(&error.to_string())),
+        },
+    };
+    let _ = app.emit("transfer:done", event);
+}
+
+fn fail_and_emit_transfer(app: &AppHandle, queue: &TransferQueue, task_id: &str, error: AppError) {
+    let message = redact_sensitive(&error.to_string());
+    let task = queue
+        .mark_failed(task_id, &message)
+        .or_else(|_| queue.get(task_id));
+    let event = TransferDoneEvent {
+        task_id: task_id.to_string(),
+        task: task.ok(),
+        error: Some(message),
+    };
+    let _ = app.emit("transfer:done", event);
+}
 
 struct TransferProgressGate {
     known_total_bytes: Option<u64>,
@@ -634,22 +681,29 @@ fn spawn_transfer(
     let control = match queue.register_control(&task.id) {
         Ok(control) => control,
         Err(error) => {
-            let _ = app.emit("transfer:done", error.to_string());
+            fail_and_emit_transfer(&app, &queue, &task.id, error);
             return;
         }
     };
+    let registration = TransferControlRegistration::new(queue.clone(), task.id.clone());
     tauri::async_runtime::spawn(async move {
+        let _registration = registration;
         let _execution_slot = match queue.acquire_execution_slot(&control).await {
             Ok(slot) => slot,
-            Err(_) => {
-                let _ = queue.unregister_control(&task.id);
+            Err(error) => {
+                match queue.get(&task.id) {
+                    Ok(current) if current.status == TransferStatus::Cancelled => {
+                        emit_transfer_done(&app, &task.id, Ok(current));
+                    }
+                    _ => fail_and_emit_transfer(&app, &queue, &task.id, error),
+                }
                 return;
             }
         };
         let running = match queue.mark_running(&task.id) {
             Ok(task) => task,
             Err(error) => {
-                let _ = app.emit("transfer:done", error.to_string());
+                fail_and_emit_transfer(&app, &queue, &task.id, error);
                 return;
             }
         };
@@ -707,37 +761,23 @@ fn spawn_transfer(
 
         let done = match result {
             Ok(()) => match queue.get(&task.id) {
-                Ok(current) if current.status == crate::models::sftp::TransferStatus::Cancelled => {
-                    Ok(current)
-                }
+                Ok(current) if current.status == TransferStatus::Cancelled => Ok(current),
                 Ok(_) => queue.mark_done(&task.id),
                 Err(crate::error::AppError::NotFound(_)) => {
-                    let _ = queue.unregister_control(&task.id);
                     return;
                 }
                 Err(error) => Err(error),
             },
             Err(error) => match queue.get(&task.id) {
-                Ok(current) if current.status == crate::models::sftp::TransferStatus::Cancelled => {
-                    Ok(current)
-                }
+                Ok(current) if current.status == TransferStatus::Cancelled => Ok(current),
                 Ok(_) => queue.mark_failed(&task.id, &error.to_string()),
                 Err(crate::error::AppError::NotFound(_)) => {
-                    let _ = queue.unregister_control(&task.id);
                     return;
                 }
                 Err(error) => Err(error),
             },
         };
-        match done {
-            Ok(task) => {
-                let _ = app.emit("transfer:done", task);
-            }
-            Err(error) => {
-                let _ = app.emit("transfer:done", error.to_string());
-            }
-        }
-        let _ = queue.unregister_control(&task.id);
+        emit_transfer_done(&app, &task.id, done);
     });
 }
 
@@ -757,22 +797,29 @@ fn spawn_file_transfer(
     let control = match queue.register_control(&task.id) {
         Ok(control) => control,
         Err(error) => {
-            let _ = app.emit("transfer:done", error.to_string());
+            fail_and_emit_transfer(&app, &queue, &task.id, error);
             return;
         }
     };
+    let registration = TransferControlRegistration::new(queue.clone(), task.id.clone());
     tauri::async_runtime::spawn(async move {
+        let _registration = registration;
         let _execution_slot = match queue.acquire_execution_slot(&control).await {
             Ok(slot) => slot,
-            Err(_) => {
-                let _ = queue.unregister_control(&task.id);
+            Err(error) => {
+                match queue.get(&task.id) {
+                    Ok(current) if current.status == TransferStatus::Cancelled => {
+                        emit_transfer_done(&app, &task.id, Ok(current));
+                    }
+                    _ => fail_and_emit_transfer(&app, &queue, &task.id, error),
+                }
                 return;
             }
         };
         let running = match queue.mark_running(&task.id) {
             Ok(task) => task,
             Err(error) => {
-                let _ = app.emit("transfer:done", error.to_string());
+                fail_and_emit_transfer(&app, &queue, &task.id, error);
                 return;
             }
         };
@@ -900,51 +947,29 @@ fn spawn_file_transfer(
 
         let done = match result {
             Ok(()) => match queue.get(&task.id) {
-                Ok(current) if current.status == crate::models::sftp::TransferStatus::Cancelled => {
-                    Ok(current)
-                }
+                Ok(current) if current.status == TransferStatus::Cancelled => Ok(current),
                 Ok(_) => queue.mark_done(&task.id),
                 Err(crate::error::AppError::NotFound(_)) => {
-                    let _ = queue.unregister_control(&task.id);
                     return;
                 }
                 Err(error) => Err(error),
             },
             Err(error) => match queue.get(&task.id) {
-                Ok(current) if current.status == crate::models::sftp::TransferStatus::Cancelled => {
-                    Ok(current)
-                }
+                Ok(current) if current.status == TransferStatus::Cancelled => Ok(current),
                 Ok(_) => queue.mark_failed(&task.id, &error.to_string()),
                 Err(crate::error::AppError::NotFound(_)) => {
-                    let _ = queue.unregister_control(&task.id);
                     return;
                 }
                 Err(error) => Err(error),
             },
         };
-        match done {
-            Ok(task) => {
-                let _ = app.emit("transfer:done", task);
-            }
-            Err(error) => {
-                let _ = app.emit("transfer:done", error.to_string());
-            }
-        }
-        let _ = queue.unregister_control(&task.id);
+        emit_transfer_done(&app, &task.id, done);
     });
 }
 
 fn finish_missing_endpoint(app: AppHandle, queue: TransferQueue, task_id: &str, message: &str) {
     let done = queue.mark_failed(task_id, message);
-    match done {
-        Ok(task) => {
-            let _ = app.emit("transfer:done", task);
-        }
-        Err(error) => {
-            let _ = app.emit("transfer:done", error.to_string());
-        }
-    }
-    let _ = queue.unregister_control(task_id);
+    emit_transfer_done(&app, task_id, done);
 }
 
 fn transient_ftp_secret(
@@ -1010,8 +1035,13 @@ fn ssh_session_context(
 
 #[cfg(test)]
 mod tests {
-    use super::{TransferProgressGate, TRANSFER_PROGRESS_EMIT_INTERVAL};
+    use super::{
+        TransferControlRegistration, TransferProgressGate, TRANSFER_PROGRESS_EMIT_INTERVAL,
+    };
     use crate::services::sftp_service::TransferProgressUpdate;
+    use crate::services::transfer_queue::TransferQueue;
+    use crate::storage::sqlite::SqliteStore;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -1039,6 +1069,27 @@ mod tests {
         assert!(gate.should_emit_at(progress(0, Some(1024)), start + Duration::from_millis(1)));
         assert!(!gate.should_emit_at(progress(512, None), start + Duration::from_millis(2)));
         assert!(gate.should_emit_at(progress(512, None), start + Duration::from_millis(3)));
+    }
+
+    #[test]
+    fn transfer_control_registration_unregisters_on_every_exit_path() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite store should open"));
+        let queue = TransferQueue::from_storage(store);
+        queue
+            .register_control("task-1")
+            .expect("control should register");
+
+        {
+            let _registration =
+                TransferControlRegistration::new(queue.clone(), "task-1".to_string());
+        }
+
+        assert_eq!(
+            queue
+                .cancel_all_controls()
+                .expect("control lookup should remain usable"),
+            0
+        );
     }
 
     fn progress(transferred_bytes: u64, total_bytes: Option<u64>) -> TransferProgressUpdate {

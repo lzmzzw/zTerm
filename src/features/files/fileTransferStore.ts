@@ -7,6 +7,7 @@ import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 import type {
   FileEntry,
   TransferConflictPolicy,
+  TransferDoneEvent,
   TransferEndpoint,
   TransferKind,
   TransferTask,
@@ -332,10 +333,9 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       const progress = await listen<TransferTask>("transfer:progress", (event) => {
         upsertTransfer(set, event.payload);
       });
-      const done = await listen<TransferTask>("transfer:done", (event) => {
-        if (typeof event.payload === "object" && event.payload && "id" in event.payload) {
-          upsertTransfer(set, event.payload);
-        }
+      const done = await listen<TransferDoneEvent>("transfer:done", (event) => {
+        if (event.payload.task) upsertTransfer(set, event.payload.task);
+        if (event.payload.error) set({ transferError: event.payload.error });
       });
       return () => {
         progress();

@@ -216,6 +216,13 @@ pub struct TransferTask {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TransferDoneEvent {
+    pub task_id: String,
+    pub task: Option<TransferTask>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SftpDeleteResult {
     pub deleted: bool,
 }

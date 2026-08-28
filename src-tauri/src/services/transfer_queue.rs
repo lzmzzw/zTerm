@@ -48,6 +48,7 @@ impl TransferRunControl {
 
     pub(crate) fn pause(&self) {
         self.inner.paused.store(true, Ordering::SeqCst);
+        self.inner.notify.notify_waiters();
     }
 
     pub(crate) fn resume(&self) {
@@ -108,6 +109,10 @@ impl TransferQueue {
             store,
             transient_tasks: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub fn reconcile_interrupted_tasks(&self) -> AppResult<usize> {
+        transfers::fail_interrupted_transfer_tasks(self.store.as_ref())
     }
 
     pub(crate) async fn acquire_execution_slot(
@@ -755,7 +760,11 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use super::{TransferQueue, TransferRunControl};
-    use crate::storage::sqlite::SqliteStore;
+    use crate::models::session::{AuthMode, SavedSessionDraft, SessionType};
+    use crate::models::sftp::{
+        TransferConflictPolicy, TransferDirection, TransferKind, TransferStatus,
+    };
+    use crate::storage::{sessions::save_session, sqlite::SqliteStore};
 
     #[tokio::test]
     async fn limits_parallel_transfer_executions() {
@@ -800,6 +809,65 @@ mod tests {
             queue
                 .cancel_all_controls()
                 .expect("repeat cancel should be safe"),
+            0
+        );
+    }
+
+    #[test]
+    fn startup_marks_persisted_incomplete_transfers_as_failed() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite store should open"));
+        let session = save_session(
+            store.as_ref(),
+            SavedSessionDraft {
+                id: None,
+                name: "test".to_string(),
+                session_type: SessionType::Ssh,
+                group_id: None,
+                host: "example.test".to_string(),
+                port: 22,
+                username: "ops".to_string(),
+                auth_mode: AuthMode::Agent,
+                credential_ref: None,
+                description: None,
+                tags: Vec::new(),
+                sort_order: 0,
+                ssh_options: None,
+                rdp_options: None,
+                local_options: None,
+                ftp_options: None,
+            },
+        )
+        .expect("session should save");
+        let queue = TransferQueue::from_storage(store);
+        let task = queue
+            .enqueue(
+                &session.id,
+                TransferDirection::Upload,
+                "C:/tmp/source.bin",
+                "/tmp/source.bin",
+                Some(TransferKind::File),
+                TransferConflictPolicy::Overwrite,
+                1024,
+            )
+            .expect("transfer should enqueue");
+        queue.mark_running(&task.id).expect("transfer should start");
+
+        assert_eq!(
+            queue
+                .reconcile_interrupted_tasks()
+                .expect("startup reconciliation should succeed"),
+            1
+        );
+        let reconciled = queue.get(&task.id).expect("transfer should remain visible");
+        assert_eq!(reconciled.status, TransferStatus::Failed);
+        assert_eq!(
+            reconciled.error_message.as_deref(),
+            Some("应用已重启，传输任务已中断")
+        );
+        assert_eq!(
+            queue
+                .reconcile_interrupted_tasks()
+                .expect("repeat reconciliation should be idempotent"),
             0
         );
     }

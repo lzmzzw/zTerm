@@ -51,6 +51,12 @@ export interface TransferTask {
   destination_endpoint?: TransferEndpoint;
 }
 
+export interface TransferDoneEvent {
+  task_id: string;
+  task: TransferTask | null;
+  error: string | null;
+}
+
 export interface LocalPathInfo {
   path: string;
   kind: TransferKind;
@@ -255,9 +261,9 @@ export const useFileStore = create<FileState>((set, get) => ({
     const progress = await listen<TransferTask>("transfer:progress", (event) => {
       upsertTransfer(set, event.payload);
     });
-    const done = await listen<TransferTask>("transfer:done", (event) => {
-      if (typeof event.payload === "object" && event.payload && "id" in event.payload) {
-        const task = event.payload;
+    const done = await listen<TransferDoneEvent>("transfer:done", (event) => {
+      const task = event.payload.task;
+      if (task) {
         upsertTransfer(set, task);
         if (task.direction === "upload" && task.status === "done") {
           const state = get();
@@ -266,6 +272,7 @@ export const useFileStore = create<FileState>((set, get) => ({
           }
         }
       }
+      if (event.payload.error) set({ error: event.payload.error });
     });
     return () => {
       progress();
