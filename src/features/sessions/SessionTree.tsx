@@ -1,6 +1,6 @@
 // Author: Liz
-import { ChevronDown, ChevronRight, Folder, FolderKey, FolderSync, Monitor, Server, Terminal } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, Folder, FolderKey, FolderSync, Monitor, Search, Server, Terminal, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
 import { fallbackOnlyErrorMessage } from "../../lib/unknownErrorMessage";
@@ -16,6 +16,8 @@ import {
   buildSessionGroupDraft,
   buildSavedSessionDraft,
   buildSessionTreeModel,
+  filterSessionTreeModel,
+  normalizeSessionSearchQuery,
   type SessionGroupTreeNode,
 } from "./sessionTreeModel";
 import type {
@@ -82,7 +84,13 @@ export function SessionTree({
   onOpenSession,
   onExportCsv,
 }: SessionTreeProps) {
-  const sessionTree = buildSessionTreeModel({ groups, sessions });
+  const [searchQuery, setSearchQuery] = useState("");
+  const baseSessionTree = useMemo(() => buildSessionTreeModel({ groups, sessions }), [groups, sessions]);
+  const sessionTree = useMemo(
+    () => filterSessionTreeModel(baseSessionTree, searchQuery),
+    [baseSessionTree, searchQuery],
+  );
+  const isSearching = normalizeSessionSearchQuery(searchQuery).length > 0;
   const [dialogType, setDialogType] = useState<SessionType | null>(null);
   const [editingSession, setEditingSession] = useState<SavedSession | null>(null);
   const [initialGroupId, setInitialGroupId] = useState<string | null>(null);
@@ -332,6 +340,39 @@ export function SessionTree({
         />
       ) : null}
 
+      <div className="zt-session-toolbar">
+        <div className="zt-session-search">
+          <Search size={14} aria-hidden="true" />
+          <input
+            type="search"
+            aria-label="搜索会话"
+            placeholder="搜索连接名"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setSearchQuery("");
+                return;
+              }
+              if (event.key !== "Enter" || !sessionTree.firstSession) return;
+              event.preventDefault();
+              onOpenSession?.(sessionTree.firstSession);
+            }}
+          />
+          {searchQuery ? (
+            <button
+              type="button"
+              className="zt-session-search-clear"
+              aria-label="清空会话搜索"
+              title="清空搜索"
+              onClick={() => setSearchQuery("")}
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
       <div className="zt-session-nodes">
         {sessionTree.groups.map((node) => (
           <SessionGroupNode
@@ -348,6 +389,7 @@ export function SessionTree({
             onSessionPointerDown={handleSessionPointerDown}
             draggedSessionId={draggedSessionId}
             dropTargetGroupId={dropTargetGroupId}
+            forceExpanded={isSearching}
           />
         ))}
 
@@ -372,7 +414,9 @@ export function SessionTree({
           </section>
         ) : null}
 
-        {sessionTree.isEmpty ? <div className="zt-empty-line">暂无会话</div> : null}
+        {sessionTree.isEmpty ? (
+          <div className="zt-empty-line">{isSearching ? "未找到匹配会话" : "暂无会话"}</div>
+        ) : null}
       </div>
 
       {dialogType ? (
@@ -453,6 +497,7 @@ function SessionGroupNode({
   onSessionPointerDown,
   draggedSessionId,
   dropTargetGroupId,
+  forceExpanded,
 }: {
   node: SessionGroupTreeNode;
   onOpenSession?: (session: SavedSession) => void;
@@ -466,9 +511,11 @@ function SessionGroupNode({
   onSessionPointerDown: (event: ReactPointerEvent<HTMLElement>, session: SavedSession) => void;
   draggedSessionId: string | null;
   dropTargetGroupId: string | null;
+  forceExpanded: boolean;
 }) {
   const { group, groups: childGroups, sessions: groupSessions } = node;
   const [expanded, setExpanded] = useState(group.expanded);
+  const effectiveExpanded = forceExpanded || expanded;
   const sessionListRef = useRef<HTMLUListElement>(null);
   useFlipLayout(sessionListRef, groupSessions.map((session) => session.id).join("/"));
 
@@ -483,6 +530,7 @@ function SessionGroupNode({
   }
 
   async function toggleGroup() {
+    if (forceExpanded) return;
     const nextExpanded = !expanded;
     setExpanded(nextExpanded);
     try {
@@ -496,11 +544,11 @@ function SessionGroupNode({
     <section className="zt-session-group" aria-label={`分组 ${group.name}`}>
       <div
         role="button"
-        tabIndex={onToggleGroup ? 0 : -1}
-        aria-expanded={expanded}
-        aria-label={`${expanded ? "折叠" : "展开"}分组 ${group.name}`}
-        aria-disabled={!onToggleGroup}
-        title={`${expanded ? "折叠" : "展开"}分组 ${group.name}`}
+        tabIndex={onToggleGroup && !forceExpanded ? 0 : -1}
+        aria-expanded={effectiveExpanded}
+        aria-label={`${effectiveExpanded ? "折叠" : "展开"}分组 ${group.name}`}
+        aria-disabled={!onToggleGroup || forceExpanded}
+        title={forceExpanded ? `搜索期间自动展开分组 ${group.name}` : `${expanded ? "折叠" : "展开"}分组 ${group.name}`}
         className={`zt-session-group-row ${dropTargetGroupId === group.id ? "drop-target" : ""}`}
         data-session-group-id={group.id}
         onContextMenu={openGroupMenu}
@@ -513,13 +561,13 @@ function SessionGroupNode({
       >
         <Folder size={14} aria-hidden="true" />
         <span>{group.name}</span>
-        {expanded ? (
+        {effectiveExpanded ? (
           <ChevronDown className="zt-session-group-indicator" size={14} aria-hidden="true" />
         ) : (
           <ChevronRight className="zt-session-group-indicator" size={14} aria-hidden="true" />
         )}
       </div>
-      {expanded ? (
+      {effectiveExpanded ? (
         <ul ref={sessionListRef}>
           {groupSessions.map((session) => (
             <SessionNode
@@ -546,6 +594,7 @@ function SessionGroupNode({
                 onSessionPointerDown={onSessionPointerDown}
                 draggedSessionId={draggedSessionId}
                 dropTargetGroupId={dropTargetGroupId}
+                forceExpanded={forceExpanded}
               />
             </li>
           ))}

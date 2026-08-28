@@ -3,7 +3,9 @@ use tauri::State;
 
 use crate::{
     error::AppResult,
-    models::command_completion::{CommandCompletionCandidate, CommandCompletionRequest},
+    models::command_completion::{
+        CommandCompletionCandidate, CommandCompletionCwdRequest, CommandCompletionRequest,
+    },
     state::AppState,
 };
 
@@ -19,5 +21,27 @@ pub fn command_completion_suggest(
         state.credential_service(),
         &request.runtime_session_id,
     );
+    completion.refresh_remote_paths_for_request(
+        state.storage(),
+        state.sftp_service(),
+        state.credential_service(),
+        &request,
+    );
     completion.suggest(state.storage().as_ref(), request)
+}
+
+#[tauri::command]
+pub async fn command_completion_resolve_cwd(
+    state: State<'_, AppState>,
+    request: CommandCompletionCwdRequest,
+) -> AppResult<Option<String>> {
+    state
+        .command_completion_service()
+        .resolve_cwd(
+            state.storage(),
+            state.sftp_service(),
+            state.credential_service(),
+            request,
+        )
+        .await
 }

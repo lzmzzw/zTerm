@@ -7,6 +7,7 @@ import {
   buildSessionGroupDraft,
   buildSessionTreeListItems,
   buildSessionTreeModel,
+  filterSessionTreeModel,
 } from "./sessionTreeModel";
 import type { SavedSession, SessionGroup } from "./types";
 
@@ -112,6 +113,45 @@ describe("sessionTreeModel", () => {
   it("reports an empty model only when both groups and sessions are empty", () => {
     expect(buildSessionTreeModel({ groups: [], sessions: [] }).isEmpty).toBe(true);
     expect(buildSessionTreeModel({ groups: [], sessions: [session({ id: "root" })] }).isEmpty).toBe(false);
+  });
+
+  it("filters normalized connection names while preserving only matching ancestor groups", () => {
+    const model = buildSessionTreeModel({
+      groups: [
+        group({ id: "group-root", name: "Root" }),
+        group({ id: "group-child", parent_id: "group-root", name: "Child" }),
+        group({ id: "group-other", name: "Other" }),
+      ],
+      sessions: [
+        session({ id: "session-web", name: "Web Production", group_id: "group-child" }),
+        session({ id: "session-db", name: "Database", group_id: "group-child" }),
+        session({ id: "session-other", name: "Other host", group_id: "group-other" }),
+        session({ id: "session-root", name: "Root host", group_id: null }),
+      ],
+    });
+
+    const filtered = filterSessionTreeModel(model, "  ＷＥＢ  ");
+
+    expect(filtered.groups.map((node) => node.group.id)).toEqual(["group-root"]);
+    expect(filtered.groups[0].groups.map((node) => node.group.id)).toEqual(["group-child"]);
+    expect(filtered.groups[0].groups[0].sessions.map((item) => item.id)).toEqual(["session-web"]);
+    expect(filtered.rootSessions).toEqual([]);
+    expect(filtered.isEmpty).toBe(false);
+    expect(filtered.firstSession?.id).toBe("session-web");
+  });
+
+  it("returns an empty filtered model when no connection name matches", () => {
+    const model = buildSessionTreeModel({
+      groups: [group({ id: "group-root" })],
+      sessions: [session({ id: "session-one", group_id: "group-root" })],
+    });
+
+    const filtered = filterSessionTreeModel(model, "missing");
+
+    expect(filtered.groups).toEqual([]);
+    expect(filtered.rootSessions).toEqual([]);
+    expect(filtered.isEmpty).toBe(true);
+    expect(filtered.firstSession).toBeNull();
   });
 
   it("builds ordered selectable tree items and removes groups emptied by session filtering", () => {

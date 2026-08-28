@@ -50,6 +50,7 @@ pub fn run() {
             commands::terminal_profile::terminal_profile_detect,
             commands::terminal_profile::terminal_profile_set_default,
             commands::command_completion::command_completion_suggest,
+            commands::command_completion::command_completion_resolve_cwd,
             commands::history::history_search,
             commands::history::history_clear,
             commands::history::history_delete_entries,

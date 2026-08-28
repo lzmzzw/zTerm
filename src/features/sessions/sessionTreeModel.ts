@@ -9,10 +9,11 @@ export interface SessionGroupTreeNode {
   sessions: SavedSession[];
 }
 
-interface SessionTreeModel {
+export interface SessionTreeModel {
   groups: SessionGroupTreeNode[];
   rootSessions: SavedSession[];
   isEmpty: boolean;
+  firstSession: SavedSession | null;
 }
 
 export type SessionTreeListItem =
@@ -70,11 +71,54 @@ export function buildSessionTreeModel({
       });
   }
 
+  const groupNodes = buildGroupNodes(null, new Set());
+  const rootSessions = sessionsByGroupId.get(null) ?? [];
   return {
-    groups: buildGroupNodes(null, new Set()),
-    rootSessions: sessionsByGroupId.get(null) ?? [],
+    groups: groupNodes,
+    rootSessions,
     isEmpty: groups.length === 0 && sessions.length === 0,
+    firstSession: findFirstSession(groupNodes) ?? rootSessions[0] ?? null,
   };
+}
+
+export function filterSessionTreeModel(model: SessionTreeModel, query: string): SessionTreeModel {
+  const normalizedQuery = normalizeSessionSearchQuery(query);
+  if (!normalizedQuery) return model;
+
+  function filterGroups(nodes: SessionGroupTreeNode[]): SessionGroupTreeNode[] {
+    return nodes.flatMap((node) => {
+      const groupSessions = node.sessions.filter((session) =>
+        normalizeSessionSearchQuery(session.name).includes(normalizedQuery),
+      );
+      const childGroups = filterGroups(node.groups);
+      if (groupSessions.length === 0 && childGroups.length === 0) return [];
+      return [{ ...node, groups: childGroups, sessions: groupSessions }];
+    });
+  }
+
+  const groups = filterGroups(model.groups);
+  const rootSessions = model.rootSessions.filter((session) =>
+    normalizeSessionSearchQuery(session.name).includes(normalizedQuery),
+  );
+  return {
+    groups,
+    rootSessions,
+    isEmpty: groups.length === 0 && rootSessions.length === 0,
+    firstSession: findFirstSession(groups) ?? rootSessions[0] ?? null,
+  };
+}
+
+export function normalizeSessionSearchQuery(value: string) {
+  return value.trim().normalize("NFKC").toLocaleLowerCase();
+}
+
+function findFirstSession(nodes: SessionGroupTreeNode[]): SavedSession | null {
+  for (const node of nodes) {
+    if (node.sessions[0]) return node.sessions[0];
+    const childSession = findFirstSession(node.groups);
+    if (childSession) return childSession;
+  }
+  return null;
 }
 
 function compareNamedItems(left: { id: string; name: string }, right: { id: string; name: string }) {

@@ -51,9 +51,13 @@ const terminalMock = vi.hoisted(() => {
     onResize: ReturnType<typeof vi.fn>;
     onScroll: ReturnType<typeof vi.fn>;
     onWriteParsed: ReturnType<typeof vi.fn>;
+    oscHandler?: (payload: string) => boolean | Promise<boolean>;
     open: ReturnType<typeof vi.fn>;
     options: unknown;
     paste: ReturnType<typeof vi.fn>;
+    parser: {
+      registerOscHandler: ReturnType<typeof vi.fn>;
+    };
     registerDecoration: ReturnType<typeof vi.fn>;
     registerMarker: ReturnType<typeof vi.fn>;
     renderListener?: () => void;
@@ -153,6 +157,12 @@ const terminalMock = vi.hoisted(() => {
       }),
       options,
       paste: vi.fn((data: string) => instance.dataListener?.(data)),
+      parser: {
+        registerOscHandler: vi.fn((_ident: number, handler: (payload: string) => boolean | Promise<boolean>) => {
+          instance.oscHandler = handler;
+          return disposable();
+        }),
+      },
       registerDecoration: vi.fn((decorationOptions: { marker: MockMarker }) => ({
         dispose: vi.fn(),
         marker: decorationOptions.marker,
@@ -502,7 +512,7 @@ describe("XtermPane", () => {
     });
 
     expect(onInput).toHaveBeenCalledWith("ec");
-    expect(onCompletionRequest).toHaveBeenCalledWith("ec", 2);
+    expect(onCompletionRequest).toHaveBeenCalledWith("ec", 2, null);
     expect(view.container.querySelector(".zt-command-ghost")?.textContent).toBe("ho");
 
     await act(async () => {
@@ -826,7 +836,7 @@ describe("XtermPane", () => {
       await Promise.resolve();
     });
 
-    expect(onCompletionRequest).toHaveBeenLastCalledWith("ec", 2);
+    expect(onCompletionRequest).toHaveBeenLastCalledWith("ec", 2, null);
 
     view.unmount();
   });
@@ -902,6 +912,168 @@ describe("XtermPane", () => {
     await flushQueuedTerminalWrites();
 
     expect(writtenTerminalText(terminal)).toBe(replay);
+    view.unmount();
+  });
+
+  it("uses the initial cwd and lets a trusted OSC 7 file URL replace it", async () => {
+    const onCompletionRequest = vi.fn().mockResolvedValue([]);
+    const view = render(
+      <XtermPane
+        data=""
+        initialCwd="/srv/initial"
+        onCompletionRequest={onCompletionRequest}
+      />,
+    );
+    const terminal = terminalMock.instances[0];
+
+    await act(async () => {
+      terminal.dataListener?.("ls a");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onCompletionRequest).toHaveBeenLastCalledWith("ls a", 4, "/srv/initial");
+
+    await act(async () => {
+      await terminal.oscHandler?.("file://remote/srv/My%20Files");
+      terminal.dataListener?.("b");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onCompletionRequest).toHaveBeenLastCalledWith("ls ab", 5, "/srv/My Files");
+
+    view.unmount();
+  });
+
+  it("updates cwd only after the resolver validates a literal cd target", async () => {
+    const onCompletionRequest = vi.fn().mockResolvedValue([]);
+    const onCwdResolve = vi
+      .fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("/srv/logs");
+    const view = render(
+      <XtermPane
+        data=""
+        initialCwd="/srv"
+        onCompletionRequest={onCompletionRequest}
+        onCwdResolve={onCwdResolve}
+      />,
+    );
+    const terminal = terminalMock.instances[0];
+
+    await act(async () => {
+      terminal.dataListener?.("cd missing\r");
+      await Promise.resolve();
+      terminal.dataListener?.("ls a");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onCwdResolve).toHaveBeenNthCalledWith(1, "/srv", "missing");
+    expect(onCompletionRequest).toHaveBeenLastCalledWith("ls a", 4, "/srv");
+
+    await act(async () => {
+      terminal.dataListener?.("\x03");
+      await Promise.resolve();
+    });
+    await act(async () => {
+      terminal.dataListener?.("cd logs\r");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      terminal.dataListener?.("ls b");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onCwdResolve).toHaveBeenNthCalledWith(2, "/srv", "logs");
+    expect(onCompletionRequest).toHaveBeenLastCalledWith("ls b", 4, "/srv/logs");
+
+    view.unmount();
+  });
+
+  it("does not resolve cwd from a multi-command paste", async () => {
+    const onCwdResolve = vi.fn().mockResolvedValue("/srv/foo");
+    const view = render(<XtermPane data="" onCwdResolve={onCwdResolve} />);
+    const terminal = terminalMock.instances[0];
+
+    await act(async () => {
+      terminal.dataListener?.("cd foo\rcd bar\r");
+      await Promise.resolve();
+    });
+
+    expect(onCwdResolve).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("invalidates an in-flight cwd resolution after later user input", async () => {
+    let finishResolution: ((cwd: string | null) => void) | null = null;
+    const onCwdResolve = vi.fn(
+      () =>
+        new Promise<string | null>((resolve) => {
+          finishResolution = resolve;
+        }),
+    );
+    const onCompletionRequest = vi.fn().mockResolvedValue([]);
+    const view = render(
+      <XtermPane
+        data=""
+        initialCwd="/srv"
+        onCompletionRequest={onCompletionRequest}
+        onCwdResolve={onCwdResolve}
+      />,
+    );
+    const terminal = terminalMock.instances[0];
+
+    await act(async () => {
+      terminal.dataListener?.("cd logs\r");
+      await Promise.resolve();
+    });
+    await act(async () => {
+      terminal.dataListener?.("\x03");
+      finishResolution?.("/srv/logs");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      terminal.dataListener?.("ls a");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onCompletionRequest).toHaveBeenLastCalledWith("ls a", 4, "/srv");
+    view.unmount();
+  });
+
+  it("shows only the missing path text while Tab safely rewrites a spaced path", async () => {
+    const onInput = vi.fn();
+    const onCompletionRequest = vi.fn().mockResolvedValue([
+      {
+        provider: "path",
+        replacement_text: "cp 'My Files'",
+        replacement_range: { start: 3, end: 5 },
+        score: 0.95,
+        source_label: "远端路径",
+        suffix: " Files",
+      },
+    ]);
+    const view = render(
+      <XtermPane data="" onCompletionRequest={onCompletionRequest} onInput={onInput} />,
+    );
+    const terminal = terminalMock.instances[0];
+
+    await act(async () => {
+      terminal.dataListener?.("cp My");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(view.container.querySelector(".zt-command-ghost")?.textContent).toBe(" Files");
+
+    await act(async () => {
+      terminal.dataListener?.("\t");
+      await Promise.resolve();
+    });
+    expect(onInput).toHaveBeenLastCalledWith("\x7f\x7f'My Files'");
+
     view.unmount();
   });
 

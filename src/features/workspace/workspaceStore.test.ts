@@ -747,7 +747,8 @@ describe("workspaceStore pane tabs", () => {
         history_scope_id: "session-1",
         pane_id: "workspace-a-pane-1",
         title: "生产机",
-        kind: "ssh",
+          kind: "ssh",
+          initial_cwd: null,
         cols: 120,
         rows: 32,
       },
@@ -850,8 +851,9 @@ describe("workspaceStore pane tabs", () => {
         history_scope_id: "session-ssh",
         pane_id: "pane-bottom",
         title: "172.16.41.180",
-        kind: "ssh",
-        cols: 120,
+          kind: "ssh",
+          initial_cwd: null,
+          cols: 120,
         rows: 32,
       },
     );
@@ -920,8 +922,9 @@ describe("workspaceStore pane tabs", () => {
       history_scope_id: "session-1",
       pane_id: "pane-a",
       title: "172.16.41.180",
-      kind: "ssh",
-      cols: 120,
+          kind: "ssh",
+          initial_cwd: null,
+          cols: 120,
       rows: 32,
     });
 

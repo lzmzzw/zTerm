@@ -260,6 +260,7 @@ function runtimeInfo(overrides: Partial<RuntimeSessionInfo> = {}): RuntimeSessio
     pane_id: "pane-1",
     title: "生产主机",
     kind: "ssh",
+    initial_cwd: null,
     cols: 120,
     rows: 32,
     ...overrides,

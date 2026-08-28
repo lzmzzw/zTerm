@@ -8,8 +8,20 @@ import { resetTerminalOutputCachesForTest, useTerminalStore } from "../terminal/
 import type { PaneNode } from "./types";
 
 vi.mock("../terminal/XtermPane", () => ({
-  XtermPane: ({ contextMenuEnabled, data }: { contextMenuEnabled?: boolean; data?: string }) => (
-    <div className="zt-xterm-pane" data-context-menu-enabled={String(contextMenuEnabled)}>
+  XtermPane: ({
+    contextMenuEnabled,
+    data,
+    initialCwd,
+  }: {
+    contextMenuEnabled?: boolean;
+    data?: string;
+    initialCwd?: string | null;
+  }) => (
+    <div
+      className="zt-xterm-pane"
+      data-context-menu-enabled={String(contextMenuEnabled)}
+      data-initial-cwd={initialCwd ?? ""}
+    >
       {data}
     </div>
   ),
@@ -230,6 +242,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "aaa",
           kind: "local",
+          initial_cwd: "C:\\work",
           cols: 120,
           rows: 32,
         },
@@ -272,6 +285,9 @@ describe("SplitPaneView", () => {
     await flushDeferredXtermMount();
 
     expect(view.container.querySelector(".zt-xterm-pane")).not.toBeNull();
+    expect(view.container.querySelector(".zt-xterm-pane")?.getAttribute("data-initial-cwd")).toBe(
+      "C:\\work",
+    );
     expect(view.container.querySelector('[aria-label="空终端分栏"]')).toBeNull();
     view.unmount();
   });
@@ -287,6 +303,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "PowerShell",
           kind: "local",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },
@@ -346,6 +363,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "PowerShell",
           kind: "local",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },
@@ -418,6 +436,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "Local",
           kind: "local",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },
@@ -429,6 +448,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "SSH",
           kind: "ssh",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },
@@ -440,6 +460,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "容器: api",
           kind: "ssh_container",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },
@@ -470,6 +491,7 @@ describe("SplitPaneView", () => {
     const sshView = render(<SplitPaneView root={rootFor("runtime-ssh")} {...props} />);
     await flushDeferredXtermMount();
     expect(sshView.container.querySelector(".zt-xterm-pane")?.getAttribute("data-context-menu-enabled")).toBe("true");
+    expect(sshView.container.querySelector(".zt-xterm-pane")?.getAttribute("data-initial-cwd")).toBe("");
     sshView.unmount();
 
     const containerView = render(<SplitPaneView root={rootFor("runtime-container")} {...props} />);
@@ -490,6 +512,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "aaa",
           kind: "local",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },
@@ -543,6 +566,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "aaa",
           kind: "local",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },
@@ -607,6 +631,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "Active",
           kind: "local",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },
@@ -618,6 +643,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-b",
           title: "Inactive",
           kind: "ssh",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },
@@ -1070,6 +1096,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "办公 RDP",
           kind: "rdp_placeholder",
+          initial_cwd: null,
           cols: 0,
           rows: 0,
         },
@@ -1132,6 +1159,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "Active",
           kind: "local",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },
@@ -1143,6 +1171,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "Background",
           kind: "ssh",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },
@@ -1244,6 +1273,7 @@ describe("SplitPaneView", () => {
           pane_id: "pane-a",
           title: "Build Shell",
           kind: "local",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },

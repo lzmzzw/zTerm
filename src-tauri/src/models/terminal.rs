@@ -30,6 +30,7 @@ pub struct RuntimeSessionInfo {
     pub pane_id: String,
     pub title: String,
     pub kind: RuntimeSessionKind,
+    pub initial_cwd: Option<String>,
     pub cols: u16,
     pub rows: u16,
 }

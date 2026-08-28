@@ -49,6 +49,7 @@ const SFTP_CACHE_IDLE_TTL: Duration = Duration::from_secs(90);
 const SFTP_CACHE_PRUNE_INTERVAL: Duration = Duration::from_secs(30);
 const SFTP_CACHE_MAX_ENTRIES: usize = 8;
 const SFTP_LIST_MAX_ATTEMPTS: usize = 3;
+const SFTP_COMPLETION_LIST_MAX_ENTRIES: usize = 5_000;
 const SFTP_LIST_RETRY_DELAY: Duration = Duration::from_millis(150);
 const SFTP_TRANSFER_CONNECT_MAX_ATTEMPTS: usize = 5;
 const SFTP_TRANSFER_CONNECT_RETRY_DELAY: Duration = Duration::from_millis(400);
@@ -211,7 +212,10 @@ impl SftpService {
     ) -> AppResult<Vec<FileEntry>> {
         let path = required_remote_path(path)?;
         for attempt in 0..SFTP_LIST_MAX_ATTEMPTS {
-            match self.list_once(session, all_sessions, secrets, &path).await {
+            match self
+                .list_once(session, all_sessions, secrets, &path, None)
+                .await
+            {
                 Ok(entries) => return Ok(entries),
                 Err(error)
                     if attempt + 1 < SFTP_LIST_MAX_ATTEMPTS
@@ -225,12 +229,64 @@ impl SftpService {
         unreachable!("SFTP directory listing must return from the retry loop")
     }
 
+    pub async fn list_for_completion(
+        &self,
+        session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
+        path: &str,
+    ) -> AppResult<Vec<FileEntry>> {
+        let path = required_remote_path(path)?;
+        for attempt in 0..SFTP_LIST_MAX_ATTEMPTS {
+            match self
+                .list_once(
+                    session,
+                    all_sessions,
+                    secrets,
+                    &path,
+                    Some(SFTP_COMPLETION_LIST_MAX_ENTRIES),
+                )
+                .await
+            {
+                Ok(entries) => return Ok(entries),
+                Err(error)
+                    if attempt + 1 < SFTP_LIST_MAX_ATTEMPTS
+                        && should_retry_sftp_list_error(&error) =>
+                {
+                    sleep_sftp_list_retry_delay(attempt).await;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("SFTP completion listing must return from the retry loop")
+    }
+
+    /// Resolve a remote path through the same reusable SFTP connection used by directory listing.
+    pub async fn canonicalize(
+        &self,
+        session: &SavedSession,
+        all_sessions: &[SavedSession],
+        secrets: &dyn SshCommandSecretResolver,
+        path: &str,
+    ) -> AppResult<String> {
+        let path = required_remote_path(path)?;
+        let lease = self
+            .cached_sftp_session(session, all_sessions, secrets)
+            .await?;
+        let sftp = lease.entry.sftp.lock().await;
+        sftp.canonicalize(path).await.map_err(|error| {
+            self.cache.remove_key_if_entry(&lease.key, &lease.entry);
+            AppError::sftp(error.to_string())
+        })
+    }
+
     async fn list_once(
         &self,
         session: &SavedSession,
         all_sessions: &[SavedSession],
         secrets: &dyn SshCommandSecretResolver,
         path: &str,
+        limit: Option<usize>,
     ) -> AppResult<Vec<FileEntry>> {
         let lease = self
             .cached_sftp_session(session, all_sessions, secrets)
@@ -243,6 +299,7 @@ impl SftpService {
                 self.cache.remove_key_if_entry(&lease.key, &lease.entry);
                 AppError::sftp(error.to_string())
             })?
+            .take(limit.unwrap_or(usize::MAX))
             .map(|entry| {
                 let metadata = entry.metadata();
                 file_entry(entry.file_name(), entry.path(), metadata)

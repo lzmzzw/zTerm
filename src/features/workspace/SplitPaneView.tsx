@@ -346,6 +346,7 @@ function LeafPane({
   const hasSnapshotText = snapshotText.length > 0;
   const writeTerminal = useTerminalStore((state) => state.writeTerminal);
   const suggestCompletion = useTerminalStore((state) => state.suggestCompletion);
+  const resolveCwd = useTerminalStore((state) => state.resolveCwd);
   const resizeTerminal = useTerminalStore((state) => state.resizeTerminal);
   const closeTerminal = useTerminalStore((state) => state.closeTerminal);
   const syncChannel = useSyncInputStore((state) => state.channel);
@@ -442,13 +443,23 @@ function LeafPane({
   );
 
   const handleCompletionRequest = useCallback(
-    (input: string, cursor: number) => {
+    (input: string, cursor: number, cwd: string | null) => {
       if (runtime && isInteractiveTerminalRuntime(runtime.kind)) {
-        return suggestCompletion(runtime.runtime_session_id, input, cursor);
+        return suggestCompletion(runtime.runtime_session_id, input, cursor, cwd);
       }
       return Promise.resolve([]);
     },
     [runtime, suggestCompletion],
+  );
+
+  const handleCwdResolve = useCallback(
+    (currentCwd: string | null, target: string | null) => {
+      if (runtime && isInteractiveTerminalRuntime(runtime.kind)) {
+        return resolveCwd(runtime.runtime_session_id, currentCwd, target);
+      }
+      return Promise.resolve(null);
+    },
+    [resolveCwd, runtime],
   );
 
   const handleClosePane = useCallback(() => {
@@ -776,12 +787,14 @@ function LeafPane({
           autoFocus={active}
           contextMenuEnabled={workspaceActive && isInteractiveTerminalRuntime(runtime.kind)}
           data={xtermReplay.data}
+          initialCwd={runtime.kind === "local" ? runtime.initial_cwd : null}
           liveData={outputChunk?.data ?? null}
           liveSerial={outputChunk?.serial ?? null}
           replayKey={xtermReplay.key}
           replayKind={xtermReplay.kind}
           streamId={runtime.runtime_session_id}
           onCompletionRequest={handleCompletionRequest}
+          onCwdResolve={handleCwdResolve}
           onDisconnect={
             isSshLikeTerminalRuntime(runtime.kind) && activeTerminalTab.runtime_session_id
               ? () => onDisconnectTerminal?.(root.id, activeTerminalTab.id, activeTerminalTab.runtime_session_id!)

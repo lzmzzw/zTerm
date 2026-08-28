@@ -127,6 +127,12 @@ function change(element: HTMLInputElement, value: string) {
   });
 }
 
+function keyDown(element: HTMLElement, key: string) {
+  act(() => {
+    element.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key }));
+  });
+}
+
 const groups: SessionGroup[] = [
   {
     id: "group-prod",
@@ -295,16 +301,63 @@ describe("SessionTree", () => {
     view.unmount();
   });
 
-  it("removes the search box and top-level add session buttons", () => {
+  it("shows the connection-name search box without restoring top-level add session buttons", () => {
     const view = render(<SessionTree groups={groups} sessions={sessions} />);
 
-    expect(view.container.querySelector('[aria-label="搜索会话"]')).toBeNull();
+    expect(input(view.container, "搜索会话").placeholder).toBe("搜索连接名");
     expect(() => button(view.container, "新增 SSH")).toThrow();
     expect(() => button(view.container, "新增 RDP")).toThrow();
     expect(view.container.textContent).toContain("生产跳板机");
     expect(view.container.textContent).toContain("本机 PowerShell");
     expect(view.container.textContent).not.toContain("10.0.0.10");
     expect(view.container.textContent).not.toContain("localhost");
+
+    view.unmount();
+  });
+
+  it("filters by normalized connection name, temporarily expands ancestors, and supports Enter and Escape", () => {
+    const onOpenSession = vi.fn();
+    const onSaveGroup = vi.fn();
+    const view = render(
+      <SessionTree
+        groups={[{ ...groups[0], expanded: false }]}
+        sessions={sessions}
+        onOpenSession={onOpenSession}
+        onSaveGroup={onSaveGroup}
+      />,
+    );
+    const searchInput = input(view.container, "搜索会话");
+
+    expect(view.container.textContent).not.toContain("生产跳板机");
+    change(searchInput, "  生产跳板  ");
+
+    const groupRow = view.container.querySelector<HTMLElement>('[aria-label="分组 生产环境"] .zt-session-group-row');
+    expect(groupRow?.getAttribute("aria-expanded")).toBe("true");
+    expect(view.container.textContent).toContain("生产跳板机");
+    expect(view.container.textContent).not.toContain("办公 RDP");
+    expect(onSaveGroup).not.toHaveBeenCalled();
+
+    keyDown(searchInput, "Enter");
+    expect(onOpenSession).toHaveBeenCalledWith(expect.objectContaining({ id: "ssh-prod" }));
+
+    keyDown(searchInput, "Escape");
+    expect(searchInput.value).toBe("");
+    expect(groupRow?.getAttribute("aria-expanded")).toBe("false");
+    expect(view.container.textContent).not.toContain("生产跳板机");
+    expect(view.container.textContent).toContain("办公 RDP");
+    expect(onSaveGroup).not.toHaveBeenCalled();
+
+    view.unmount();
+  });
+
+  it("shows a dedicated empty state when no connection name matches", () => {
+    const view = render(<SessionTree groups={groups} sessions={sessions} />);
+
+    change(input(view.container, "搜索会话"), "不存在的连接");
+
+    expect(view.container.textContent).toContain("未找到匹配会话");
+    expect(view.container.textContent).not.toContain("暂无会话");
+    expect(view.container.querySelectorAll(".zt-session-node-main")).toHaveLength(0);
 
     view.unmount();
   });

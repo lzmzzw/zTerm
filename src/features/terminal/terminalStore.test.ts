@@ -52,6 +52,7 @@ describe("terminalStore", () => {
       pane_id: "pane-1",
       title: "PowerShell",
       kind: "local",
+      initial_cwd: "C:\\work",
       cols: 120,
       rows: 32,
     });
@@ -62,6 +63,7 @@ describe("terminalStore", () => {
       paneId: "pane-1",
       workingDirectory: "C:\\work",
     });
+    expect(useTerminalStore.getState().runtimes["runtime-local"]?.initial_cwd).toBe("C:\\work");
   });
 
   it("passes a saved-session working directory override when opening a terminal", async () => {
@@ -72,8 +74,9 @@ describe("terminalStore", () => {
       history_scope_id: "session-1",
       pane_id: "pane-1",
       title: "生产机",
-      kind: "ssh",
-      cols: 120,
+          kind: "ssh",
+          initial_cwd: null,
+          cols: 120,
       rows: 32,
     });
 
@@ -86,6 +89,126 @@ describe("terminalStore", () => {
     });
   });
 
+  it("retries a cold path cache a bounded number of times and returns the refreshed path", async () => {
+    vi.useFakeTimers();
+    useTerminalStore.setState({
+      runtimes: {
+        "runtime-ssh": {
+          runtime_session_id: "runtime-ssh",
+          saved_session_id: "session-1",
+          history_scope_kind: "saved_session",
+          history_scope_id: "session-1",
+          pane_id: "pane-1",
+          title: "SSH",
+          kind: "ssh",
+          initial_cwd: null,
+          cols: 120,
+          rows: 32,
+        },
+      },
+    });
+    const systemCandidate = {
+      provider: "system",
+      replacement_text: "cat",
+      suffix: "",
+      replacement_range: { start: 0, end: 3 },
+      score: 0.5,
+      source_label: "远端系统命令",
+    };
+    const pathCandidate = {
+      provider: "path",
+      replacement_text: "cat logs/",
+      suffix: "gs/",
+      replacement_range: { start: 4, end: 6 },
+      score: 0.95,
+      source_label: "远端路径",
+    };
+    invokeMock
+      .mockResolvedValueOnce([systemCandidate])
+      .mockResolvedValueOnce([systemCandidate])
+      .mockResolvedValueOnce([pathCandidate]);
+
+    const pending = useTerminalStore
+      .getState()
+      .suggestCompletion("runtime-ssh", "cat lo", 6, "/srv");
+    await vi.advanceTimersByTimeAsync(800);
+
+    await expect(pending).resolves.toEqual([pathCandidate]);
+    expect(invokeMock).toHaveBeenCalledTimes(3);
+    expect(invokeMock).toHaveBeenLastCalledWith("command_completion_suggest", {
+      request: {
+        runtime_session_id: "runtime-ssh",
+        input: "cat lo",
+        cursor: 6,
+        limit: 8,
+        cwd: "/srv",
+      },
+    });
+    vi.useRealTimers();
+  });
+
+  it("stops stale cold-cache retries when a newer input request starts", async () => {
+    vi.useFakeTimers();
+    useTerminalStore.setState({
+      runtimes: {
+        "runtime-ssh": {
+          runtime_session_id: "runtime-ssh",
+          saved_session_id: "session-1",
+          history_scope_kind: "saved_session",
+          history_scope_id: "session-1",
+          pane_id: "pane-1",
+          title: "SSH",
+          kind: "ssh",
+          initial_cwd: null,
+          cols: 120,
+          rows: 32,
+        },
+      },
+    });
+    const systemCandidate = {
+      provider: "system",
+      replacement_text: "cat",
+      suffix: "",
+      replacement_range: { start: 0, end: 3 },
+      score: 0.5,
+      source_label: "远端系统命令",
+    };
+    const pathCandidate = {
+      provider: "path",
+      replacement_text: "cat logs/",
+      suffix: "s/",
+      replacement_range: { start: 4, end: 7 },
+      score: 0.95,
+      source_label: "远端路径",
+    };
+    invokeMock.mockResolvedValueOnce([systemCandidate]).mockResolvedValueOnce([pathCandidate]);
+
+    const stale = useTerminalStore.getState().suggestCompletion("runtime-ssh", "cat lo", 6, "/srv");
+    await Promise.resolve();
+    const current = useTerminalStore.getState().suggestCompletion("runtime-ssh", "cat log", 7, "/srv");
+    await vi.advanceTimersByTimeAsync(800);
+
+    await expect(stale).resolves.toEqual([systemCandidate]);
+    await expect(current).resolves.toEqual([pathCandidate]);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("resolves cwd through the runtime-scoped IPC command", async () => {
+    invokeMock.mockResolvedValue("/srv/logs");
+
+    await expect(
+      useTerminalStore.getState().resolveCwd("runtime-ssh", "/srv", "logs"),
+    ).resolves.toBe("/srv/logs");
+    expect(invokeMock).toHaveBeenCalledWith("command_completion_resolve_cwd", {
+      request: {
+        runtime_session_id: "runtime-ssh",
+        current_cwd: "/srv",
+        target: "logs",
+      },
+    });
+  });
+
   it("opens an SSH container terminal with the selected container target", async () => {
     invokeMock.mockResolvedValue({
       runtime_session_id: "runtime-container",
@@ -94,7 +217,8 @@ describe("terminalStore", () => {
       history_scope_id: "session-1",
       pane_id: "pane-1",
       title: "容器: api",
-      kind: "ssh_container",
+          kind: "ssh_container",
+          initial_cwd: null,
       cols: 120,
       rows: 32,
     });
@@ -259,6 +383,7 @@ describe("terminalStore", () => {
           pane_id: "pane-1",
           title: "SSH",
           kind: "ssh",
+          initial_cwd: null,
           cols: 120,
           rows: 32,
         },

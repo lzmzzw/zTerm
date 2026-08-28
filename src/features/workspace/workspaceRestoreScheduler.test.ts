@@ -25,6 +25,7 @@ function runtime(
     pane_id: paneId,
     title: id,
     kind,
+    initial_cwd: null,
     cols: 120,
     rows: 32,
   };

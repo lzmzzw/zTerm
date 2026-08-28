@@ -120,6 +120,7 @@ impl TerminalManager {
             pane_id: options.pane_id,
             title: options.title,
             kind: RuntimeSessionKind::Local,
+            initial_cwd: canonical_local_cwd(Path::new(&options.cwd)),
             cols: options.cols,
             rows: options.rows,
         };
@@ -193,6 +194,7 @@ impl TerminalManager {
             pane_id,
             title,
             kind: RuntimeSessionKind::RdpPlaceholder,
+            initial_cwd: None,
             cols: 0,
             rows: 0,
         };
@@ -244,6 +246,7 @@ impl TerminalManager {
             pane_id,
             title: session.name.clone(),
             kind: RuntimeSessionKind::Ssh,
+            initial_cwd: None,
             cols,
             rows,
         };
@@ -335,6 +338,7 @@ impl TerminalManager {
             pane_id,
             title: format!("容器: {title_target}"),
             kind: RuntimeSessionKind::SshContainer,
+            initial_cwd: None,
             cols,
             rows,
         };
@@ -383,6 +387,7 @@ impl TerminalManager {
         cols: u16,
         rows: u16,
     ) -> AppResult<OpenedPtySession> {
+        let initial_cwd = initial_local_cwd(local_options)?;
         let mut command = CommandBuilder::new(profile.path.as_str());
         for arg in &profile.args {
             command.arg(arg.as_str());
@@ -393,12 +398,7 @@ impl TerminalManager {
             command.arg("-Command");
             command.arg(powershell_history_integration_script());
         }
-        if let Some(working_directory) = local_options
-            .and_then(|options| options.working_directory.as_deref())
-            .filter(|value| !value.trim().is_empty())
-        {
-            command.cwd(working_directory);
-        }
+        command.cwd(&initial_cwd);
         if let Some(options) = local_options {
             for variable in &options.environment {
                 let name = variable.name.trim();
@@ -416,6 +416,7 @@ impl TerminalManager {
             pane_id,
             title,
             kind: RuntimeSessionKind::Local,
+            initial_cwd: Some(initial_cwd.to_string_lossy().to_string()),
             cols,
             rows,
         };
@@ -809,6 +810,40 @@ impl TerminalManager {
     }
 }
 
+fn initial_local_cwd(local_options: Option<&LocalOptions>) -> AppResult<PathBuf> {
+    let process_cwd = std::env::current_dir()
+        .map_err(|error| AppError::terminal(format!("读取本机工作目录失败: {error}")))?;
+    let configured = local_options
+        .and_then(|options| options.working_directory.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let candidate = configured
+        .map(PathBuf::from)
+        .map(|path| {
+            if path.is_absolute() {
+                path
+            } else {
+                process_cwd.join(path)
+            }
+        })
+        .unwrap_or(process_cwd);
+    Ok(std::fs::canonicalize(&candidate).unwrap_or(candidate))
+}
+
+fn canonical_local_cwd(path: &Path) -> Option<String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    Some(
+        std::fs::canonicalize(&absolute)
+            .unwrap_or(absolute)
+            .to_string_lossy()
+            .to_string(),
+    )
+}
+
 struct SystemSshSecretResolver;
 
 impl SshCommandSecretResolver for SystemSshSecretResolver {
@@ -899,11 +934,11 @@ fn powershell_history_integration_script() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::terminal_profile::TerminalProfile;
+    use crate::models::{session::LocalOptions, terminal_profile::TerminalProfile};
 
     use super::{
-        powershell_history_integration_script, supports_powershell_history_integration, tail_chars,
-        TerminalManager,
+        initial_local_cwd, powershell_history_integration_script,
+        supports_powershell_history_integration, tail_chars, TerminalManager,
     };
 
     #[test]
@@ -973,5 +1008,20 @@ mod tests {
             args: vec!["-File".to_string(), "startup.ps1".to_string()],
             ..profile
         }));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn configured_local_working_directory_is_reported_as_the_initial_cwd() {
+        let options = LocalOptions {
+            profile_id: None,
+            working_directory: Some("C:\\work".to_string()),
+            environment: Vec::new(),
+        };
+
+        assert_eq!(
+            initial_local_cwd(Some(&options)).expect("initial cwd"),
+            std::path::PathBuf::from("C:\\work")
+        );
     }
 }

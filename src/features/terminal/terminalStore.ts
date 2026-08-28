@@ -20,12 +20,13 @@ export interface RuntimeSessionInfo {
   pane_id: string;
   title: string;
   kind: RuntimeSessionKind;
+  initial_cwd: string | null;
   cols: number;
   rows: number;
 }
 
 export interface CommandCompletionCandidate {
-  provider: "history" | "system";
+  provider: "history" | "system" | "path";
   replacement_text: string;
   suffix: string;
   replacement_range: {
@@ -88,7 +89,17 @@ interface TerminalState {
   listSshContainers: (savedSessionId: string) => Promise<SshContainerInfo[]>;
   openDefaultLocalTerminal: (paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>;
   writeTerminal: (runtimeSessionId: string, data: string) => Promise<void>;
-  suggestCompletion: (runtimeSessionId: string, input: string, cursor: number) => Promise<CommandCompletionCandidate[]>;
+  suggestCompletion: (
+    runtimeSessionId: string,
+    input: string,
+    cursor: number,
+    cwd?: string | null,
+  ) => Promise<CommandCompletionCandidate[]>;
+  resolveCwd: (
+    runtimeSessionId: string,
+    currentCwd: string | null,
+    target: string | null,
+  ) => Promise<string | null>;
   resizeTerminal: (runtimeSessionId: string, cols: number, rows: number) => Promise<void>;
   closeTerminal: (runtimeSessionId: string, options?: { releaseExternalSession?: boolean }) => Promise<void>;
   appendOutput: (runtimeSessionId: string, data: string) => void;
@@ -105,12 +116,14 @@ const outputTailByRuntime: Record<string, string> = {};
 const visualOutputTailByRuntime: Record<string, string> = {};
 const liveOutputSubscriptions: Record<string, number> = {};
 const replayBuffersByRuntime: Record<string, TerminalReplayBuffer> = {};
+const completionRequestGenerationByRuntime: Record<string, number> = {};
 
 export function resetTerminalOutputCachesForTest() {
   clearRecord(outputTailByRuntime);
   clearRecord(visualOutputTailByRuntime);
   clearRecord(liveOutputSubscriptions);
   clearReplayBuffers();
+  clearRecord(completionRequestGenerationByRuntime);
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -227,13 +240,40 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }));
     }
   },
-  async suggestCompletion(runtimeSessionId, input, cursor) {
-    return invoke<CommandCompletionCandidate[]>("command_completion_suggest", {
+  async suggestCompletion(runtimeSessionId, input, cursor, cwd) {
+    const generation = (completionRequestGenerationByRuntime[runtimeSessionId] ?? 0) + 1;
+    completionRequestGenerationByRuntime[runtimeSessionId] = generation;
+    const request = {
+      runtime_session_id: runtimeSessionId,
+      input,
+      cursor,
+      limit: 8,
+      cwd,
+    };
+    let candidates = await invoke<CommandCompletionCandidate[]>("command_completion_suggest", { request });
+    if (
+      get().runtimes[runtimeSessionId]?.kind !== "ssh" ||
+      !isPathCompletionInput(input) ||
+      candidates.some((candidate) => candidate.provider === "path")
+    ) {
+      return candidates;
+    }
+    for (const retryDelay of [300, 500]) {
+      await delay(retryDelay);
+      if (completionRequestGenerationByRuntime[runtimeSessionId] !== generation) {
+        return candidates;
+      }
+      candidates = await invoke<CommandCompletionCandidate[]>("command_completion_suggest", { request });
+      if (candidates.some((candidate) => candidate.provider === "path")) break;
+    }
+    return candidates;
+  },
+  async resolveCwd(runtimeSessionId, currentCwd, target) {
+    return invoke<string | null>("command_completion_resolve_cwd", {
       request: {
         runtime_session_id: runtimeSessionId,
-        input,
-        cursor,
-        limit: 8,
+        current_cwd: currentCwd,
+        target,
       },
     });
   },
@@ -264,6 +304,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       delete outputTailByRuntime[runtimeSessionId];
       delete visualOutputTailByRuntime[runtimeSessionId];
       delete liveOutputSubscriptions[runtimeSessionId];
+      delete completionRequestGenerationByRuntime[runtimeSessionId];
       disposeReplayBuffer(runtimeSessionId);
       return { runtimes, outputChunks, inputSerialByRuntime };
     });
@@ -316,6 +357,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     };
   },
 }));
+
+function isPathCompletionInput(input: string) {
+  const segment = input.split(/[|;&](?![|&])/).at(-1)?.trimStart() ?? "";
+  return /^(?:cd|cp|mv|rm|ls|cat)\s+/i.test(segment);
+}
+
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
 
 function isSubmittedTerminalInput(data: string) {
   return data.includes("\r") || data.includes("\n");

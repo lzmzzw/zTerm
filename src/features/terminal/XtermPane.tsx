@@ -17,6 +17,7 @@ import {
 import { ZtContextMenu } from "../../components/ZtUi";
 import { scheduleNextTask } from "../../lib/renderScheduling";
 import { readClipboardTextWithRetry, sanitizeTerminalPaste } from "./terminalClipboard";
+import { parseOsc7Cwd, parseSimpleCdTarget } from "./terminalCwd";
 import {
   createTerminalSemanticHighlighter,
   DIGE_BLACK_SEMANTIC_PALETTE,
@@ -32,13 +33,19 @@ import type { TerminalInputSource } from "./syncInputStore";
 interface XtermPaneProps {
   autoFocus?: boolean;
   data?: string;
+  initialCwd?: string | null;
   liveData?: string | null;
   liveSerial?: number | null;
   replayKey?: number | string | null;
   replayKind?: TerminalReplayKind;
   streamId?: string | null;
   contextMenuEnabled?: boolean;
-  onCompletionRequest?: (input: string, cursor: number) => Promise<CommandCompletionCandidate[]>;
+  onCompletionRequest?: (
+    input: string,
+    cursor: number,
+    cwd: string | null,
+  ) => Promise<CommandCompletionCandidate[]>;
+  onCwdResolve?: (currentCwd: string | null, target: string | null) => Promise<string | null>;
   onDisconnect?: () => void;
   onInput?: (data: string, metadata?: { source: TerminalInputSource }) => void;
   onReconnect?: () => void;
@@ -105,6 +112,7 @@ interface QueuedTerminalWrite {
 export function XtermPane({
   autoFocus = true,
   data = "",
+  initialCwd = null,
   liveData = null,
   liveSerial,
   replayKey = null,
@@ -112,6 +120,7 @@ export function XtermPane({
   streamId = null,
   contextMenuEnabled = true,
   onCompletionRequest,
+  onCwdResolve,
   onDisconnect,
   onInput,
   onReconnect,
@@ -135,8 +144,11 @@ export function XtermPane({
   const outputWriteGenerationRef = useRef(0);
   const outputWriteTimerRef = useRef<number | null>(null);
   const lineInputRef = useRef("");
+  const cwdRef = useRef<string | null>(initialCwd);
+  const cwdResolveGenerationRef = useRef(0);
   const pasteInFlightRef = useRef<Promise<void> | null>(null);
   const onInputRef = useRef(onInput);
+  const onCwdResolveRef = useRef(onCwdResolve);
   const onResizeRef = useRef(onResize);
   const [ghostCandidate, setGhostCandidate] = useState<CommandCompletionCandidate | null>(null);
   const [ghostPosition, setGhostPosition] = useState<CSSProperties>({ bottom: 8, left: 10 });
@@ -223,8 +235,9 @@ export function XtermPane({
 
   useEffect(() => {
     onInputRef.current = onInput;
+    onCwdResolveRef.current = onCwdResolve;
     onResizeRef.current = onResize;
-  }, [onInput, onResize]);
+  }, [onCwdResolve, onInput, onResize]);
 
   useEffect(() => {
     ghostCandidateRef.current = ghostCandidate;
@@ -235,13 +248,18 @@ export function XtermPane({
   }, [lineInput]);
 
   useEffect(() => {
+    cwdResolveGenerationRef.current += 1;
+    cwdRef.current = initialCwd;
+  }, [initialCwd, streamId]);
+
+  useEffect(() => {
     if (!onCompletionRequest || !lineInput.trim()) {
       setGhostCandidate(null);
       return;
     }
 
     const requestId = (completionRequestIdRef.current += 1);
-    void onCompletionRequest(lineInput, countChars(lineInput))
+    void onCompletionRequest(lineInput, countChars(lineInput), cwdRef.current)
       .then((candidates) => {
         if (completionRequestIdRef.current !== requestId) return;
         const candidate = normalizedCandidateForInput(candidates, lineInput);
@@ -261,9 +279,13 @@ export function XtermPane({
         return;
       }
 
+      if (!parsingOutputRef.current) {
+        cwdResolveGenerationRef.current += 1;
+      }
+
       const candidate = ghostCandidateRef.current;
       if (value === "\t" && candidate) {
-        onInputRef.current?.(candidate.suffix);
+        onInputRef.current?.(completionInputForCandidate(candidate, lineInputRef.current));
         lineInputRef.current = candidate.replacement_text;
         ghostCandidateRef.current = null;
         setLineInput(candidate.replacement_text);
@@ -283,6 +305,25 @@ export function XtermPane({
 
       onInputRef.current?.(value);
       const currentInput = lineInputRef.current;
+      const submittedParts = value.split(/[\r\n]/);
+      const submittedPrefix = submittedParts[0];
+      const hasAdditionalCommand = submittedParts.slice(1).some((part) => part.trim().length > 0);
+      if (value.includes("\r") || value.includes("\n")) {
+        const parsedCd = hasAdditionalCommand
+          ? null
+          : parseSimpleCdTarget(currentInput + submittedPrefix);
+        const resolveCwd = onCwdResolveRef.current;
+        if (parsedCd && resolveCwd) {
+          const generation = cwdResolveGenerationRef.current;
+          void resolveCwd(cwdRef.current, parsedCd.target)
+            .then((resolvedCwd) => {
+              if (resolvedCwd && cwdResolveGenerationRef.current === generation) {
+                cwdRef.current = resolvedCwd;
+              }
+            })
+            .catch(() => undefined);
+        }
+      }
       const nextInput = applyTerminalInput(currentInput, value);
       if (nextInput !== currentInput) {
         setLineInput(nextInput);
@@ -372,6 +413,14 @@ export function XtermPane({
     terminal.loadAddon(searchAddon);
     terminal.loadAddon(new WebLinksAddon());
     terminal.open(containerRef.current);
+    const cwdDisposable = terminal.parser.registerOscHandler(7, (payload) => {
+      const cwd = parseOsc7Cwd(payload);
+      if (cwd) {
+        cwdResolveGenerationRef.current += 1;
+        cwdRef.current = cwd;
+      }
+      return true;
+    });
     const semanticHighlighter = createTerminalSemanticHighlighter(
       terminal,
       resolveTerminalSemanticPalette(),
@@ -404,6 +453,7 @@ export function XtermPane({
       window.removeEventListener("resize", fit);
       inputDisposable.dispose();
       resizeDisposable.dispose();
+      cwdDisposable.dispose();
       semanticHighlighter.dispose();
       terminalRef.current = null;
       semanticHighlighterRef.current = null;
@@ -708,11 +758,28 @@ function estimateCellWidth(row: HTMLElement | null | undefined, fontSize: number
 
 function normalizedCandidateForInput(candidates: CommandCompletionCandidate[], input: string) {
   const candidate = candidates.find(
-    (item) => item.replacement_text !== input && item.replacement_text.startsWith(input),
+    (item) =>
+      item.replacement_text !== input &&
+      item.replacement_range.start >= 0 &&
+      item.replacement_range.start <= item.replacement_range.end &&
+      item.replacement_range.end <= countChars(input) &&
+      Array.from(item.replacement_text).slice(0, item.replacement_range.start).join("") ===
+        Array.from(input).slice(0, item.replacement_range.start).join(""),
   );
   if (!candidate) return null;
   return {
     ...candidate,
-    suffix: candidate.replacement_text.slice(input.length),
+    suffix: candidate.suffix,
   };
+}
+
+function completionInputForCandidate(candidate: CommandCompletionCandidate, input: string) {
+  if (candidate.replacement_text.startsWith(input)) {
+    return candidate.replacement_text.slice(input.length);
+  }
+  const eraseCount = Math.max(0, countChars(input) - candidate.replacement_range.start);
+  const replacement = Array.from(candidate.replacement_text)
+    .slice(candidate.replacement_range.start)
+    .join("");
+  return `${"\x7f".repeat(eraseCount)}${replacement}`;
 }

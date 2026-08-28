@@ -7,6 +7,14 @@ pub struct CommandCompletionRequest {
     pub input: String,
     pub cursor: usize,
     pub limit: Option<usize>,
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct CommandCompletionCwdRequest {
+    pub runtime_session_id: String,
+    pub current_cwd: Option<String>,
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,6 +32,7 @@ pub struct CommandCompletionCandidate {
 pub enum CommandCompletionProvider {
     History,
     System,
+    Path,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
