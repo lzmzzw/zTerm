@@ -827,7 +827,7 @@ fn initial_local_cwd(local_options: Option<&LocalOptions>) -> AppResult<PathBuf>
             }
         })
         .unwrap_or(process_cwd);
-    Ok(std::fs::canonicalize(&candidate).unwrap_or(candidate))
+    Ok(dunce::canonicalize(&candidate).unwrap_or(candidate))
 }
 
 fn canonical_local_cwd(path: &Path) -> Option<String> {
@@ -837,7 +837,7 @@ fn canonical_local_cwd(path: &Path) -> Option<String> {
         std::env::current_dir().ok()?.join(path)
     };
     Some(
-        std::fs::canonicalize(&absolute)
+        dunce::canonicalize(&absolute)
             .unwrap_or(absolute)
             .to_string_lossy()
             .to_string(),
@@ -1022,6 +1022,18 @@ mod tests {
         assert_eq!(
             initial_local_cwd(Some(&options)).expect("initial cwd"),
             std::path::PathBuf::from("C:\\work")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn existing_local_working_directory_does_not_expose_the_verbatim_prefix() {
+        let initial_cwd = initial_local_cwd(None).expect("initial cwd");
+
+        assert!(initial_cwd.is_absolute());
+        assert!(
+            !initial_cwd.to_string_lossy().starts_with(r"\\?\"),
+            "PowerShell would render a provider-qualified prompt for {initial_cwd:?}"
         );
     }
 }

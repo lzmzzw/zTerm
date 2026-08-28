@@ -7160,6 +7160,7 @@ dependencies = [
  "base64 0.22.1",
  "bssh-russh-sftp",
  "dirs",
+ "dunce",
  "keyring",
  "percent-encoding",
  "portable-pty",

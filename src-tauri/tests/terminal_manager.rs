@@ -185,6 +185,16 @@ fn local_powershell_history_hook_reports_recalled_commands_when_available() {
                         .expect("PowerShell runtime should accept CPR response");
                 }
                 if !sent_command && output.contains("PS ") && output.contains('>') {
+                    assert!(
+                        !output.contains(r"Microsoft.PowerShell.Core\FileSystem::"),
+                        "PowerShell prompt exposed its provider-qualified path: {}",
+                        terminal_tail(&output)
+                    );
+                    assert!(
+                        !output.contains(r"\\?\"),
+                        "PowerShell prompt exposed a verbatim Windows path: {}",
+                        terminal_tail(&output)
+                    );
                     sent_command = true;
                     manager
                         .write(&runtime_id, &format!("{command}\r"))
