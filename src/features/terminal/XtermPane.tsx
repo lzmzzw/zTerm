@@ -6,7 +6,6 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
   type ClipboardEvent as ReactClipboardEvent,
-  type CSSProperties,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -126,7 +125,9 @@ export function XtermPane({
   onReconnect,
   onResize,
 }: XtermPaneProps) {
+  const paneRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const ghostElementRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const semanticHighlighterRef = useRef<TerminalSemanticHighlighter | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
@@ -151,7 +152,6 @@ export function XtermPane({
   const onCwdResolveRef = useRef(onCwdResolve);
   const onResizeRef = useRef(onResize);
   const [ghostCandidate, setGhostCandidate] = useState<CommandCompletionCandidate | null>(null);
-  const [ghostPosition, setGhostPosition] = useState<CSSProperties>({ bottom: 8, left: 10 });
   const [lineInput, setLineInput] = useState("");
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
@@ -169,6 +169,19 @@ export function XtermPane({
     replayingOutputRef.current = false;
     clearOutputWriteTimer();
   }, [clearOutputWriteTimer]);
+
+  const syncGhostPosition = useCallback(() => {
+    const element = ghostElementRef.current;
+    if (!element) return;
+    const position = resolveGhostPosition(
+      terminalRef.current,
+      containerRef.current,
+      paneRef.current,
+    );
+    element.style.left = `${position.left}px`;
+    element.style.top = `${position.top}px`;
+    element.style.maxWidth = `${position.maxWidth}px`;
+  }, []);
 
   const drainQueuedOutputWrites = useCallback(() => {
     const terminal = terminalRef.current;
@@ -263,7 +276,6 @@ export function XtermPane({
       .then((candidates) => {
         if (completionRequestIdRef.current !== requestId) return;
         const candidate = normalizedCandidateForInput(candidates, lineInput);
-        setGhostPosition(resolveGhostPosition(terminalRef.current, containerRef.current));
         setGhostCandidate(candidate);
       })
       .catch(() => {
@@ -272,6 +284,10 @@ export function XtermPane({
         }
       });
   }, [lineInput, onCompletionRequest]);
+
+  useLayoutEffect(() => {
+    if (ghostCandidate) syncGhostPosition();
+  }, [ghostCandidate, syncGhostPosition]);
 
   const handleTerminalInput = useCallback(
     (value: string) => {
@@ -439,10 +455,18 @@ export function XtermPane({
       lastResizeRef.current = { cols: size.cols, rows: size.rows };
       onResizeRef.current?.(size.cols, size.rows);
     };
-    const resizeDisposable = terminal.onResize(reportTerminalSize);
+    const cursorDisposable = terminal.onCursorMove(syncGhostPosition);
+    const scrollDisposable = terminal.onScroll(syncGhostPosition);
+    const resizeDisposable = terminal.onResize((size) => {
+      reportTerminalSize(size);
+      syncGhostPosition();
+    });
     fitAddon.fit();
     reportTerminalSize({ cols: terminal.cols, rows: terminal.rows });
-    const fit = () => fitAddon.fit();
+    const fit = () => {
+      fitAddon.fit();
+      syncGhostPosition();
+    };
     const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fit);
     resizeObserver?.observe(containerRef.current);
     window.addEventListener("resize", fit);
@@ -452,6 +476,8 @@ export function XtermPane({
       resizeObserver?.disconnect();
       window.removeEventListener("resize", fit);
       inputDisposable.dispose();
+      cursorDisposable.dispose();
+      scrollDisposable.dispose();
       resizeDisposable.dispose();
       cwdDisposable.dispose();
       semanticHighlighter.dispose();
@@ -466,7 +492,7 @@ export function XtermPane({
       lastResizeRef.current = null;
       scheduleNextTask(() => terminal.dispose());
     };
-  }, [cancelQueuedOutputWrites, handleTerminalInput, pasteClipboardText]);
+  }, [cancelQueuedOutputWrites, handleTerminalInput, pasteClipboardText, syncGhostPosition]);
 
   useEffect(() => {
     if (autoFocus) terminalRef.current?.focus();
@@ -546,6 +572,7 @@ export function XtermPane({
   return (
     <div
       className="zt-xterm-pane"
+      ref={paneRef}
       onPasteCapture={handlePasteCapture}
       onContextMenu={(event) => {
         event.preventDefault();
@@ -574,7 +601,7 @@ export function XtermPane({
       />
       <div className="zt-xterm-host" ref={containerRef} />
       {ghostCandidate ? (
-        <div className="zt-command-ghost" aria-hidden="true" style={ghostPosition}>
+        <div className="zt-command-ghost" aria-hidden="true" ref={ghostElementRef}>
           {ghostCandidate.suffix}
         </div>
       ) : null}
@@ -722,38 +749,43 @@ function countChars(value: string) {
   return Array.from(value).length;
 }
 
-function resolveGhostPosition(terminal: Terminal | null, container: HTMLElement | null): CSSProperties {
-  if (!terminal || !container) {
-    return { bottom: 8, left: 10 };
+function resolveGhostPosition(
+  terminal: Terminal | null,
+  container: HTMLElement | null,
+  pane: HTMLElement | null,
+) {
+  if (!terminal || !container || !pane) {
+    return { left: 10, maxWidth: 1, top: 8 };
   }
-  const rows = container.querySelector<HTMLElement>(".xterm-rows");
-  const firstRow = rows?.querySelector<HTMLElement>("div");
-  const rowsRect = rows?.getBoundingClientRect();
+  const screen = container.querySelector<HTMLElement>(".xterm-screen");
+  const firstRow = container.querySelector<HTMLElement>(".xterm-rows > div");
+  const screenRect = screen?.getBoundingClientRect();
   const rowRect = firstRow?.getBoundingClientRect();
-  const containerRect = container.getBoundingClientRect();
+  const paneRect = pane.getBoundingClientRect();
   const fontSize = Number(terminal.options.fontSize) || resolveConfiguredTerminalFontSize();
-  const cellWidth = Math.max(6, estimateCellWidth(firstRow, fontSize));
-  const rowHeight = Math.max(fontSize * 1.2, rowRect?.height || fontSize * 1.35);
-  const cursorX = Math.max(0, terminal.buffer.active.cursorX);
-  const cursorY = Math.max(0, terminal.buffer.active.cursorY);
-  if (!rowsRect || rowsRect.height === 0) {
-    return { bottom: 8, left: 10 + cursorX * cellWidth };
-  }
+  const columns = Math.max(1, terminal.cols);
+  const rows = Math.max(1, terminal.rows);
+  const cellWidth = screenRect && screenRect.width > 0
+    ? screenRect.width / columns
+    : Math.max(6, fontSize * 0.62);
+  const rowHeight = screenRect && screenRect.height > 0
+    ? screenRect.height / rows
+    : Math.max(fontSize * 1.2, rowRect?.height || fontSize * 1.35);
+  const rawCursorX = Math.max(0, terminal.buffer.active.cursorX);
+  const cursorRowOffset = Math.floor(rawCursorX / columns);
+  const cursorX = rawCursorX % columns;
+  const cursorY = Math.max(0, terminal.buffer.active.cursorY + cursorRowOffset);
+  const originLeft = (screenRect?.left ?? paneRect.left + 4) - paneRect.left;
+  const originTop = (screenRect?.top ?? paneRect.top) - paneRect.top;
+  const left = Math.max(originLeft, originLeft + cursorX * cellWidth);
   return {
-    left: Math.min(containerRect.width - 20, 4 + cursorX * cellWidth),
-    top: Math.max(0, rowsRect.top - containerRect.top + cursorY * rowHeight),
-    bottom: "auto",
+    left,
+    maxWidth: Math.max(
+      cellWidth,
+      (screenRect?.right ?? paneRect.right - 4) - paneRect.left - left,
+    ),
+    top: Math.max(originTop, originTop + Math.min(rows - 1, cursorY) * rowHeight),
   };
-}
-
-function estimateCellWidth(row: HTMLElement | null | undefined, fontSize: number) {
-  if (!row) return fontSize * 0.62;
-  const textLength = row.textContent ? Array.from(row.textContent).length : 0;
-  const width = row.getBoundingClientRect().width;
-  if (textLength > 0 && width > 0) {
-    return width / textLength;
-  }
-  return fontSize * 0.62;
 }
 
 function normalizedCandidateForInput(candidates: CommandCompletionCandidate[], input: string) {

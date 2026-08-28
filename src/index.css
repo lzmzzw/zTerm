@@ -2281,9 +2281,9 @@ a[href]:focus-visible,
 
 .zt-command-ghost {
   position: absolute;
-  left: 10px;
-  bottom: 8px;
-  max-width: calc(100% - 20px);
+  left: 0;
+  top: 0;
+  max-width: calc(100% - 4px);
   overflow: hidden;
   color: rgba(248, 248, 242, 0.34);
   font-family: ui-monospace, "SFMono-Regular", "Cascadia Mono", "Microsoft YaHei Mono", Consolas, "Liberation Mono", monospace;

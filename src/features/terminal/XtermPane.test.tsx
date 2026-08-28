@@ -152,7 +152,10 @@ const terminalMock = vi.hoisted(() => {
           row.style.height = "17px";
           rows.appendChild(row);
         }
-        terminal.appendChild(rows);
+        const screen = document.createElement("div");
+        screen.className = "xterm-screen";
+        screen.appendChild(rows);
+        terminal.appendChild(screen);
         container.appendChild(terminal);
       }),
       options,
@@ -228,6 +231,20 @@ interface TerminalOptions {
   fontSize?: number;
   fontWeight?: number | string;
   theme?: Record<string, string>;
+}
+
+function domRect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    bottom: top + height,
+    height,
+    left,
+    right: left + width,
+    top,
+    width,
+    x: left,
+    y: top,
+    toJSON: () => ({}),
+  };
 }
 
 function render(ui: ReactElement) {
@@ -504,6 +521,14 @@ describe("XtermPane", () => {
       <XtermPane data="" onCompletionRequest={onCompletionRequest} onInput={onInput} />,
     );
     const terminal = terminalMock.instances[0];
+    const pane = view.container.querySelector<HTMLElement>(".zt-xterm-pane")!;
+    const screen = view.container.querySelector<HTMLElement>(".xterm-screen")!;
+    vi.spyOn(pane, "getBoundingClientRect").mockReturnValue(domRect(0, 0, 820, 200));
+    vi.spyOn(screen, "getBoundingClientRect").mockReturnValue(domRect(4, 10, 800, 170));
+    terminal.cols = 100;
+    terminal.rows = 10;
+    terminal.buffer.active.cursorX = 25;
+    terminal.buffer.active.cursorY = 2;
 
     await act(async () => {
       terminal.dataListener?.("ec");
@@ -513,6 +538,16 @@ describe("XtermPane", () => {
 
     expect(onInput).toHaveBeenCalledWith("ec");
     expect(onCompletionRequest).toHaveBeenCalledWith("ec", 2, null);
+    const ghost = view.container.querySelector<HTMLElement>(".zt-command-ghost");
+    expect(ghost?.style.left).toBe("204px");
+    expect(ghost?.style.maxWidth).toBe("600px");
+    expect(ghost?.style.top).toBe("44px");
+
+    act(() => {
+      terminal.buffer.active.cursorX = 26;
+      window.dispatchEvent(new Event("resize"));
+    });
+    expect(ghost?.style.left).toBe("212px");
     expect(view.container.querySelector(".zt-command-ghost")?.textContent).toBe("ho");
 
     await act(async () => {
