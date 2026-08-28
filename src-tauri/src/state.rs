@@ -1,5 +1,8 @@
 // Author: Liz
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use tauri::AppHandle;
 
@@ -44,6 +47,7 @@ pub struct AppState {
     ssh_command_service: SshCommandService,
     sftp_service: SftpService,
     transfer_queue: TransferQueue,
+    shutting_down: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -99,6 +103,7 @@ impl AppState {
             ssh_command_service,
             sftp_service,
             transfer_queue,
+            shutting_down: Arc::new(AtomicBool::new(false)),
             storage,
             terminal_manager,
             terminal_output_dispatcher,
@@ -171,5 +176,38 @@ impl AppState {
 
     pub fn transfer_queue(&self) -> TransferQueue {
         self.transfer_queue.clone()
+    }
+
+    pub async fn shutdown(&self) -> crate::error::AppResult<()> {
+        if self.shutting_down.swap(true, Ordering::SeqCst) {
+            return Ok(());
+        }
+        let mut failures = Vec::new();
+        if let Err(error) = self.ai_chat_stream_service.cancel_all() {
+            failures.push(error.to_string());
+        }
+        if let Err(error) = self.llm_provider_test_stream_service.cancel_all() {
+            failures.push(error.to_string());
+        }
+        if let Err(error) = self.transfer_queue.cancel_all_controls() {
+            failures.push(error.to_string());
+        }
+        if let Err(error) = self.terminal_manager.close_all() {
+            failures.push(error.to_string());
+        }
+        if let Err(error) = self.mcp_service.stop_and_wait().await {
+            failures.push(error.to_string());
+        }
+        if let Err(error) = crate::commands::agent::cleanup_stale_agent_session_directories() {
+            failures.push(error.to_string());
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(crate::error::AppError::terminal(format!(
+                "应用退出清理部分失败: {}",
+                failures.join("；")
+            )))
+        }
     }
 }

@@ -2,12 +2,14 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
 };
 
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, State};
-use tokio::process::Command;
+use tokio::{process::Command, time::timeout};
 use uuid::Uuid;
 
 use crate::{
@@ -26,6 +28,7 @@ use crate::{
 use super::terminal::spawn_terminal_reader;
 
 const AGENT_MCP_TOKEN_ENV: &str = "ZTERM_AGENT_MCP_TOKEN";
+const CODEX_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Serialize)]
 pub struct AgentCodexSession {
@@ -92,10 +95,7 @@ pub async fn agent_codex_open(
             saved_session_id: saved_session_id.clone(),
             target_label: target_label.clone(),
         })?;
-    let session_root = AppPaths::default_for_install()?
-        .data_dir()
-        .join("agent-sessions")
-        .join(&agent_session_id);
+    let session_root = agent_session_root(&agent_session_id)?;
     let prepare_workspace = fs::create_dir_all(&session_root).and_then(|_| {
         fs::write(
             session_root.join("AGENTS.md"),
@@ -103,26 +103,16 @@ pub async fn agent_codex_open(
         )
     });
     if let Err(error) = prepare_workspace {
-        let _ = state
-            .mcp_service()
-            .unregister_agent_binding(&agent_session_id);
+        cleanup_agent_artifacts(&state, &agent_session_id, &session_root);
         return Err(error.into());
     }
-    let model_catalog_path = match write_codex_mcp_model_catalog(&session_root).await {
-        Ok(path) => path,
+    let (model_catalog_path, inherited_mcp_servers) = match tokio::try_join!(
+        write_codex_mcp_model_catalog(&session_root),
+        list_inherited_codex_mcp_servers(&session_root),
+    ) {
+        Ok(result) => result,
         Err(error) => {
-            let _ = state
-                .mcp_service()
-                .unregister_agent_binding(&agent_session_id);
-            return Err(error);
-        }
-    };
-    let inherited_mcp_servers = match list_inherited_codex_mcp_servers(&session_root).await {
-        Ok(servers) => servers,
-        Err(error) => {
-            let _ = state
-                .mcp_service()
-                .unregister_agent_binding(&agent_session_id);
+            cleanup_agent_artifacts(&state, &agent_session_id, &session_root);
             return Err(error);
         }
     };
@@ -147,12 +137,13 @@ pub async fn agent_codex_open(
         }) {
         Ok(opened) => opened,
         Err(error) => {
-            let _ = state
-                .mcp_service()
-                .unregister_agent_binding(&agent_session_id);
+            cleanup_agent_artifacts(&state, &agent_session_id, &session_root);
             return Err(error);
         }
     };
+    let cleanup_mcp = state.mcp_service();
+    let cleanup_agent_session_id = agent_session_id.clone();
+    let cleanup_session_root = session_root.clone();
     spawn_terminal_reader(
         app,
         state.terminal_manager(),
@@ -162,6 +153,10 @@ pub async fn agent_codex_open(
         opened.info.runtime_session_id.clone(),
         opened.reader,
         Vec::new(),
+        Some(Arc::new(move || {
+            let _ = cleanup_mcp.unregister_agent_binding(&cleanup_agent_session_id);
+            let _ = remove_agent_session_directory(&cleanup_session_root);
+        })),
     );
     Ok(AgentCodexSession {
         agent_session_id,
@@ -175,9 +170,40 @@ pub async fn agent_codex_open(
 
 #[tauri::command]
 pub fn agent_codex_unbind(state: State<'_, AppState>, agent_session_id: String) -> AppResult<()> {
+    let agent_session_id = required_agent_session_id(&agent_session_id)?;
     state
         .mcp_service()
-        .unregister_agent_binding(agent_session_id.trim())
+        .unregister_agent_binding(&agent_session_id)?;
+    remove_agent_session_directory(&agent_session_root(&agent_session_id)?)
+}
+
+#[tauri::command]
+pub fn agent_codex_close(
+    state: State<'_, AppState>,
+    agent_session_id: String,
+    runtime_session_id: String,
+) -> AppResult<()> {
+    let agent_session_id = required_agent_session_id(&agent_session_id)?;
+    let runtime_session_id = required_text("Codex CLI runtime ID", &runtime_session_id)?;
+    if let Ok(runtime) = state.terminal_manager().runtime_info(&runtime_session_id) {
+        if !runtime.pane_id.starts_with("agent:") {
+            return Err(AppError::validation("目标 runtime 不是 Codex CLI 会话"));
+        }
+    }
+    match state.terminal_manager().close(&runtime_session_id) {
+        Ok(_) | Err(AppError::NotFound(_)) => {}
+        Err(error) => return Err(error),
+    }
+    state
+        .command_history_service()
+        .unregister_runtime(&runtime_session_id);
+    state
+        .command_completion_service()
+        .unregister_runtime(&runtime_session_id);
+    state
+        .mcp_service()
+        .unregister_agent_binding(&agent_session_id)?;
+    remove_agent_session_directory(&agent_session_root(&agent_session_id)?)
 }
 
 fn codex_launch_command(
@@ -240,12 +266,7 @@ fn codex_launch_command(
 }
 
 async fn list_inherited_codex_mcp_servers(session_root: &Path) -> AppResult<Vec<String>> {
-    let mut command = background_codex_command(&["mcp", "list"]);
-    let output = command
-        .current_dir(session_root)
-        .output()
-        .await
-        .map_err(|error| AppError::ai(format!("无法读取本机 Codex MCP 配置: {error}")))?;
+    let output = run_codex_probe(session_root, &["mcp", "list"], "读取本机 Codex MCP 配置").await?;
     if !output.status.success() {
         return Err(AppError::ai(format!(
             "本机 Codex MCP 配置读取失败，退出状态: {}",
@@ -287,12 +308,12 @@ fn parse_codex_mcp_list(output: &str) -> AppResult<Vec<String>> {
 }
 
 async fn write_codex_mcp_model_catalog(session_root: &Path) -> AppResult<PathBuf> {
-    let mut command = background_codex_command(&["debug", "models"]);
-    let output = command
-        .current_dir(session_root)
-        .output()
-        .await
-        .map_err(|error| AppError::ai(format!("无法读取本机 Codex 模型目录: {error}")))?;
+    let output = run_codex_probe(
+        session_root,
+        &["debug", "models"],
+        "读取本机 Codex 模型目录",
+    )
+    .await?;
     if !output.status.success() {
         return Err(AppError::ai(format!(
             "本机 Codex 模型目录读取失败，退出状态: {}",
@@ -320,6 +341,7 @@ fn background_codex_command(arguments: &[&str]) -> Command {
     for &argument in arguments {
         command.arg(argument);
     }
+    command.kill_on_drop(true);
     #[cfg(windows)]
     {
         // These short-lived probes capture stdout and do not own an interactive console.
@@ -327,6 +349,99 @@ fn background_codex_command(arguments: &[&str]) -> Command {
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     command
+}
+
+async fn run_codex_probe(
+    session_root: &Path,
+    arguments: &[&str],
+    action: &str,
+) -> AppResult<std::process::Output> {
+    let mut command = background_codex_command(arguments);
+    command.current_dir(session_root);
+    timeout(CODEX_PROBE_TIMEOUT, command.output())
+        .await
+        .map_err(|_| AppError::ai(format!("{action}超时，已终止 Codex 探测进程")))?
+        .map_err(|error| AppError::ai(format!("无法{action}: {error}")))
+}
+
+pub(crate) fn cleanup_stale_agent_session_directories() -> AppResult<()> {
+    let root = AppPaths::default_for_install()?
+        .data_dir()
+        .join("agent-sessions");
+    let entries = match fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if Uuid::parse_str(name).is_ok() && entry.path().is_dir() {
+            remove_agent_session_directory(&entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+fn cleanup_agent_artifacts(
+    state: &State<'_, AppState>,
+    agent_session_id: &str,
+    session_root: &Path,
+) {
+    let _ = state
+        .mcp_service()
+        .unregister_agent_binding(agent_session_id);
+    let _ = remove_agent_session_directory(session_root);
+}
+
+fn agent_session_root(agent_session_id: &str) -> AppResult<PathBuf> {
+    let agent_session_id = required_agent_session_id(agent_session_id)?;
+    Ok(AppPaths::default_for_install()?
+        .data_dir()
+        .join("agent-sessions")
+        .join(agent_session_id))
+}
+
+fn required_agent_session_id(value: &str) -> AppResult<String> {
+    let value = required_text("Agent 会话 ID", value)?;
+    Uuid::parse_str(&value).map_err(|_| AppError::validation("Agent 会话 ID 格式无效"))?;
+    Ok(value)
+}
+
+fn remove_agent_session_directory(path: &Path) -> AppResult<()> {
+    let expected_root = AppPaths::default_for_install()?
+        .data_dir()
+        .join("agent-sessions");
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| AppError::validation("Agent 会话目录名称无效"))?;
+    required_agent_session_id(name)?;
+    if path.parent() != Some(expected_root.as_path()) {
+        return Err(AppError::validation("Agent 会话目录超出允许范围"));
+    }
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(AppError::validation("Agent 会话目录不能是符号链接"));
+    }
+    let canonical_root = fs::canonicalize(&expected_root)?;
+    let canonical_path = fs::canonicalize(path)?;
+    if !canonical_path.starts_with(&canonical_root) || canonical_path == canonical_root {
+        return Err(AppError::validation("Agent 会话目录超出允许范围"));
+    }
+    match fs::remove_dir_all(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(AppError::storage(format!(
+            "清理 Agent 会话目录失败: {error}"
+        ))),
+    }
 }
 
 fn disable_responses_lite(catalog: &mut Value) -> AppResult<()> {
@@ -387,7 +502,7 @@ mod tests {
 
     use super::{
         agent_instructions, background_codex_command, codex_launch_command, disable_responses_lite,
-        parse_codex_mcp_list,
+        parse_codex_mcp_list, required_agent_session_id,
     };
     use crate::models::ai::AiApprovalMode;
 
@@ -478,5 +593,16 @@ stitch https://example.test/mcp enabled Unknown\n";
             .expect("models")
             .iter()
             .all(|model| model["use_responses_lite"] == false));
+    }
+
+    #[test]
+    fn agent_session_cleanup_accepts_only_uuid_scoped_directories() {
+        let valid = "6b6f8358-97f8-41a6-90db-c9c3ab683aef";
+        assert_eq!(
+            required_agent_session_id(valid).expect("UUID should validate"),
+            valid
+        );
+        assert!(required_agent_session_id("..\\other-directory").is_err());
+        assert!(required_agent_session_id("agent-pane-1").is_err());
     }
 }

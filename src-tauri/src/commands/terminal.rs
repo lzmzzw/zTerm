@@ -114,6 +114,7 @@ pub fn terminal_open(
                 opened.info.runtime_session_id.clone(),
                 opened.reader,
                 Vec::new(),
+                None,
             );
             Ok(opened.info)
         }
@@ -172,6 +173,7 @@ pub fn terminal_open(
                 opened.info.runtime_session_id.clone(),
                 opened.reader,
                 auth_secrets,
+                None,
             );
             Ok(opened.info)
         }
@@ -252,6 +254,7 @@ pub fn terminal_open_ssh_container(
         opened.info.runtime_session_id.clone(),
         opened.reader,
         auth_secrets,
+        None,
     );
     Ok(opened.info)
 }
@@ -304,6 +307,7 @@ pub fn terminal_open_default_local(
         opened.info.runtime_session_id.clone(),
         opened.reader,
         Vec::new(),
+        None,
     );
     Ok(opened.info)
 }
@@ -559,6 +563,7 @@ pub(crate) fn spawn_terminal_reader(
     runtime_session_id: String,
     mut reader: Box<dyn Read + Send>,
     auth_secrets: Vec<AuthPromptSecret>,
+    exit_cleanup: Option<Arc<dyn Fn() + Send + Sync>>,
 ) {
     spawn_terminal_exit_watcher(
         app.clone(),
@@ -566,6 +571,7 @@ pub(crate) fn spawn_terminal_reader(
         Arc::clone(&history),
         completion.clone(),
         runtime_session_id.clone(),
+        exit_cleanup.clone(),
     );
 
     thread::spawn(move || {
@@ -610,6 +616,7 @@ pub(crate) fn spawn_terminal_reader(
                 Err(error) => {
                     output_dispatcher.flush_runtime(&runtime_session_id);
                     if manager.close(&runtime_session_id).is_ok() {
+                        run_terminal_exit_cleanup(exit_cleanup.as_ref());
                         history.unregister_runtime(&runtime_session_id);
                         completion.unregister_runtime(&runtime_session_id);
                         let _ = app.emit(
@@ -628,6 +635,7 @@ pub(crate) fn spawn_terminal_reader(
 
         output_dispatcher.flush_runtime(&runtime_session_id);
         if manager.close(&runtime_session_id).is_ok() {
+            run_terminal_exit_cleanup(exit_cleanup.as_ref());
             history.unregister_runtime(&runtime_session_id);
             completion.unregister_runtime(&runtime_session_id);
             let _ = app.emit(
@@ -648,12 +656,14 @@ fn spawn_terminal_exit_watcher(
     history: Arc<CommandHistoryService>,
     completion: CommandCompletionService,
     runtime_session_id: String,
+    exit_cleanup: Option<Arc<dyn Fn() + Send + Sync>>,
 ) {
     thread::spawn(move || loop {
         thread::sleep(Duration::from_millis(200));
         match manager.try_wait_exit_code(&runtime_session_id) {
             Ok(Some(exit_code)) => {
                 if manager.close(&runtime_session_id).is_ok() {
+                    run_terminal_exit_cleanup(exit_cleanup.as_ref());
                     history.unregister_runtime(&runtime_session_id);
                     completion.unregister_runtime(&runtime_session_id);
                     let _ = app.emit(
@@ -671,6 +681,12 @@ fn spawn_terminal_exit_watcher(
             Err(_) => return,
         }
     });
+}
+
+fn run_terminal_exit_cleanup(exit_cleanup: Option<&Arc<dyn Fn() + Send + Sync>>) {
+    if let Some(cleanup) = exit_cleanup {
+        cleanup();
+    }
 }
 
 fn zmodem_safe_file_name(value: &str) -> AppResult<String> {

@@ -22,7 +22,7 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(handle_second_instance));
     }
 
-    builder
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -30,6 +30,7 @@ pub fn run() {
         .setup(setup_app_state)
         .invoke_handler(tauri::generate_handler![
             commands::agent::agent_codex_open,
+            commands::agent::agent_codex_close,
             commands::agent::agent_codex_unbind,
             commands::sessions::sessions_list,
             commands::sessions::sessions_save_group,
@@ -132,8 +133,21 @@ pub fn run() {
             commands::terminal::terminal_resize,
             commands::terminal::terminal_close,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run zTerm");
+        .build(tauri::generate_context!())
+        .expect("failed to build zTerm");
+    app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+            let Some(state) = app_handle.try_state::<state::AppState>() else {
+                return;
+            };
+            if let Err(error) = tauri::async_runtime::block_on(state.shutdown()) {
+                eprintln!(
+                    "application shutdown cleanup failed: {}",
+                    security::redaction::redact_sensitive(&error.to_string())
+                );
+            }
+        }
+    });
 }
 
 fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>, _cwd: String) {
@@ -249,6 +263,12 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
         .map_err(|_| "early external launch lock was poisoned")?;
     let paths = paths::AppPaths::default_for_install()?;
     paths.ensure_dirs()?;
+    if let Err(error) = commands::agent::cleanup_stale_agent_session_directories() {
+        eprintln!(
+            "stale Agent session cleanup failed: {}",
+            security::redaction::redact_sensitive(&error.to_string())
+        );
+    }
     let storage = storage::sqlite::SqliteStore::open(paths.db_path())?;
     let state = state::AppState::new_with_app_handle(storage, app.handle().clone());
     let _ = state

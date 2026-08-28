@@ -42,6 +42,20 @@ impl AiChatStreamService {
             controls.remove(chat_id);
         }
     }
+
+    pub fn cancel_all(&self) -> AppResult<usize> {
+        let controls = std::mem::take(
+            &mut *self
+                .controls
+                .lock()
+                .map_err(|_| AppError::ai("AI 对话取消控制锁已损坏"))?,
+        );
+        let count = controls.len();
+        for (_, sender) in controls {
+            let _ = sender.send(());
+        }
+        Ok(count)
+    }
 }
 
 #[cfg(test)]
@@ -79,6 +93,25 @@ mod tests {
                 .cancel("chat-2")
                 .expect("cancel after finish should succeed"),
             "finished chat should not keep a stale control"
+        );
+    }
+
+    #[test]
+    fn cancel_all_notifies_every_registered_chat() {
+        let service = AiChatStreamService::default();
+        let mut first = service
+            .register("chat-1")
+            .expect("first chat should register");
+        let mut second = service
+            .register("chat-2")
+            .expect("second chat should register");
+
+        assert_eq!(service.cancel_all().expect("all chats should cancel"), 2);
+        assert!(first.try_recv().is_ok());
+        assert!(second.try_recv().is_ok());
+        assert_eq!(
+            service.cancel_all().expect("repeat cancel should be safe"),
+            0
         );
     }
 }

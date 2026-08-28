@@ -42,6 +42,20 @@ impl LlmProviderTestStreamService {
             controls.remove(test_id);
         }
     }
+
+    pub fn cancel_all(&self) -> AppResult<usize> {
+        let controls = std::mem::take(
+            &mut *self
+                .controls
+                .lock()
+                .map_err(|_| AppError::ai("模型测试取消控制锁已损坏"))?,
+        );
+        let count = controls.len();
+        for (_, sender) in controls {
+            let _ = sender.send(());
+        }
+        Ok(count)
+    }
 }
 
 #[cfg(test)]
@@ -79,6 +93,25 @@ mod tests {
                 .cancel("test-2")
                 .expect("cancel after finish should succeed"),
             "finished test should not keep a stale control"
+        );
+    }
+
+    #[test]
+    fn cancel_all_notifies_every_registered_test() {
+        let service = LlmProviderTestStreamService::default();
+        let mut first = service
+            .register("test-1")
+            .expect("first test should register");
+        let mut second = service
+            .register("test-2")
+            .expect("second test should register");
+
+        assert_eq!(service.cancel_all().expect("all tests should cancel"), 2);
+        assert!(first.try_recv().is_ok());
+        assert!(second.try_recv().is_ok());
+        assert_eq!(
+            service.cancel_all().expect("repeat cancel should be safe"),
+            0
         );
     }
 }

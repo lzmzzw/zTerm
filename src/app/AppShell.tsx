@@ -25,7 +25,7 @@ import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
 import { ZtCenteredPageLayout, ZtConfirmDialog, ZtInlineError, ZtModalOverlay, ZtSurfaceFrame } from "../components/ZtUi";
 import { setAiAffectedDomainsHandler, useAiStore } from "../features/ai/aiStore";
-import { openAgentCodex, unbindAgentCodex, type AgentCodexSession } from "../features/ai/agentCodexApi";
+import { closeAgentCodex, openAgentCodex, type AgentCodexSession } from "../features/ai/agentCodexApi";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
 import { useFileTransferStore } from "../features/files/fileTransferStore";
 import { useFileStore, type TransferConflict, type TransferConflictPolicy } from "../features/files/fileStore";
@@ -202,27 +202,8 @@ function rightToolFromValue(value: string | null | undefined): RightTool | null 
   return null;
 }
 
-async function stopAgentCodexSession(
-  session: AgentCodexSession,
-  closeRuntime: (runtimeSessionId: string) => Promise<unknown>,
-) {
-  const [closeResult, unbindResult] = await Promise.allSettled([
-    closeRuntime(session.runtime.runtime_session_id),
-    unbindAgentCodex(session.agent_session_id),
-  ]);
-  const failures: string[] = [];
-  if (closeResult.status === "rejected") {
-    const message = unknownErrorMessage(closeResult.reason, "关闭 Codex CLI 进程失败");
-    if (!message.includes("runtime session not found")) {
-      failures.push(message);
-    }
-  }
-  if (unbindResult.status === "rejected") {
-    failures.push(unknownErrorMessage(unbindResult.reason, "撤销 Codex CLI MCP 绑定失败"));
-  }
-  if (failures.length > 0) {
-    throw new Error(failures.join("；"));
-  }
+async function stopAgentCodexSession(session: AgentCodexSession) {
+  await closeAgentCodex(session);
 }
 
 export function AppShell() {
@@ -671,12 +652,12 @@ export function AppShell() {
     const removed = Object.entries(agentSessionsByTabId).filter(([tabId]) => !liveTabIds.has(tabId));
     if (removed.length === 0) return;
     for (const [, session] of removed) {
-      void stopAgentCodexSession(session, closeTerminal).catch(() => undefined);
+      void stopAgentCodexSession(session).catch(() => undefined);
     }
     setAgentSessionsByTabId((current) =>
       Object.fromEntries(Object.entries(current).filter(([tabId]) => liveTabIds.has(tabId))),
     );
-  }, [agentSessionsByTabId, closeTerminal, tabs]);
+  }, [agentSessionsByTabId, tabs]);
 
   const syncChannelCandidateKey = syncChannelCandidates
     .map((candidate) => `${candidate.id}:${candidate.runtimeSessionId}:${candidate.host}`)
@@ -1493,7 +1474,7 @@ export function AppShell() {
     setAgentOpeningTabId(tabId);
     setAgentOpenError(null);
     try {
-      await stopAgentCodexSession(previousSession, closeTerminal);
+      await stopAgentCodexSession(previousSession);
       setAgentSessionsByTabId((current) =>
         Object.fromEntries(Object.entries(current).filter(([currentTabId]) => currentTabId !== tabId)),
       );
@@ -1524,7 +1505,7 @@ export function AppShell() {
     setAgentOpeningTabId(tabId);
     setAgentOpenError(null);
     try {
-      await stopAgentCodexSession(session, closeTerminal);
+      await stopAgentCodexSession(session);
       setAgentSessionsByTabId((current) =>
         Object.fromEntries(Object.entries(current).filter(([currentTabId]) => currentTabId !== tabId)),
       );

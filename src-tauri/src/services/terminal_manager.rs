@@ -617,6 +617,30 @@ impl TerminalManager {
             .unwrap_or(0)
     }
 
+    pub fn close_all(&self) -> AppResult<usize> {
+        let runtime_session_ids = self
+            .sessions
+            .lock()
+            .map_err(|_| AppError::terminal("terminal session lock was poisoned"))?
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut closed = 0;
+        let mut first_error = None;
+        for runtime_session_id in runtime_session_ids {
+            match self.close(&runtime_session_id) {
+                Ok(_) => closed += 1,
+                Err(AppError::NotFound(_)) => {}
+                Err(error) if first_error.is_none() => first_error = Some(error),
+                Err(_) => {}
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(closed),
+        }
+    }
+
     pub fn runtime_infos(&self) -> AppResult<Vec<RuntimeSessionInfo>> {
         let mut infos = self
             .infos
@@ -1008,6 +1032,29 @@ mod tests {
             args: vec!["-File".to_string(), "startup.ps1".to_string()],
             ..profile
         }));
+    }
+
+    #[test]
+    fn close_all_is_idempotent_for_multiple_runtime_sessions() {
+        let manager = TerminalManager::default();
+        manager
+            .open_rdp_placeholder(
+                "rdp-1".to_string(),
+                "pane-1".to_string(),
+                "RDP 1".to_string(),
+            )
+            .expect("first placeholder should open");
+        manager
+            .open_rdp_placeholder(
+                "rdp-2".to_string(),
+                "pane-2".to_string(),
+                "RDP 2".to_string(),
+            )
+            .expect("second placeholder should open");
+
+        assert_eq!(manager.close_all().expect("all runtimes should close"), 2);
+        assert_eq!(manager.runtime_count(), 0);
+        assert_eq!(manager.close_all().expect("repeat close should be safe"), 0);
     }
 
     #[cfg(windows)]

@@ -590,6 +590,15 @@ impl TransferQueue {
         Ok(())
     }
 
+    pub fn cancel_all_controls(&self) -> AppResult<usize> {
+        let controls = std::mem::take(&mut *self.lock_controls()?);
+        let count = controls.len();
+        for (_, control) in controls {
+            control.cancel();
+        }
+        Ok(count)
+    }
+
     pub fn get(&self, task_id: &str) -> AppResult<TransferTask> {
         if let Some(task) = self.get_transient_task(task_id)? {
             return Ok(task);
@@ -768,5 +777,30 @@ mod tests {
             .await
             .expect("second transfer should start after the slot is released")
             .expect("second transfer slot should be available");
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_and_unregisters_all_transfer_controls() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite store should open"));
+        let queue = TransferQueue::from_storage(store);
+        let first = queue
+            .register_control("transfer-1")
+            .expect("first control should register");
+        let second = queue
+            .register_control("transfer-2")
+            .expect("second control should register");
+
+        assert_eq!(
+            queue.cancel_all_controls().expect("controls should cancel"),
+            2
+        );
+        assert!(first.checkpoint().await.is_err());
+        assert!(second.checkpoint().await.is_err());
+        assert_eq!(
+            queue
+                .cancel_all_controls()
+                .expect("repeat cancel should be safe"),
+            0
+        );
     }
 }

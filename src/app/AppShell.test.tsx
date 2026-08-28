@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "./AppShell";
-import { openAgentCodex, unbindAgentCodex } from "../features/ai/agentCodexApi";
+import { closeAgentCodex, openAgentCodex } from "../features/ai/agentCodexApi";
 import { useFileTransferStore } from "../features/files/fileTransferStore";
 import { useSyncInputStore } from "../features/terminal/syncInputStore";
 
@@ -271,7 +271,7 @@ vi.mock("../features/ai/agentCodexApi", () => ({
       rows: 30,
     },
   })),
-  unbindAgentCodex: vi.fn(async () => undefined),
+  closeAgentCodex: vi.fn(async () => undefined),
 }));
 
 vi.mock("../features/files/FileExplorerPanel", () => ({
@@ -3347,14 +3347,12 @@ describe("AppShell", () => {
       await onRestart();
     });
 
-    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("agent-runtime-pane-1-tab-1");
-    expect(vi.mocked(unbindAgentCodex)).toHaveBeenCalledWith("agent-pane-1-tab-1");
+    expect(vi.mocked(closeAgentCodex)).toHaveBeenCalledWith(
+      expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }),
+    );
     expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(openAgentCodex).mock.invocationCallOrder[1]).toBeGreaterThan(
-      storeMocks.closeTerminal.mock.invocationCallOrder[0],
-    );
-    expect(vi.mocked(openAgentCodex).mock.invocationCallOrder[1]).toBeGreaterThan(
-      vi.mocked(unbindAgentCodex).mock.invocationCallOrder[0],
+      vi.mocked(closeAgentCodex).mock.invocationCallOrder[0],
     );
     expect(vi.mocked(openAgentCodex)).toHaveBeenLastCalledWith({
       tabId: "pane-1-tab-1",
@@ -3383,17 +3381,18 @@ describe("AppShell", () => {
       await onClose();
     });
 
-    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("agent-runtime-pane-1-tab-1");
-    expect(vi.mocked(unbindAgentCodex)).toHaveBeenCalledWith("agent-pane-1-tab-1");
+    expect(vi.mocked(closeAgentCodex)).toHaveBeenCalledWith(
+      expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }),
+    );
     expect(view.container.querySelector('[aria-label="AI 面板"]')).toBeNull();
     expect(view.container.querySelector(".zt-workbench")?.classList.contains("zt-workbench-right-collapsed")).toBe(true);
     view.unmount();
   });
 
-  it("still revokes the Codex MCP binding when closing its PTY fails", async () => {
+  it("keeps the Agent panel open when backend Codex cleanup fails", async () => {
     storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
     storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
-    storeMocks.closeTerminal.mockRejectedValueOnce(new Error("close failed"));
+    vi.mocked(closeAgentCodex).mockRejectedValueOnce(new Error("close failed"));
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -3406,7 +3405,9 @@ describe("AppShell", () => {
       await onClose();
     });
 
-    expect(vi.mocked(unbindAgentCodex)).toHaveBeenCalledWith("agent-pane-1-tab-1");
+    expect(vi.mocked(closeAgentCodex)).toHaveBeenCalledWith(
+      expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }),
+    );
     expect(view.container.querySelector('[aria-label="AI 面板"]')).not.toBeNull();
     expect(storeMocks.aiPanelProps?.error).toContain("close failed");
     view.unmount();
