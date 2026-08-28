@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::{oneshot, Notify},
+    sync::{oneshot, Notify, Semaphore},
     task::{JoinHandle, JoinSet},
 };
 use uuid::Uuid;
@@ -37,6 +37,7 @@ const MCP_TOKEN_SECRET_REF: &str = "mcp:bearer-token";
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const MAX_HTTP_BODY_BYTES: usize = 1024 * 1024;
 const MAX_CONSECUTIVE_ACCEPT_ERRORS: u32 = 5;
+const MAX_CONCURRENT_CONNECTIONS: usize = 32;
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DEFAULT_MCP_PORT: u16 = 9419;
 
@@ -264,6 +265,7 @@ impl McpService {
         let listener_task = tokio::spawn(async move {
             let mut consecutive_accept_errors = 0_u32;
             let mut connections = JoinSet::new();
+            let connection_slots = Arc::new(Semaphore::new(MAX_CONCURRENT_CONNECTIONS));
             'listener: loop {
                 tokio::select! {
                     biased;
@@ -280,8 +282,12 @@ impl McpService {
                                 if !peer_addr.ip().is_loopback() {
                                     continue;
                                 }
+                                let Ok(connection_slot) = Arc::clone(&connection_slots).try_acquire_owned() else {
+                                    continue;
+                                };
                                 let context = context.clone();
                                 connections.spawn(async move {
+                                    let _connection_slot = connection_slot;
                                     let _ = handle_connection(stream, context).await;
                                 });
                             }
@@ -1447,11 +1453,28 @@ fn origin_is_allowed(origin: Option<String>) -> bool {
     let Some(origin) = origin else {
         return true;
     };
-    let origin = origin.trim().to_ascii_lowercase();
-    origin.starts_with("http://127.0.0.1")
-        || origin.starts_with("http://localhost")
-        || origin.starts_with("http://[::1]")
-        || origin == "tauri://localhost"
+    let origin = origin.trim();
+    if origin.eq_ignore_ascii_case("tauri://localhost") {
+        return true;
+    }
+    let Ok(url) = url::Url::parse(origin) else {
+        return false;
+    };
+    if url.scheme() != "http"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        return false;
+    }
+    match url.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
 }
 
 fn find_header_end(buffer: &[u8]) -> Option<usize> {
@@ -1486,7 +1509,7 @@ mod tests {
     use crate::services::credential_service::MemorySecretStore;
 
     use super::{
-        bind_mcp_listener, configured_mcp_port, mark_listener_finished,
+        bind_mcp_listener, configured_mcp_port, mark_listener_finished, origin_is_allowed,
         read_http_request_with_timeout, McpLifecycle, McpRuntime, McpService, McpStartGuard,
         DEFAULT_MCP_PORT,
     };
@@ -1495,6 +1518,28 @@ mod tests {
     fn missing_mcp_port_uses_stable_default_and_explicit_zero_stays_ephemeral() {
         assert_eq!(configured_mcp_port(None), DEFAULT_MCP_PORT);
         assert_eq!(configured_mcp_port(Some(0)), 0);
+    }
+
+    #[test]
+    fn origin_validation_accepts_only_exact_loopback_hosts() {
+        for origin in [
+            None,
+            Some("http://127.0.0.1:9419".to_string()),
+            Some("http://localhost:9419".to_string()),
+            Some("http://[::1]:9419".to_string()),
+            Some("tauri://localhost".to_string()),
+        ] {
+            assert!(origin_is_allowed(origin));
+        }
+        for origin in [
+            "http://127.0.0.1.evil.test",
+            "http://localhost.evil.test",
+            "http://127.0.0.1@evil.test",
+            "https://localhost",
+            "http://localhost/path",
+        ] {
+            assert!(!origin_is_allowed(Some(origin.to_string())));
+        }
     }
 
     #[tokio::test]

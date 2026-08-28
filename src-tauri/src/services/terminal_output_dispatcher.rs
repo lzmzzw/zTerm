@@ -8,10 +8,11 @@ use crate::models::terminal::TerminalDataEvent;
 
 const FLUSH_INTERVAL: Duration = Duration::from_millis(16);
 const FLUSH_DATA_THRESHOLD_BYTES: usize = 32 * 1024;
+const OUTPUT_QUEUE_CAPACITY: usize = 256;
 
 #[derive(Clone)]
 pub struct TerminalOutputDispatcher {
-    sender: Option<mpsc::Sender<TerminalOutputMessage>>,
+    sender: Option<mpsc::SyncSender<TerminalOutputMessage>>,
 }
 
 impl TerminalOutputDispatcher {
@@ -19,7 +20,7 @@ impl TerminalOutputDispatcher {
         let Some(app) = app else {
             return Self { sender: None };
         };
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::sync_channel(OUTPUT_QUEUE_CAPACITY);
         thread::spawn(move || run_dispatcher(app, receiver));
         Self {
             sender: Some(sender),

@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import packageJson from "../../../package.json";
 
+import { stringifiedErrorMessage } from "../../lib/unknownErrorMessage";
 import { acceleratorFromKeyboardEvent, bindingsWithDefaults, detectShortcutConflicts } from "./shortcutManager";
 import { displayAccelerator } from "../../app/platform";
 import { t } from "./i18n";
@@ -212,7 +213,7 @@ function McpSettings({
     try {
       setTools(await onLoadTools());
     } catch (error) {
-      setToolsError(error instanceof Error ? error.message : String(error));
+      setToolsError(stringifiedErrorMessage(error));
     } finally {
       setToolsLoading(false);
     }
@@ -654,7 +655,7 @@ function AboutSettings({ language }: { language: AppLanguage }) {
   }
 
   function describeUpdateError(error: unknown) {
-    return error instanceof Error ? error.message : String(error);
+    return stringifiedErrorMessage(error);
   }
 
   function formatDownloadProgress(event: DownloadEvent, totalBytes: number | null, downloadedBytes: number) {

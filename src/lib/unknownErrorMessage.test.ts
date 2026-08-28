@@ -1,7 +1,12 @@
 // Author: Liz
 import { describe, expect, it } from "vitest";
 
-import { fallbackOnlyErrorMessage, stringifiedErrorMessage, unknownErrorMessage } from "./unknownErrorMessage";
+import {
+  fallbackOnlyErrorMessage,
+  isTauriAppError,
+  stringifiedErrorMessage,
+  unknownErrorMessage,
+} from "./unknownErrorMessage";
 
 describe("unknownErrorMessage", () => {
   it("keeps the default store error semantics", () => {
@@ -24,6 +29,15 @@ describe("unknownErrorMessage", () => {
       ),
     ).toBe("LLM 响应中未找到文本内容");
     expect(unknownErrorMessage({ message: " " }, "fallback", { objectMessage: true })).toBe("fallback");
+  });
+
+  it("recognizes serialized Rust AppError values without trusting arbitrary objects", () => {
+    const error = { code: "sftp", message: "远端连接中断" };
+
+    expect(isTauriAppError(error)).toBe(true);
+    expect(unknownErrorMessage(error, "fallback")).toBe("远端连接中断");
+    expect(isTauriAppError({ code: "unknown", message: "do not trust" })).toBe(false);
+    expect(unknownErrorMessage({ code: "unknown", message: "do not trust" }, "fallback")).toBe("fallback");
   });
 
   it("can preserve fallback-only semantics for non-Error string throws", () => {
