@@ -42,7 +42,7 @@
 
 `AppSettings.workspace_restore_strategy` 支持 `visible_first`、`connect_all`、`layout_only`，旧设置 JSON 缺字段时默认 `visible_first`。`visible_first` 先显示布局，再优先恢复当前可见 pane/tab；`connect_all` 显示布局后尽快低并发连接全部标签；`layout_only` 只恢复布局和 queued 状态，不自动打开终端。`settings_get` 和 `settings_reset` 返回的 `AppSettings.shortcuts` 会合并当前 `shortcut_registry_list` 中缺失的动作，调用方应以返回值作为 UI 展示和后续保存的有效配置。
 
-`AppSettings.mcp` 为 `{ enabled, port? }`，旧设置缺字段时默认 `{ enabled: false, port: null }`；`port=null` 优先使用稳定默认端口 `9419`。启用状态会在 zTerm 启动时恢复监听，不依赖打开设置页；多开实例发现目标端口已占用时自动监听系统分配的本机可用端口，实际地址以该实例返回的 `McpServerStatus.endpoint` 为准，保存的首选端口不被覆盖。MCP token 只写入 OS keyring，不写入 SQLite settings JSON；首次升级且 keyring 尚无 MCP token 时可从 `ZTERM_MCP_TOKEN` 环境变量迁移，之后以 keyring 为准。token 只通过 `McpServerStatus.token` 返回给本地设置页复制或轮换。`McpServerStatus` 为 `{ enabled, endpoint?, token? }`，关闭时 `endpoint/token=null`。
+`AppSettings.mcp` 为 `{ enabled, port? }`，旧设置缺字段时默认 `{ enabled: false, port: null }`；`port=null` 优先使用稳定默认端口 `9419`。启用状态会在 zTerm 启动时恢复监听，不依赖打开设置页；启动请求单飞，停止会等待监听任务退出并 drain 已接收连接，监听退出会清理运行态；单连接 HTTP 请求读取有 10 秒超时，避免半开连接永久占用。多开实例发现目标端口已占用时自动监听系统分配的本机可用端口，实际地址以该实例返回的 `McpServerStatus.endpoint` 为准，保存的首选端口不被覆盖。MCP token 只写入 OS keyring，不写入 SQLite settings JSON；首次升级且 keyring 尚无 MCP token 时可从 `ZTERM_MCP_TOKEN` 环境变量迁移，之后以 keyring 为准。token 只通过 `McpServerStatus.token` 返回给本地设置页复制或轮换。`McpServerStatus` 为 `{ enabled, endpoint?, token? }`，关闭时 `endpoint/token=null`。
 
 MCP 设置页的工具详情默认折叠，首次展开时通过只读命令 `mcp_tool_catalog_list` 读取 MCP 专用 allowlist；结果按工具 ID 命名空间分组展示，并缓存到本次设置页会话。加载过程提供 loading、空清单、失败和重试状态，不读取或展示 MCP Bearer token 之外的 secret。
 
@@ -92,12 +92,12 @@ FileZilla 格式文件传输可直接使用 `zTerm.exe "sftp://user:password@hos
 | `terminal_open_default_local` | `{ paneId, workingDirectory? }` | `RuntimeSessionInfo` | 使用默认终端 profile 打开本机 PTY，可用 `workingDirectory` 覆盖工作目录 |
 | `terminal_write` | `{ runtimeSessionId, data }` | `{ accepted: true }` | 写入终端；普通 shell 同步捕获输入历史，启用 shell integration 的 PowerShell 由后续 PTY 事件捕获最终命令行 |
 | `terminal_write_bytes` | `{ runtimeSessionId, data }` | `{ accepted: true }` | 写入原始终端字节；仅用于 ZMODEM，不捕获命令历史 |
-| `terminal_zmodem_read_files` | `{ paths }` | `{ name, size, mtime_ms, data }[]` | 读取用户选择的本机文件，供远端 `rz` 上传 |
-| `terminal_zmodem_save_file` | `{ directory, fileName, data }` | `{ path, bytes }` | 净化远端文件名并保存 `sz` 下载内容；同名文件自动追加序号 |
+| `terminal_zmodem_read_files` | `{ paths }` | `{ name, size, mtime_ms, data }[]` | 读取用户选择的本机文件，供远端 `rz` 上传；单文件超过 32 MiB 或本次批次总量超过 64 MiB 时拒绝，并引导改用 SFTP |
+| `terminal_zmodem_save_file` | `{ directory, fileName, data }` | `{ path, bytes }` | 净化远端文件名并保存 `sz` 下载内容；单文件超过 32 MiB 或本次批次总量超过 64 MiB 时拒绝/跳过并引导改用 SFTP；同名文件自动追加序号 |
 | `terminal_resize` | `{ runtimeSessionId, cols, rows }` | `{ resized: true }` | 调整 runtime 尺寸 |
 | `terminal_close` | `{ runtimeSessionId, releaseExternalSession? }` | `{ closed: true }` | 关闭 runtime 并释放资源；RDP placeholder 会终止其持有的 `mstsc.exe` 子进程并删除临时 `.rdp` 文件；外部一次性 SSH 可在重连时传 `false` 保留 transient session |
 
-`RuntimeSessionInfo` 返回 `runtime_session_id`、`saved_session_id?`、`history_scope_kind?`、`history_scope_id?`、`pane_id`、`title`、`kind`、`cols` 和 `rows`。`kind` 支持 `local`、`ssh`、`ssh_container`、`rdp_placeholder`。SSH 和 SSH 容器 runtime 的历史作用域为 `saved_session:<session_id>`；外部一次性 SSH runtime 不返回历史作用域，不写命令历史 scope，关闭对应 runtime 时释放进程内 transient session 和 secret；Local runtime 的历史作用域为 `local_profile:<profile_id>`；RDP placeholder 不返回历史作用域。交互式 `pwsh.exe` / `powershell.exe` profile 会安装 PSReadLine Enter handler，以 shell 最终缓冲区生成 Base64 OSC 事件；后端持久化后剥离该事件，避免污染 `terminal:data`、输出 replay 和终端画面。自定义 PowerShell profile 已包含 `-Command`、`-File`、`-EncodedCommand` 或 `-NonInteractive` 时不注入。SSH/Local/SSH 容器 PTY runtime 支持 ZMODEM rz/sz。后端在 `terminal:data` 中保留字符串 `data` 供普通终端输出和上下文截尾，同时提供 `data_base64` 原始字节给前端 ZMODEM sentry；前端识别到远端 `rz` 时选择本机文件并通过 `terminal_write_bytes` 上传，识别到远端 `sz` 时选择保存目录并调用 `terminal_zmodem_save_file` 写盘。ZMODEM 字节写入不进入命令历史；RDP placeholder 仍不接受任何终端输入。
+`RuntimeSessionInfo` 返回 `runtime_session_id`、`saved_session_id?`、`history_scope_kind?`、`history_scope_id?`、`pane_id`、`title`、`kind`、`cols`、`rows` 和 `initial_cwd?`。`kind` 支持 `local`、`ssh`、`ssh_container`、`rdp_placeholder`。Local runtime 返回实际 PTY 初始工作目录；其他 runtime 无可靠初始目录时返回空值。SSH 和 SSH 容器 runtime 的历史作用域为 `saved_session:<session_id>`；外部一次性 SSH runtime 不返回历史作用域，不写命令历史 scope，关闭对应 runtime 时释放进程内 transient session 和 secret；Local runtime 的历史作用域为 `local_profile:<profile_id>`；RDP placeholder 不返回历史作用域。交互式 `pwsh.exe` / `powershell.exe` profile 会安装 PSReadLine Enter handler，以 shell 最终缓冲区生成 Base64 OSC 事件；后端持久化后剥离该事件，避免污染 `terminal:data`、输出 replay 和终端画面。自定义 PowerShell profile 已包含 `-Command`、`-File`、`-EncodedCommand` 或 `-NonInteractive` 时不注入。终端右键、`Ctrl+V` 和 DOM paste 统一读取 `text/plain`，净化 ANSI/控制字符、BOM 和双向文本控制字符后写入终端，不保留原剪贴板样式。SSH/Local/SSH 容器 PTY runtime 支持 ZMODEM rz/sz；后端在 `terminal:data` 中保留字符串 `data` 供普通终端输出和上下文截尾，同时提供 `data_base64` 原始字节给前端 ZMODEM sentry；前端识别到远端 `rz` 时选择本机文件并通过 `terminal_write_bytes` 上传，识别到远端 `sz` 时选择保存目录并调用 `terminal_zmodem_save_file` 写盘。ZMODEM 字节写入不进入命令历史；RDP placeholder 仍不接受任何终端输入。
 
 ## SSH Containers
 
@@ -112,9 +112,10 @@ FileZilla 格式文件传输可直接使用 `zTerm.exe "sftp://user:password@hos
 
 | Command | 入参 | 返回 | 说明 |
 | --- | --- | --- | --- |
-| `command_completion_suggest` | `{ request: { runtime_session_id, input, cursor, limit? } }` | `CommandCompletionCandidate[]` | 按当前 runtime 输入前缀返回命令补全候选；Local/SSH 支持，RDP 占位不返回候选 |
+| `command_completion_suggest` | `{ request: { runtime_session_id, input, cursor, limit?, cwd? } }` | `CommandCompletionCandidate[]` | 按当前 runtime 输入前缀和已知 cwd 返回命令/路径补全候选；Local/SSH 支持，RDP 占位不返回候选；冷缓存时先返回可用候选并后台刷新 |
+| `command_completion_resolve_cwd` | `{ request: { runtime_session_id, current_cwd?, target? } }` | `string?` | 仅解析简单 `cd` 目标；Local 使用本地 canonicalize，SSH 使用 SFTP canonicalize；无法安全验证时返回空值 |
 
-`CommandCompletionCandidate` 包含 `provider`（`history` 或 `system`）、`replacement_text`、`suffix`、`replacement_range { start, end }`、`score` 和 `source_label`。候选由后端聚合当前会话历史、系统命令和全局历史；历史候选过滤明显敏感命令；本地系统命令来自 PATH/PATHEXT 和常见内建命令；SSH 系统命令在连接后后台探测远端 PATH 并缓存，探测失败时静默降级为历史候选；SSH 容器 runtime 不使用宿主机远端命令缓存，首版只提供会话历史、全局历史和基础 POSIX builtins。前端只用最佳候选展示幽灵后缀，`Tab` 接受时只写入缺失 suffix。
+`CommandCompletionCandidate` 包含 `provider`（`history`、`system` 或 `path`）、`replacement_text`、`suffix`、`replacement_range { start, end }`、`score` 和 `source_label`。候选由后端聚合当前会话历史、系统命令、全局历史和简单路径项；历史候选过滤明显敏感命令；本地系统命令来自 PATH/PATHEXT 和常见内建命令；SSH 系统命令在连接后后台探测远端 PATH 并缓存，路径列表按 `saved_session_id + canonical lookup directory` 缓存。路径补全覆盖 `cd`、`cp`、`mv`、`rm`、`ls`、`cat` 的相对/绝对/`.`/`..`/`~` 和带空格引号路径；`cd` 仅返回目录。缓存有短 TTL、数量上限、in-flight 去重和失败静默降级，冷缓存不阻塞终端输入。已知 cwd 来自 Local 初始工作目录、shell 发出的 OSC 7、简单且已验证的 `cd`，或 SSH canonicalize fallback；复杂 shell 表达式不猜测。SSH 容器 runtime 不使用宿主机远端命令缓存，继续只提供会话历史、全局历史和基础 POSIX builtins。前端只用最佳候选展示幽灵后缀；`Tab` 通常只写入缺失 suffix，需要补齐引号时按 `replacement_range` 重写当前路径 token。
 
 ## History
 
