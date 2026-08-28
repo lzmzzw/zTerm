@@ -244,15 +244,7 @@ fn codex_launch_command(
 }
 
 async fn list_inherited_codex_mcp_servers(session_root: &Path) -> AppResult<Vec<String>> {
-    let mut command = if cfg!(windows) {
-        let mut command = Command::new("cmd.exe");
-        command.args(["/D", "/S", "/C", "codex", "mcp", "list"]);
-        command
-    } else {
-        let mut command = Command::new("codex");
-        command.args(["mcp", "list"]);
-        command
-    };
+    let mut command = background_codex_command(&["mcp", "list"]);
     let output = command
         .current_dir(session_root)
         .output()
@@ -299,15 +291,7 @@ fn parse_codex_mcp_list(output: &str) -> AppResult<Vec<String>> {
 }
 
 async fn write_codex_mcp_model_catalog(session_root: &Path) -> AppResult<PathBuf> {
-    let mut command = if cfg!(windows) {
-        let mut command = Command::new("cmd.exe");
-        command.args(["/D", "/S", "/C", "codex", "debug", "models"]);
-        command
-    } else {
-        let mut command = Command::new("codex");
-        command.args(["debug", "models"]);
-        command
-    };
+    let mut command = background_codex_command(&["debug", "models"]);
     let output = command
         .current_dir(session_root)
         .output()
@@ -327,6 +311,26 @@ async fn write_codex_mcp_model_catalog(session_root: &Path) -> AppResult<PathBuf
         .map_err(|error| AppError::ai(format!("无法生成 Codex 模型目录: {error}")))?;
     fs::write(&path, catalog_bytes)?;
     Ok(path)
+}
+
+fn background_codex_command(arguments: &[&str]) -> Command {
+    let mut command = if cfg!(windows) {
+        let mut command = Command::new("cmd.exe");
+        command.args(["/D", "/S", "/C", "codex"]);
+        command
+    } else {
+        Command::new("codex")
+    };
+    for &argument in arguments {
+        command.arg(argument);
+    }
+    #[cfg(windows)]
+    {
+        // These short-lived probes capture stdout and do not own an interactive console.
+        // Prevent the Windows default terminal host from showing a transient window.
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    command
 }
 
 fn disable_responses_lite(catalog: &mut Value) -> AppResult<()> {
@@ -381,12 +385,13 @@ fn required_text(label: &str, value: &str) -> AppResult<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{ffi::OsStr, path::Path};
 
     use serde_json::json;
 
     use super::{
-        agent_instructions, codex_launch_command, disable_responses_lite, parse_codex_mcp_list,
+        agent_instructions, background_codex_command, codex_launch_command, disable_responses_lite,
+        parse_codex_mcp_list,
     };
     use crate::models::ai::AiApprovalMode;
 
@@ -443,6 +448,24 @@ node_repl C:\\\\tools\\\\node.exe enabled Unsupported\n\
 stitch https://example.test/mcp enabled Unknown\n";
         let servers = parse_codex_mcp_list(output).expect("MCP list should parse");
         assert_eq!(servers, ["node_repl", "stitch"]);
+    }
+
+    #[test]
+    fn background_codex_command_keeps_discovery_arguments_noninteractive() {
+        let command = background_codex_command(&["mcp", "list"]);
+        let command = command.as_std();
+        #[cfg(windows)]
+        assert_eq!(command.get_program(), OsStr::new("cmd.exe"));
+        #[cfg(not(windows))]
+        assert_eq!(command.get_program(), OsStr::new("codex"));
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        #[cfg(windows)]
+        assert_eq!(arguments, ["/D", "/S", "/C", "codex", "mcp", "list"]);
+        #[cfg(not(windows))]
+        assert_eq!(arguments, ["mcp", "list"]);
     }
 
     #[test]

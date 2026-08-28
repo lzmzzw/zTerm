@@ -37,7 +37,7 @@
 | `mcp_server_set_enabled` | `{ enabled, port? }` | `McpServerStatus` | 启用或关闭本机 MCP Streamable HTTP 服务，并同步保存 `AppSettings.mcp` |
 | `mcp_server_rotate_token` | 无 | `McpServerStatus` | 轮换当前运行期 Bearer token；token 不写入 `AppSettings` |
 | `mcp_tool_catalog_list` | 无 | `McpToolDefinition[]` | 返回 MCP 专用 allowlist、风险信息和输入 schema，供设置页展示 |
-| `agent_codex_open` | `{ tabId, targetRuntimeSessionId, targetSavedSessionId?, targetLabel }` | `AgentCodexSession` | 为当前终端标签启动本机 Codex CLI PTY，注入仅能读写绑定终端的会话级 MCP 身份；使用侧栏专用模型目录关闭 Responses Lite，确保自定义 MCP tools 对当前 Codex 可见；会话启动时禁用 `apps`、`plugins`、内置 Skills 和 Skill 自动上下文，并禁用用户配置中除 `zterm` 外的 MCP；仅对 scoped zTerm MCP 关闭 Codex 自身的重复工具审批，实际审批继续由 zTerm 连接策略执行 |
+| `agent_codex_open` | `{ tabId, targetRuntimeSessionId, targetSavedSessionId?, targetLabel }` | `AgentCodexSession` | 为当前终端标签启动本机 Codex CLI PTY，注入仅能读写绑定终端的会话级 MCP 身份；Windows 上启动前的短生命周期 Codex 配置探测使用 `CREATE_NO_WINDOW`，不会显示独立终端窗口；使用侧栏专用模型目录关闭 Responses Lite，确保自定义 MCP tools 对当前 Codex 可见；会话启动时禁用 `apps`、`plugins`、内置 Skills 和 Skill 自动上下文，并禁用用户配置中除 `zterm` 外的 MCP；仅对 scoped zTerm MCP 关闭 Codex 自身的重复工具审批，实际审批继续由 zTerm 连接策略执行 |
 | `agent_codex_unbind` | `{ agentSessionId }` | `null` | 终端标签被删除时撤销该 Codex 会话的 MCP bearer 绑定 |
 
 `AppSettings.workspace_restore_strategy` 支持 `visible_first`、`connect_all`、`layout_only`，旧设置 JSON 缺字段时默认 `visible_first`。`visible_first` 先显示布局，再优先恢复当前可见 pane/tab；`connect_all` 显示布局后尽快低并发连接全部标签；`layout_only` 只恢复布局和 queued 状态，不自动打开终端。`settings_get` 和 `settings_reset` 返回的 `AppSettings.shortcuts` 会合并当前 `shortcut_registry_list` 中缺失的动作，调用方应以返回值作为 UI 展示和后续保存的有效配置。
