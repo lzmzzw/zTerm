@@ -49,7 +49,9 @@ interface RightToolsPanelProps {
     loading: boolean;
     pendingInvocations: AiToolPendingInvocation[];
     onApprovalModeChange: (mode: AiApprovalMode) => Promise<unknown> | unknown;
+    onClose: () => Promise<unknown> | unknown;
     onConfirmTool: (invocationId: string, approved: boolean, secretInputs?: AiToolSecretInputs) => Promise<unknown> | unknown;
+    onRestart: () => Promise<unknown> | unknown;
   };
   files: {
     entries: FileEntry[];
@@ -174,7 +176,9 @@ export function RightToolsPanel({
                 loading={agent.loading}
                 error={agent.error}
                 onApprovalModeChange={agent.onApprovalModeChange}
+                onClose={agent.onClose}
                 onConfirmTool={agent.onConfirmTool}
+                onRestart={agent.onRestart}
               />
             </>
           ) : null}

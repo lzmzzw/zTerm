@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "./AppShell";
+import { openAgentCodex, unbindAgentCodex } from "../features/ai/agentCodexApi";
 import { useFileTransferStore } from "../features/files/fileTransferStore";
 import { useSyncInputStore } from "../features/terminal/syncInputStore";
 
@@ -962,6 +963,30 @@ function runningWorkspace(id: string, sortOrder: number, updatedAtMs: number, ru
         },
       },
     ],
+  };
+}
+
+function activeTerminalWorkspaceTab() {
+  return {
+    id: "tab-1",
+    title: "开发机 A",
+    active_pane_id: "pane-1",
+    root: {
+      kind: "leaf",
+      id: "pane-1",
+      title: "开发机 A",
+      runtime_session_id: "runtime-1",
+      saved_session_id: "session-1",
+      active_terminal_tab_id: "pane-1-tab-1",
+      terminal_tabs: [
+        {
+          id: "pane-1-tab-1",
+          title: "开发机 A",
+          runtime_session_id: "runtime-1",
+          saved_session_id: "session-1",
+        },
+      ],
+    },
   };
 }
 
@@ -3301,6 +3326,86 @@ describe("AppShell", () => {
       }),
     );
 
+    view.unmount();
+  });
+
+  it("restarts the active Codex CLI after closing its PTY and revoking its MCP binding", async () => {
+    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    const onRestart = storeMocks.aiPanelProps?.onRestart as () => Promise<void>;
+
+    await act(async () => {
+      await onRestart();
+    });
+
+    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("agent-runtime-pane-1-tab-1");
+    expect(vi.mocked(unbindAgentCodex)).toHaveBeenCalledWith("agent-pane-1-tab-1");
+    expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(openAgentCodex).mock.invocationCallOrder[1]).toBeGreaterThan(
+      storeMocks.closeTerminal.mock.invocationCallOrder[0],
+    );
+    expect(vi.mocked(openAgentCodex).mock.invocationCallOrder[1]).toBeGreaterThan(
+      vi.mocked(unbindAgentCodex).mock.invocationCallOrder[0],
+    );
+    expect(vi.mocked(openAgentCodex)).toHaveBeenLastCalledWith({
+      tabId: "pane-1-tab-1",
+      targetRuntimeSessionId: "runtime-1",
+      targetSavedSessionId: "session-1",
+      targetLabel: "开发机 A",
+    });
+    expect(storeMocks.aiPanelProps?.session).toEqual(
+      expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }),
+    );
+    view.unmount();
+  });
+
+  it("closes the active Codex CLI, revokes its MCP binding, and collapses the Agent panel", async () => {
+    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    const onClose = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
+
+    await act(async () => {
+      await onClose();
+    });
+
+    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("agent-runtime-pane-1-tab-1");
+    expect(vi.mocked(unbindAgentCodex)).toHaveBeenCalledWith("agent-pane-1-tab-1");
+    expect(view.container.querySelector('[aria-label="AI 面板"]')).toBeNull();
+    expect(view.container.querySelector(".zt-workbench")?.classList.contains("zt-workbench-right-collapsed")).toBe(true);
+    view.unmount();
+  });
+
+  it("still revokes the Codex MCP binding when closing its PTY fails", async () => {
+    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.closeTerminal.mockRejectedValueOnce(new Error("close failed"));
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    const onClose = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
+
+    await act(async () => {
+      await onClose();
+    });
+
+    expect(vi.mocked(unbindAgentCodex)).toHaveBeenCalledWith("agent-pane-1-tab-1");
+    expect(view.container.querySelector('[aria-label="AI 面板"]')).not.toBeNull();
+    expect(storeMocks.aiPanelProps?.error).toContain("close failed");
     view.unmount();
   });
 

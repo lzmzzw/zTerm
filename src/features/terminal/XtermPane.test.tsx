@@ -1262,6 +1262,50 @@ describe("XtermPane", () => {
     view.unmount();
   });
 
+  it("shows separated Codex lifecycle actions without clear or search", async () => {
+    const onCloseTerminal = vi.fn();
+    const onRestart = vi.fn();
+    const view = render(
+      <XtermPane
+        contextMenuClearEnabled={false}
+        contextMenuSearchEnabled={false}
+        data=""
+        onCloseTerminal={onCloseTerminal}
+        onRestart={onRestart}
+      />,
+    );
+
+    async function openMenu() {
+      await act(async () => {
+        view.container.querySelector(".zt-xterm-pane")?.dispatchEvent(
+          new MouseEvent("contextmenu", { bubbles: true, clientX: 12, clientY: 18 }),
+        );
+        await Promise.resolve();
+      });
+    }
+
+    await openMenu();
+    expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
+      "复制",
+      "粘贴",
+      "重启 Codex CLI",
+      "关闭 Codex CLI",
+    ]);
+    expect(view.container.querySelectorAll('[role="separator"]')).toHaveLength(1);
+
+    await act(async () => {
+      (Array.from(view.container.querySelectorAll('[role="menuitem"]'))[2] as HTMLButtonElement).click();
+    });
+    expect(onRestart).toHaveBeenCalledTimes(1);
+
+    await openMenu();
+    await act(async () => {
+      (Array.from(view.container.querySelectorAll('[role="menuitem"]'))[3] as HTMLButtonElement).click();
+    });
+    expect(onCloseTerminal).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
   it("prevents the default context menu without rendering actions when disabled", async () => {
     const view = render(<XtermPane contextMenuEnabled={false} data="" />);
     const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 12, clientY: 18 });

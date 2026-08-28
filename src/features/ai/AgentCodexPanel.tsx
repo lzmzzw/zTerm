@@ -15,7 +15,9 @@ export function AgentCodexPanel({
   approvalMode,
   pendingInvocations,
   onApprovalModeChange,
+  onClose,
   onConfirmTool,
+  onRestart,
 }: {
   session: AgentCodexSession | null;
   loading: boolean;
@@ -23,7 +25,9 @@ export function AgentCodexPanel({
   approvalMode: AiApprovalMode;
   pendingInvocations: AgentPendingInvocation[];
   onApprovalModeChange: (mode: AiApprovalMode) => Promise<unknown> | unknown;
+  onClose: () => Promise<unknown> | unknown;
   onConfirmTool: (invocationId: string, approved: boolean, secretInputs?: AiToolSecretInputs) => Promise<unknown> | unknown;
+  onRestart: () => Promise<unknown> | unknown;
 }) {
   const [secretInputs, setSecretInputs] = useState<Record<string, string>>({});
   const runtimeSessionId = session?.runtime.runtime_session_id ?? null;
@@ -112,6 +116,8 @@ export function AgentCodexPanel({
           <XtermPane
             autoFocus
             contextMenuEnabled
+            contextMenuClearEnabled={false}
+            contextMenuSearchEnabled={false}
             data={initialOutput}
             replayKind="raw"
             replayKey={runtimeSessionId}
@@ -119,7 +125,9 @@ export function AgentCodexPanel({
             liveData={outputChunk?.data ?? null}
             liveSerial={outputChunk?.serial ?? null}
             onInput={(data) => void writeTerminal(runtimeSessionId, data)}
+            onCloseTerminal={() => void onClose()}
             onResize={(cols, rows) => void resizeTerminal(runtimeSessionId, cols, rows)}
+            onRestart={() => void onRestart()}
           />
         ) : (
           <div className="zt-agent-codex-state">请先打开一个可操作的终端标签页。</div>

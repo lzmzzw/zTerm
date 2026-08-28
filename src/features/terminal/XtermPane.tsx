@@ -39,6 +39,8 @@ interface XtermPaneProps {
   replayKind?: TerminalReplayKind;
   streamId?: string | null;
   contextMenuEnabled?: boolean;
+  contextMenuClearEnabled?: boolean;
+  contextMenuSearchEnabled?: boolean;
   onCompletionRequest?: (
     input: string,
     cursor: number,
@@ -47,7 +49,9 @@ interface XtermPaneProps {
   onCwdResolve?: (currentCwd: string | null, target: string | null) => Promise<string | null>;
   onDisconnect?: () => void;
   onInput?: (data: string, metadata?: { source: TerminalInputSource }) => void;
+  onCloseTerminal?: () => void;
   onReconnect?: () => void;
+  onRestart?: () => void;
   onResize?: (cols: number, rows: number) => void;
 }
 
@@ -118,11 +122,15 @@ export function XtermPane({
   replayKind = "raw",
   streamId = null,
   contextMenuEnabled = true,
+  contextMenuClearEnabled = true,
+  contextMenuSearchEnabled = true,
   onCompletionRequest,
   onCwdResolve,
   onDisconnect,
   onInput,
+  onCloseTerminal,
   onReconnect,
+  onRestart,
   onResize,
 }: XtermPaneProps) {
   const paneRef = useRef<HTMLDivElement | null>(null);
@@ -591,12 +599,16 @@ export function XtermPane({
           if (selection) void navigator.clipboard?.writeText(selection);
         }}
         onDisconnect={onDisconnect}
+        onCloseTerminal={onCloseTerminal}
         onPaste={() => void pasteClipboardText()}
         onReconnect={onReconnect}
+        onRestart={onRestart}
         onSearch={() => {
           const term = window.prompt("搜索");
           if (term) searchAddonRef.current?.findNext(term);
         }}
+        showClear={contextMenuClearEnabled}
+        showSearch={contextMenuSearchEnabled}
         onClose={() => setContextMenu(null)}
       />
       <div className="zt-xterm-host" ref={containerRef} />
@@ -615,18 +627,26 @@ function TerminalContextMenu({
   onCopy,
   onDisconnect,
   onClose,
+  onCloseTerminal,
   onPaste,
   onReconnect,
+  onRestart,
   onSearch,
+  showClear,
+  showSearch,
 }: {
   menu: { x: number; y: number } | null;
   onClear: () => void;
   onCopy: () => void;
   onDisconnect?: () => void;
   onClose: () => void;
+  onCloseTerminal?: () => void;
   onPaste: () => void;
   onReconnect?: () => void;
+  onRestart?: () => void;
   onSearch: () => void;
+  showClear: boolean;
+  showSearch: boolean;
 }) {
   useEffect(() => {
     if (!menu) return undefined;
@@ -635,6 +655,7 @@ function TerminalContextMenu({
   }, [menu, onClose]);
 
   if (!menu) return null;
+  const hasLifecycleActions = Boolean(onRestart || onCloseTerminal);
   const hasConnectionActions = Boolean(onReconnect || onDisconnect);
 
   return (
@@ -645,12 +666,31 @@ function TerminalContextMenu({
       <button type="button" role="menuitem" onClick={onPaste}>
         粘贴
       </button>
-      <button type="button" role="menuitem" onClick={onClear}>
-        清屏
-      </button>
-      <button type="button" role="menuitem" onClick={onSearch}>
-        搜索
-      </button>
+      {showClear ? (
+        <button type="button" role="menuitem" onClick={onClear}>
+          清屏
+        </button>
+      ) : null}
+      {showSearch ? (
+        <button type="button" role="menuitem" onClick={onSearch}>
+          搜索
+        </button>
+      ) : null}
+      {hasLifecycleActions ? (
+        <>
+          <div className="zt-context-menu-separator" role="separator" />
+          {onRestart ? (
+            <button type="button" role="menuitem" onClick={onRestart}>
+              重启 Codex CLI
+            </button>
+          ) : null}
+          {onCloseTerminal ? (
+            <button type="button" className="zt-delete-button" role="menuitem" onClick={onCloseTerminal}>
+              关闭 Codex CLI
+            </button>
+          ) : null}
+        </>
+      ) : null}
       {hasConnectionActions ? (
         <>
           <div className="zt-context-menu-separator" role="separator" />

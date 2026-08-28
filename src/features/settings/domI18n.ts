@@ -69,6 +69,8 @@ const exact: Record<string, string> = {
   "确认": "Confirm",
   "确认删除": "Confirm Delete",
   "清屏": "Clear Screen",
+  "重启 Codex CLI": "Restart Codex CLI",
+  "关闭 Codex CLI": "Close Codex CLI",
   "复制": "Copy",
   "粘贴": "Paste",
   "模型已保存": "Model saved",

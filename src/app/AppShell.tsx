@@ -201,6 +201,29 @@ function rightToolFromValue(value: string | null | undefined): RightTool | null 
   return null;
 }
 
+async function stopAgentCodexSession(
+  session: AgentCodexSession,
+  closeRuntime: (runtimeSessionId: string) => Promise<unknown>,
+) {
+  const [closeResult, unbindResult] = await Promise.allSettled([
+    closeRuntime(session.runtime.runtime_session_id),
+    unbindAgentCodex(session.agent_session_id),
+  ]);
+  const failures: string[] = [];
+  if (closeResult.status === "rejected") {
+    const message = unknownErrorMessage(closeResult.reason, "关闭 Codex CLI 进程失败");
+    if (!message.includes("runtime session not found")) {
+      failures.push(message);
+    }
+  }
+  if (unbindResult.status === "rejected") {
+    failures.push(unknownErrorMessage(unbindResult.reason, "撤销 Codex CLI MCP 绑定失败"));
+  }
+  if (failures.length > 0) {
+    throw new Error(failures.join("；"));
+  }
+}
+
 export function AppShell() {
   const {
     groups,
@@ -629,8 +652,7 @@ export function AppShell() {
     const removed = Object.entries(agentSessionsByTabId).filter(([tabId]) => !liveTabIds.has(tabId));
     if (removed.length === 0) return;
     for (const [, session] of removed) {
-      void closeTerminal(session.runtime.runtime_session_id).catch(() => undefined);
-      void unbindAgentCodex(session.agent_session_id).catch(() => undefined);
+      void stopAgentCodexSession(session, closeTerminal).catch(() => undefined);
     }
     setAgentSessionsByTabId((current) =>
       Object.fromEntries(Object.entries(current).filter(([tabId]) => liveTabIds.has(tabId))),
@@ -1360,6 +1382,7 @@ export function AppShell() {
       setActiveTool(null);
       return;
     }
+    setAgentOpenError(null);
     setActiveTool("agent");
     void ensureActiveAgentCodex();
   }
@@ -1389,6 +1412,56 @@ export function AppShell() {
       setAgentSessionsByTabId((current) => ({ ...current, [tabId]: session }));
     } catch (error) {
       setAgentOpenError(unknownErrorMessage(error, "Codex CLI 启动失败"));
+    } finally {
+      setAgentOpeningTabId((current) => (current === tabId ? null : current));
+    }
+  }
+
+  async function restartActiveAgentCodex() {
+    if (!activeAgentTabId || !activeAgentSession || agentOpeningTabId === activeAgentTabId) return;
+    const tabId = activeAgentTabId;
+    const previousSession = activeAgentSession;
+    setAgentOpeningTabId(tabId);
+    setAgentOpenError(null);
+    try {
+      await stopAgentCodexSession(previousSession, closeTerminal);
+      setAgentSessionsByTabId((current) =>
+        Object.fromEntries(Object.entries(current).filter(([currentTabId]) => currentTabId !== tabId)),
+      );
+      const session = await openAgentCodex({
+        tabId,
+        targetRuntimeSessionId: previousSession.target_runtime_session_id,
+        targetSavedSessionId: previousSession.target_saved_session_id,
+        targetLabel: previousSession.target_label,
+      });
+      useTerminalStore.setState((state) => ({
+        runtimes: {
+          ...state.runtimes,
+          [session.runtime.runtime_session_id]: session.runtime,
+        },
+      }));
+      setAgentSessionsByTabId((current) => ({ ...current, [tabId]: session }));
+    } catch (error) {
+      setAgentOpenError(unknownErrorMessage(error, "Codex CLI 重启失败"));
+    } finally {
+      setAgentOpeningTabId((current) => (current === tabId ? null : current));
+    }
+  }
+
+  async function closeActiveAgentCodex() {
+    if (!activeAgentTabId || !activeAgentSession || agentOpeningTabId === activeAgentTabId) return;
+    const tabId = activeAgentTabId;
+    const session = activeAgentSession;
+    setAgentOpeningTabId(tabId);
+    setAgentOpenError(null);
+    try {
+      await stopAgentCodexSession(session, closeTerminal);
+      setAgentSessionsByTabId((current) =>
+        Object.fromEntries(Object.entries(current).filter(([currentTabId]) => currentTabId !== tabId)),
+      );
+      setActiveTool(null);
+    } catch (error) {
+      setAgentOpenError(unknownErrorMessage(error, "Codex CLI 关闭失败"));
     } finally {
       setAgentOpeningTabId((current) => (current === tabId ? null : current));
     }
@@ -2069,7 +2142,9 @@ export function AppShell() {
           loading: agentLoading || agentOpeningTabId === activeAgentTabId,
           pendingInvocations: aiPendingInvocations,
           onApprovalModeChange: setApprovalMode,
+          onClose: closeActiveAgentCodex,
           onConfirmTool: confirmTool,
+          onRestart: restartActiveAgentCodex,
         }}
         files={{
           entries: fileEntries,
