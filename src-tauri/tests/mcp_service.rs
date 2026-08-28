@@ -1,9 +1,21 @@
 // Author: Liz
-use std::{fs, sync::Arc, time::Duration};
+use std::{
+    fs,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use reqwest::StatusCode;
 use serde_json::{json, Value};
-use tokio::{process::Command, time::timeout};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+    process::Command,
+    time::timeout,
+};
 use uuid::Uuid;
 use zterm_lib::{
     commands::mcp::start_mcp_if_enabled,
@@ -68,6 +80,42 @@ impl AiToolCommandWriter for FakeToolWriter {
         _max_chars: usize,
     ) -> AppResult<Option<String>> {
         Ok(Some("recent terminal output".to_string()))
+    }
+}
+
+#[derive(Default)]
+struct CountingToolWriter {
+    list_calls: AtomicUsize,
+}
+
+impl AiToolCommandWriter for CountingToolWriter {
+    fn write_terminal(&self, _runtime_session_id: &str, _data: &str) -> AppResult<()> {
+        Ok(())
+    }
+
+    fn list_terminals(&self) -> AppResult<Vec<RuntimeSessionInfo>> {
+        self.list_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Vec::new())
+    }
+
+    fn terminal_output_cursor(&self, _runtime_session_id: &str) -> AppResult<Option<usize>> {
+        Ok(None)
+    }
+
+    fn read_terminal_output_after(
+        &self,
+        _runtime_session_id: &str,
+        _cursor: usize,
+    ) -> AppResult<Option<String>> {
+        Ok(None)
+    }
+
+    fn read_terminal_output_tail(
+        &self,
+        _runtime_session_id: &str,
+        _max_chars: usize,
+    ) -> AppResult<Option<String>> {
+        Ok(None)
     }
 }
 
@@ -242,7 +290,141 @@ async fn mcp_service_binds_localhost_and_serves_json_rpc() {
         .iter()
         .any(|tool| tool["name"] == "ssh.execute"));
 
-    service.stop().expect("service should stop");
+    service.stop_and_wait().await.expect("service should stop");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_mcp_starts_share_one_listener_and_concurrent_stops_wait_for_it() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+    let service = Arc::new(McpService::with_secret_store(Arc::new(
+        MemorySecretStore::default(),
+    )));
+
+    let mut starts = Vec::new();
+    for _ in 0..12 {
+        let store = Arc::clone(&store);
+        let tools = tools.clone();
+        let service = Arc::clone(&service);
+        starts.push(tokio::spawn(async move {
+            service.ensure_running(store, tools, Some(0)).await
+        }));
+    }
+    let mut endpoints = Vec::new();
+    for start in starts {
+        let status = start
+            .await
+            .expect("start task should join")
+            .expect("MCP start should succeed");
+        endpoints.push(status.endpoint.expect("running endpoint"));
+    }
+    assert!(endpoints.iter().all(|endpoint| endpoint == &endpoints[0]));
+
+    let mut stops = Vec::new();
+    for _ in 0..4 {
+        let service = Arc::clone(&service);
+        stops.push(tokio::spawn(async move { service.stop_and_wait().await }));
+    }
+    for stop in stops {
+        let status = stop
+            .await
+            .expect("stop task should join")
+            .expect("MCP stop should succeed");
+        assert!(!status.enabled);
+    }
+    assert!(service.status().is_none());
+}
+
+#[tokio::test]
+async fn stopped_mcp_listener_releases_port_for_immediate_restart() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+    let service = McpService::with_secret_store(Arc::new(MemorySecretStore::default()));
+    let first = service
+        .ensure_running(Arc::clone(&store), tools.clone(), Some(0))
+        .await
+        .expect("first MCP start should succeed");
+    let port = first
+        .endpoint
+        .as_deref()
+        .and_then(|endpoint| endpoint.strip_prefix("http://127.0.0.1:"))
+        .and_then(|endpoint| endpoint.strip_suffix("/mcp"))
+        .and_then(|port| port.parse::<u16>().ok())
+        .expect("ephemeral endpoint port");
+
+    service
+        .stop_and_wait()
+        .await
+        .expect("listener should stop and release its port");
+    assert!(service.status().is_none());
+
+    let restarted = service
+        .ensure_running(store, tools, Some(port))
+        .await
+        .expect("MCP should immediately restart on the released port");
+    assert_eq!(
+        restarted.endpoint.as_deref(),
+        Some(format!("http://127.0.0.1:{port}/mcp").as_str())
+    );
+    service
+        .stop_and_wait()
+        .await
+        .expect("restarted listener should stop");
+}
+
+#[tokio::test]
+async fn disabling_mcp_cancels_preaccepted_request_before_tool_execution() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let writer = Arc::new(CountingToolWriter::default());
+    let tools = AiToolService::with_writer(writer.clone());
+    let service = McpService::with_secret_store(Arc::new(MemorySecretStore::default()));
+    let status = service
+        .ensure_running(store, tools, Some(0))
+        .await
+        .expect("MCP start should succeed");
+    let endpoint = status.endpoint.expect("endpoint");
+    let token = status.token.expect("token");
+    let port = endpoint
+        .strip_prefix("http://127.0.0.1:")
+        .and_then(|endpoint| endpoint.strip_suffix("/mcp"))
+        .and_then(|port| port.parse::<u16>().ok())
+        .expect("endpoint port");
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("client should connect");
+    let body = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"terminal.list","arguments":{}}}"#;
+    let partial_headers = format!(
+        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\n",
+        body.len()
+    );
+    stream
+        .write_all(partial_headers.as_bytes())
+        .await
+        .expect("partial request should write");
+    tokio::time::sleep(Duration::from_millis(30)).await;
+
+    timeout(Duration::from_secs(1), service.stop_and_wait())
+        .await
+        .expect("stop should not wait for the slow request timeout")
+        .expect("MCP stop should succeed");
+
+    let mut response = Vec::new();
+    let completed_request = async {
+        stream
+            .write_all(b"Content-Type: application/json\r\n\r\n")
+            .await?;
+        stream.write_all(body).await
+    }
+    .await;
+    if completed_request.is_ok() {
+        let _ = timeout(
+            Duration::from_millis(200),
+            stream.read_to_end(&mut response),
+        )
+        .await;
+    }
+    assert_eq!(writer.list_calls.load(Ordering::SeqCst), 0);
+    assert!(!response.windows(6).any(|window| window == b"200 OK"));
 }
 
 #[tokio::test]
@@ -337,7 +519,7 @@ async fn sidebar_agent_token_is_scoped_to_its_bound_page_terminal() {
         .expect("ssh.execute rejection JSON");
     assert_eq!(rejected["error"]["code"], -32601);
 
-    service.stop().expect("service should stop");
+    service.stop_and_wait().await.expect("service should stop");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -417,7 +599,7 @@ async fn codex_cli_discovers_sidebar_tools_with_non_lite_model_catalog() {
         .await
         .expect("Codex smoke should finish before timeout")
         .expect("Codex smoke should launch");
-    service.stop().expect("service should stop");
+    service.stop_and_wait().await.expect("service should stop");
     fs::remove_dir_all(&smoke_root).expect("smoke directory should remove");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -476,7 +658,10 @@ async fn mcp_token_is_reused_and_rotation_persists_across_service_instances() {
         .await
         .expect("first MCP service should start");
     let first_token = first_status.token.expect("first token");
-    first_service.stop().expect("first service should stop");
+    first_service
+        .stop_and_wait()
+        .await
+        .expect("first service should stop");
 
     let second_service = McpService::with_secret_store(secrets.clone());
     let second_status = second_service
@@ -490,7 +675,10 @@ async fn mcp_token_is_reused_and_rotation_persists_across_service_instances() {
         .token
         .expect("rotated token");
     assert_ne!(rotated_token, first_token);
-    second_service.stop().expect("second service should stop");
+    second_service
+        .stop_and_wait()
+        .await
+        .expect("second service should stop");
 
     let third_service = McpService::with_secret_store(secrets);
     let third_status = third_service
@@ -498,7 +686,10 @@ async fn mcp_token_is_reused_and_rotation_persists_across_service_instances() {
         .await
         .expect("third MCP service should start");
     assert_eq!(third_status.token.as_deref(), Some(rotated_token.as_str()));
-    third_service.stop().expect("third service should stop");
+    third_service
+        .stop_and_wait()
+        .await
+        .expect("third service should stop");
 }
 
 #[tokio::test]
@@ -527,7 +718,7 @@ async fn enabled_mcp_setting_starts_listener_without_opening_settings_page() {
         status.endpoint.as_deref(),
         Some(format!("http://127.0.0.1:{port}/mcp").as_str())
     );
-    service.stop().expect("service should stop");
+    service.stop_and_wait().await.expect("service should stop");
 }
 
 #[tokio::test]

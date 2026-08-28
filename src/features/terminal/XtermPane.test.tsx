@@ -53,6 +53,7 @@ const terminalMock = vi.hoisted(() => {
     onWriteParsed: ReturnType<typeof vi.fn>;
     open: ReturnType<typeof vi.fn>;
     options: unknown;
+    paste: ReturnType<typeof vi.fn>;
     registerDecoration: ReturnType<typeof vi.fn>;
     registerMarker: ReturnType<typeof vi.fn>;
     renderListener?: () => void;
@@ -136,6 +137,10 @@ const terminalMock = vi.hoisted(() => {
         const terminal = document.createElement("div");
         terminal.className = "terminal xterm";
         terminal.style.lineHeight = "17px";
+        terminal.tabIndex = 0;
+        terminal.addEventListener("keydown", (event) => {
+          instance.customKeyEventHandler?.(event);
+        });
         const rows = document.createElement("div");
         rows.className = "xterm-rows";
         for (let rowIndex = 0; rowIndex < 10; rowIndex += 1) {
@@ -147,6 +152,7 @@ const terminalMock = vi.hoisted(() => {
         container.appendChild(terminal);
       }),
       options,
+      paste: vi.fn((data: string) => instance.dataListener?.(data)),
       registerDecoration: vi.fn((decorationOptions: { marker: MockMarker }) => ({
         dispose: vi.fn(),
         marker: decorationOptions.marker,
@@ -865,6 +871,7 @@ describe("XtermPane", () => {
       (Array.from(view.container.querySelectorAll('[role="menuitem"]'))[1] as HTMLButtonElement).click();
       await Promise.resolve();
     });
+    expect(terminalMock.instances[0].paste).toHaveBeenCalledWith("pasted text");
     expect(onInput).toHaveBeenCalledWith("pasted text");
 
     await openMenu();
@@ -928,6 +935,89 @@ describe("XtermPane", () => {
 
     expect(terminal.customKeyEventHandler?.(event)).toBe(false);
     expect(terminal.selectAll).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("captures real ctrl+v and paste DOM events without allowing duplicate or raw input", async () => {
+    const onInput = vi.fn();
+    const rawText = "\ufeff你好\t\x1b[31mtext\x1b[0m\u202e\x00";
+    const readText = vi.fn().mockResolvedValue(rawText);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText, writeText: vi.fn() },
+    });
+    const view = render(<XtermPane data="" onInput={onInput} />);
+    const terminal = terminalMock.instances[0];
+    const terminalElement = view.container.querySelector<HTMLElement>(".terminal.xterm");
+    const keydown = new KeyboardEvent("keydown", {
+      key: "v",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    const repeatedKeydown = new KeyboardEvent("keydown", {
+      key: "v",
+      ctrlKey: true,
+      repeat: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, "clipboardData", {
+      value: { getData: vi.fn(() => rawText) },
+    });
+    const bubbledKeydown = vi.fn();
+    const nativeTerminalPaste = vi.fn();
+    document.addEventListener("keydown", bubbledKeydown);
+    terminalElement?.addEventListener("paste", nativeTerminalPaste);
+
+    await act(async () => {
+      terminalElement?.dispatchEvent(keydown);
+      terminalElement?.dispatchEvent(paste);
+      terminalElement?.dispatchEvent(repeatedKeydown);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(keydown.defaultPrevented).toBe(true);
+    expect(paste.defaultPrevented).toBe(true);
+    expect(bubbledKeydown).not.toHaveBeenCalled();
+    expect(nativeTerminalPaste).not.toHaveBeenCalled();
+    expect(readText).toHaveBeenCalledTimes(1);
+    expect(terminal.paste).toHaveBeenCalledTimes(1);
+    expect(terminal.paste).toHaveBeenCalledWith("你好\ttext");
+    expect(onInput).toHaveBeenCalledTimes(1);
+    expect(onInput).toHaveBeenCalledWith("你好\ttext");
+    expect(onInput).not.toHaveBeenCalledWith(rawText);
+    document.removeEventListener("keydown", bubbledKeydown);
+    view.unmount();
+  });
+
+  it("captures a standalone DOM paste before xterm and sends sanitized text once", async () => {
+    const onInput = vi.fn();
+    const rawText = "echo \x1b[32mgreen\x1b[0m\x00\r\n";
+    const view = render(<XtermPane data="" onInput={onInput} />);
+    const terminal = terminalMock.instances[0];
+    const terminalElement = view.container.querySelector<HTMLElement>(".terminal.xterm");
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, "clipboardData", {
+      value: { getData: vi.fn(() => rawText) },
+    });
+    const nativeTerminalPaste = vi.fn();
+    terminalElement?.addEventListener("paste", nativeTerminalPaste);
+
+    await act(async () => {
+      terminalElement?.dispatchEvent(paste);
+      await Promise.resolve();
+    });
+
+    expect(paste.defaultPrevented).toBe(true);
+    expect(nativeTerminalPaste).not.toHaveBeenCalled();
+    expect(terminal.paste).toHaveBeenCalledTimes(1);
+    expect(terminal.paste).toHaveBeenCalledWith("echo green\r\n");
+    expect(onInput).toHaveBeenCalledTimes(1);
+    expect(onInput).toHaveBeenCalledWith("echo green\r\n");
+    expect(onInput).not.toHaveBeenCalledWith(rawText);
     view.unmount();
   });
 

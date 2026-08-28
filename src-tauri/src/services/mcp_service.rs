@@ -3,7 +3,11 @@ use std::{
     collections::HashMap,
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
 };
 
 use serde::{Deserialize, Serialize};
@@ -11,7 +15,8 @@ use serde_json::{json, Value};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::oneshot,
+    sync::{oneshot, Notify},
+    task::{JoinHandle, JoinSet},
 };
 use uuid::Uuid;
 
@@ -31,6 +36,8 @@ const MCP_TOKEN_ENV_VAR: &str = "ZTERM_MCP_TOKEN";
 const MCP_TOKEN_SECRET_REF: &str = "mcp:bearer-token";
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const MAX_HTTP_BODY_BYTES: usize = 1024 * 1024;
+const MAX_CONSECUTIVE_ACCEPT_ERRORS: u32 = 5;
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub const DEFAULT_MCP_PORT: u16 = 9419;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,9 +66,18 @@ struct McpContext {
 }
 
 pub struct McpService {
-    runtime: Mutex<Option<McpRuntime>>,
+    lifecycle: Arc<Mutex<McpLifecycle>>,
+    lifecycle_changed: Arc<Notify>,
+    next_generation: AtomicU64,
     secret_store: Arc<dyn SecretStore>,
     agent_bindings: Arc<Mutex<HashMap<String, AgentMcpBinding>>>,
+}
+
+enum McpLifecycle {
+    Stopped,
+    Starting { generation: u64 },
+    Running(McpRuntime),
+    Stopping { generation: u64 },
 }
 
 #[derive(Clone, Debug)]
@@ -79,9 +95,57 @@ pub struct AgentMcpAccess {
 }
 
 struct McpRuntime {
+    generation: u64,
     endpoint: String,
     token: Arc<Mutex<String>>,
     shutdown: Option<oneshot::Sender<()>>,
+    listener_task: JoinHandle<()>,
+}
+
+struct McpStartGuard {
+    lifecycle: Arc<Mutex<McpLifecycle>>,
+    lifecycle_changed: Arc<Notify>,
+    generation: u64,
+    committed: bool,
+}
+
+impl McpStartGuard {
+    fn new(
+        lifecycle: Arc<Mutex<McpLifecycle>>,
+        lifecycle_changed: Arc<Notify>,
+        generation: u64,
+    ) -> Self {
+        Self {
+            lifecycle,
+            lifecycle_changed,
+            generation,
+            committed: false,
+        }
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for McpStartGuard {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let Ok(mut lifecycle) = self.lifecycle.lock() else {
+            return;
+        };
+        if matches!(
+            &*lifecycle,
+            McpLifecycle::Starting {
+                generation: active_generation
+            } if *active_generation == self.generation
+        ) {
+            *lifecycle = McpLifecycle::Stopped;
+            self.lifecycle_changed.notify_waiters();
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -102,7 +166,9 @@ pub struct McpHttpResponse {
 impl McpService {
     pub fn with_secret_store(secret_store: Arc<dyn SecretStore>) -> Self {
         Self {
-            runtime: Mutex::new(None),
+            lifecycle: Arc::new(Mutex::new(McpLifecycle::Stopped)),
+            lifecycle_changed: Arc::new(Notify::new()),
+            next_generation: AtomicU64::new(1),
             secret_store,
             agent_bindings: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -114,17 +180,76 @@ impl McpService {
         tools: AiToolService,
         port: Option<u16>,
     ) -> AppResult<McpServerStatus> {
-        if let Some(status) = self.status() {
-            return Ok(status);
+        self.ensure_running(storage, tools, port).await
+    }
+
+    pub async fn ensure_running(
+        &self,
+        storage: Arc<SqliteStore>,
+        tools: AiToolService,
+        port: Option<u16>,
+    ) -> AppResult<McpServerStatus> {
+        enum StartDecision {
+            Running(McpServerStatus),
+            Wait,
+            Start(u64),
         }
 
-        let token_value = self.load_or_create_token()?;
-        let listener = bind_mcp_listener(configured_mcp_port(port))
-            .await
-            .map_err(|error| AppError::ai(format!("MCP 服务绑定失败: {error}")))?;
-        let local_addr = listener
-            .local_addr()
-            .map_err(|error| AppError::ai(format!("MCP 服务地址读取失败: {error}")))?;
+        let generation = loop {
+            let changed = self.lifecycle_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            let decision = {
+                let mut lifecycle = self
+                    .lifecycle
+                    .lock()
+                    .map_err(|_| AppError::ai("MCP lifecycle lock was poisoned"))?;
+                match &*lifecycle {
+                    McpLifecycle::Running(runtime) if !runtime.listener_task.is_finished() => {
+                        StartDecision::Running(runtime_status(runtime)?)
+                    }
+                    McpLifecycle::Running(_) => {
+                        let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
+                        *lifecycle = McpLifecycle::Starting { generation };
+                        StartDecision::Start(generation)
+                    }
+                    McpLifecycle::Starting { .. } | McpLifecycle::Stopping { .. } => {
+                        StartDecision::Wait
+                    }
+                    McpLifecycle::Stopped => {
+                        let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
+                        *lifecycle = McpLifecycle::Starting { generation };
+                        StartDecision::Start(generation)
+                    }
+                }
+            };
+            match decision {
+                StartDecision::Running(status) => return Ok(status),
+                StartDecision::Wait => changed.as_mut().await,
+                StartDecision::Start(generation) => break generation,
+            }
+        };
+        let mut start_guard = McpStartGuard::new(
+            Arc::clone(&self.lifecycle),
+            Arc::clone(&self.lifecycle_changed),
+            generation,
+        );
+
+        let prepared = async {
+            let token_value = self.load_or_create_token()?;
+            let listener = bind_mcp_listener(configured_mcp_port(port))
+                .await
+                .map_err(|error| AppError::ai(format!("MCP 服务绑定失败: {error}")))?;
+            let local_addr = listener
+                .local_addr()
+                .map_err(|error| AppError::ai(format!("MCP 服务地址读取失败: {error}")))?;
+            Ok::<_, AppError>((token_value, listener, local_addr))
+        }
+        .await;
+        let (token_value, listener, local_addr) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => return Err(error),
+        };
         let endpoint = format!("http://127.0.0.1:{}{MCP_PATH}", local_addr.port());
         let token = Arc::new(Mutex::new(token_value.clone()));
         let context = McpContext {
@@ -134,24 +259,55 @@ impl McpService {
             agent_bindings: Arc::clone(&self.agent_bindings),
         };
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
-        tokio::spawn(async move {
-            loop {
+        let lifecycle = Arc::clone(&self.lifecycle);
+        let lifecycle_changed = Arc::clone(&self.lifecycle_changed);
+        let listener_task = tokio::spawn(async move {
+            let mut consecutive_accept_errors = 0_u32;
+            let mut connections = JoinSet::new();
+            'listener: loop {
                 tokio::select! {
+                    biased;
                     _ = &mut shutdown_rx => break,
-                    accepted = listener.accept() => {
-                        let Ok((stream, peer_addr)) = accepted else {
-                            continue;
-                        };
-                        if !peer_addr.ip().is_loopback() {
-                            continue;
+                    completed = connections.join_next(), if !connections.is_empty() => {
+                        if let Some(Err(error)) = completed {
+                            eprintln!("MCP connection task failed: {error}");
                         }
-                        let context = context.clone();
-                        tokio::spawn(async move {
-                            let _ = handle_connection(stream, context).await;
-                        });
+                    }
+                    accepted = listener.accept() => {
+                        match accepted {
+                            Ok((stream, peer_addr)) => {
+                                consecutive_accept_errors = 0;
+                                if !peer_addr.ip().is_loopback() {
+                                    continue;
+                                }
+                                let context = context.clone();
+                                connections.spawn(async move {
+                                    let _ = handle_connection(stream, context).await;
+                                });
+                            }
+                            Err(error) => {
+                                consecutive_accept_errors += 1;
+                                eprintln!(
+                                    "MCP listener accept failed ({consecutive_accept_errors}/{MAX_CONSECUTIVE_ACCEPT_ERRORS}): {error}"
+                                );
+                                if consecutive_accept_errors >= MAX_CONSECUTIVE_ACCEPT_ERRORS {
+                                    break 'listener;
+                                }
+                                let delay = Duration::from_millis(
+                                    25_u64.saturating_mul(1_u64 << (consecutive_accept_errors - 1)),
+                                );
+                                tokio::select! {
+                                    _ = &mut shutdown_rx => break 'listener,
+                                    _ = tokio::time::sleep(delay) => {}
+                                }
+                            }
+                        }
                     }
                 }
             }
+            connections.abort_all();
+            while connections.join_next().await.is_some() {}
+            mark_listener_finished(&lifecycle, &lifecycle_changed, generation);
         });
 
         let status = McpServerStatus {
@@ -159,47 +315,116 @@ impl McpService {
             endpoint: Some(endpoint.clone()),
             token: Some(token_value),
         };
-        let mut guard = self
-            .runtime
-            .lock()
-            .map_err(|_| AppError::ai("MCP runtime lock was poisoned"))?;
-        *guard = Some(McpRuntime {
+        let mut pending_runtime = Some(McpRuntime {
+            generation,
             endpoint,
             token,
             shutdown: Some(shutdown_tx),
+            listener_task,
         });
-        Ok(status)
-    }
-
-    pub fn stop(&self) -> AppResult<McpServerStatus> {
-        let mut guard = self
-            .runtime
-            .lock()
-            .map_err(|_| AppError::ai("MCP runtime lock was poisoned"))?;
-        if let Some(mut runtime) = guard.take() {
+        let installed = {
+            let mut lifecycle = self
+                .lifecycle
+                .lock()
+                .map_err(|_| AppError::ai("MCP lifecycle lock was poisoned"))?;
+            if matches!(
+                &*lifecycle,
+                McpLifecycle::Starting {
+                    generation: active_generation
+                } if *active_generation == generation
+            ) {
+                *lifecycle =
+                    McpLifecycle::Running(pending_runtime.take().expect("pending MCP runtime"));
+                true
+            } else {
+                false
+            }
+        };
+        if !installed {
+            let mut runtime = pending_runtime.expect("uninstalled MCP runtime");
             if let Some(shutdown) = runtime.shutdown.take() {
                 let _ = shutdown.send(());
             }
+            let _ = runtime.listener_task.await;
+            return Err(AppError::ai("MCP 服务启动期间状态已变更"));
         }
-        Ok(McpServerStatus {
-            enabled: false,
-            endpoint: None,
-            token: None,
-        })
+        start_guard.commit();
+        self.lifecycle_changed.notify_waiters();
+        Ok(status)
+    }
+
+    pub async fn stop_and_wait(&self) -> AppResult<McpServerStatus> {
+        enum StopDecision {
+            Stopped,
+            Wait,
+            Stop(McpRuntime),
+        }
+
+        let mut runtime = loop {
+            let changed = self.lifecycle_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            let decision = {
+                let mut lifecycle = self
+                    .lifecycle
+                    .lock()
+                    .map_err(|_| AppError::ai("MCP lifecycle lock was poisoned"))?;
+                match &*lifecycle {
+                    McpLifecycle::Stopped => StopDecision::Stopped,
+                    McpLifecycle::Starting { .. } | McpLifecycle::Stopping { .. } => {
+                        StopDecision::Wait
+                    }
+                    McpLifecycle::Running(_) => {
+                        let McpLifecycle::Running(runtime) =
+                            std::mem::replace(&mut *lifecycle, McpLifecycle::Stopped)
+                        else {
+                            unreachable!();
+                        };
+                        let generation = runtime.generation;
+                        *lifecycle = McpLifecycle::Stopping { generation };
+                        StopDecision::Stop(runtime)
+                    }
+                }
+            };
+            match decision {
+                StopDecision::Stopped => return Ok(disabled_status()),
+                StopDecision::Wait => changed.as_mut().await,
+                StopDecision::Stop(runtime) => break runtime,
+            }
+        };
+        if let Some(shutdown) = runtime.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        let generation = runtime.generation;
+        let joined = runtime.listener_task.await;
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| AppError::ai("MCP lifecycle lock was poisoned"))?;
+        if matches!(
+            &*lifecycle,
+            McpLifecycle::Stopping {
+                generation: active_generation
+            } if *active_generation == generation
+        ) {
+            *lifecycle = McpLifecycle::Stopped;
+        }
+        self.lifecycle_changed.notify_waiters();
+        joined.map_err(|error| AppError::ai(format!("MCP listener task failed: {error}")))?;
+        Ok(disabled_status())
     }
 
     pub fn rotate_token(&self) -> AppResult<McpServerStatus> {
-        let guard = self
-            .runtime
+        let lifecycle = self
+            .lifecycle
             .lock()
-            .map_err(|_| AppError::ai("MCP runtime lock was poisoned"))?;
-        let Some(runtime) = guard.as_ref() else {
-            return Ok(McpServerStatus {
-                enabled: false,
-                endpoint: None,
-                token: None,
-            });
+            .map_err(|_| AppError::ai("MCP lifecycle lock was poisoned"))?;
+        let McpLifecycle::Running(runtime) = &*lifecycle else {
+            return Ok(disabled_status());
         };
+        if runtime.listener_task.is_finished() {
+            return Ok(disabled_status());
+        }
         let token = generate_token();
         self.secret_store.set_secret(MCP_TOKEN_SECRET_REF, &token)?;
         *runtime
@@ -230,14 +455,18 @@ impl McpService {
     }
 
     pub fn status(&self) -> Option<McpServerStatus> {
-        let guard = self.runtime.lock().ok()?;
-        let runtime = guard.as_ref()?;
-        let token = runtime.token.lock().ok()?.clone();
-        Some(McpServerStatus {
-            enabled: true,
-            endpoint: Some(runtime.endpoint.clone()),
-            token: Some(token),
-        })
+        let mut lifecycle = self.lifecycle.lock().ok()?;
+        match &*lifecycle {
+            McpLifecycle::Running(runtime) if !runtime.listener_task.is_finished() => {
+                runtime_status(runtime).ok()
+            }
+            McpLifecycle::Running(_) => {
+                *lifecycle = McpLifecycle::Stopped;
+                self.lifecycle_changed.notify_waiters();
+                None
+            }
+            _ => None,
+        }
     }
 
     pub fn register_agent_binding(&self, binding: AgentMcpBinding) -> AppResult<AgentMcpAccess> {
@@ -262,6 +491,49 @@ impl McpService {
             .retain(|_, binding| binding.agent_session_id != agent_session_id);
         Ok(())
     }
+}
+
+fn runtime_status(runtime: &McpRuntime) -> AppResult<McpServerStatus> {
+    let token = runtime
+        .token
+        .lock()
+        .map_err(|_| AppError::ai("MCP token lock was poisoned"))?
+        .clone();
+    Ok(McpServerStatus {
+        enabled: true,
+        endpoint: Some(runtime.endpoint.clone()),
+        token: Some(token),
+    })
+}
+
+fn disabled_status() -> McpServerStatus {
+    McpServerStatus {
+        enabled: false,
+        endpoint: None,
+        token: None,
+    }
+}
+
+fn mark_listener_finished(
+    lifecycle: &Mutex<McpLifecycle>,
+    lifecycle_changed: &Notify,
+    generation: u64,
+) {
+    let Ok(mut lifecycle) = lifecycle.lock() else {
+        return;
+    };
+    if matches!(
+        &*lifecycle,
+        McpLifecycle::Running(runtime) if runtime.generation == generation
+    ) || matches!(
+        &*lifecycle,
+        McpLifecycle::Starting {
+            generation: active_generation
+        } if *active_generation == generation
+    ) {
+        *lifecycle = McpLifecycle::Stopped;
+    }
+    lifecycle_changed.notify_waiters();
 }
 
 impl Default for McpService {
@@ -902,7 +1174,7 @@ fn reject_unknown_mcp_keys(
 }
 
 async fn handle_connection(mut stream: TcpStream, context: McpContext) -> AppResult<()> {
-    let request = read_http_request(&mut stream).await?;
+    let request = read_http_request_with_timeout(&mut stream, HTTP_REQUEST_TIMEOUT).await?;
     let token = context
         .token
         .lock()
@@ -930,6 +1202,15 @@ async fn handle_connection(mut stream: TcpStream, context: McpContext) -> AppRes
         }
     };
     write_http_response(&mut stream, response).await
+}
+
+async fn read_http_request_with_timeout(
+    stream: &mut TcpStream,
+    timeout_duration: Duration,
+) -> AppResult<McpHttpRequest> {
+    tokio::time::timeout(timeout_duration, read_http_request(stream))
+        .await
+        .map_err(|_| AppError::ai("MCP 请求读取超时"))?
 }
 
 async fn handle_agent_http_request(
@@ -1198,7 +1479,17 @@ async fn bind_mcp_listener(port: u16) -> std::io::Result<TcpListener> {
 
 #[cfg(test)]
 mod tests {
-    use super::{bind_mcp_listener, configured_mcp_port, DEFAULT_MCP_PORT};
+    use std::{future::pending, sync::Arc, time::Duration};
+
+    use tokio::{io::AsyncWriteExt, sync::Notify};
+
+    use crate::services::credential_service::MemorySecretStore;
+
+    use super::{
+        bind_mcp_listener, configured_mcp_port, mark_listener_finished,
+        read_http_request_with_timeout, McpLifecycle, McpRuntime, McpService, McpStartGuard,
+        DEFAULT_MCP_PORT,
+    };
 
     #[test]
     fn missing_mcp_port_uses_stable_default_and_explicit_zero_stays_ephemeral() {
@@ -1220,5 +1511,90 @@ mod tests {
 
         assert_ne!(actual_port, occupied_port);
         assert_ne!(actual_port, 0);
+    }
+
+    #[tokio::test]
+    async fn aborted_start_future_rolls_back_starting_state() {
+        let generation = 7;
+        let lifecycle = Arc::new(std::sync::Mutex::new(McpLifecycle::Starting { generation }));
+        let lifecycle_changed = Arc::new(Notify::new());
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let start_task = tokio::spawn({
+            let lifecycle = Arc::clone(&lifecycle);
+            let lifecycle_changed = Arc::clone(&lifecycle_changed);
+            async move {
+                let _guard = McpStartGuard::new(lifecycle, lifecycle_changed, generation);
+                let _ = entered_tx.send(());
+                pending::<()>().await;
+            }
+        });
+        entered_rx.await.expect("start future should enter");
+
+        start_task.abort();
+        let _ = start_task.await;
+
+        assert!(matches!(
+            &*lifecycle.lock().expect("lifecycle lock"),
+            McpLifecycle::Stopped
+        ));
+    }
+
+    #[tokio::test]
+    async fn listener_task_exit_clears_running_status() {
+        let generation = 9;
+        let service = McpService::with_secret_store(Arc::new(MemorySecretStore::default()));
+        let lifecycle = Arc::clone(&service.lifecycle);
+        let lifecycle_changed = Arc::clone(&service.lifecycle_changed);
+        let (exit_tx, exit_rx) = tokio::sync::oneshot::channel();
+        let listener_task = tokio::spawn(async move {
+            let _ = exit_rx.await;
+            mark_listener_finished(&lifecycle, &lifecycle_changed, generation);
+        });
+        let (shutdown, _shutdown_rx) = tokio::sync::oneshot::channel();
+        *service.lifecycle.lock().expect("lifecycle lock") = McpLifecycle::Running(McpRuntime {
+            generation,
+            endpoint: "http://127.0.0.1:9419/mcp".to_string(),
+            token: Arc::new(std::sync::Mutex::new("test-token".to_string())),
+            shutdown: Some(shutdown),
+            listener_task,
+        });
+        assert!(service.status().is_some());
+
+        exit_tx.send(()).expect("listener exit signal");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while service.status().is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("listener exit should clear status");
+        assert!(service.status().is_none());
+    }
+
+    #[tokio::test]
+    async fn slow_http_request_times_out() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener should bind");
+        let address = listener.local_addr().expect("listener address");
+        let client_task = tokio::spawn(async move {
+            let mut client = tokio::net::TcpStream::connect(address)
+                .await
+                .expect("test client should connect");
+            client
+                .write_all(b"POST /mcp HTTP/1.1\r\nHost: localhost\r\n")
+                .await
+                .expect("partial request should write");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        });
+        let (mut server, _) = listener.accept().await.expect("server should accept");
+
+        let error = read_http_request_with_timeout(&mut server, Duration::from_millis(25))
+            .await
+            .expect_err("slow request should time out");
+
+        assert!(error.to_string().contains("请求读取超时"));
+        client_task.abort();
+        let _ = client_task.await;
     }
 }

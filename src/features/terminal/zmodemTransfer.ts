@@ -42,6 +42,8 @@ interface ZmodemTransferDependencies {
 
 const controllers = new Map<string, ZmodemRuntimeController>();
 const SEND_CHUNK_BYTES = 64 * 1024;
+export const ZMODEM_SINGLE_FILE_LIMIT_BYTES = 32 * 1024 * 1024;
+const ZMODEM_SINGLE_FILE_LIMIT_LABEL = "32 MiB";
 const PROGRESS_BAR_WIDTH = 20;
 const UNKNOWN_TOTAL_PROGRESS_STEP_BYTES = 256 * 1024;
 const ZMODEM_ASTERISK = 42;
@@ -235,8 +237,20 @@ class ZmodemRuntimeController {
     });
     session.on("offer", (offer: ZmodemOffer) => {
       const details = offer.get_details();
+      if (isKnownOversizedZmodemFile(details.size)) {
+        try {
+          offer.skip();
+        } catch {
+          session.abort?.();
+        }
+        this.appendOutput(
+          `已跳过 ${details.name}：文件大小 ${formatBytes(details.size)} 超过 ZMODEM 单文件限制 ${ZMODEM_SINGLE_FILE_LIMIT_LABEL}，请使用 SFTP 文件面板下载。\r\n`,
+        );
+        return;
+      }
       const progress = createTransferProgress("下载", details.name, details.size, (output) => this.appendOutput(output));
       let receivedBytes = 0;
+      let limitExceeded = false;
       let progressFinished = false;
       const finishProgress = () => {
         if (progressFinished) return;
@@ -246,11 +260,26 @@ class ZmodemRuntimeController {
       progress.update(0);
       offer.on("input", (payload) => {
         receivedBytes += payload.length;
+        if (receivedBytes > ZMODEM_SINGLE_FILE_LIMIT_BYTES) {
+          if (!limitExceeded) {
+            limitExceeded = true;
+            try {
+              offer.skip();
+            } catch {
+              session.abort?.();
+            }
+            this.appendOutput(
+              `已中止 ${details.name}：实际接收数据超过 ZMODEM 单文件限制 ${ZMODEM_SINGLE_FILE_LIMIT_LABEL}，请使用 SFTP 文件面板下载。\r\n`,
+            );
+          }
+          return;
+        }
         progress.update(receivedBytes);
       });
       const saveTask = offer
         .accept({ on_input: "spool_uint8array" })
         .then((payloads) => {
+          if (limitExceeded) return undefined;
           finishProgress();
           return this.dependencies.saveFile?.(directory, details.name, flattenPayloads(payloads));
         })
@@ -260,6 +289,7 @@ class ZmodemRuntimeController {
           this.appendOutput(`已保存 ${details.name} -> ${saved.path}\r\n`);
         })
         .catch((error) => {
+          if (limitExceeded) return;
           finishProgress();
           this.appendOutput(`保存 ${details.name} 失败：${stringifiedErrorMessage(error)}\r\n`);
         });
@@ -306,6 +336,10 @@ class ZmodemRuntimeController {
 
 function isZfinHeader(value: unknown): value is { NAME: "ZFIN" } {
   return typeof value === "object" && value !== null && "NAME" in value && value.NAME === "ZFIN";
+}
+
+function isKnownOversizedZmodemFile(size: number | undefined): size is number {
+  return size !== undefined && Number.isFinite(size) && size > ZMODEM_SINGLE_FILE_LIMIT_BYTES;
 }
 
 async function sendFileBytes(

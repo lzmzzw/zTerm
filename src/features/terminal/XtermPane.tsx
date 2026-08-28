@@ -4,10 +4,19 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type ClipboardEvent as ReactClipboardEvent,
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { ZtContextMenu } from "../../components/ZtUi";
 import { scheduleNextTask } from "../../lib/renderScheduling";
+import { readClipboardTextWithRetry, sanitizeTerminalPaste } from "./terminalClipboard";
 import {
   createTerminalSemanticHighlighter,
   DIGE_BLACK_SEMANTIC_PALETTE,
@@ -126,6 +135,7 @@ export function XtermPane({
   const outputWriteGenerationRef = useRef(0);
   const outputWriteTimerRef = useRef<number | null>(null);
   const lineInputRef = useRef("");
+  const pasteInFlightRef = useRef<Promise<void> | null>(null);
   const onInputRef = useRef(onInput);
   const onResizeRef = useRef(onResize);
   const [ghostCandidate, setGhostCandidate] = useState<CommandCompletionCandidate | null>(null);
@@ -283,6 +293,42 @@ export function XtermPane({
     [],
   );
 
+  const pastePlainText = useCallback((text: string) => {
+    const plainText = sanitizeTerminalPaste(text);
+    if (plainText) {
+      terminalRef.current?.paste(plainText);
+    }
+  }, []);
+
+  const pasteClipboardText = useCallback(() => {
+    if (pasteInFlightRef.current) {
+      return pasteInFlightRef.current;
+    }
+
+    const pasteTask = readClipboardTextWithRetry(navigator.clipboard)
+      .then(pastePlainText)
+      .catch(() => undefined)
+      .finally(() => {
+        if (pasteInFlightRef.current === pasteTask) {
+          pasteInFlightRef.current = null;
+        }
+      });
+    pasteInFlightRef.current = pasteTask;
+    return pasteTask;
+  }, [pastePlainText]);
+
+  const handlePasteCapture = useCallback(
+    (event: ReactClipboardEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (pasteInFlightRef.current) {
+        return;
+      }
+      pastePlainText(event.clipboardData.getData("text/plain"));
+    },
+    [pastePlainText],
+  );
+
   useLayoutEffect(() => {
     return () => {
       containerRef.current?.replaceChildren();
@@ -304,7 +350,17 @@ export function XtermPane({
       theme: resolveTerminalTheme(),
     });
     terminal.attachCustomKeyEventHandler((event) => {
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "a") {
+      const hasPrimaryModifier = (event.ctrlKey || event.metaKey) && !event.altKey;
+      const key = event.key.toLowerCase();
+      if (hasPrimaryModifier && key === "v") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.type === "keydown" && !event.repeat) {
+          void pasteClipboardText();
+        }
+        return false;
+      }
+      if (hasPrimaryModifier && key === "a") {
         terminal.selectAll();
         return false;
       }
@@ -360,7 +416,7 @@ export function XtermPane({
       lastResizeRef.current = null;
       scheduleNextTask(() => terminal.dispose());
     };
-  }, [cancelQueuedOutputWrites, handleTerminalInput]);
+  }, [cancelQueuedOutputWrites, handleTerminalInput, pasteClipboardText]);
 
   useEffect(() => {
     if (autoFocus) terminalRef.current?.focus();
@@ -440,6 +496,7 @@ export function XtermPane({
   return (
     <div
       className="zt-xterm-pane"
+      onPasteCapture={handlePasteCapture}
       onContextMenu={(event) => {
         event.preventDefault();
         if (!contextMenuEnabled) return;
@@ -457,11 +514,7 @@ export function XtermPane({
           if (selection) void navigator.clipboard?.writeText(selection);
         }}
         onDisconnect={onDisconnect}
-        onPaste={() => {
-          void navigator.clipboard?.readText().then((text) => {
-            if (text) onInputRef.current?.(text);
-          });
-        }}
+        onPaste={() => void pasteClipboardText()}
         onReconnect={onReconnect}
         onSearch={() => {
           const term = window.prompt("搜索");

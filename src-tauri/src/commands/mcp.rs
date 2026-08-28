@@ -40,7 +40,9 @@ pub async fn start_mcp_if_enabled(
     }
     let settings = get_app_settings(storage.as_ref())?;
     if settings.mcp.enabled {
-        return service.start(storage, tools, settings.mcp.port).await;
+        return service
+            .ensure_running(storage, tools, settings.mcp.port)
+            .await;
     }
     Ok(McpServerStatus {
         enabled: false,
@@ -65,10 +67,10 @@ pub async fn mcp_server_set_enabled(
     if enabled {
         state
             .mcp_service()
-            .start(storage, state.ai_tool_service(), port)
+            .ensure_running(storage, state.ai_tool_service(), port)
             .await
     } else {
-        state.mcp_service().stop()
+        state.mcp_service().stop_and_wait().await
     }
 }
 

@@ -33,6 +33,11 @@ use crate::{
     },
 };
 
+const ZMODEM_MAX_SINGLE_FILE_BYTES: u64 = 32 * 1024 * 1024;
+const ZMODEM_MAX_UPLOAD_BATCH_BYTES: u64 = 64 * 1024 * 1024;
+const ZMODEM_MAX_SINGLE_FILE_LABEL: &str = "32 MiB";
+const ZMODEM_MAX_UPLOAD_BATCH_LABEL: &str = "64 MiB";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AuthPromptSecret {
     target: String,
@@ -406,7 +411,8 @@ pub fn terminal_zmodem_read_files(paths: Vec<String>) -> AppResult<Vec<TerminalZ
         return Err(AppError::validation("未选择要上传的文件"));
     }
 
-    paths
+    let mut metadata_total_size = 0_u64;
+    let files = paths
         .into_iter()
         .map(|path| {
             let path = PathBuf::from(path);
@@ -416,8 +422,45 @@ pub fn terminal_zmodem_read_files(paths: Vec<String>) -> AppResult<Vec<TerminalZ
                 return Err(AppError::validation("只能上传本机文件"));
             }
             let name = zmodem_safe_file_name(&path.to_string_lossy())?;
-            let data = fs::read(&path)
+            metadata_total_size =
+                zmodem_upload_total_after_file(&name, metadata.len(), metadata_total_size)?;
+            Ok((path, name))
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+
+    let mut actual_total_size = 0_u64;
+    files
+        .into_iter()
+        .map(|(path, name)| {
+            let file = fs::File::open(&path)
                 .map_err(|error| AppError::terminal(format!("读取本机文件失败: {error}")))?;
+            let metadata = file
+                .metadata()
+                .map_err(|error| AppError::terminal(format!("读取本机文件失败: {error}")))?;
+            if !metadata.is_file() {
+                return Err(AppError::validation("只能上传本机文件"));
+            }
+            zmodem_upload_total_after_file(&name, metadata.len(), actual_total_size)?;
+            let remaining_batch_bytes =
+                ZMODEM_MAX_UPLOAD_BATCH_BYTES.saturating_sub(actual_total_size);
+            let (read_limit, limit_scope, limit_label) =
+                if remaining_batch_bytes < ZMODEM_MAX_SINGLE_FILE_BYTES {
+                    (
+                        remaining_batch_bytes,
+                        "单批上传",
+                        ZMODEM_MAX_UPLOAD_BATCH_LABEL,
+                    )
+                } else {
+                    (
+                        ZMODEM_MAX_SINGLE_FILE_BYTES,
+                        "单文件",
+                        ZMODEM_MAX_SINGLE_FILE_LABEL,
+                    )
+                };
+            let data = read_zmodem_file_bounded(file, &name, read_limit, limit_scope, limit_label)?;
+            let actual_size = u64::try_from(data.len()).unwrap_or(u64::MAX);
+            actual_total_size =
+                zmodem_upload_total_after_file(&name, actual_size, actual_total_size)?;
             let mtime_ms = metadata
                 .modified()
                 .ok()
@@ -426,12 +469,56 @@ pub fn terminal_zmodem_read_files(paths: Vec<String>) -> AppResult<Vec<TerminalZ
                 .unwrap_or_default();
             Ok(TerminalZmodemLocalFile {
                 name,
-                size: metadata.len(),
+                size: actual_size,
                 mtime_ms,
                 data,
             })
         })
         .collect()
+}
+
+fn read_zmodem_file_bounded(
+    reader: impl Read,
+    name: &str,
+    limit: u64,
+    limit_scope: &str,
+    limit_label: &str,
+) -> AppResult<Vec<u8>> {
+    let mut data = Vec::new();
+    reader
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut data)
+        .map_err(|error| AppError::terminal(format!("读取本机文件失败: {error}")))?;
+    if u64::try_from(data.len()).unwrap_or(u64::MAX) > limit {
+        return Err(AppError::validation(format!(
+            "ZMODEM {limit_scope}最大支持 {limit_label}，{name} 在读取期间超过限制；请使用 SFTP 文件面板上传大文件"
+        )));
+    }
+    Ok(data)
+}
+
+fn zmodem_upload_total_after_file(
+    name: &str,
+    file_size: u64,
+    current_total: u64,
+) -> AppResult<u64> {
+    if file_size > ZMODEM_MAX_SINGLE_FILE_BYTES {
+        return Err(AppError::validation(format!(
+            "ZMODEM 单文件最大支持 {ZMODEM_MAX_SINGLE_FILE_LABEL}，{name} 超过限制；请使用 SFTP 文件面板上传大文件"
+        )));
+    }
+
+    let next_total = current_total.checked_add(file_size).ok_or_else(|| {
+        AppError::validation(format!(
+            "ZMODEM 单批上传最大支持 {ZMODEM_MAX_UPLOAD_BATCH_LABEL}，本次选择的文件总量超过限制；请使用 SFTP 文件面板上传"
+        ))
+    })?;
+    if next_total > ZMODEM_MAX_UPLOAD_BATCH_BYTES {
+        return Err(AppError::validation(format!(
+            "ZMODEM 单批上传最大支持 {ZMODEM_MAX_UPLOAD_BATCH_LABEL}，本次选择的文件总量超过限制；请使用 SFTP 文件面板上传"
+        )));
+    }
+    Ok(next_total)
 }
 
 #[tauri::command]
@@ -845,9 +932,13 @@ fn terminal_profile_for_session(
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, io::Cursor};
+
     use super::{
-        local_options_with_working_directory, select_auth_secret_for_prompt,
-        should_answer_auth_prompt, zmodem_safe_file_name, AuthPromptSecret,
+        local_options_with_working_directory, read_zmodem_file_bounded,
+        select_auth_secret_for_prompt, should_answer_auth_prompt, terminal_zmodem_read_files,
+        zmodem_safe_file_name, zmodem_upload_total_after_file, AuthPromptSecret,
+        ZMODEM_MAX_SINGLE_FILE_BYTES, ZMODEM_MAX_UPLOAD_BATCH_BYTES,
     };
     use crate::models::session::{LocalEnvironmentVariable, LocalOptions};
 
@@ -974,5 +1065,98 @@ mod tests {
     fn zmodem_file_name_rejects_empty_or_parent_names() {
         assert!(zmodem_safe_file_name("   ").is_err());
         assert!(zmodem_safe_file_name("..").is_err());
+    }
+
+    #[test]
+    fn zmodem_upload_size_accepts_exact_single_and_batch_limits() {
+        let total = zmodem_upload_total_after_file("first.bin", ZMODEM_MAX_SINGLE_FILE_BYTES, 0)
+            .expect("single-file boundary should be accepted");
+        let total =
+            zmodem_upload_total_after_file("second.bin", ZMODEM_MAX_SINGLE_FILE_BYTES, total)
+                .expect("batch boundary should be accepted");
+
+        assert_eq!(total, ZMODEM_MAX_UPLOAD_BATCH_BYTES);
+    }
+
+    #[test]
+    fn zmodem_upload_size_rejects_single_file_over_limit_with_sftp_guidance() {
+        let error =
+            zmodem_upload_total_after_file("oversized.bin", ZMODEM_MAX_SINGLE_FILE_BYTES + 1, 0)
+                .expect_err("oversized file should be rejected");
+        let message = error.to_string();
+
+        assert!(message.contains("32 MiB"));
+        assert!(message.contains("oversized.bin"));
+        assert!(message.contains("SFTP"));
+    }
+
+    #[test]
+    fn zmodem_upload_size_rejects_batch_over_limit_with_sftp_guidance() {
+        let error = zmodem_upload_total_after_file("next.bin", 1, ZMODEM_MAX_UPLOAD_BATCH_BYTES)
+            .expect_err("oversized batch should be rejected");
+        let message = error.to_string();
+
+        assert!(message.contains("64 MiB"));
+        assert!(message.contains("SFTP"));
+    }
+
+    #[test]
+    fn zmodem_read_files_keeps_small_file_behavior() {
+        let path =
+            std::env::temp_dir().join(format!("zterm-zmodem-small-{}.bin", uuid::Uuid::new_v4()));
+        fs::write(&path, [1_u8, 2, 3]).expect("small fixture should be written");
+
+        let result = terminal_zmodem_read_files(vec![path.to_string_lossy().to_string()]);
+        let _ = fs::remove_file(&path);
+        let files = result.expect("small file should be read");
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].size, 3);
+        assert_eq!(files[0].data, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn zmodem_read_files_rejects_oversized_sparse_file_from_metadata() {
+        let path = std::env::temp_dir().join(format!(
+            "zterm-zmodem-oversized-{}.bin",
+            uuid::Uuid::new_v4()
+        ));
+        let file = fs::File::create(&path).expect("sparse fixture should be created");
+        file.set_len(ZMODEM_MAX_SINGLE_FILE_BYTES + 1)
+            .expect("sparse fixture should be sized");
+        drop(file);
+
+        let result = terminal_zmodem_read_files(vec![path.to_string_lossy().to_string()]);
+        let _ = fs::remove_file(&path);
+        let message = result
+            .expect_err("oversized sparse file should be rejected")
+            .to_string();
+
+        assert!(message.contains("32 MiB"));
+        assert!(message.contains("SFTP"));
+    }
+
+    #[test]
+    fn zmodem_bounded_read_rejects_growth_past_the_metadata_size() {
+        let reader = Cursor::new(vec![1_u8, 2, 3, 4]);
+        let error = read_zmodem_file_bounded(reader, "growing.bin", 3, "单文件", "3 B")
+            .expect_err("data beyond the read limit should be rejected");
+        let message = error.to_string();
+
+        assert!(message.contains("growing.bin"));
+        assert!(message.contains("3 B"));
+        assert!(message.contains("SFTP"));
+    }
+
+    #[test]
+    fn zmodem_bounded_read_can_enforce_remaining_batch_capacity() {
+        let reader = Cursor::new(vec![1_u8, 2]);
+        let error = read_zmodem_file_bounded(reader, "next.bin", 1, "单批上传", "64 MiB")
+            .expect_err("data beyond the remaining batch capacity should be rejected");
+        let message = error.to_string();
+
+        assert!(message.contains("单批上传"));
+        assert!(message.contains("64 MiB"));
+        assert!(message.contains("SFTP"));
     }
 }

@@ -75,14 +75,10 @@ pub async fn agent_codex_open(
         .unwrap_or(AiApprovalMode::Safe);
 
     let settings = get_app_settings(state.storage().as_ref())?;
-    let mcp_status = if let Some(status) = state.mcp_service().status() {
-        status
-    } else {
-        state
-            .mcp_service()
-            .start(state.storage(), state.ai_tool_service(), settings.mcp.port)
-            .await?
-    };
+    let mcp_status = state
+        .mcp_service()
+        .ensure_running(state.storage(), state.ai_tool_service(), settings.mcp.port)
+        .await?;
     if !mcp_status.enabled {
         return Err(AppError::ai("zTerm MCP 服务未能启动"));
     }

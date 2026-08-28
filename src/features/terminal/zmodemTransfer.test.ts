@@ -44,6 +44,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 import {
   clearTerminalZmodemControllersForTest,
   consumeTerminalZmodemData,
+  ZMODEM_SINGLE_FILE_LIMIT_BYTES,
 } from "./zmodemTransfer";
 
 describe("zmodemTransfer", () => {
@@ -282,6 +283,137 @@ describe("zmodemTransfer", () => {
     );
     expect(appendOutput).toHaveBeenCalledWith("runtime-1", expect.stringContaining("下载完成，共 1 个文件"));
     expect(appendOutput.mock.calls.every(([, output]) => !output.includes("[ZMODEM]"))).toBe(true);
+  });
+
+  it("accepts a file at the ZMODEM limit and skips a known oversized file before spooling", async () => {
+    sentryMock.consumeImpl = () => undefined;
+    const appendOutput = vi.fn();
+    let offerHandler: ((offer: any) => void) | null = null;
+    const boundaryOffer = {
+      get_details: vi.fn(() => ({ name: "boundary.bin", size: ZMODEM_SINGLE_FILE_LIMIT_BYTES })),
+      on: vi.fn().mockReturnThis(),
+      accept: vi.fn().mockResolvedValue([]),
+      skip: vi.fn(),
+    };
+    const oversizedOffer = {
+      get_details: vi.fn(() => ({ name: "oversized.bin", size: ZMODEM_SINGLE_FILE_LIMIT_BYTES + 1 })),
+      on: vi.fn().mockReturnThis(),
+      accept: vi.fn(),
+      skip: vi.fn(),
+    };
+    const session: any = {
+      type: "receive",
+      on: vi.fn((eventName: string, handler: (...args: any[]) => void) => {
+        if (eventName === "offer") offerHandler = handler;
+        return session;
+      }),
+      start: vi.fn(() => {
+        offerHandler?.(boundaryOffer);
+        offerHandler?.(oversizedOffer);
+      }),
+      close: vi.fn(),
+      abort: vi.fn(),
+      send_offer: vi.fn(),
+    };
+    const detection = {
+      confirm: vi.fn(() => session),
+      deny: vi.fn(),
+    };
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "**B", dataBase64: base64([42, 42, 66]) },
+      {
+        appendOutput,
+        selectDownloadDirectory: vi.fn().mockResolvedValue("D:\\Downloads"),
+      },
+    );
+    sentryMock.instances[0].options.on_detect(detection);
+    await flushPromises();
+
+    expect(boundaryOffer.accept).toHaveBeenCalledWith({ on_input: "spool_uint8array" });
+    expect(boundaryOffer.skip).not.toHaveBeenCalled();
+    expect(oversizedOffer.skip).toHaveBeenCalledOnce();
+    expect(oversizedOffer.accept).not.toHaveBeenCalled();
+    expect(oversizedOffer.on).not.toHaveBeenCalled();
+    expect(appendOutput).toHaveBeenCalledWith(
+      "runtime-1",
+      expect.stringMatching(/oversized\.bin.*32 MiB.*SFTP/),
+    );
+  });
+
+  it("stops unknown-size and under-reported downloads when actual input exceeds the limit", async () => {
+    sentryMock.consumeImpl = () => undefined;
+    const appendOutput = vi.fn();
+    let offerHandler: ((offer: any) => void) | null = null;
+    const createLateOversizedOffer = (name: string, inputSizes: number[], size?: number) => {
+      let inputHandler: ((payload: { length: number }) => void) | null = null;
+      const offer = {
+        get_details: vi.fn(() => ({ name, size })),
+        on: vi.fn((eventName: string, handler: (payload: { length: number }) => void) => {
+          if (eventName === "input") inputHandler = handler;
+          return offer;
+        }),
+        accept: vi.fn(async () => {
+          for (const length of inputSizes) inputHandler?.({ length });
+          return [new Uint8Array([1])];
+        }),
+        skip: vi.fn(),
+      };
+      return offer;
+    };
+    const unknownSizeOffer = createLateOversizedOffer(
+      "unknown-size.bin",
+      [ZMODEM_SINGLE_FILE_LIMIT_BYTES + 1],
+    );
+    const underReportedOffer = createLateOversizedOffer(
+      "under-reported.bin",
+      [ZMODEM_SINGLE_FILE_LIMIT_BYTES, 1],
+      1,
+    );
+    const session: any = {
+      type: "receive",
+      on: vi.fn((eventName: string, handler: (...args: any[]) => void) => {
+        if (eventName === "offer") offerHandler = handler;
+        return session;
+      }),
+      start: vi.fn(() => {
+        offerHandler?.(unknownSizeOffer);
+        offerHandler?.(underReportedOffer);
+      }),
+      close: vi.fn(),
+      abort: vi.fn(),
+      send_offer: vi.fn(),
+    };
+    const saveFile = vi.fn();
+    const detection = {
+      confirm: vi.fn(() => session),
+      deny: vi.fn(),
+    };
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "**B", dataBase64: base64([42, 42, 66]) },
+      {
+        appendOutput,
+        selectDownloadDirectory: vi.fn().mockResolvedValue("D:\\Downloads"),
+        saveFile,
+      },
+    );
+    sentryMock.instances[0].options.on_detect(detection);
+    await flushPromises();
+
+    expect(unknownSizeOffer.accept).toHaveBeenCalledWith({ on_input: "spool_uint8array" });
+    expect(unknownSizeOffer.skip).toHaveBeenCalledOnce();
+    expect(underReportedOffer.accept).toHaveBeenCalledWith({ on_input: "spool_uint8array" });
+    expect(underReportedOffer.skip).toHaveBeenCalledOnce();
+    expect(saveFile).not.toHaveBeenCalled();
+    expect(appendOutput).toHaveBeenCalledWith(
+      "runtime-1",
+      expect.stringMatching(/unknown-size\.bin.*32 MiB.*SFTP/),
+    );
+    expect(appendOutput).toHaveBeenCalledWith(
+      "runtime-1",
+      expect.stringMatching(/under-reported\.bin.*32 MiB.*SFTP/),
+    );
   });
 
   it("completes a receive session when terminal output follows ZFIN without OO", async () => {
