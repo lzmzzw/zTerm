@@ -106,6 +106,11 @@ fn sessions_can_save_and_list_ssh_and_rdp_entries() {
 
     let ssh =
         save_session(&store, ssh_draft(Some(group.id.clone()))).expect("ssh session should save");
+    assert!(ssh
+        .ssh_options
+        .as_ref()
+        .and_then(|options| options.container.as_ref())
+        .is_some_and(|container| container.enabled && container.runtime == "docker"));
     let rdp = save_session(&store, rdp_draft()).expect("rdp session should save");
     let list = list_sessions(&store).expect("sessions should list");
 

@@ -3,6 +3,8 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::AppResult;
 
+const SSH_CONTAINER_DEFAULT_MIGRATION_VERSION: i64 = 1;
+
 pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
     upgrade_saved_sessions_schema(connection)?;
     connection.execute_batch("pragma foreign_keys = on;")?;
@@ -262,10 +264,42 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
     ensure_transfer_task_strategy_columns(&transaction)?;
     ensure_ai_tool_audit_columns(&transaction)?;
     ensure_ai_tool_pending_columns(&transaction)?;
+    enable_existing_ssh_container_entries(&transaction)?;
     reset_workspace_runtime_status(&transaction)?;
     drop_legacy_agent_runs(&transaction)?;
     drop_source_reuse_records(&transaction)?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn enable_existing_ssh_container_entries(transaction: &rusqlite::Transaction<'_>) -> AppResult<()> {
+    let user_version =
+        transaction.query_row("pragma user_version", [], |row| row.get::<_, i64>(0))?;
+    if user_version >= SSH_CONTAINER_DEFAULT_MIGRATION_VERSION {
+        return Ok(());
+    }
+    let default_container =
+        serde_json::to_string(&crate::models::session::SshContainerOptions::default())
+            .map_err(|error| crate::error::AppError::storage(error.to_string()))?;
+    transaction.execute(
+        "
+        update saved_sessions
+        set ssh_options_json = case
+          when ssh_options_json is null
+            or json_valid(ssh_options_json) = 0
+            or json_type(ssh_options_json) <> 'object'
+          then json_set('{}', '$.container', json(?1))
+          when json_type(ssh_options_json, '$.container') = 'object'
+          then json_set(ssh_options_json, '$.container.enabled', json('true'))
+          else json_set(ssh_options_json, '$.container', json(?1))
+        end
+        where type = 'ssh'
+        ",
+        [&default_container],
+    )?;
+    transaction.execute_batch(&format!(
+        "pragma user_version = {SSH_CONTAINER_DEFAULT_MIGRATION_VERSION};"
+    ))?;
     Ok(())
 }
 

@@ -531,6 +531,7 @@ describe("SessionTree", () => {
 
     await click(button(view.container, "容器"));
     expect(editorFields(view.container).textContent).toContain("启用容器入口");
+    expect(input(view.container, "启用容器").checked).toBe(true);
     expect(editorFields(view.container).textContent).not.toContain("在连接时自动打开");
 
     view.unmount();

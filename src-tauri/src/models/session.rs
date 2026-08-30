@@ -84,7 +84,7 @@ pub struct SshOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SshContainerOptions {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_container_runtime")]
     pub runtime: String,
@@ -96,6 +96,33 @@ pub struct SshContainerOptions {
     pub user: Option<String>,
     #[serde(default)]
     pub workdir: Option<String>,
+}
+
+impl Default for SshOptions {
+    fn default() -> Self {
+        Self {
+            connect_timeout_ms: Some(10_000),
+            keepalive_interval_ms: Some(30_000),
+            proxy_command: None,
+            identity_file: None,
+            jump_hosts: Vec::new(),
+            tunnels: Vec::new(),
+            container: Some(SshContainerOptions::default()),
+        }
+    }
+}
+
+impl Default for SshContainerOptions {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            runtime: default_container_runtime(),
+            container: String::new(),
+            shell: Some("/bin/sh".to_string()),
+            user: None,
+            workdir: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

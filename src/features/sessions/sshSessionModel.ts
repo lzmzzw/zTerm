@@ -15,7 +15,7 @@ export const defaultSshOptions: SshOptions = {
   jump_hosts: [],
   tunnels: [],
   container: {
-    enabled: false,
+    enabled: true,
     runtime: "docker",
     container: "",
     shell: "/bin/sh",
@@ -128,7 +128,7 @@ export function emptySshTunnel(mode: SshTunnelMode): SshTunnel {
 
 export function emptySshContainer(): NonNullable<SshOptions["container"]> {
   return {
-    enabled: false,
+    enabled: true,
     runtime: "docker",
     container: "",
     shell: "/bin/sh",

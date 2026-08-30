@@ -9,6 +9,7 @@ import {
   sessionEditorDialogTitle,
   sessionEditorSections,
 } from "./sessionEditorModel";
+import { defaultSshOptions, emptySshContainer } from "./sshSessionModel";
 import type { SavedSession } from "./types";
 
 function session(overrides: Partial<SavedSession>): SavedSession {
@@ -50,6 +51,15 @@ describe("sessionEditorModel", () => {
       working_directory: null,
       environment: [],
     });
+  });
+
+  it("enables the SSH container entry by default", () => {
+    expect(defaultSshOptions.container).toMatchObject({
+      enabled: true,
+      runtime: "docker",
+      shell: "/bin/sh",
+    });
+    expect(emptySshContainer().enabled).toBe(true);
   });
 
   it("returns editor defaults by session type", () => {

@@ -8,7 +8,8 @@ use crate::{
     error::{AppError, AppResult},
     models::session::{
         AuthMode, DeleteResult, LocalOptions, RdpOptions, SavedSession, SavedSessionDraft,
-        SessionGroup, SessionGroupDraft, SessionType, SessionsList,
+        SessionGroup, SessionGroupDraft, SessionType, SessionsList, SshContainerOptions,
+        SshOptions,
     },
     storage::sqlite::SqliteStore,
 };
@@ -149,7 +150,7 @@ pub fn delete_session_group(store: &SqliteStore, id: &str) -> AppResult<DeleteRe
     })
 }
 
-pub fn save_session(store: &SqliteStore, draft: SavedSessionDraft) -> AppResult<SavedSession> {
+pub fn save_session(store: &SqliteStore, mut draft: SavedSessionDraft) -> AppResult<SavedSession> {
     let name = required_text("会话名称", draft.name)?;
     let host = normalize_host(draft.session_type, draft.host)?;
     let username = normalize_username(draft.session_type, draft.username)?;
@@ -161,6 +162,12 @@ pub fn save_session(store: &SqliteStore, draft: SavedSessionDraft) -> AppResult<
     }
     if draft.session_type == SessionType::Local {
         validate_local_options(draft.local_options.as_ref())?;
+    }
+    if draft.session_type == SessionType::Ssh {
+        let options = draft.ssh_options.get_or_insert_with(SshOptions::default);
+        options
+            .container
+            .get_or_insert_with(SshContainerOptions::default);
     }
 
     let id = normalized_id(draft.id);

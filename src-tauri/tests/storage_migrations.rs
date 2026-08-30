@@ -648,6 +648,34 @@ fn migrations_upgrade_existing_saved_sessions_without_losing_data() {
             Some("group-1".to_string())
         )
     );
+    let container_enabled: i64 = connection
+        .query_row(
+            "select json_extract(ssh_options_json, '$.container.enabled')
+             from saved_sessions where id = 'ssh-existing'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("existing SSH container option should migrate");
+    assert_eq!(container_enabled, 1);
+
+    connection
+        .execute(
+            "update saved_sessions
+             set ssh_options_json = json_set(ssh_options_json, '$.container.enabled', json('false'))
+             where id = 'ssh-existing'",
+            [],
+        )
+        .expect("container option should be disabled explicitly");
+    run_migrations(&mut connection).expect("completed migration should be idempotent");
+    let container_enabled_after_opt_out: i64 = connection
+        .query_row(
+            "select json_extract(ssh_options_json, '$.container.enabled')
+             from saved_sessions where id = 'ssh-existing'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("explicit container opt-out should remain");
+    assert_eq!(container_enabled_after_opt_out, 0);
     assert!(column_exists(
         &connection,
         "saved_sessions",
