@@ -69,6 +69,15 @@ interface TerminalHistoryChangedEvent {
 
 const MAX_TERMINAL_OUTPUT_CHARS = 50_000;
 const MAX_TERMINAL_VISUAL_TAIL_CHARS = 8_000;
+const PATH_COMMAND_CONTEXT =
+  /^(?:cat|cd|cp|ls|mv|rm|tar|unzip|zip)(?:\s|$)/i;
+const PATH_COMMAND_LOOKUP =
+  /^(?:cat|cd|cp|ls|mv|rm|tar|unzip|zip)\s+/i;
+const DOCKER_COMPOSE_CONTEXT = /^(?:docker\s+compose|docker-compose)(?:\s|$)/i;
+const DOCKER_COMPOSE_PATH_CONTEXT =
+  /(?:^|\s)(?:-f|--file|--env-file|--project-directory)(?:=[^\s]*|\s+[^\s]*)?$/i;
+const DOCKER_COMPOSE_PATH_LOOKUP =
+  /(?:^|\s)(?:-f|--file|--env-file|--project-directory)(?:=[^\s]*|\s+[^\s]*)$/i;
 
 interface TerminalState {
   runtimes: Record<string, RuntimeSessionInfo>;
@@ -376,12 +385,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
 function isPathCompletionInput(input: string) {
   const segment = input.split(/[|;&](?![|&])/).at(-1)?.trimStart() ?? "";
-  return /^(?:cd|cp|mv|rm|ls|cat)(?:\s|$)/i.test(segment);
+  return PATH_COMMAND_CONTEXT.test(segment) || (
+    DOCKER_COMPOSE_CONTEXT.test(segment) && DOCKER_COMPOSE_PATH_CONTEXT.test(segment)
+  );
 }
 
 function isPathCompletionLookupInput(input: string) {
   const segment = input.split(/[|;&](?![|&])/).at(-1)?.trimStart() ?? "";
-  return /^(?:cd|cp|mv|rm|ls|cat)\s+/i.test(segment);
+  return PATH_COMMAND_LOOKUP.test(segment) || (
+    DOCKER_COMPOSE_CONTEXT.test(segment) && DOCKER_COMPOSE_PATH_LOOKUP.test(segment)
+  );
 }
 
 function delay(milliseconds: number) {

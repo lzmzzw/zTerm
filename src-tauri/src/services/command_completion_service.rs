@@ -66,7 +66,8 @@ const POSIX_BUILTINS: &[&str] = &[
     "false", "fg", "jobs", "kill", "printf", "pwd", "read", "return", "set", "shift", "test",
     "times", "trap", "true", "type", "ulimit", "umask", "unalias", "unset", "wait",
 ];
-const PATH_ARGUMENT_COMMANDS: &[&str] = &["cat", "cd", "cp", "ls", "mv", "rm"];
+const PATH_OPERAND_COMMANDS: &[&str] = &["cat", "cp", "ls", "mv", "rm"];
+const DIRECTORY_OPERAND_COMMANDS: &[&str] = &["cd"];
 
 #[derive(Clone, Default)]
 pub struct CommandCompletionService {
@@ -160,6 +161,13 @@ impl CommandCompletionService {
 
         self.push_path_candidates(&request, &context, &mut seen_replacements, &mut candidates)?;
         if path_context {
+            self.boost_path_candidates_with_history(
+                store,
+                &request,
+                context.history_scope_kind,
+                context.history_scope_id.as_deref(),
+                &mut candidates,
+            )?;
             candidates.sort_by(|left, right| {
                 right
                     .score
@@ -627,7 +635,7 @@ impl CommandCompletionService {
             if candidates.len() >= request.limit {
                 break;
             }
-            if query.directories_only && entry.kind != FileKind::Directory {
+            if !query.entry_filter.accepts(entry.kind) {
                 continue;
             }
             if query.name_prefix.is_empty() && entry.name.starts_with('.') {
@@ -686,6 +694,41 @@ impl CommandCompletionService {
                     "远端路径".to_string()
                 },
             });
+        }
+        Ok(())
+    }
+
+    fn boost_path_candidates_with_history(
+        &self,
+        store: &SqliteStore,
+        request: &NormalizedCompletionRequest,
+        scope_kind: Option<HistoryScopeKind>,
+        scope_id: Option<&str>,
+        candidates: &mut [CommandCompletionCandidate],
+    ) -> AppResult<()> {
+        if candidates.is_empty() {
+            return Ok(());
+        }
+        let (Some(scope_kind), Some(scope_id)) = (scope_kind, scope_id) else {
+            return Ok(());
+        };
+        let history = search_command_history(
+            store,
+            HistorySearchOptions {
+                query: Some(request.prefix.clone()),
+                scope_kind: Some(scope_kind),
+                scope_id: Some(scope_id.to_string()),
+                limit: Some(HISTORY_SCAN_LIMIT),
+                deduplicate: Some(true),
+            },
+        )?;
+        for candidate in candidates {
+            if history.iter().any(|entry| {
+                historical_command_uses_path(&entry.command, &candidate.replacement_text)
+            }) {
+                candidate.score = (candidate.score + 0.02).min(0.99);
+                candidate.source_label = format!("{} · 历史常用", candidate.source_label);
+            }
         }
         Ok(())
     }
@@ -896,7 +939,46 @@ struct PathQuery {
     quote: Option<char>,
     quote_closed: bool,
     separator: &'static str,
-    directories_only: bool,
+    entry_filter: PathEntryFilter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathEntryFilter {
+    Any,
+    Directories,
+    Files,
+}
+
+impl PathEntryFilter {
+    fn accepts(self, kind: FileKind) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Directories => kind == FileKind::Directory,
+            Self::Files => kind == FileKind::File,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PathArgumentTarget {
+    entry_filter: PathEntryFilter,
+    inline_value_offset: usize,
+}
+
+impl PathArgumentTarget {
+    const fn new(entry_filter: PathEntryFilter) -> Self {
+        Self {
+            entry_filter,
+            inline_value_offset: 0,
+        }
+    }
+
+    const fn inline(entry_filter: PathEntryFilter, inline_value_offset: usize) -> Self {
+        Self {
+            entry_filter,
+            inline_value_offset,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -911,15 +993,9 @@ fn path_query(prefix: &str, cwd: Option<&str>, local: bool) -> Option<PathQuery>
     let segment_start = command_segment_start(prefix);
     let segment = prefix.chars().skip(segment_start).collect::<String>();
     let tokens = shell_tokens(&segment, segment_start);
-    let command = tokens.first()?.value.to_ascii_lowercase();
-    if !is_path_argument_command(&command) {
-        return None;
-    }
     let ends_with_space = prefix.chars().last().is_some_and(char::is_whitespace);
-    if tokens.len() < 2 && !ends_with_space {
-        return None;
-    }
-    let token = if ends_with_space {
+    let target = path_argument_target(&tokens, ends_with_space)?;
+    let mut token = if ends_with_space {
         ShellToken {
             start: prefix.chars().count(),
             value: String::new(),
@@ -929,6 +1005,16 @@ fn path_query(prefix: &str, cwd: Option<&str>, local: bool) -> Option<PathQuery>
     } else {
         tokens.last()?.to_owned()
     };
+    if target.inline_value_offset > 0 {
+        token.start += target.inline_value_offset;
+        token.value = token
+            .value
+            .chars()
+            .skip(target.inline_value_offset)
+            .collect();
+        token.quote = None;
+        token.quote_closed = false;
+    }
     if token.start == tokens[0].start || contains_unsafe_path_expression(&token.value) {
         return None;
     }
@@ -955,21 +1041,243 @@ fn path_query(prefix: &str, cwd: Option<&str>, local: bool) -> Option<PathQuery>
         quote: token.quote,
         quote_closed: token.quote_closed,
         separator,
-        directories_only: command == "cd",
+        entry_filter: target.entry_filter,
     })
 }
 
-fn is_path_argument_command(command: &str) -> bool {
-    PATH_ARGUMENT_COMMANDS.contains(&command.to_ascii_lowercase().as_str())
+fn path_argument_target(
+    tokens: &[ShellToken],
+    ends_with_space: bool,
+) -> Option<PathArgumentTarget> {
+    let command = tokens.first()?.value.to_ascii_lowercase();
+    let current_index = if ends_with_space {
+        tokens.len()
+    } else {
+        tokens.len().checked_sub(1)?
+    };
+    if current_index == 0 {
+        return None;
+    }
+    let current = tokens
+        .get(current_index)
+        .map(|token| token.value.as_str())
+        .unwrap_or("");
+    let previous = current_index
+        .checked_sub(1)
+        .and_then(|index| tokens.get(index))
+        .map(|token| token.value.as_str());
+
+    if DIRECTORY_OPERAND_COMMANDS.contains(&command.as_str()) {
+        return (!current.starts_with('-'))
+            .then_some(PathArgumentTarget::new(PathEntryFilter::Directories));
+    }
+    if PATH_OPERAND_COMMANDS.contains(&command.as_str()) {
+        return (!current.starts_with('-'))
+            .then_some(PathArgumentTarget::new(PathEntryFilter::Any));
+    }
+    match command.as_str() {
+        "tar" => tar_path_argument_target(current, previous, current_index == 2),
+        "zip" => zip_path_argument_target(tokens, current_index, current, previous),
+        "unzip" => unzip_path_argument_target(tokens, current_index, current, previous),
+        "docker"
+            if tokens
+                .get(1)
+                .is_some_and(|token| token.value.eq_ignore_ascii_case("compose")) =>
+        {
+            docker_compose_path_argument_target(current, previous)
+        }
+        "docker-compose" => docker_compose_path_argument_target(current, previous),
+        _ => None,
+    }
+}
+
+fn tar_path_argument_target(
+    current: &str,
+    previous: Option<&str>,
+    previous_is_initial_option_bundle: bool,
+) -> Option<PathArgumentTarget> {
+    if let Some(target) = inline_path_option(
+        current,
+        &[
+            ("--file", PathEntryFilter::Files),
+            ("--files-from", PathEntryFilter::Files),
+            ("--exclude-from", PathEntryFilter::Files),
+            ("--directory", PathEntryFilter::Directories),
+        ],
+    ) {
+        return Some(target);
+    }
+    match previous {
+        Some("-C" | "--directory") => {
+            return Some(PathArgumentTarget::new(PathEntryFilter::Directories));
+        }
+        Some("-f" | "--file" | "-T" | "--files-from" | "-X" | "--exclude-from") => {
+            return Some(PathArgumentTarget::new(PathEntryFilter::Files));
+        }
+        Some(option) if previous_is_initial_option_bundle && tar_short_archive_option(option) => {
+            return Some(PathArgumentTarget::new(PathEntryFilter::Files));
+        }
+        Some("--exclude" | "--transform" | "--mtime" | "--owner" | "--group" | "--mode") => {
+            return None;
+        }
+        _ => {}
+    }
+    (!current.starts_with('-')).then_some(PathArgumentTarget::new(PathEntryFilter::Any))
+}
+
+fn zip_path_argument_target(
+    tokens: &[ShellToken],
+    current_index: usize,
+    current: &str,
+    previous: Option<&str>,
+) -> Option<PathArgumentTarget> {
+    match previous {
+        Some("-b" | "--temp-path") => {
+            return Some(PathArgumentTarget::new(PathEntryFilter::Directories));
+        }
+        Some("-x" | "--exclude" | "-i" | "--include") => return None,
+        _ => {}
+    }
+    if current.starts_with('-') {
+        return None;
+    }
+    let positional_count = tokens[1..current_index.min(tokens.len())]
+        .iter()
+        .filter(|token| !token.value.starts_with('-'))
+        .count();
+    Some(PathArgumentTarget::new(if positional_count == 0 {
+        PathEntryFilter::Files
+    } else {
+        PathEntryFilter::Any
+    }))
+}
+
+fn unzip_path_argument_target(
+    tokens: &[ShellToken],
+    current_index: usize,
+    current: &str,
+    previous: Option<&str>,
+) -> Option<PathArgumentTarget> {
+    if previous == Some("-d") {
+        return Some(PathArgumentTarget::new(PathEntryFilter::Directories));
+    }
+    if current.starts_with('-') || unzip_archive_seen(tokens, current_index) {
+        return None;
+    }
+    Some(PathArgumentTarget::new(PathEntryFilter::Files))
+}
+
+fn docker_compose_path_argument_target(
+    current: &str,
+    previous: Option<&str>,
+) -> Option<PathArgumentTarget> {
+    if let Some(target) = inline_path_option(
+        current,
+        &[
+            ("--file", PathEntryFilter::Files),
+            ("--env-file", PathEntryFilter::Files),
+            ("--project-directory", PathEntryFilter::Directories),
+        ],
+    ) {
+        return Some(target);
+    }
+    match previous {
+        Some("-f" | "--file" | "--env-file") => {
+            Some(PathArgumentTarget::new(PathEntryFilter::Files))
+        }
+        Some("--project-directory") => Some(PathArgumentTarget::new(PathEntryFilter::Directories)),
+        _ => None,
+    }
+}
+
+fn inline_path_option(
+    current: &str,
+    options: &[(&str, PathEntryFilter)],
+) -> Option<PathArgumentTarget> {
+    let lowercase = current.to_ascii_lowercase();
+    options.iter().find_map(|(option, entry_filter)| {
+        let prefix = format!("{option}=");
+        lowercase
+            .starts_with(&prefix)
+            .then_some(PathArgumentTarget::inline(
+                *entry_filter,
+                prefix.chars().count(),
+            ))
+    })
+}
+
+fn tar_short_archive_option(option: &str) -> bool {
+    let option = option.strip_prefix('-').unwrap_or(option);
+    option.len() > 1
+        && option.ends_with('f')
+        && option
+            .chars()
+            .all(|character| character.is_ascii_alphabetic())
+}
+
+fn unzip_archive_seen(tokens: &[ShellToken], current_index: usize) -> bool {
+    let mut skip_next = false;
+    for token in tokens.iter().take(current_index).skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if matches!(token.value.as_str(), "-P" | "-d") {
+            skip_next = true;
+            continue;
+        }
+        if !token.value.starts_with('-') {
+            return true;
+        }
+    }
+    false
 }
 
 fn path_command_waiting_for_argument(prefix: &str) -> bool {
     let segment_start = command_segment_start(prefix);
     let segment = prefix.chars().skip(segment_start).collect::<String>();
-    let command = segment.trim();
-    !command.is_empty()
-        && !command.chars().any(char::is_whitespace)
-        && is_path_argument_command(command)
+    let tokens = shell_tokens(&segment, segment_start);
+    let Some(command) = tokens.first().map(|token| token.value.to_ascii_lowercase()) else {
+        return false;
+    };
+    if tokens.len() == 1 {
+        return DIRECTORY_OPERAND_COMMANDS.contains(&command.as_str())
+            || PATH_OPERAND_COMMANDS.contains(&command.as_str())
+            || matches!(command.as_str(), "tar" | "zip" | "unzip");
+    }
+    let last = tokens.last().map(|token| token.value.as_str());
+    match command.as_str() {
+        "tar" => last.is_some_and(|option| {
+            matches!(
+                option,
+                "-C" | "--directory"
+                    | "-f"
+                    | "--file"
+                    | "-T"
+                    | "--files-from"
+                    | "-X"
+                    | "--exclude-from"
+            ) || tar_short_archive_option(option)
+        }),
+        "zip" => last.is_some_and(|option| matches!(option, "-b" | "--temp-path")),
+        "unzip" => last == Some("-d"),
+        "docker"
+            if tokens
+                .get(1)
+                .is_some_and(|token| token.value.eq_ignore_ascii_case("compose")) =>
+        {
+            last.is_some_and(is_docker_compose_path_option)
+        }
+        "docker-compose" => last.is_some_and(is_docker_compose_path_option),
+        _ => false,
+    }
+}
+
+fn is_docker_compose_path_option(option: &str) -> bool {
+    matches!(
+        option,
+        "-f" | "--file" | "--env-file" | "--project-directory"
+    )
 }
 
 fn shell_tokens(value: &str, offset: usize) -> Vec<ShellToken> {
@@ -1419,6 +1727,22 @@ fn command_starts_with(command: &str, prefix: &str) -> bool {
     }
 }
 
+fn historical_command_uses_path(command: &str, candidate: &str) -> bool {
+    let command = command.trim();
+    let candidate = candidate.trim();
+    let directory_candidate = candidate.ends_with('/') || candidate.ends_with('\\');
+    let candidate_without_separator = candidate.trim_end_matches(['/', '\\']);
+    if command == candidate_without_separator {
+        return true;
+    }
+    if directory_candidate && command.starts_with(candidate) {
+        return true;
+    }
+    command.strip_prefix(candidate).is_some_and(|remainder| {
+        remainder.is_empty() || remainder.chars().next().is_some_and(char::is_whitespace)
+    })
+}
+
 fn char_prefix(value: &str, chars: usize) -> String {
     value.chars().take(chars).collect()
 }
@@ -1440,9 +1764,10 @@ mod tests {
             terminal::RuntimeSessionKind,
         },
         services::command_completion_service::{
-            command_token, list_local_path_entries, parse_remote_command_output, path_query,
-            remote_path_cache_key, resolve_local_cwd, resolve_remote_cwd_candidate,
-            CommandCompletionService,
+            command_token, list_local_path_entries, parse_remote_command_output,
+            path_command_waiting_for_argument, path_query, remote_path_cache_key,
+            resolve_local_cwd, resolve_remote_cwd_candidate, CommandCompletionService,
+            PathEntryFilter,
         },
         storage::{history::insert_command_history, sessions::save_session, sqlite::SqliteStore},
     };
@@ -1637,6 +1962,53 @@ mod tests {
     }
 
     #[test]
+    fn path_query_understands_archive_and_docker_compose_argument_positions() {
+        let tar_archive = path_query("tar -czf ar", Some("/srv"), false).expect("tar archive");
+        assert_eq!(tar_archive.entry_filter, PathEntryFilter::Files);
+        assert_eq!(tar_archive.name_prefix, "ar");
+
+        let tar_directory =
+            path_query("tar --directory=sr", Some("/srv"), false).expect("tar directory");
+        assert_eq!(tar_directory.entry_filter, PathEntryFilter::Directories);
+        assert_eq!(tar_directory.name_prefix, "sr");
+        assert_eq!(
+            tar_directory.token_start,
+            "tar --directory=".chars().count()
+        );
+
+        let zip_archive = path_query("zip ar", Some("/srv"), false).expect("zip archive");
+        assert_eq!(zip_archive.entry_filter, PathEntryFilter::Files);
+        let zip_source = path_query("zip archive.zip sr", Some("/srv"), false).expect("zip source");
+        assert_eq!(zip_source.entry_filter, PathEntryFilter::Any);
+
+        let unzip_archive = path_query("unzip ar", Some("/srv"), false).expect("unzip archive");
+        assert_eq!(unzip_archive.entry_filter, PathEntryFilter::Files);
+        assert!(path_query("unzip archive.zip member", Some("/srv"), false).is_none());
+        let unzip_destination =
+            path_query("unzip archive.zip -d sr", Some("/srv"), false).expect("unzip target");
+        assert_eq!(unzip_destination.entry_filter, PathEntryFilter::Directories);
+
+        let compose_file =
+            path_query("docker compose -f co", Some("/srv"), false).expect("compose file");
+        assert_eq!(compose_file.entry_filter, PathEntryFilter::Files);
+        let compose_inline = path_query("docker compose --file=co", Some("/srv"), false)
+            .expect("inline compose file");
+        assert_eq!(compose_inline.name_prefix, "co");
+        assert_eq!(
+            compose_inline.token_start,
+            "docker compose --file=".chars().count()
+        );
+        let project_directory =
+            path_query("docker compose --project-directory sr", Some("/srv"), false)
+                .expect("compose project directory");
+        assert_eq!(project_directory.entry_filter, PathEntryFilter::Directories);
+
+        assert!(path_command_waiting_for_argument("tar -czf"));
+        assert!(path_command_waiting_for_argument("docker compose --file"));
+        assert!(!path_command_waiting_for_argument("docker compose"));
+    }
+
+    #[test]
     fn remote_path_cache_is_scoped_and_cd_only_returns_directories() {
         let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
         let service = CommandCompletionService::new();
@@ -1781,6 +2153,20 @@ mod tests {
             },
         )
         .expect("history insert");
+        insert_command_history(
+            store.as_ref(),
+            CommandHistoryDraft {
+                scope_kind: Some(HistoryScopeKind::SavedSession),
+                scope_id: Some(session.id.clone()),
+                runtime_session_id: "runtime-path".to_string(),
+                command: "cd ssh".to_string(),
+                cwd: Some("/root".to_string()),
+                exit_code: Some(0),
+                started_at_ms: 20,
+                finished_at_ms: Some(21),
+            },
+        )
+        .expect("frequent path history insert");
 
         let service = CommandCompletionService::new();
         service.register_runtime(
@@ -1831,6 +2217,8 @@ mod tests {
             )
             .expect("visible path completion");
         assert_eq!(visible.len(), 2);
+        assert_eq!(visible[0].replacement_text, "cd ssh/");
+        assert_eq!(visible[0].source_label, "远端路径 · 历史常用");
         assert!(visible
             .iter()
             .all(|candidate| candidate.provider == CommandCompletionProvider::Path));
@@ -1873,6 +2261,78 @@ mod tests {
         assert!(hidden
             .iter()
             .any(|candidate| candidate.replacement_text == "cd .cache/"));
+    }
+
+    #[test]
+    fn archive_and_compose_commands_return_only_matching_filesystem_entries() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+        let service = CommandCompletionService::new();
+        service.register_runtime(
+            "runtime-tools",
+            RuntimeSessionKind::Ssh,
+            Some("session-tools".to_string()),
+            None,
+            None,
+        );
+        service.store_remote_path_entries(
+            "session-tools",
+            "/srv",
+            "/srv",
+            vec![
+                path_entry("archive.zip", FileKind::File),
+                path_entry("compose.yaml", FileKind::File),
+                path_entry("config", FileKind::Directory),
+                path_entry("src", FileKind::Directory),
+            ],
+        );
+
+        for (input, expected) in [
+            ("tar -xf ar", "tar -xf archive.zip"),
+            ("unzip ar", "unzip archive.zip"),
+            ("zip archive.zip s", "zip archive.zip src/"),
+            ("tar -czf backup.tar s", "tar -czf backup.tar src/"),
+            ("docker compose -f co", "docker compose -f compose.yaml"),
+            (
+                "docker compose --file=co",
+                "docker compose --file=compose.yaml",
+            ),
+            (
+                "docker compose --project-directory c",
+                "docker compose --project-directory config/",
+            ),
+        ] {
+            let candidates = service
+                .suggest(
+                    store.as_ref(),
+                    CommandCompletionRequest {
+                        runtime_session_id: "runtime-tools".to_string(),
+                        input: input.to_string(),
+                        cursor: input.chars().count(),
+                        limit: Some(8),
+                        cwd: Some("/srv".to_string()),
+                    },
+                )
+                .expect("tool path completion");
+            assert_eq!(candidates.len(), 1, "unexpected candidates for {input:?}");
+            assert_eq!(candidates[0].provider, CommandCompletionProvider::Path);
+            assert_eq!(candidates[0].replacement_text, expected);
+        }
+
+        let compose_files = service
+            .suggest(
+                store.as_ref(),
+                CommandCompletionRequest {
+                    runtime_session_id: "runtime-tools".to_string(),
+                    input: "docker compose -f ".to_string(),
+                    cursor: 18,
+                    limit: Some(8),
+                    cwd: Some("/srv".to_string()),
+                },
+            )
+            .expect("compose files");
+        assert!(compose_files
+            .iter()
+            .all(|candidate| !candidate.replacement_text.ends_with("config/")));
     }
 
     #[test]

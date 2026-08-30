@@ -267,6 +267,86 @@ describe("terminalStore", () => {
     vi.useRealTimers();
   });
 
+  it("keeps archive command completion in filesystem context", async () => {
+    useTerminalStore.setState({
+      runtimes: {
+        "runtime-ssh": {
+          runtime_session_id: "runtime-ssh",
+          saved_session_id: "session-1",
+          history_scope_kind: "saved_session",
+          history_scope_id: "session-1",
+          pane_id: "pane-1",
+          title: "SSH",
+          kind: "ssh",
+          initial_cwd: null,
+          cols: 120,
+          rows: 32,
+        },
+      },
+    });
+    invokeMock.mockResolvedValue([
+      {
+        provider: "history",
+        replacement_text: "tar -xf missing.tar",
+        suffix: " -xf missing.tar",
+        replacement_range: { start: 0, end: 3 },
+        score: 0.9,
+        source_label: "当前会话历史",
+      },
+    ]);
+
+    await expect(
+      useTerminalStore.getState().suggestCompletion("runtime-ssh", "tar", 3, "/srv"),
+    ).resolves.toEqual([]);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries docker compose file options and returns only the path provider", async () => {
+    vi.useFakeTimers();
+    useTerminalStore.setState({
+      runtimes: {
+        "runtime-ssh": {
+          runtime_session_id: "runtime-ssh",
+          saved_session_id: "session-1",
+          history_scope_kind: "saved_session",
+          history_scope_id: "session-1",
+          pane_id: "pane-1",
+          title: "SSH",
+          kind: "ssh",
+          initial_cwd: null,
+          cols: 120,
+          rows: 32,
+        },
+      },
+    });
+    const historyCandidate = {
+      provider: "history",
+      replacement_text: "docker compose --file=config.yaml",
+      suffix: "nfig.yaml",
+      replacement_range: { start: 22, end: 24 },
+      score: 0.9,
+      source_label: "当前会话历史",
+    };
+    const pathCandidate = {
+      provider: "path",
+      replacement_text: "docker compose --file=compose.yaml",
+      suffix: "mpose.yaml",
+      replacement_range: { start: 22, end: 24 },
+      score: 0.95,
+      source_label: "远端路径",
+    };
+    invokeMock.mockResolvedValueOnce([historyCandidate]).mockResolvedValueOnce([pathCandidate]);
+
+    const pending = useTerminalStore
+      .getState()
+      .suggestCompletion("runtime-ssh", "docker compose --file=co", 24, "/srv");
+    await vi.advanceTimersByTimeAsync(300);
+
+    await expect(pending).resolves.toEqual([pathCandidate]);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
   it("resolves cwd through the runtime-scoped IPC command", async () => {
     invokeMock.mockResolvedValue("/srv/logs");
 
