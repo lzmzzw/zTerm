@@ -15,7 +15,6 @@
   --zt-space-2: 8px;
   --zt-space-3: 12px;
   --zt-space-4: 16px;
-  --zt-space-6: 24px;
   --zt-radius-control: 6px;
   --zt-radius-pane: 5px;
   --zt-radius-window: 10px;
@@ -608,7 +607,7 @@ a[href]:focus-visible,
 
 .zt-sync-channel-row small {
   color: var(--zt-text-muted);
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
 }
 
 .zt-sync-channel-row > button {
@@ -651,7 +650,7 @@ a[href]:focus-visible,
   flex: 1;
   overflow: hidden;
   color: var(--zt-text-primary);
-  font-size: 15px;
+  font-size: var(--zt-font-size-section);
   font-weight: 600;
   letter-spacing: 0;
   text-align: left;
@@ -1045,7 +1044,7 @@ a[href]:focus-visible,
 .zt-select-option-description {
   margin-top: 2px;
   color: var(--zt-text-muted);
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
   font-weight: 400;
 }
 
@@ -1482,7 +1481,7 @@ a[href]:focus-visible,
 .zt-tunnel-meta,
 .zt-tunnel-list-item dt {
   color: var(--zt-text-muted);
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
 }
 
 .zt-tunnel-list {
@@ -1517,7 +1516,7 @@ a[href]:focus-visible,
   background: var(--zt-bg-input);
   color: var(--zt-text-secondary);
   padding: 2px 6px;
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
 }
 
 .zt-container-enter-button {
@@ -1558,7 +1557,7 @@ a[href]:focus-visible,
   min-width: 0;
   overflow: hidden;
   color: var(--zt-text-muted);
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2877,7 +2876,7 @@ a[href]:focus-visible,
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--zt-text-muted);
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
   line-height: 1.4;
 }
 
@@ -2922,7 +2921,7 @@ a[href]:focus-visible,
   align-items: center;
   gap: 6px;
   color: var(--zt-text-muted);
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
 }
 
 .zt-monitor-overview select {
@@ -2931,7 +2930,7 @@ a[href]:focus-visible,
   background: var(--zt-bg-input);
   color: var(--zt-text-primary);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
   padding: 3px 5px;
 }
 
@@ -2939,7 +2938,7 @@ a[href]:focus-visible,
   width: 112px;
   min-height: 24px;
   padding: 0 24px 0 8px;
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
 }
 
 .zt-monitor-overview .zt-select-chevron {
@@ -3020,7 +3019,7 @@ a[href]:focus-visible,
   display: grid;
   gap: 6px;
   margin: 8px 0 0;
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
 }
 
 .zt-monitor-info-rows div {
@@ -3049,12 +3048,6 @@ a[href]:focus-visible,
 
 .zt-spin {
   animation: zt-spin 0.9s linear infinite;
-}
-
-@keyframes zt-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .zt-file-panel {
@@ -3204,7 +3197,7 @@ a[href]:focus-visible,
   border-radius: 10px;
   background: var(--zt-accent);
   color: #fff;
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
   font-weight: 700;
 }
 
@@ -4337,7 +4330,7 @@ a[href]:focus-visible,
 
 .zt-agent-codex-target span {
   color: var(--zt-text-muted);
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
 }
 
 .zt-agent-codex-terminal {
@@ -4578,7 +4571,7 @@ a[href]:focus-visible,
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
+  font-size: var(--zt-font-size-section);
   font-weight: 600;
   letter-spacing: 0;
 }
@@ -5622,12 +5615,6 @@ a[href]:focus-visible,
   opacity: 0.55;
 }
 
-.zt-settings-status {
-  margin: 0;
-  color: var(--zt-success);
-  font-size: var(--zt-font-size-ui);
-}
-
 .zt-settings-list {
   display: grid;
   min-height: 0;
@@ -5773,7 +5760,7 @@ a[href]:focus-visible,
 
 .zt-mcp-tool-item code {
   color: var(--zt-text-secondary);
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
 }
 
 .zt-mcp-tool-item p {
@@ -6128,7 +6115,7 @@ a[href]:focus-visible,
 
 .zt-ssh-tunnel-mode-grid small {
   color: var(--zt-text-muted);
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
   line-height: 1.35;
 }
 
@@ -6138,7 +6125,7 @@ a[href]:focus-visible,
   background: var(--zt-bg-input);
   color: var(--zt-text-secondary);
   padding: 2px 6px;
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
   white-space: nowrap;
 }
 
@@ -6209,7 +6196,7 @@ a[href]:focus-visible,
 .zt-ssh-tunnel-card-grid label span {
   overflow: hidden;
   color: var(--zt-text-muted);
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -6425,7 +6412,7 @@ a[href]:focus-visible,
   border-radius: var(--zt-radius-control);
   background: var(--zt-bg-surface);
   color: var(--zt-text-secondary);
-  font-size: 11px;
+  font-size: var(--zt-font-size-caption);
 }
 
 .zt-settings-about-cards {

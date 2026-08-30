@@ -19,6 +19,7 @@ use crate::{
         },
         sqlite::SqliteStore,
     },
+    validation::required_text,
 };
 
 pub const KEYRING_SERVICE: &str = "zTerm";
@@ -203,12 +204,4 @@ fn normalized_id(id: Option<String>) -> Option<String> {
             Some(value)
         }
     })
-}
-
-fn required_text(label: &str, value: impl AsRef<str>) -> AppResult<String> {
-    let value = value.as_ref().trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
 }

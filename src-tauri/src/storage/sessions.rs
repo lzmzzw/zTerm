@@ -1,6 +1,4 @@
 // Author: Liz
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rusqlite::{params, types::Type, OptionalExtension, Row};
 use uuid::Uuid;
 
@@ -12,6 +10,8 @@ use crate::{
         SshOptions,
     },
     storage::sqlite::SqliteStore,
+    time::now_ms,
+    validation::required_text,
 };
 
 pub const SESSION_GROUPS_TABLE: &str = "session_groups";
@@ -323,14 +323,6 @@ fn map_session(row: &Row<'_>) -> rusqlite::Result<SavedSession> {
     })
 }
 
-fn required_text(label: &str, value: impl AsRef<str>) -> AppResult<String> {
-    let value = value.as_ref().trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
-}
-
 fn normalized_id(id: Option<String>) -> Option<String> {
     id.and_then(|value| {
         let value = value.trim().to_string();
@@ -415,11 +407,4 @@ fn bool_to_i64(value: bool) -> i64 {
     } else {
         0
     }
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }

@@ -4,7 +4,6 @@ use std::{
     fs,
     path::Path,
     sync::{Arc, Mutex},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use base64::{engine::general_purpose, Engine as _};
@@ -21,6 +20,8 @@ use crate::{
     services::{
         credential_service::CredentialService, ssh_command_service::SshCommandSecretResolver,
     },
+    time::now_ms,
+    validation::required_text,
 };
 
 const EXTERNAL_SESSION_PREFIX: &str = "external:";
@@ -1240,14 +1241,6 @@ fn parse_port(value: &str) -> AppResult<u16> {
     Ok(port)
 }
 
-fn required_text(label: &str, value: impl AsRef<str>) -> AppResult<String> {
-    let value = value.as_ref().trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
-}
-
 fn default_external_ssh_options() -> SshOptions {
     SshOptions {
         connect_timeout_ms: None,
@@ -1269,13 +1262,6 @@ fn default_external_container_options() -> SshContainerOptions {
         user: None,
         workdir: None,
     }
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

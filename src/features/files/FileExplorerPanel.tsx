@@ -3,7 +3,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { FileToolbar } from "./FileToolbar";
-import type { FileEntry } from "./fileStore";
+import type { FileEntry } from "./fileTypes";
 import type { FileSelectionEvent } from "./fileSelectionModel";
 import { resolveFileDragDropEvent } from "./fileDragDropModel";
 import { formatFileModifiedTime, resolveFileIcon } from "./fileExplorerPresentation";

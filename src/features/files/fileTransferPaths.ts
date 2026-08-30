@@ -1,5 +1,5 @@
 // Author: Liz
-import type { TransferEndpoint, TransferKind } from "./fileStore";
+import type { TransferEndpoint, TransferKind } from "./fileTypes";
 import { joinRemotePath, parentRemotePath, remoteFileName } from "./remotePath";
 
 function endpointFileName(path: string) {

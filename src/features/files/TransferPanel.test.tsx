@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 
 import { TransferPanel } from "./TransferPanel";
-import type { TransferTask } from "./fileStore";
+import type { TransferTask } from "./fileTypes";
 
 function render(ui: ReactElement) {
   const container = document.createElement("div");

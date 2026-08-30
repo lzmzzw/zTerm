@@ -1,5 +1,5 @@
 // Author: Liz
-import type { FileEntry } from "./fileStore";
+import type { FileEntry } from "./fileTypes";
 
 export interface FileSelectionEvent {
   ctrlKey?: boolean;

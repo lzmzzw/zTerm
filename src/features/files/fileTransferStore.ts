@@ -11,8 +11,16 @@ import type {
   TransferEndpoint,
   TransferKind,
   TransferTask,
-} from "./fileStore";
+} from "./fileTypes";
+import { listTransferEndpoint } from "./fileTransferApi";
 import { nextSelectedFilePaths, type FileSelectionEvent } from "./fileSelectionModel";
+import {
+  cancelTransferTask,
+  deleteTransferTask,
+  pauseTransferTask,
+  resumeTransferTask,
+  retryTransferTask,
+} from "./transferTaskApi";
 
 export type FileTransferSide = "left" | "right";
 
@@ -219,7 +227,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     }
     updatePane(set, side, { loading: true, error: null });
     try {
-      const entries = await invoke<FileEntry[]>("file_transfer_list_endpoint", { endpoint });
+      const entries = await listTransferEndpoint(endpoint);
       if (!isCurrentPaneRequest(side, requestId)) return;
       updatePane(set, side, {
         entries,
@@ -290,23 +298,23 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     }
   },
   async retryTransfer(taskId) {
-    const task = await invoke<TransferTask>("transfer_retry", { taskId });
+    const task = await retryTransferTask(taskId);
     upsertTransfer(set, task);
   },
   async pauseTransfer(taskId) {
-    const task = await invoke<TransferTask>("transfer_pause", { taskId });
+    const task = await pauseTransferTask(taskId);
     upsertTransfer(set, task);
   },
   async resumeTransfer(taskId) {
-    const task = await invoke<TransferTask>("transfer_resume", { taskId });
+    const task = await resumeTransferTask(taskId);
     upsertTransfer(set, task);
   },
   async cancelTransfer(taskId) {
-    const task = await invoke<TransferTask>("transfer_cancel", { taskId });
+    const task = await cancelTransferTask(taskId);
     upsertTransfer(set, task);
   },
   async deleteTransfer(taskId) {
-    await invoke("transfer_delete", { taskId });
+    await deleteTransferTask(taskId);
     deletedTransferIds.add(taskId);
     set((state) => ({ transfers: state.transfers.filter((task) => task.id !== taskId) }));
   },
@@ -323,7 +331,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   async clearTransfers(taskIds) {
     const ids = taskIds ?? get().transfers.map((task) => task.id);
     for (const taskId of ids) {
-      await invoke("transfer_delete", { taskId });
+      await deleteTransferTask(taskId);
       deletedTransferIds.add(taskId);
     }
     set((state) => ({ transfers: state.transfers.filter((task) => !ids.includes(task.id)) }));

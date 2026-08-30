@@ -1,5 +1,5 @@
 // Author: Liz
-import type { FileEntry, LocalPathInfo, TransferConflictPolicy, TransferKind } from "./fileStore";
+import type { FileEntry, LocalPathInfo, TransferConflictPolicy, TransferKind } from "./fileTypes";
 import { joinRemotePath, remoteFileName } from "./remotePath";
 
 export interface PlannedUploadTransfer {

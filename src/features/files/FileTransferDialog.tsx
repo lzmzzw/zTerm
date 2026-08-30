@@ -3,7 +3,7 @@ import { ZtDialog } from "../../components/ZtUi";
 import { ZtSelect } from "../../components/ZtSelect";
 import type { AppLanguage } from "../settings/settingsStore";
 import { useFileTransferStore } from "./fileTransferStore";
-import type { TransferConflictPolicy } from "./fileStore";
+import type { TransferConflictPolicy } from "./fileTypes";
 import { FileTransferPanel } from "./FileTransferPanel";
 
 interface FileTransferDialogProps {

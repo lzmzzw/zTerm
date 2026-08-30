@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import { nextSelectedFilePaths, selectedFileEntries } from "./fileSelectionModel";
-import type { FileEntry } from "./fileStore";
+import type { FileEntry } from "./fileTypes";
 
 const entries: FileEntry[] = [
   file("/var/log/a.log"),

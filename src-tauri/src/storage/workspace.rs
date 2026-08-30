@@ -1,8 +1,5 @@
 // Author: Liz
-use std::{
-    collections::HashSet,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::HashSet;
 
 use rusqlite::{params, types::Type, OptionalExtension, Row};
 use uuid::Uuid;
@@ -17,6 +14,8 @@ use crate::{
         },
     },
     storage::sqlite::SqliteStore,
+    time::now_ms,
+    validation::required_text,
 };
 
 pub const WORKSPACES_TABLE: &str = "workspaces";
@@ -494,14 +493,6 @@ fn map_workspace_tab(row: &Row<'_>) -> rusqlite::Result<WorkspaceTab> {
     })
 }
 
-fn required_text(label: &str, value: impl AsRef<str>) -> AppResult<String> {
-    let value = value.as_ref().trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
-}
-
 fn normalized_id(id: Option<String>) -> Option<String> {
     id.and_then(|value| {
         let value = value.trim().to_string();
@@ -519,11 +510,4 @@ fn conversion_error(column: usize, message: String) -> rusqlite::Error {
         Type::Text,
         Box::new(AppError::storage(message)),
     )
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }

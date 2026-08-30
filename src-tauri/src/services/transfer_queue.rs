@@ -7,7 +7,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
@@ -20,6 +19,7 @@ use crate::{
         TransferTask, TransferTaskOrigin,
     },
     storage::{sqlite::SqliteStore, transfers},
+    time::now_ms,
 };
 
 const MAX_CONCURRENT_TRANSFER_EXECUTIONS: usize = 1;
@@ -746,13 +746,6 @@ fn endpoint_uses_external_session(endpoint: &TransferEndpoint) -> bool {
         .saved_session_id
         .as_deref()
         .is_some_and(is_external_session_id)
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

@@ -1,6 +1,4 @@
 // Author: Liz
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rusqlite::{params, types::Type, OptionalExtension, Row};
 use uuid::Uuid;
 
@@ -11,6 +9,8 @@ use crate::{
         TransferKind, TransferStatus, TransferTask, TransferTaskOrigin,
     },
     storage::sqlite::SqliteStore,
+    time::now_ms,
+    validation::required_text,
 };
 
 pub const TRANSFER_TASKS_TABLE: &str = "transfer_tasks";
@@ -502,14 +502,6 @@ fn validate_endpoint(endpoint: &TransferEndpoint, label: &str) -> AppResult<()> 
     Ok(())
 }
 
-fn required_text(label: &str, value: impl AsRef<str>) -> AppResult<String> {
-    let value = value.as_ref().trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
-}
-
 fn u64_to_i64(value: u64) -> AppResult<i64> {
     i64::try_from(value).map_err(|_| AppError::validation("传输字节数超出支持范围"))
 }
@@ -524,11 +516,4 @@ fn conversion_error(column: usize, message: String) -> rusqlite::Error {
         Type::Text,
         Box::new(AppError::storage(message)),
     )
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }

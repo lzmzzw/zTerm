@@ -20,6 +20,7 @@ use crate::{
     storage::sessions::{
         delete_session, delete_session_group, list_sessions, save_session, save_session_group,
     },
+    validation::required_text,
 };
 
 const SESSION_TEST_SCRIPT: &str = "printf zterm-session-test";
@@ -480,14 +481,6 @@ impl SshCommandSecretResolver for SessionTestSecretResolver {
             .ok_or_else(|| AppError::credential("当前无法读取凭据"))?
             .read_secret(credential_ref)
     }
-}
-
-fn required_text(label: &str, value: &str) -> AppResult<String> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
 }
 
 fn save_preview_session(draft: SavedSessionDraft) -> AppResult<SavedSession> {

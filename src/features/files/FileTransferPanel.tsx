@@ -15,7 +15,6 @@ import {
   RefreshCw,
   Server,
 } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
 import { type CSSProperties, type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useShallow } from "zustand/react/shallow";
@@ -32,13 +31,14 @@ import {
   visibleSessionTreeListItems,
 } from "../sessions/sessionTreeModel";
 import { TransferPanel } from "./TransferPanel";
-import type { FileEntry, TransferEndpoint, TransferKind } from "./fileStore";
+import type { FileEntry, TransferEndpoint, TransferKind } from "./fileTypes";
 import {
   endpointDisplayPath,
   endpointTargetPath,
   parentEndpointPath,
   transferKindFromFileKind,
 } from "./fileTransferPaths";
+import { listTransferEndpoint } from "./fileTransferApi";
 import { useFileTransferStore, type FileTransferSide } from "./fileTransferStore";
 import { formatFileModifiedTime, resolveFileIcon } from "./fileExplorerPresentation";
 import {
@@ -357,9 +357,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       return [{ source, destination, kind }];
     });
     if (sourcePlans.length === 0) return;
-    const plans = await expandTransferPlans(sourcePlans, (endpoint) =>
-      invoke<FileEntry[]>("file_transfer_list_endpoint", { endpoint }),
-    );
+    const plans = await expandTransferPlans(sourcePlans, listTransferEndpoint);
     if (plans.length === 0) return;
     const groupMeta = createTransferTaskGroupMeta(
       sourcePlans,

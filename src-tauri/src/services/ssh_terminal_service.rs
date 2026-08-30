@@ -26,6 +26,7 @@ use crate::{
         ssh_command_service::SshCommandSecretResolver,
         ssh_container_service::{build_container_exec_command, enabled_container_options},
     },
+    validation::required_text,
 };
 
 pub struct SshTerminalSpawn {
@@ -712,14 +713,6 @@ fn required_credential_ref<'a>(session: &'a SavedSession, message: &str) -> AppR
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AppError::validation(message))
-}
-
-fn required_text(label: &str, value: &str) -> AppResult<String> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
 }
 
 fn russh_error(error: russh::Error) -> AppError {

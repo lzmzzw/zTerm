@@ -1,12 +1,12 @@
 // Author: Liz
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rusqlite::{params, OptionalExtension, Row};
 
 use crate::{
     error::{AppError, AppResult},
     models::terminal_profile::{TerminalProfile, TerminalProfileDraft},
     storage::sqlite::SqliteStore,
+    time::now_ms,
+    validation::required_text,
 };
 
 pub const TERMINAL_PROFILES_TABLE: &str = "terminal_profiles";
@@ -172,25 +172,10 @@ fn map_terminal_profile(row: &Row<'_>) -> rusqlite::Result<TerminalProfile> {
     })
 }
 
-fn required_text(label: &str, value: impl AsRef<str>) -> AppResult<String> {
-    let value = value.as_ref().trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
-}
-
 fn bool_to_i64(value: bool) -> i64 {
     if value {
         1
     } else {
         0
     }
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }

@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, ChevronUp, Pause, Play, RotateCcw, Trash2, X
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 
 import { ZtConfirmDialog } from "../../components/ZtUi";
-import type { TransferStatus, TransferTask } from "./fileStore";
+import type { TransferStatus, TransferTask } from "./fileTypes";
 import { legacyTransferDestinationPath, legacyTransferSourcePath } from "./fileTransferPaths";
 import { groupTransferTasks } from "./transferTaskGroups";
 

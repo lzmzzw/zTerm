@@ -1,6 +1,4 @@
 // Author: Liz
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rusqlite::{params, OptionalExtension, Row};
 use serde_json::Value;
 
@@ -11,6 +9,8 @@ use crate::{
         AiToolPendingInvocation, RiskLevel,
     },
     storage::sqlite::SqliteStore,
+    time::now_ms,
+    validation::required_text,
 };
 
 pub const AI_CONNECTION_APPROVAL_POLICIES_TABLE: &str = "ai_connection_approval_policies";
@@ -342,21 +342,6 @@ fn conversion_error(column: usize, message: String) -> rusqlite::Error {
     )
 }
 
-fn required_text(label: &str, value: impl AsRef<str>) -> AppResult<String> {
-    let value = value.as_ref().trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
-}
-
 fn bool_to_i64(value: bool) -> i64 {
     i64::from(value)
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }

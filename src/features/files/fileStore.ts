@@ -5,74 +5,23 @@ import { create } from "zustand";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 import { nextSelectedFilePaths, type FileSelectionEvent } from "./fileSelectionModel";
-
-type FileKind = "file" | "directory" | "symlink" | "other";
-export type TransferKind = "file" | "directory";
-export type TransferConflictPolicy = "overwrite" | "skip" | "rename";
-
-export interface FileEntry {
-  name: string;
-  path: string;
-  kind: FileKind;
-  size: number;
-  modified_at_ms: number | null;
-  permissions: string | null;
-}
-
-type TransferDirection = "upload" | "download";
-export type TransferStatus = "queued" | "running" | "paused" | "done" | "failed" | "cancelled";
-type TransferTaskOrigin = "sftp_panel" | "file_transfer";
-type TransferEndpointKind = "local" | "saved_session";
-
-export interface TransferEndpoint {
-  kind: TransferEndpointKind;
-  saved_session_id?: string | null;
-  path: string;
-}
-
-export interface TransferTask {
-  id: string;
-  group_id?: string | null;
-  group_name?: string | null;
-  saved_session_id: string;
-  direction: TransferDirection;
-  local_path: string;
-  remote_path: string;
-  kind: TransferKind | null;
-  conflict_policy: TransferConflictPolicy;
-  total_bytes: number;
-  transferred_bytes: number;
-  status: TransferStatus;
-  error_message: string | null;
-  created_at_ms: number;
-  updated_at_ms: number;
-  task_origin?: TransferTaskOrigin;
-  source_endpoint?: TransferEndpoint;
-  destination_endpoint?: TransferEndpoint;
-}
-
-export interface TransferDoneEvent {
-  task_id: string;
-  task: TransferTask | null;
-  error: string | null;
-}
-
-export interface LocalPathInfo {
-  path: string;
-  kind: TransferKind;
-}
-
-export interface TransferConflictCheckItem {
-  direction: TransferDirection;
-  localPath: string;
-  remotePath: string;
-  kind: TransferKind;
-}
-
-export interface TransferConflict {
-  direction: TransferDirection;
-  path: string;
-}
+import type {
+  FileEntry,
+  LocalPathInfo,
+  TransferConflict,
+  TransferConflictCheckItem,
+  TransferConflictPolicy,
+  TransferDoneEvent,
+  TransferKind,
+  TransferTask,
+} from "./fileTypes";
+import {
+  cancelTransferTask,
+  deleteTransferTask,
+  pauseTransferTask,
+  resumeTransferTask,
+  retryTransferTask,
+} from "./transferTaskApi";
 
 interface TransferOptions {
   kind?: TransferKind;
@@ -237,23 +186,23 @@ export const useFileStore = create<FileState>((set, get) => ({
     }
   },
   async retryTransfer(taskId) {
-    const task = await invoke<TransferTask>("transfer_retry", { taskId });
+    const task = await retryTransferTask(taskId);
     upsertTransfer(set, task);
   },
   async pauseTransfer(taskId) {
-    const task = await invoke<TransferTask>("transfer_pause", { taskId });
+    const task = await pauseTransferTask(taskId);
     upsertTransfer(set, task);
   },
   async resumeTransfer(taskId) {
-    const task = await invoke<TransferTask>("transfer_resume", { taskId });
+    const task = await resumeTransferTask(taskId);
     upsertTransfer(set, task);
   },
   async cancelTransfer(taskId) {
-    const task = await invoke<TransferTask>("transfer_cancel", { taskId });
+    const task = await cancelTransferTask(taskId);
     upsertTransfer(set, task);
   },
   async deleteTransfer(taskId) {
-    await invoke("transfer_delete", { taskId });
+    await deleteTransferTask(taskId);
     deletedTransferIds.add(taskId);
     set((state) => ({ transfers: state.transfers.filter((task) => task.id !== taskId) }));
   },

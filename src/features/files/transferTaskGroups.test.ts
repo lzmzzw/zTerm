@@ -1,7 +1,7 @@
 // Author: Liz
 import { describe, expect, it, vi } from "vitest";
 
-import type { FileEntry, TransferTask } from "./fileStore";
+import type { FileEntry, TransferTask } from "./fileTypes";
 import { createTransferTaskGroupMeta, expandTransferPlans, groupTransferTasks } from "./transferTaskGroups";
 
 describe("transferTaskGroups", () => {

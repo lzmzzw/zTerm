@@ -1,9 +1,5 @@
 // Author: Liz
-use std::{
-    path::Path,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{path::Path, sync::Arc};
 
 use serde::de::DeserializeOwned;
 use serde_json::{json, Map, Value};
@@ -62,6 +58,8 @@ use crate::{
         transfers::list_transfer_tasks,
         workspace::{get_workspace, list_workspaces, remove_workspace, save_workspace},
     },
+    time::now_ms,
+    validation::required_text,
 };
 
 pub trait AiToolCommandWriter: Send + Sync {
@@ -2654,14 +2652,6 @@ fn first_leaf_id(node: &PaneNode) -> Option<String> {
     }
 }
 
-fn required_text(label: &str, value: impl AsRef<str>) -> AppResult<String> {
-    let value = value.as_ref().trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
-}
-
 fn normalize_optional(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
@@ -2979,11 +2969,4 @@ fn spawn_ai_file_transfer(
         let _ = queue.unregister_control(&task.id);
     });
     Ok(())
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }

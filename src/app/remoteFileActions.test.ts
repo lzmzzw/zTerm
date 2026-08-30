@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createRemoteFileActions } from "./remoteFileActions";
-import type { LocalPathInfo } from "../features/files/fileStore";
+import type { LocalPathInfo } from "../features/files/fileTypes";
 
 describe("remoteFileActions", () => {
   it("opens the parent directory and refreshes it for the active SSH session", async () => {

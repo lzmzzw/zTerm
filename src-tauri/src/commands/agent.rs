@@ -22,6 +22,7 @@ use crate::{
     services::terminal_manager::AgentCodexPtyOptions,
     state::AppState,
     storage::{ai::get_ai_connection_approval_mode, settings::get_app_settings},
+    validation::required_text,
 };
 
 use super::terminal::spawn_terminal_reader;
@@ -425,14 +426,6 @@ zTerm 是这些工具的唯一审批点；不要重复请求批准。若工具�
 
 fn toml_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-fn required_text(label: &str, value: &str) -> AppResult<String> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
 }
 
 #[cfg(test)]

@@ -14,7 +14,7 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: listenMock,
 }));
 
-import type { FileEntry, TransferTask } from "./fileStore";
+import type { FileEntry, TransferTask } from "./fileTypes";
 import { useFileTransferStore } from "./fileTransferStore";
 
 function entry(path: string): FileEntry {

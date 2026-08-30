@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 
 import { FileExplorerPanel } from "./FileExplorerPanel";
-import type { FileEntry } from "./fileStore";
+import type { FileEntry } from "./fileTypes";
 
 vi.mock("@tauri-apps/api/webview", () => ({
   getCurrentWebview: () => ({

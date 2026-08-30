@@ -1,6 +1,4 @@
 // Author: Liz
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rusqlite::{params, types::Type, OptionalExtension, Row};
 
 use crate::{
@@ -10,6 +8,8 @@ use crate::{
         session::DeleteResult,
     },
     storage::sqlite::SqliteStore,
+    time::now_ms,
+    validation::required_text,
 };
 
 pub const CREDENTIAL_RECORDS_TABLE: &str = "credential_records";
@@ -118,25 +118,10 @@ fn map_credential_record(row: &Row<'_>) -> rusqlite::Result<CredentialRecord> {
     })
 }
 
-fn required_text(label: &str, value: impl AsRef<str>) -> AppResult<String> {
-    let value = value.as_ref().trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
-}
-
 fn conversion_error(column: usize, message: String) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(
         column,
         Type::Text,
         Box::new(AppError::storage(message)),
     )
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }

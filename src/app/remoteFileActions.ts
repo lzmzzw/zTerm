@@ -1,6 +1,5 @@
 // Author: Liz
 import { open } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
 
 import type {
   FileEntry,
@@ -9,8 +8,9 @@ import type {
   TransferConflictCheckItem,
   TransferConflictPolicy,
   TransferKind,
-} from "../features/files/fileStore";
+} from "../features/files/fileTypes";
 import { buildDownloadTransferPlans, buildUploadTransferPlans } from "../features/files/fileTransferPlanner";
+import { listTransferEndpoint } from "../features/files/fileTransferApi";
 import {
   createTransferTaskGroupMeta,
   expandTransferPlans,
@@ -79,7 +79,7 @@ export function createRemoteFileActions({
   renamePath,
   classifyLocalPaths,
   checkTransferConflicts,
-  listTransferEndpoint = defaultListTransferEndpoint,
+  listTransferEndpoint: listEndpoint = listTransferEndpoint,
   selectUploadPaths = defaultSelectUploadPaths,
   selectDownloadDirectory = defaultSelectDownloadDirectory,
 }: RemoteFileActionDependencies) {
@@ -126,7 +126,7 @@ export function createRemoteFileActions({
       destination: { kind: "saved_session", saved_session_id: activeSshSessionId, path: plan.remotePath },
       kind: plan.kind,
     }));
-    const expandedPlans = await expandTransferPlans(sourcePlans, listTransferEndpoint);
+    const expandedPlans = await expandTransferPlans(sourcePlans, listEndpoint);
     if (expandedPlans.length === 0) return;
     const conflictPlans = expandedPlans.map((plan) => ({
       localPath: plan.source.path,
@@ -157,7 +157,7 @@ export function createRemoteFileActions({
       destination: { kind: "local", saved_session_id: null, path: plan.localPath },
       kind: plan.kind,
     }));
-    const expandedPlans = await expandTransferPlans(sourcePlans, listTransferEndpoint);
+    const expandedPlans = await expandTransferPlans(sourcePlans, listEndpoint);
     if (expandedPlans.length === 0) return;
     const conflictPlans = expandedPlans.map((plan) => ({
       remotePath: plan.source.path,
@@ -245,10 +245,6 @@ async function defaultSelectDownloadDirectory() {
     directory: true,
   });
   return typeof selected === "string" ? selected : null;
-}
-
-function defaultListTransferEndpoint(endpoint: TransferSourcePlan["source"]) {
-  return invoke<FileEntry[]>("file_transfer_list_endpoint", { endpoint });
 }
 
 function normalizeDialogSelection(selected: string | string[] | null) {

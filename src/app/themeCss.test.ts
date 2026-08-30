@@ -47,6 +47,13 @@ describe("global dark theme colors", () => {
     expect(rootVariable("--zt-window-actions-width")).toBe("120px");
   });
 
+  it("keeps shared typography and spinner rules single-sourced", () => {
+    expect(css.match(/@keyframes\s+zt-spin/g)).toHaveLength(1);
+    expect(css.match(/^\.zt-settings-status\s*\{/gm)).toHaveLength(1);
+    expect(css).not.toMatch(/(^|\s)font-size:\s*(11|15)px;/m);
+    expect(css).not.toContain("--zt-space-6");
+  });
+
   it("drives aligned workbench chrome from the shared geometry tokens", () => {
     expect(ruleBodiesForSelector(".zt-workbench")).toContain(
       "grid-template-rows: var(--zt-titlebar-height) minmax(320px, 1fr)",

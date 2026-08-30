@@ -3,7 +3,7 @@ import { act, StrictMode, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { FileEntry, TransferTask } from "./fileStore";
+import type { FileEntry, TransferTask } from "./fileTypes";
 import { useFileTransferStore } from "./fileTransferStore";
 import { useSessionStore } from "../sessions/sessionStore";
 import type { SavedSession, SessionGroup } from "../sessions/types";

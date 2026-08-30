@@ -28,7 +28,8 @@ import { closeAgentCodex, openAgentCodex, type AgentCodexSession } from "../feat
 import { setMcpAffectedDomainsHandler, useMcpStore } from "../features/ai/mcpStore";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
 import { useFileTransferStore } from "../features/files/fileTransferStore";
-import { useFileStore, type TransferConflict, type TransferConflictPolicy } from "../features/files/fileStore";
+import { useFileStore } from "../features/files/fileStore";
+import type { TransferConflict, TransferConflictPolicy } from "../features/files/fileTypes";
 import type { CommandHistoryView } from "../features/history/CommandHistoryPanel";
 import { resolveHistoryScope } from "../features/history/historyScopeModel";
 import { useHistoryStore } from "../features/history/historyStore";

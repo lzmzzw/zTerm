@@ -1,12 +1,11 @@
 // Author: Liz
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rusqlite::{params, OptionalExtension};
 
 use crate::{
     error::{AppError, AppResult},
     models::settings::{AppSettings, SettingsSection},
     storage::sqlite::SqliteStore,
+    time::now_ms,
 };
 
 pub const APP_SETTINGS_TABLE: &str = "app_settings";
@@ -77,13 +76,6 @@ fn validate_settings(settings: &AppSettings) -> AppResult<()> {
         return Err(AppError::validation("MCP 端口不能为 0"));
     }
     Ok(())
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

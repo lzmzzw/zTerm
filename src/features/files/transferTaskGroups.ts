@@ -1,5 +1,5 @@
 // Author: Liz
-import type { FileEntry, TransferEndpoint, TransferTask } from "./fileStore";
+import type { FileEntry, TransferEndpoint, TransferTask } from "./fileTypes";
 
 export interface TransferSourcePlan {
   source: TransferEndpoint;

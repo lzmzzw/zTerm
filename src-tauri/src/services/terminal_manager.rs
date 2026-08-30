@@ -6,7 +6,7 @@ use std::{
     process::Child as ProcessChild,
     sync::{Arc, Mutex},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize};
@@ -29,6 +29,7 @@ use crate::{
         spawn_ssh_container_terminal_with_resolver, spawn_ssh_terminal_with_resolver,
         NativeSshControl, SshTerminalRuntime,
     },
+    time::now_ms,
 };
 
 #[derive(Default)]
@@ -914,13 +915,6 @@ fn suppression_tail_start(value: &str, end_prefix: &str) -> Option<usize> {
     let after_prefix = end_start + end_prefix.len();
     let after_line = value[after_prefix..].find('\n')?;
     Some(after_prefix + after_line + 1)
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }
 
 fn short_container_id(container_id: &str) -> String {

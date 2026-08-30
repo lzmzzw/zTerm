@@ -7,7 +7,7 @@ import type { AgentCodexSession } from "../features/ai/agentCodexApi";
 import type { McpApprovalMode, McpToolPendingInvocation, McpToolSecretInputs } from "../features/ai/mcpStore";
 import { FileExplorerPanel } from "../features/files/FileExplorerPanel";
 import { TransferPanel } from "../features/files/TransferPanel";
-import type { FileEntry, TransferTask } from "../features/files/fileStore";
+import type { FileEntry, TransferTask } from "../features/files/fileTypes";
 import type { FileSelectionEvent } from "../features/files/fileSelectionModel";
 import { CommandHistoryPanel } from "../features/history/CommandHistoryPanel";
 import type {

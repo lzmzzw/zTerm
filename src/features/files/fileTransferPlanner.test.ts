@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildDownloadTransferPlans, buildUploadTransferPlans } from "./fileTransferPlanner";
-import type { FileEntry, LocalPathInfo } from "./fileStore";
+import type { FileEntry, LocalPathInfo } from "./fileTypes";
 
 describe("fileTransferPlanner", () => {
   it("plans file and directory uploads under the current remote root", () => {

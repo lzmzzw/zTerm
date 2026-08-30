@@ -28,6 +28,7 @@ use crate::{
     error::{AppError, AppResult},
     models::session::{AuthMode, SavedSession, SessionType},
     services::credential_service::CredentialService,
+    validation::required_text,
 };
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 15;
@@ -708,14 +709,6 @@ fn required_credential_ref<'a>(session: &'a SavedSession, message: &str) -> AppR
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AppError::validation(message))
-}
-
-fn required_text(label: &str, value: &str) -> AppResult<String> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(AppError::validation(format!("{label}不能为空")));
-    }
-    Ok(value.to_string())
 }
 
 fn normalize_script(script: String) -> AppResult<String> {

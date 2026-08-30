@@ -4,7 +4,7 @@ import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Folder, Monitor, Serv
 import { type CSSProperties, type ReactNode, useState } from "react";
 
 import { ZtButton, ZtDialog, ZtInlineError, ZtPromptDialog } from "../components/ZtUi";
-import type { TransferConflict, TransferConflictPolicy } from "../features/files/fileStore";
+import type { TransferConflict, TransferConflictPolicy } from "../features/files/fileTypes";
 import { buildSessionTreeListItems, visibleSessionTreeListItems } from "../features/sessions/sessionTreeModel";
 import type { SavedSession, SessionGroup } from "../features/sessions/types";
 import type { SyncChannelMember } from "../features/terminal/syncInputStore";

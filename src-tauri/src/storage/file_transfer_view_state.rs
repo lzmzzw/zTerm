@@ -1,12 +1,11 @@
 // Author: Liz
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rusqlite::{params, OptionalExtension};
 
 use crate::{
     error::{AppError, AppResult},
     models::sftp::{FileTransferViewState, TransferEndpoint, TransferEndpointKind},
     storage::sqlite::SqliteStore,
+    time::now_ms,
 };
 
 pub fn get_file_transfer_view_state(
@@ -80,11 +79,4 @@ fn validate_endpoint(endpoint: &TransferEndpoint) -> AppResult<()> {
         }
         _ => Ok(()),
     }
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
-        .unwrap_or_default()
 }

@@ -12,7 +12,7 @@ import {
   FolderOpen,
 } from "lucide-react";
 
-import type { FileEntry } from "./fileStore";
+import type { FileEntry } from "./fileTypes";
 
 export function formatFileModifiedTime(value: number | null) {
   if (!value) return "-";
