@@ -25,7 +25,7 @@ import {
 } from "./settingsPageModel";
 import { ZtNumberInput } from "../../components/ZtNumberInput";
 import { ZtSelect } from "../../components/ZtSelect";
-import { ZtSurfaceFrame } from "../../components/ZtUi";
+import { ZtInlineError, ZtSurfaceFrame } from "../../components/ZtUi";
 import type {
   AppLanguage,
   AppSettings,
@@ -104,7 +104,7 @@ export function SettingsPage({
     <ZtSurfaceFrame className="zt-settings-page">
       <header className="zt-settings-page-header">
         <strong>{t(language, "settings")}</strong>
-        {error ? <span className="zt-settings-page-error">{error}</span> : null}
+        {error ? <ZtInlineError className="zt-settings-page-error">{error}</ZtInlineError> : null}
         <button type="button" aria-label={t(language, "closeSettings")} onClick={onClose}>
           <X size={14} aria-hidden="true" />
         </button>
@@ -289,10 +289,12 @@ function McpSettings({
           <div id="zt-mcp-tools-details" className="zt-mcp-tools-details">
             {toolsLoading ? <div className="zt-mcp-tools-message">{t(language, "mcpToolsLoading")}</div> : null}
             {toolsError ? (
-              <div className="zt-mcp-tools-message is-error">
-                <span>{t(language, "mcpToolsLoadFailed", { message: toolsError })}</span>
-                <button type="button" onClick={() => void loadTools()}>{t(language, "mcpToolsRetry")}</button>
-              </div>
+              <ZtInlineError
+                className="zt-mcp-tools-message is-error"
+                action={<button type="button" onClick={() => void loadTools()}>{t(language, "mcpToolsRetry")}</button>}
+              >
+                {t(language, "mcpToolsLoadFailed", { message: toolsError })}
+              </ZtInlineError>
             ) : null}
             {!toolsLoading && !toolsError && tools?.length === 0 ? (
               <div className="zt-mcp-tools-message">{t(language, "mcpToolsEmpty")}</div>
@@ -492,7 +494,7 @@ function ShortcutSettings({
   return (
     <section className="zt-settings-section zt-settings-section-with-actions" aria-label={t(language, "shortcuts")}>
       <div className="zt-settings-section-body">
-        {conflicts.size > 0 ? <p className="zt-session-error">{t(language, "shortcutConflict")}</p> : null}
+        {conflicts.size > 0 ? <ZtInlineError className="zt-session-error">{t(language, "shortcutConflict")}</ZtInlineError> : null}
         <div className="zt-shortcut-list">
           {rows.map(({ definition, binding }) => (
             <div className={`zt-shortcut-row ${conflicts.has(definition.action_id) ? "conflict" : ""}`} key={definition.action_id}>

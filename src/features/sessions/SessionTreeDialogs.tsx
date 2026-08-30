@@ -1,7 +1,7 @@
 // Author: Liz
 import { useState } from "react";
 
-import { ZtButton, ZtConfirmDialog, ZtContextMenu, ZtDialog, ZtInput } from "../../components/ZtUi";
+import { ZtButton, ZtConfirmDialog, ZtContextMenu, ZtDialog, ZtInlineError, ZtInput } from "../../components/ZtUi";
 import type { SavedSession, SessionGroup } from "./types";
 
 export type SessionTreeContextMenu =
@@ -138,7 +138,7 @@ export function SessionGroupDialog({
           <span>文件夹名称</span>
           <ZtInput aria-label="文件夹名称" value={name} onChange={(event) => setName(event.currentTarget.value)} />
         </label>
-        {error ? <p className="zt-session-error">{error}</p> : null}
+        {error ? <ZtInlineError className="zt-session-error">{error}</ZtInlineError> : null}
       </form>
     </ZtDialog>
   );

@@ -10,6 +10,7 @@ import {
   ZtDialog,
   ZtContextMenu,
   ZtInput,
+  ZtInlineError,
   ZtSwitch,
   ZtTextarea,
 } from "../../components/ZtUi";
@@ -414,8 +415,8 @@ export function ModelManagerPanel({
       </div>
 
       <div className="zt-model-panel-body">
-        {error ? <div className="zt-empty-line">{error}</div> : null}
-        {formError && !editorOpen ? <p className="zt-session-error">{formError}</p> : null}
+        {error ? <ZtInlineError>{error}</ZtInlineError> : null}
+        {formError && !editorOpen ? <ZtInlineError className="zt-session-error">{formError}</ZtInlineError> : null}
         {message && !editorOpen ? <p className="zt-settings-status">{message}</p> : null}
 
         <div className="zt-model-list" aria-label="已添加模型列表">
@@ -473,7 +474,7 @@ export function ModelManagerPanel({
           <form id={editorFormId} className="zt-model-form" onSubmit={(event) => void saveProvider(event)}>
             <div className="zt-model-editor-main">
               <section className="zt-model-config-section" aria-label="模型基础配置">
-                {formError ? <p className="zt-session-error zt-model-message-line">{formError}</p> : null}
+                {formError ? <ZtInlineError className="zt-session-error zt-model-message-line">{formError}</ZtInlineError> : null}
                 {message ? <p className="zt-settings-status zt-model-message-line">{message}</p> : null}
                 <div className="zt-model-config-grid">
                   <label>

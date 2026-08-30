@@ -2006,8 +2006,12 @@ export function AppShell() {
                     </button>
                   }
                 />
-                {sessionError || sessionActionError ? (
-                  <div className="zt-empty-line">{sessionError ?? sessionActionError}</div>
+                {sessionActionError ? (
+                  <ZtInlineError onDismiss={() => setSessionActionError(null)} dismissLabel="关闭会话操作错误提示">
+                    {sessionActionError}
+                  </ZtInlineError>
+                ) : sessionError ? (
+                  <ZtInlineError>{sessionError}</ZtInlineError>
                 ) : null}
                 <SessionTree
                   groups={groups}
@@ -2173,7 +2177,16 @@ export function AppShell() {
       ) : null}
 
       <main className={terminalError ? "zt-main zt-main-with-error" : "zt-main"}>
-        {terminalError ? <ZtInlineError className="zt-main-error">{terminalError}</ZtInlineError> : null}
+        {terminalError ? (
+          <ZtInlineError
+            className="zt-main-error"
+            title="操作未完成"
+            dismissLabel="关闭终端错误提示"
+            onDismiss={() => setTerminalError(null)}
+          >
+            {terminalError}
+          </ZtInlineError>
+        ) : null}
         <WorkspaceStage
           onActivatePane={setActivePane}
           onAddPaneTab={handleRequestPaneConnection}

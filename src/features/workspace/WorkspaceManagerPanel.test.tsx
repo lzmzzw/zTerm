@@ -155,7 +155,7 @@ describe("WorkspaceManagerPanel", () => {
   it("keeps the error message and workspace list inside one content container", () => {
     const view = render(panel({ error: "加载工作区缩略图失败" }));
     const body = view.container.querySelector(".zt-workspace-panel-body");
-    expect(body?.querySelector(".zt-empty-line")?.textContent).toBe("加载工作区缩略图失败");
+    expect(body?.querySelector('[role="alert"]')?.textContent).toBe("加载工作区缩略图失败");
     expect(body?.querySelector(".zt-workspace-list")).not.toBeNull();
     view.unmount();
   });

@@ -124,7 +124,7 @@ describe("file transfer dialog styles", () => {
   });
 
   it("keeps transfer errors in the dialog flow instead of overlaying adjacent content", () => {
-    const styles = ruleBody(".zt-inline-error");
+    const styles = ruleBody(".zt-alert");
 
     expect(styles).toContain("display: grid");
     expect(styles).toContain("position: static");

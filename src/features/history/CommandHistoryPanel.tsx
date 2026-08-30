@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
-import { ZtButton, ZtContextMenu, ZtDialog, ZtInput, ZtSwitch, ZtTextarea } from "../../components/ZtUi";
+import { ZtButton, ZtContextMenu, ZtDialog, ZtInlineError, ZtInput, ZtSwitch, ZtTextarea } from "../../components/ZtUi";
 import { t } from "../settings/i18n";
 import type { AppLanguage } from "../settings/settingsStore";
 import type {
@@ -355,7 +355,7 @@ export function CommandHistoryPanel({
             />
           </div>
 
-          {error ? <div className="zt-history-error">{error}</div> : null}
+          {error ? <ZtInlineError className="zt-history-error">{error}</ZtInlineError> : null}
 
           <div className="zt-history-list" role="list" ref={historyListRef}>
             {orderedEntries.length === 0 ? <div className="zt-empty-line">{t(language, "noHistory")}</div> : null}
@@ -497,7 +497,7 @@ function CommandGroupView({
         </button>
       </div>
 
-      {groupError ? <div className="zt-history-error">{groupError}</div> : null}
+      {groupError ? <ZtInlineError className="zt-history-error">{groupError}</ZtInlineError> : null}
 
       <div className="zt-history-group-list">
         {!hasHistoryScope ? <div className="zt-empty-line">{t(language, "cannotSaveCommandGroup")}</div> : null}
@@ -678,7 +678,7 @@ function CommandGroupDialog({
             placeholder={t(language, "commandGroupCommandsPlaceholder")}
           />
         </label>
-        {error ? <p className="zt-command-group-dialog-error" role="alert">{error}</p> : null}
+        {error ? <ZtInlineError className="zt-command-group-dialog-error">{error}</ZtInlineError> : null}
       </form>
     </ZtDialog>
   );

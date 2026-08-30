@@ -2169,6 +2169,28 @@ describe("AppShell", () => {
     view.unmount();
   });
 
+  it("lets users dismiss a terminal operation error", async () => {
+    storeMocks.takePendingExternalLaunches.mockRejectedValue(new Error("SSH connection refused"));
+
+    const view = render(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const alert = view.container.querySelector('.zt-main-error[role="alert"]');
+    expect(alert?.textContent).toContain("操作未完成");
+    expect(alert?.textContent).toContain("SSH connection refused");
+
+    act(() => {
+      button(view.container, "关闭终端错误提示").click();
+    });
+    expect(view.container.querySelector(".zt-main-error")).toBeNull();
+    expect(view.container.querySelector("main")?.classList.contains("zt-main-with-error")).toBe(false);
+
+    view.unmount();
+  });
+
   it("opens a second-instance external SSH launch in a new pane tab", async () => {
     storeMocks.workspaceState.tabs = [
       {

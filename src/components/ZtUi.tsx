@@ -1,12 +1,15 @@
 // Author: Liz
 import {
   Check,
+  CheckCircle2,
   ChevronDown,
   CircleAlert,
+  Info,
   Minus,
   Plus,
   RefreshCw,
   Search,
+  TriangleAlert,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -25,6 +28,7 @@ type ZtDensity = "dense" | "default" | "large";
 type ZtControlSize = "dense" | "default" | "form";
 type ZtButtonVariant = "default" | "primary" | "danger" | "ghost";
 type ZtDialogSize = "compact" | "medium" | "large";
+type ZtAlertTone = "error" | "warning" | "info" | "success";
 
 export const ztIconSizes = {
   dense: 14,
@@ -32,12 +36,76 @@ export const ztIconSizes = {
   large: 18,
 } as const;
 
-export function ZtInlineError({ children, className = "" }: { children: ReactNode; className?: string }) {
+const alertIconMap = {
+  error: CircleAlert,
+  warning: TriangleAlert,
+  info: Info,
+  success: CheckCircle2,
+} satisfies Record<ZtAlertTone, LucideIcon>;
+
+export function ZtAlert({
+  children,
+  className = "",
+  tone = "error",
+  title,
+  action,
+  onDismiss,
+  dismissLabel = "关闭提示",
+}: {
+  children: ReactNode;
+  className?: string;
+  tone?: ZtAlertTone;
+  title?: ReactNode;
+  action?: ReactNode;
+  onDismiss?: () => void;
+  dismissLabel?: string;
+}) {
+  const AlertIcon = alertIconMap[tone];
   return (
-    <div className={["zt-inline-error", className].filter(Boolean).join(" ")} role="alert">
-      <CircleAlert size={16} aria-hidden="true" />
-      <span>{children}</span>
+    <div
+      className={classNames("zt-alert", `zt-alert-${tone}`, onDismiss && "is-dismissible", className)}
+      role={tone === "error" ? "alert" : "status"}
+    >
+      <AlertIcon className="zt-alert-icon" size={16} aria-hidden="true" />
+      <div className="zt-alert-content">
+        {title ? <strong className="zt-alert-title">{title}</strong> : null}
+        <div className="zt-alert-message">{children}</div>
+      </div>
+      {action ? <div className="zt-alert-action">{action}</div> : null}
+      {onDismiss ? (
+        <button className="zt-alert-dismiss" type="button" aria-label={dismissLabel} title={dismissLabel} onClick={onDismiss}>
+          <X size={14} aria-hidden="true" />
+        </button>
+      ) : null}
     </div>
+  );
+}
+
+export function ZtInlineError({
+  children,
+  className = "",
+  title,
+  action,
+  onDismiss,
+  dismissLabel,
+}: {
+  children: ReactNode;
+  className?: string;
+  title?: ReactNode;
+  action?: ReactNode;
+  onDismiss?: () => void;
+  dismissLabel?: string;
+}) {
+  return (
+    <ZtAlert
+      className={classNames("zt-inline-error", className)}
+      title={title}
+      action={action}
+      onDismiss={onDismiss}
+      dismissLabel={dismissLabel}
+    >
+      {children}
+    </ZtAlert>
   );
 }
 
@@ -377,7 +445,7 @@ export function ZtPromptDialog({
             onChange={(event) => setValue(event.currentTarget.value)}
           />
         </label>
-        {error ? <p className="zt-session-error">{error}</p> : null}
+        {error ? <ZtInlineError className="zt-session-error">{error}</ZtInlineError> : null}
       </form>
     </ZtDialog>
   );

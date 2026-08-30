@@ -2,7 +2,7 @@
 import { CopyPlus, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { ZtContextMenu } from "../../components/ZtUi";
+import { ZtContextMenu, ZtInlineError } from "../../components/ZtUi";
 import { WorkspaceLayoutPreview, type WorkspaceLayoutPreviewSession } from "./WorkspaceLayoutPreview";
 import { DEFAULT_WORKSPACE_ID } from "./workspaceConstants";
 import type { WorkspaceSidebarItem } from "./workspaceShellModel";
@@ -98,7 +98,9 @@ export function WorkspaceManagerPanel({
           if (event.target === event.currentTarget) onClearWorkspaceSelection();
         }}
       >
-        <div className="zt-workspace-panel-error">{error ? <div className="zt-empty-line">{error}</div> : null}</div>
+        <div className="zt-workspace-panel-error">
+          {error ? <ZtInlineError>{error}</ZtInlineError> : null}
+        </div>
         <ul
           className="zt-workspace-list"
           onClick={(event) => {

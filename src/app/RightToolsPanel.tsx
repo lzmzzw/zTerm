@@ -26,7 +26,7 @@ import type { AppLanguage } from "../features/settings/settingsStore";
 import type { SshContainerInfo } from "../features/terminal/sshContainerApi";
 import { t } from "../features/settings/i18n";
 import { ZtSelect } from "../components/ZtSelect";
-import { ZtContextMenu } from "../components/ZtUi";
+import { ZtContextMenu, ZtInlineError } from "../components/ZtUi";
 import { PanelHeader, ToolButton } from "./ShellControls";
 import { rightToolLabelKey, visibleRightTools, type ActiveConnectionKind, type RightTool } from "./rightTools";
 
@@ -408,7 +408,7 @@ function SshContainerListPanel({
         </label>
       ) : null}
       {loading ? <div className="zt-empty-line">正在加载容器...</div> : null}
-      {error ? <div className="zt-error-line">{error}</div> : null}
+      {error ? <ZtInlineError className="zt-error-line">{error}</ZtInlineError> : null}
       {!loading && !error && containers.length === 0 ? <div className="zt-empty-line">当前 SSH 连接没有容器</div> : null}
       {containers.length > 0 ? (
         <div className="zt-tunnel-list" role="list" aria-label="SSH 容器列表">

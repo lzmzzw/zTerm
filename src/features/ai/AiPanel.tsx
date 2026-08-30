@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowUp, ChevronDown, ChevronRight, History, Plus, ShieldChe
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
+import { ZtInlineError } from "../../components/ZtUi";
 import { t } from "../settings/i18n";
 import type { AppLanguage } from "../settings/settingsStore";
 import type {
@@ -168,7 +169,7 @@ export function AiPanel({
       return <div className="zt-empty-line">{t(language, "loadingAiHistoryPreview")}</div>;
     }
     if (preview.error) {
-      return <div className="zt-session-error">{preview.error}</div>;
+      return <ZtInlineError className="zt-session-error">{preview.error}</ZtInlineError>;
     }
     const previewMessages = preview.messages?.slice(-4) ?? [];
     if (previewMessages.length === 0) {
@@ -219,7 +220,7 @@ export function AiPanel({
               {t(language, "aiHistoryPendingToolsNotice", { count: pendingInvocations.length })}
             </div>
           ) : null}
-          {error ? <div className="zt-session-error">{error}</div> : null}
+          {error ? <ZtInlineError className="zt-session-error">{error}</ZtInlineError> : null}
           {historyConversations.length === 0 ? <div className="zt-empty-line">{t(language, "noAiConversations")}</div> : null}
           {historyConversations.map((conversation) => {
             const expanded = expandedConversationIds.includes(conversation.id);
@@ -328,7 +329,7 @@ export function AiPanel({
           ) : null}
 
           {!providersAvailable ? <div className="zt-ai-warning">{t(language, "configureAiProvider")}</div> : null}
-          {error ? <div className="zt-session-error">{error}</div> : null}
+          {error ? <ZtInlineError className="zt-session-error">{error}</ZtInlineError> : null}
 
           <div className="zt-ai-composer" aria-label={t(language, "aiComposer")}>
             <div className="zt-ai-prompt zt-ai-chat-input">

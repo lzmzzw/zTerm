@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ZtAlert,
   ZtButton,
   ZtAttentionRegion,
   ZtCheckbox,
@@ -58,6 +59,23 @@ afterEach(() => {
 });
 
 describe("ZtUi primitives", () => {
+  it("renders alert tones and lets users dismiss operational errors", () => {
+    const onDismiss = vi.fn();
+    const view = render(
+      <ZtAlert tone="error" title="连接失败" onDismiss={onDismiss} dismissLabel="关闭连接失败提示">
+        无法连接 SSH 主机
+      </ZtAlert>,
+    );
+
+    const alert = view.container.querySelector('[role="alert"]') as HTMLElement | null;
+    expect(alert?.classList.contains("zt-alert-error")).toBe(true);
+    expect(alert?.querySelector(".zt-alert-title")?.textContent).toBe("连接失败");
+    expect(alert?.querySelector(".zt-alert-message")?.textContent).toBe("无法连接 SSH 主机");
+
+    click(alert?.querySelector('button[aria-label="关闭连接失败提示"]') as HTMLElement);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
   it("composes modal overlays and surfaces from shared frame primitives", () => {
     const view = render(
       <ZtModalOverlay>

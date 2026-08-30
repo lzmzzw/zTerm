@@ -3,6 +3,7 @@ import { Bot, LoaderCircle, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
+import { ZtInlineError } from "../../components/ZtUi";
 import { XtermPane } from "../terminal/XtermPane";
 import { useTerminalStore } from "../terminal/terminalStore";
 import type { AiApprovalMode, AiToolSecretInputs } from "./aiStore";
@@ -111,7 +112,9 @@ export function AgentCodexPanel({
         {loading ? (
           <div className="zt-agent-codex-state"><LoaderCircle className="zt-spin" size={18} />正在启动本机 Codex CLI...</div>
         ) : error ? (
-          <div className="zt-agent-codex-state is-error">{error}</div>
+          <div className="zt-agent-codex-state is-error">
+            <ZtInlineError>{error}</ZtInlineError>
+          </div>
         ) : session && runtimeSessionId ? (
           <XtermPane
             autoFocus

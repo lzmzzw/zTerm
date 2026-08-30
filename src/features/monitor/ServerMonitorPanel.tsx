@@ -3,6 +3,7 @@ import { RefreshCw } from "lucide-react";
 import { useState } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
+import { ZtInlineError } from "../../components/ZtUi";
 import type { ServerInfoSnapshot } from "./serverInfoApi";
 import { formatTimestamp, formatUptime, joinDefined } from "./serverInfoFormatters";
 import type { NetworkTrafficSnapshot } from "./serverInfoMetricsModel";
@@ -99,7 +100,7 @@ export function ServerMonitorPanel({
             />
           </label>
         </footer>
-        {error ? <div className="zt-monitor-error">{error}</div> : null}
+        {error ? <ZtInlineError className="zt-monitor-error">{error}</ZtInlineError> : null}
       </section>
 
       {loading && !snapshot ? <div className="zt-empty-line">正在读取服务器信息...</div> : null}

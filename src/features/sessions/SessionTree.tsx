@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
 import { fallbackOnlyErrorMessage } from "../../lib/unknownErrorMessage";
+import { ZtInlineError } from "../../components/ZtUi";
 import { SessionEditorDialog } from "./SessionEditorDialog";
 import {
   ConfirmDialog,
@@ -327,7 +328,11 @@ export function SessionTree({
 
   return (
     <section className="zt-session-tree" aria-label="会话树" onContextMenu={openRootMenu}>
-      {actionError ? <div className="zt-session-error">{actionError}</div> : null}
+      {actionError ? (
+        <ZtInlineError className="zt-session-error" onDismiss={() => setActionError(null)} dismissLabel="关闭会话错误提示">
+          {actionError}
+        </ZtInlineError>
+      ) : null}
       {dragVisual ? (
         <DragOverlay
           ref={dragOverlayRef}

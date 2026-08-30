@@ -3,7 +3,7 @@
 import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Folder, Monitor, Server, Terminal } from "lucide-react";
 import { type CSSProperties, type ReactNode, useState } from "react";
 
-import { ZtButton, ZtDialog, ZtPromptDialog } from "../components/ZtUi";
+import { ZtButton, ZtDialog, ZtInlineError, ZtPromptDialog } from "../components/ZtUi";
 import type { TransferConflict, TransferConflictPolicy } from "../features/files/fileStore";
 import { buildSessionTreeListItems, visibleSessionTreeListItems } from "../features/sessions/sessionTreeModel";
 import type { SavedSession, SessionGroup } from "../features/sessions/types";
@@ -133,7 +133,7 @@ export function ConnectionPickerDialog({
           );
         })}
       </div>
-      {error ? <p className="zt-session-error">{error}</p> : null}
+      {error ? <ZtInlineError className="zt-session-error">{error}</ZtInlineError> : null}
     </ZtDialog>
   );
 }

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { ZtNumberInput } from "../../components/ZtNumberInput";
 import { ZtSelect } from "../../components/ZtSelect";
-import { ZtInput, ZtModalOverlay, ZtSurfaceFrame } from "../../components/ZtUi";
+import { ZtInlineError, ZtInput, ZtModalOverlay, ZtSurfaceFrame } from "../../components/ZtUi";
 import { fallbackOnlyErrorMessage } from "../../lib/unknownErrorMessage";
 import { LocalSessionForm } from "./LocalSessionForm";
 import { FtpSessionForm } from "./FtpSessionForm";
@@ -528,7 +528,7 @@ export function SessionEditorDialog({
         </div>
 
         <div className="zt-session-editor-messages" aria-live="polite">
-          {error ? <p className="zt-session-error">{error}</p> : null}
+          {error ? <ZtInlineError className="zt-session-error">{error}</ZtInlineError> : null}
           {status ? <p className="zt-settings-status">{status}</p> : null}
         </div>
 

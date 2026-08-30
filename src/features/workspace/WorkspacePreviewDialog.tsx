@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
-import { ZtButton, ZtDialog, ZtInput, ZtTextarea } from "../../components/ZtUi";
+import { ZtButton, ZtDialog, ZtInlineError, ZtInput, ZtTextarea } from "../../components/ZtUi";
 import type { SavedSession } from "../sessions/types";
 import {
   findLeafPane,
@@ -272,7 +272,9 @@ function TerminalTabInspector({
           />
         </label>
         {selectedTerminalTab.restore_status === "failed" ? (
-          <p className="zt-workspace-preview-error">{selectedTerminalTab.restore_error ?? "恢复失败"}</p>
+          <ZtInlineError className="zt-workspace-preview-error">
+            {selectedTerminalTab.restore_error ?? "恢复失败"}
+          </ZtInlineError>
         ) : null}
       </div>
     </>
