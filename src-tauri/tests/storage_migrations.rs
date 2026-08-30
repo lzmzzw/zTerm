@@ -53,10 +53,7 @@ fn migrations_create_all_phase_two_tables() {
         "command_history",
         "transfer_tasks",
         "credential_records",
-        "ai_provider_profiles",
-        "ai_conversations",
         "ai_connection_approval_policies",
-        "ai_conversation_messages",
         "ai_tool_pending",
         "ai_tool_audits",
         "session_command_groups",
@@ -90,10 +87,7 @@ fn migrations_are_idempotent() {
                 'command_history',
                 'transfer_tasks',
                 'credential_records',
-                'ai_provider_profiles',
-                'ai_conversations',
                 'ai_connection_approval_policies',
-                'ai_conversation_messages',
                 'ai_tool_pending',
                 'ai_tool_audits',
                 'session_command_groups',
@@ -104,7 +98,7 @@ fn migrations_are_idempotent() {
         )
         .expect("table count query should run");
 
-    assert_eq!(table_count, 18);
+    assert_eq!(table_count, 15);
     assert!(index_exists(&connection, "idx_workspaces_sort"));
     assert!(index_exists(
         &connection,
@@ -350,7 +344,7 @@ fn migrations_reset_existing_running_workspaces_to_closed() {
 }
 
 #[test]
-fn migrations_drop_legacy_agent_runs_without_ai_chat_tables() {
+fn migrations_drop_legacy_agent_runs_without_model_tables() {
     let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
     connection
         .execute_batch(
@@ -372,9 +366,93 @@ fn migrations_drop_legacy_agent_runs_without_ai_chat_tables() {
 
     assert!(!table_exists(&connection, "agent_runs"));
     assert!(!index_exists(&connection, "idx_agent_runs_runtime_time"));
-    assert!(table_exists(&connection, "ai_conversations"));
+    assert!(!table_exists(&connection, "ai_provider_profiles"));
+    assert!(!table_exists(&connection, "ai_conversations"));
+    assert!(!table_exists(&connection, "ai_conversation_messages"));
     assert!(table_exists(&connection, "ai_tool_pending"));
     assert!(table_exists(&connection, "ai_tool_audits"));
+}
+
+#[test]
+fn migrations_purge_legacy_model_data_and_fields() {
+    let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
+    connection
+        .execute_batch(
+            "
+            create table ai_provider_profiles (id text primary key, name text not null);
+            insert into ai_provider_profiles values ('provider-1', 'legacy');
+            create table ai_conversations (id text primary key, title text not null);
+            insert into ai_conversations values ('conversation-1', 'legacy');
+            create table ai_conversation_messages (
+                id text primary key,
+                conversation_id text not null,
+                content text not null
+            );
+            insert into ai_conversation_messages values ('message-1', 'conversation-1', 'legacy');
+
+            create table credential_records (
+                id text primary key,
+                name text not null,
+                kind text not null check (kind in ('ssh_password', 'ssh_key_passphrase', 'rdp_password', 'ai_api_key')),
+                credential_ref text not null unique,
+                created_at_ms integer not null,
+                updated_at_ms integer not null
+            );
+            insert into credential_records values ('ai-key', 'legacy', 'ai_api_key', 'keyring:legacy', 1, 1);
+            insert into credential_records values ('ssh-key', 'ssh', 'ssh_password', 'keyring:ssh', 1, 1);
+
+            create table ai_tool_pending (
+                id text primary key,
+                tool_id text not null,
+                tool_title text not null,
+                risk_level text not null,
+                arguments_summary text not null,
+                arguments_json text not null,
+                target_summary text null,
+                risk_summary text null,
+                requires_confirmation integer not null,
+                requires_secret_input integer not null default 0,
+                secret_input_label text null,
+                status text not null,
+                reason text null,
+                requested_by text null,
+                conversation_id text null,
+                run_id text null,
+                step_id text null,
+                created_at_ms integer not null
+            );
+            insert into ai_tool_pending values (
+                'chat-pending', 'terminal.read', 'Read', 'low', '{}', '{}', null, null,
+                0, 0, null, 'pending', null, null, 'conversation-1', null, null, 1
+            );
+            insert into ai_tool_pending values (
+                'mcp-pending', 'terminal.write', 'Write', 'high', '{}', '{}', null, null,
+                1, 0, null, 'pending', null, null, null, null, null, 2
+            );
+            ",
+        )
+        .expect("legacy model schema should prepare");
+
+    run_migrations(&mut connection).expect("legacy model data should be purged");
+
+    assert!(!table_exists(&connection, "ai_provider_profiles"));
+    assert!(!table_exists(&connection, "ai_conversations"));
+    assert!(!table_exists(&connection, "ai_conversation_messages"));
+    assert!(!column_exists(
+        &connection,
+        "ai_tool_pending",
+        "conversation_id"
+    ));
+    let credentials: i64 = connection
+        .query_row("select count(*) from credential_records", [], |row| {
+            row.get(0)
+        })
+        .expect("credential count should read");
+    let pending: i64 = connection
+        .query_row("select count(*) from ai_tool_pending", [], |row| row.get(0))
+        .expect("pending count should read");
+    assert_eq!(credentials, 1);
+    assert_eq!(pending, 1);
 }
 
 #[test]

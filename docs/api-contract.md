@@ -37,7 +37,7 @@
 | `mcp_server_set_enabled` | `{ enabled, port? }` | `McpServerStatus` | 启用或关闭本机 MCP Streamable HTTP 服务，并同步保存 `AppSettings.mcp` |
 | `mcp_server_rotate_token` | 无 | `McpServerStatus` | 轮换当前运行期 Bearer token；token 不写入 `AppSettings` |
 | `mcp_tool_catalog_list` | 无 | `McpToolDefinition[]` | 返回 MCP 专用 allowlist、风险信息和输入 schema，供设置页展示 |
-| `agent_codex_open` | `{ tabId, targetRuntimeSessionId, targetSavedSessionId?, targetLabel }` | `AgentCodexSession` | 为当前终端标签启动本机 Codex CLI PTY，注入仅能读写绑定终端的会话级 MCP 身份；Windows 上启动前的短生命周期 Codex 配置探测使用 `CREATE_NO_WINDOW`，不会显示独立终端窗口；使用侧栏专用模型目录关闭 Responses Lite，确保自定义 MCP tools 对当前 Codex 可见；会话启动时禁用 `apps`、`plugins`、内置 Skills 和 Skill 自动上下文，并禁用用户配置中除 `zterm` 外的 MCP；仅对 scoped zTerm MCP 关闭 Codex 自身的重复工具审批，实际审批继续由 zTerm 连接策略执行 |
+| `agent_codex_open` | `{ tabId, targetRuntimeSessionId, targetSavedSessionId?, targetLabel }` | `AgentCodexSession` | 为当前终端标签启动本机 Codex CLI PTY，注入仅能读写绑定终端的会话级 MCP 身份；不注入或覆盖 Codex CLI 的模型配置；会话启动时禁用用户配置中除 scoped `zterm` 外的 MCP，仅对 scoped zTerm MCP 关闭 Codex 自身的重复工具审批，实际审批继续由 zTerm 连接策略执行 |
 | `agent_codex_unbind` | `{ agentSessionId }` | `null` | 终端标签被删除，或用户从 Agent 终端菜单关闭、重启 Codex CLI 时，撤销该会话的 MCP bearer 绑定 |
 
 `AppSettings.workspace_restore_strategy` 支持 `visible_first`、`connect_all`、`layout_only`，旧设置 JSON 缺字段时默认 `visible_first`。`visible_first` 先显示布局，再优先恢复当前可见 pane/tab；`connect_all` 显示布局后尽快低并发连接全部标签；`layout_only` 只恢复布局和 queued 状态，不自动打开终端。`settings_get` 和 `settings_reset` 返回的 `AppSettings.shortcuts` 会合并当前 `shortcut_registry_list` 中缺失的动作，调用方应以返回值作为 UI 展示和后续保存的有效配置。
@@ -172,60 +172,37 @@ FileZilla 格式文件传输可直接使用 `zTerm.exe "sftp://user:password@hos
 
 目录扫描和冲突检查期间，文件传输弹窗显示准备状态并忽略重复触发；准备失败会直接显示错误。`TransferQueue` 全局同时只执行 1 个传输任务，其余任务保持 `queued`。同一 SSH/SFTP 会话下的连续上传和下载复用带安全连接 key 与空闲淘汰的 SFTP session；远端目录读取、冲突检查和传输执行发现缓存 session 已关闭、连接被重置或连接超时（含 Windows `10060`）时，先淘汰缓存并重连，传输开始前还会探测 session 是否可用。目录读取和冲突检查最多尝试 3 次，首次建立传输连接对明确的连接拒绝或连接超时错误最多执行 5 次指数退避重试。传输操作失败时立即淘汰该 session，下一任务重新建立；认证、凭据、权限和路径错误不重试。远端到远端中转继续使用独立双连接，避免同一 session 锁重入。
 
-## Credentials And AI Provider
+## Credentials
 
 | Command | 入参 | 返回 | 说明 |
 | --- | --- | --- | --- |
 | `credentials_list` | 无 | `CredentialRecord[]` | 列凭据元数据，不返回 secret |
-| `credentials_save` | `CredentialDraft` | `CredentialRecord` | secret 写入 OS keyring，SQLite 只保存引用；`kind` 支持 `ssh_password`、`ssh_key_passphrase`、`rdp_password`、`ai_api_key` |
+| `credentials_save` | `CredentialDraft` | `CredentialRecord` | secret 写入 OS keyring，SQLite 只保存引用；`kind` 支持 `ssh_password`、`ssh_key_passphrase`、`rdp_password` |
 | `credentials_read_secret` | `{ credentialRef }` | `{ secret }` | 按 `credential_ref` 从 OS keyring 读取 secret；仅用于用户显式点击查看或受控自动填充路径，不得用于列表回显 |
 | `credentials_delete` | `{ id }` | `{ deleted: true }` | 删除凭据元数据和对应 keyring secret |
 | `credentials_test` | `{ id }` | `{ ok: true }` | 验证 keyring secret 可读 |
-| `llm_provider_list` | 无 | `AiProviderProfile[]` | 列 Provider，不返回 API Key 明文 |
-| `llm_provider_save` | `AiProviderProfileDraft` | `AiProviderProfile` | API Key 存在时写入 OS keyring，SQLite 保存 `api_key_ref`；OpenAI-compatible Provider 可保存空 key |
-| `llm_provider_delete` | `{ id }` | `{ deleted: true }` | 删除 Provider 和 owned API Key secret |
-| `llm_provider_test` | `{ id }` | `{ ok, message }` | 使用真实轻量请求测试 Provider，错误消息脱敏；OpenAI-compatible 空 key 请求不发送 `Authorization` |
-| `llm_provider_test_draft` | `{ request: { draft, prompt } }` | `{ ok, message, output }` | 使用当前表单 Provider 配置和用户输入发起真实模型调用；不保存 Provider、不写入 keyring、不创建 AI 会话 |
-| `llm_provider_test_draft_stream` | `{ request: { draft, prompt } }` | `{ test_id }` | 启动当前表单 Provider 的单轮真实流式测试；通过事件返回增量文本和完成状态 |
-| `llm_provider_test_draft_cancel` | `{ testId }` | `{ cancelled }` | 按 `test_id` 取消正在进行的 draft 流式测试 |
 
 SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，用户输入的密码通过 `credentials_save(kind=ssh_password)` 写入 OS keyring，保存后的 `credential_ref` 进入会话；密钥认证时，用户选择的身份文件路径写入 `ssh_options.identity_file`，输入的密钥密码通过 `credentials_save(kind=ssh_key_passphrase)` 写入 OS keyring。UI 不再暴露手工编辑 `credential_ref` 的项目；旧数据中已有 `credential_ref` 仍作为后续登录的 keyring lookup key 兼容读取。编辑已有 SSH 会话时，密码和密钥密码字段 value 不预填真实 secret，但在存在 `credential_ref` 时默认用 `******` 占位掩码展示；只有用户点击查看按钮时才通过 `credentials_read_secret` 显式读取并显示已保存 secret。RDP 新建/编辑 UI 使用同样的密码保存和查看规则：输入密码通过 `credentials_save(kind=rdp_password)` 写入 OS keyring，编辑已有 RDP 会话时默认只显示 `******` 占位掩码，点击查看才读取真实 secret。
 
-`AiProviderProfile.kind` wire 值支持 `openai_chat`、`openai_responses`、`anthropic`，并兼容旧 serde 形态 `open_ai_chat`、`open_ai_responses`；`is_default=true` 的 enabled Provider 优先用于 AI Chat。`openai_chat`、`openai_responses` 允许 `api_key_ref=""`，请求时仅在 key 存在时发送 `Authorization: Bearer ...`；`anthropic` 仍要求 API Key 并通过 `x-api-key` 发送。OpenAI-compatible `base_url` 既可保存服务根路径如 `/v1`，也可保存完整端点如 `/v1/responses`，后端会避免重复拼接 path。OpenAI Responses 解析优先读取 `output_text`，并扫描 `output[]` 中全部 message/content 的 `{ type: "output_text", text }`；`content` 兼容数组和单对象两种形态，可兼容响应中先出现 `reasoning` 的结构。成功响应按完整 body 解析，避免较长 JSON 被错误摘要截断；非 2xx 错误消息只展示脱敏后的响应摘要。Draft 测试使用前端传入的 `draft` 和 `prompt` 构造临时 Provider：`api_key` 非空时只用于本次请求，`api_key_ref` 非空时从 OS keyring 读取已保存 secret，二者都为空时仅 OpenAI-compatible 允许无 key 调用；测试输出只作为响应或流式事件返回，不写入 Provider、credential、AI conversation 或 tool audit。流式 draft 测试支持 OpenAI Chat Completions、OpenAI Responses 和 Anthropic 原生 SSE 增量文本；事件 payload 均携带 `test_id`，前端必须只接收当前测试 ID 的事件并在关闭或取消时清理监听。
+## Codex Sidebar And MCP Approval
 
-## Codex Sidebar, Approval And Legacy AI Tool IPC
-
-当前右侧 Agent 面板不再调用 zTerm 自研 AI Chat 或配置的 LLM Provider，而是启动本机已登录的 `codex` CLI。每个可操作终端标签最多保留一个 Codex PTY；切换到没有 Codex 会话的标签时关闭侧栏，手动打开时新建进程，切回已有会话的标签时自动恢复显示。Codex 本地 sandbox 固定为 `read-only`，远程写入必须经过 zTerm MCP 和连接级审批链路。原 AI Chat/Conversation IPC 暂保留作为后端兼容能力，不是当前侧栏入口。
+当前右侧 Agent 面板完全由本机已登录的 `codex` CLI 实现。每个可操作终端标签最多保留一个 Codex PTY；切换到没有 Codex 会话的标签时关闭侧栏，手动打开时新建进程，切回已有会话的标签时自动恢复显示。Codex 本地 sandbox 固定为 `read-only`，远程写入必须经过 zTerm MCP 和连接级审批链路。zTerm 不提供模型管理、内置模型请求或 AI Conversation IPC，也不向 Codex 注入自定义模型目录。
 
 | Command | 入参 | 返回 | 说明 |
 | --- | --- | --- | --- |
-| `ai_chat` | `{ request: AiChatRequest }` | `AiChatResponse` | 使用默认 enabled Provider 发起原生 tool/function call；按当前保存 SSH 连接的审批模式自动执行或创建 pending，持久化用户/工具/助手消息 |
-| `ai_chat_stream` | `{ request: AiChatRequest }` | `{ chat_id, conversation_id }` | 启动 AI 面板真实流式对话；立即持久化用户消息，后台通过事件返回助手增量、完成、错误或取消状态 |
-| `ai_chat_cancel` | `{ chatId }` | `{ cancelled }` | 按 `chat_id` 取消正在进行的 AI 面板流式输出；取消后不持久化助手消息 |
-| `ai_terminal_context_snapshot` | `{ request: AiTerminalContextRequest }` | `AiTerminalContextSnapshot` | 生成 AI 上下文快照；优先使用后端终端输出 ring buffer，`recent_output` 只返回最多 4000 字符尾部 |
-| `ai_tool_registry_list` | 无 | `AiToolDefinition[]` | 返回 zTerm 限定工具注册表 |
-| `ai_tool_prepare` | `{ request: AiToolPrepareRequest }` | `AiToolPendingInvocation` | 校验工具参数、生成预览、风险摘要并写入 pending |
-| `ai_tool_confirm` | `{ request: AiToolConfirmRequest }` | `AiToolAuditRecord` | 用户确认或拒绝 pending 工具；执行结果写入审计并删除 pending |
-| `ai_tool_pending` | 无 | `AiToolPendingInvocation[]` | 按创建时间倒序列出待确认工具 |
-| `ai_tool_audit` | `{ request?: AiToolAuditListRequest }` | `AiToolAuditRecord[]` | 按完成时间倒序列出工具审计，默认最多 100 条 |
-| `ai_conversation_create` | `{ request: AiConversationCreateRequest }` | `AiConversation` | 创建 AI 会话 |
-| `ai_conversation_list` | `{ request?: AiConversationListRequest }` | `AiConversationSummary[]` | 列出会话，支持 `query` 和 `limit`，最大 200 |
-| `ai_conversation_get` | `{ conversationId }` | `AiConversation` | 读取会话和按时间升序排列的消息 |
-| `ai_conversation_delete` | `{ conversationId }` | `boolean` | 删除会话，消息随 SQLite 外键级联删除 |
-| `ai_set_conversation_approval_mode` | `{ request: AiConversationApprovalModeUpdateRequest }` | `AiConversation` | 更新当前 AI 会话审批模式 |
-| `ai_connection_approval_mode_get` | `{ savedSessionId }` | `AiConnectionApprovalPolicy` | 读取已保存 SSH 连接的审批模式；未配置时返回 `safe` |
-| `ai_connection_approval_mode_set` | `{ request: { saved_session_id, approval_mode } }` | `AiConnectionApprovalPolicy` | 保存 SSH 连接级审批模式；拒绝不存在或非 SSH 的连接 |
-| `ai_conversation_message_append` | `{ request: AiConversationMessageAppendRequest }` | `AiConversationMessage` | 追加一条 `user`、`assistant`、`system` 或 `tool` 消息 |
+| `mcp_tool_confirm` | `{ request: AiToolConfirmRequest }` | `AiToolAuditRecord` | 用户确认或拒绝 MCP pending；执行结果写入审计并删除 pending |
+| `mcp_tool_pending` | 无 | `AiToolPendingInvocation[]` | 按创建时间倒序列出待确认 MCP 工具 |
+| `mcp_tool_audit` | `{ request?: AiToolAuditListRequest }` | `AiToolAuditRecord[]` | 按完成时间倒序列出 MCP 工具审计，默认最多 100 条 |
+| `mcp_connection_approval_mode_get` | `{ savedSessionId }` | `AiConnectionApprovalPolicy` | 读取已保存 SSH 连接的审批模式；未配置时返回 `safe` |
+| `mcp_connection_approval_mode_set` | `{ request: { saved_session_id, approval_mode } }` | `AiConnectionApprovalPolicy` | 保存 SSH 连接级审批模式；拒绝不存在或非 SSH 的连接 |
 
-`AiChatRequest` 包含 `conversation_id?`、`message`、`approval_mode?`、`history[]` 和 `terminal_context?`。`AiChatResponse` 包含 `conversation_id`、Provider 信息、助手消息、`pending_invocations[]`、`executed_invocations[]`、`context_used`、`tool_count` 和 `generated_at_ms`。`ai_chat_stream` 保留同一请求体并新增事件契约：`ai-chat:chunk`、`ai-chat:done`、`ai-chat:error`、`ai-chat:cancelled` payload 均携带 `chat_id`，前端只接收当前 `chat_id`；完成事件携带最终助手消息、pending/已执行工具、上下文标记和生成时间，后端仅在完整完成时追加助手消息到会话。审批模式 wire 值为 `request_approval`、`safe`、`full_access`，默认 `safe`。当前上下文能解析到已保存 SSH `saved_session_id` 时，后端以 `ai_connection_approval_policies` 的连接级策略为唯一生效值，并把该值回写到当前 `AiConversation.approval_mode` 作为兼容快照；没有已保存 SSH 目标时才沿用会话/请求模式。会话 scope 使用 `follow_focus`、`locked_pane`、`no_context` 等字符串和 JSON `scope_ref_json` 记录上下文引用；消息 `metadata_json` 必须是合法 JSON。`AiTerminalContextRequest/Snapshot` 可携带 `runtime_session_id`、`saved_session_id`、`pane_id`、`title`、`cwd`、最近输出、选中文本和输入缓冲；后端维护运行期终端输出 ring buffer，不跨重启持久化完整终端输出。
+侧栏 Codex 的 scoped MCP 仅可见 `terminal.read` 和 `terminal.write`。`terminal.read` 使用运行期 ring buffer，可读取最近输出或指定 cursor 后的最多 4000 字符增量；`terminal.write` 写入后等待输出短暂稳定并返回新 cursor。审批策略按当前已保存 SSH 连接生效：`request_approval` 每次工具调用都创建 pending；`safe` 自动执行低/中风险工具，高/严重风险创建 pending；`full_access` 对 `terminal.write` 和外部 `ssh.execute` 的命令风险不再额外强制 pending，并在执行后写审计。传输等显式强制确认工具即使在 `full_access` 仍创建 pending。
 
-AI 工具注册表保留 zTerm 已有能力供兼容后端与外部 MCP 复用：`terminal.list/read/write/open/close/split/focus`、`ssh.execute`、`workspace.open_tool`、`settings.get/update_ai_security`、`llm_provider.list/create/update/delete/test`、`session_groups.save/delete`、`sessions.list/save/delete/open/test`、`workspace.list/get/save/delete/restore`、`terminal_profile.list/set_default`、`transfer.list/retry/pause/resume/cancel/delete`、`server_info.snapshot`、`ssh_container.list`、`sftp.list/mkdir/upload/download/delete/rename`、`history.search/record/clear`、`zterm.context/search`。当前右侧 Agent 不再调用 Provider Chat，而是运行本机 Codex CLI；它的 scoped MCP 仅可见 `terminal.read` 和 `terminal.write`。`terminal.read` 使用运行期 ring buffer，可读取最近输出或指定 cursor 后的最多 4000 字符增量；`terminal.write` 写入后等待输出短暂稳定并返回新 cursor。审批策略按当前已保存 SSH 连接生效：`request_approval` 每次工具调用都创建 pending；`safe` 自动执行低/中风险工具，高/严重风险创建 pending；`full_access` 对 `terminal.write` 和外部 `ssh.execute` 的命令风险不再额外强制 pending，并在执行后写审计。删除、清空、传输、`settings.update_ai_security`、缺少本地 secret 的 Provider create/update 等显式强制确认工具即使在 `full_access` 仍创建 pending。兼容 AI 的 `sessions.save` 仍可接收用户在对话中提供的一次性 SSH/RDP 密码，后端立即写入 OS keyring 并从后续参数、审计摘要和消息移除；MCP 参数不适用该例外。
+自动或人工批准执行后写入 `ai_tool_audits`，记录 `affected_domains` 供前端按域刷新 Session、Workspace、Terminal、History、Transfer 等状态。表名作为既有 MCP 审计存储继续保留。`terminal.write` 会等待终端输出短暂稳定并返回回读摘要；会话/分组、工作区定义、终端 profile、传输控制、历史、服务器资源快照、SSH 容器列表和 SFTP/FTP 文件操作复用现有 storage/service 入口。
 
-自动或人工批准执行后写入 `ai_tool_audits`，记录 `affected_domains` 供前端按域刷新 Session、Model、Workspace、Terminal、History、Transfer 等状态。`terminal.write` 会等待终端输出短暂稳定并把回读摘要写入 tool message；会话/分组、Provider、工作区定义、终端 profile、传输控制、历史、服务器资源快照、SSH 容器列表和 SFTP/FTP 文件操作复用现有 storage/service 入口。前端运行态动作通过 `zterm:tool-action` 事件执行，例如打开工具面板、恢复工作区、分屏、聚焦 pane 和打开会话；`ssh/sftp/ftp.upload/download` 则由后端入队并异步执行，不依赖前端或 computer use。
+本机 MCP v1 采用 MCP 2025-11-25 Streamable HTTP，endpoint 固定为 `http://127.0.0.1:<port>/mcp`，默认端口为 `9419`，默认关闭，不提供 stdio sidecar；用户启用后会随 zTerm 启动自动监听。服务验证 `Authorization: Bearer <token>` 和 `Origin`，仅允许无 Origin 或 localhost/127.0.0.1/::1/`tauri://localhost`。当前 JSON-RPC 支持 `initialize`、`tools/list`、`tools/call`；客户端 notification（包括 `notifications/initialized`）返回 HTTP `202 Accepted` 空响应。MCP allowlist 只开放 `sessions.list/save`、`terminal.list/open/read/write/close`、`ssh.execute`、`ssh.upload/download`、`sftp.upload/download`、`ftp.upload/download`、`transfer.list`；目录外工具即使按名称调用也返回 `-32601`。所有工具提供非空 input schema，未知参数返回 `-32602`。调用参数直接包含 `saved_session_id` 时按该连接读取审批策略；只有 `runtime_session_id` 时先从运行终端回溯 `saved_session_id`。读取和保存操作通过 `structuredContent.result` 返回脱敏结构，不返回 `credential_ref` 或 secret。
 
-本机 MCP v1 采用 MCP 2025-11-25 Streamable HTTP，endpoint 固定为 `http://127.0.0.1:<port>/mcp`，默认端口为 `9419`，默认关闭，不提供 stdio sidecar；用户启用后会随 zTerm 启动自动监听。服务验证 `Authorization: Bearer <token>` 和 `Origin`，仅允许无 Origin 或 localhost/127.0.0.1/::1/`tauri://localhost`。当前 JSON-RPC 支持 `initialize`、`tools/list`、`tools/call`；客户端 notification（包括 `notifications/initialized`）返回 HTTP `202 Accepted` 空响应，不生成带空 ID 的 JSON-RPC 响应。MCP 使用独立 allowlist，只开放 `sessions.list/save`、`terminal.list/open/read/write/close`、`ssh.execute`、`ssh.upload/download`、`sftp.upload/download`、`ftp.upload/download`、`transfer.list`、`llm_provider.list/save`；目录外工具即使按名称调用也返回 `-32601`。所有工具提供非空 input schema，未知参数返回 `-32602`。调用参数直接包含 `saved_session_id` 时按该连接读取审批策略；只有 `runtime_session_id` 时先从运行终端回溯 `saved_session_id`。因此同一 SSH 连接的侧栏 Codex 与外部 MCP 共用连接级策略；无连接目标、无法回溯或非持久化连接继续保守使用 `safe`。读取和保存操作通过 `structuredContent.result` 返回脱敏结构，不返回 `credential_ref`、`api_key_ref` 或 secret。
-
-`ssh.execute` 输入 `saved_session_id` 和 `script`，通过 zTerm 保存连接复用密码、密钥、SSH Agent、跳板机和 SSH 连接缓存，返回 stdout、stderr、exit code、截断标记和耗时。`terminal.open` 在前端打开保存连接，调用方随后使用 `terminal.list(saved_session_id)` 获取 runtime ID，再通过 `terminal.read/write/close` 操作。`sessions.save.reuse_auth_from_session_id` 可复用另一连接的认证引用而不向 MCP 暴露引用；密码型新连接和需要 API Key 的模型会创建 pending，并通过 `zterm:tool-pending` 让 zTerm Agent 面板刷新本地 secret 输入。MCP 参数递归拒绝 password、token、API Key、private key 等明文 secret。
+`ssh.execute` 输入 `saved_session_id` 和 `script`，通过 zTerm 保存连接复用密码、密钥、SSH Agent、跳板机和 SSH 连接缓存，返回 stdout、stderr、exit code、截断标记和耗时。`terminal.open` 在前端打开保存连接，调用方随后使用 `terminal.list(saved_session_id)` 获取 runtime ID，再通过 `terminal.read/write/close` 操作。`sessions.save.reuse_auth_from_session_id` 可复用另一连接的认证引用而不向 MCP 暴露引用；密码型新连接会创建 pending，并通过 `zterm:tool-pending` 让 zTerm Agent 面板刷新本地 secret 输入。MCP 参数递归拒绝 password、token、API Key、private key 等明文 secret。
 
 `ssh.upload/download` 只接受 SSH 连接，`sftp.upload/download` 接受 SSH 或 SFTP 连接，`ftp.upload/download` 只接受 FTP 连接；统一参数为 `saved_session_id`、绝对 `local_path`、`remote_path`，可选 `kind=file|directory` 和 `conflict_policy=overwrite|skip|rename`。上传和下载都强制进入 zTerm 本地 pending/confirm，确认后创建持久化传输任务并在后台复用现有连接与 keyring 凭据；MCP 首次调用返回 `pending`，确认后调用方用 `transfer.list` 按连接查询 `queued/running/paused/done/failed/cancelled` 状态和字节进度。审计成功表示任务已入队，不等同于远端传输完成；真实结果以传输任务状态为准。
 
@@ -238,23 +215,12 @@ AI 工具注册表保留 zTerm 已有能力供兼容后端与外部 MCP 复用�
 | `terminal:history-changed` | `{ runtime_session_id }` | shell integration 提交并持久化最终命令行后，通知前端刷新对应历史作用域 |
 | `transfer:progress` | `TransferTask` | 传输状态或进度更新 |
 | `transfer:done` | `TransferTask` | 传输完成、失败或取消 |
-| `llm-provider-test:chunk` | `{ test_id, delta }` | draft 模型流式测试收到文本增量 |
-| `llm-provider-test:done` | `{ test_id, message, output }` | draft 模型流式测试完成 |
-| `llm-provider-test:error` | `{ test_id, message }` | draft 模型流式测试失败，消息已脱敏 |
-| `llm-provider-test:cancelled` | `{ test_id }` | draft 模型流式测试被取消 |
-| `ai-chat:chunk` | `{ chat_id, conversation_id, delta }` | AI 面板流式对话收到助手文本增量 |
-| `ai-chat:done` | `{ chat_id, conversation_id, message, pending_invocations, executed_invocations, context_used, generated_at_ms }` | AI 面板流式对话完成并已持久化助手消息 |
-| `ai-chat:error` | `{ chat_id, message }` | AI 面板流式对话失败，消息已脱敏 |
-| `ai-chat:cancelled` | `{ chat_id, conversation_id }` | AI 面板流式对话被取消，助手消息不落库 |
-| `zterm:tool-action` | `{ action, arguments, affected_domains }` | 后端 AI/MCP 工具通过审批后请求前端执行运行态动作 |
+| `zterm:tool-action` | `{ action, arguments, affected_domains }` | 后端 MCP 工具通过审批后请求前端执行运行态动作 |
 | `zterm:tool-pending` | 无 | 外部 MCP 创建待确认工具后通知前端刷新 pending 列表，不携带参数或 secret |
 
 ## Security Notes
 
-- Secret、API Key、密码和私钥片段不得写入 SQLite、文档、日志或 UI 列表；AI 创建 SSH/RDP 连接时接收的密码只允许进入 OS keyring，SQLite 只保存 `credential_ref`。
-- AI terminal context、用户消息、工具参数摘要、pending 工具和审计记录必须经过脱敏后才能持久化；前端乐观展示的用户消息也必须脱敏，避免当前对话窗口短暂显示密码。
-- 未审批的 AI 工具写入不得进入终端；高危命令也不能绕过当前会话审批策略。
-- OpenAI-compatible 无 key Provider 不得伪造空 `Bearer` 头；Anthropic 等原生 Provider 不得绕过 key 校验。
-- AI 工具参数摘要和审计记录必须脱敏，pending 工具执行失败时返回结构化错误并保留审计。
-- MCP Bearer token 不写入 SQLite、AI 会话、审计摘要或 Provider 请求；Origin 非本机时拒绝。MCP 工具参数不得携带 SSH 密码、私钥正文、API Key 或其他明文 secret。
+- Secret、API Key、密码和私钥片段不得写入 SQLite、文档、日志或 UI 列表；MCP 保存密码连接时，密码只允许经本地确认进入 OS keyring，SQLite 只保存 `credential_ref`。
+- MCP 工具参数摘要、pending 和审计记录必须脱敏；未审批的写入不得进入终端，高危命令不能绕过当前连接审批策略。
+- MCP Bearer token 不写入 SQLite 或审计摘要；Origin 非本机时拒绝。MCP 工具参数不得携带 SSH 密码、私钥正文、API Key 或其他明文 secret。
 - ZMODEM 下载文件名只取安全 basename 后写入用户选择目录；上传只读取用户通过本次文件选择器选择的路径。ZMODEM 原始字节不写入命令历史或 SQLite。

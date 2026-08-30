@@ -182,7 +182,6 @@ describe("global dark theme colors", () => {
   it("uses one neutral hover and selected hierarchy without directional accent bars", () => {
     const statePairs = [
       [".zt-tabs button:hover:not(:disabled)", ".zt-tabs button[aria-selected=\"true\"]"],
-      [".zt-ai-conversation-row:hover .zt-ai-conversation-main", ".zt-ai-conversation-row.is-active .zt-ai-conversation-main"],
       [".zt-session-editor-nav button:hover", ".zt-session-editor-nav button[aria-current=\"page\"]"],
       [".zt-settings-page-tabs button:hover", ".zt-settings-page-tabs button[aria-selected=\"true\"]"],
     ];
@@ -235,7 +234,6 @@ describe("global dark theme colors", () => {
   it("keeps expanded left tool panels full height so blank areas receive context menu events", () => {
     expect(ruleBodiesForSelector(".zt-left-tool-panel")).toContain("height: 100%");
     expect(ruleBodiesForSelector(".zt-workspace-panel")).toContain("height: 100%");
-    expect(ruleBodiesForSelector(".zt-model-panel")).toContain("height: 100%");
   });
 
   it("uses one compact action style for panel headers and contextual toolbars", () => {
@@ -365,9 +363,6 @@ describe("global dark theme colors", () => {
     expect(ruleBodiesForSelector(".zt-session-group-dialog label")).toContain(
       "padding: 16px var(--zt-dialog-inline-inset) 0",
     );
-    expect(ruleBodiesForSelector(".zt-model-editor-main")).toContain(
-      "padding: 20px var(--zt-dialog-inline-inset)",
-    );
     expect(rootVariable("--zt-dialog-height-large")).toBe("780px");
     expect(ruleBodiesForSelector(".zt-settings-page")).toContain(
       "height: min(var(--zt-dialog-height-large), calc(100vh - 96px))",
@@ -396,10 +391,7 @@ describe("global dark theme colors", () => {
       ".zt-transfer-list",
       ".zt-history-list",
       ".zt-history-group-list",
-      ".zt-ai-messages",
-      ".zt-ai-tools",
       ".zt-monitor-panel",
-      ".zt-model-panel-body",
     ]) {
       expect(ruleBodiesForSelector(selector)).toContain("scrollbar-width: thin");
       expect(ruleBodiesForSelector(selector)).toContain("scrollbar-color: var(--zt-scrollbar-thumb) transparent");
@@ -430,21 +422,11 @@ describe("global dark theme colors", () => {
     }
   });
 
-  it("keeps the AI composer controls compact and anchored to the bottom", () => {
-    expect(ruleBodiesForSelector(".zt-ai-panel")).toContain("height: 100%");
-    expect(ruleBodiesForSelector(".zt-ai-panel")).toContain("padding: 4px 10px 6px");
-    expect(ruleBodiesForSelector(".zt-ai-composer")).toContain("grid-row: -2 / -1");
-    expect(ruleBodiesForSelector(".zt-ai-composer")).toContain("align-self: end");
-    expect(ruleBodiesForSelector(".zt-ai-prompt textarea")).toContain("resize: none");
-    expect(ruleBodiesForSelector(".zt-ai-composer-footer")).toContain("align-items: flex-end");
+  it("keeps Agent approval controls compact", () => {
     expect(ruleBodiesForSelector(".zt-ai-approval-mode svg")).toContain("width: 12px");
     expect(ruleBodiesForSelector(".zt-ai-approval-mode svg")).toContain("height: 12px");
     expect(ruleBodiesForSelector(".zt-ai-approval-select.zt-select-trigger")).toContain("height: 22px");
     expect(ruleBodiesForSelector(".zt-ai-approval-select.zt-select-trigger")).toContain("font-size: 12px");
-    expect(ruleBodiesForSelector(".zt-ai-send")).toContain("width: 24px");
-    expect(ruleBodiesForSelector(".zt-ai-send")).toContain("height: 24px");
-    expect(ruleBodiesForSelector(".zt-ai-send svg")).toContain("width: 15px");
-    expect(ruleBodiesForSelector(".zt-ai-send svg")).toContain("height: 15px");
   });
 
   it("styles connection type icons without adding icons to ordinary section tabs", () => {

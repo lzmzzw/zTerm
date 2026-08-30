@@ -16,7 +16,7 @@ panes in the center, and files/history/monitor/Codex tools on the right.
 - Use split terminal panes with tabs and workspace restore.
 - Browse SFTP directories, create folders, upload, download, rename, delete, and retry transfers.
 - Capture command history by session or local profile, search it, copy commands, and send commands back to the active terminal.
-- Store credentials and AI provider API keys in the operating system keyring instead of plain SQLite rows.
+- Store connection credentials in the operating system keyring instead of plain SQLite rows.
 - Launch the locally authenticated Codex CLI in the Agent sidebar, with one retained process per terminal tab.
 - Restrict sidebar Codex sessions to session-scoped MCP tools that read and write the bound terminal page; SSH commands reuse the visible SSH terminal instead of opening another SSH connection.
 - Let Codex use the local MCP server to upload or download files and directories through saved SSH, SFTP, and FTP connections after local approval, without exposing keyring credentials.
@@ -24,8 +24,9 @@ panes in the center, and files/history/monitor/Codex tools on the right.
 
 RDP sessions open in the Windows system Remote Desktop client. The workspace
 keeps the session tab for navigation but does not embed or render the remote
-desktop. Cloud model invocation and remote agent orchestration are intentionally
-outside the current public MVP.
+desktop. Model management and built-in model invocation are intentionally
+outside zTerm; the Agent sidebar is implemented entirely by the locally
+authenticated Codex CLI.
 
 ## Screenshots
 

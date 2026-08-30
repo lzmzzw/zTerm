@@ -5,14 +5,24 @@ use tauri::State;
 
 use crate::{
     error::AppResult,
-    models::settings::McpSettings,
+    models::{
+        ai::{
+            AiConnectionApprovalPolicy, AiConnectionApprovalPolicyUpdateRequest,
+            AiToolAuditListRequest, AiToolAuditRecord, AiToolConfirmRequest,
+            AiToolPendingInvocation,
+        },
+        settings::McpSettings,
+    },
     services::{
         ai_tool_service::AiToolService,
         mcp_service::{mcp_tool_catalog, McpServerStatus, McpService, McpToolDefinition},
     },
     state::AppState,
-    storage::settings::{get_app_settings, save_app_settings},
     storage::sqlite::SqliteStore,
+    storage::{
+        ai::{get_ai_connection_approval_policy, upsert_ai_connection_approval_policy},
+        settings::{get_app_settings, save_app_settings},
+    },
 };
 
 #[tauri::command]
@@ -72,6 +82,54 @@ pub async fn mcp_server_set_enabled(
     } else {
         state.mcp_service().stop_and_wait().await
     }
+}
+
+#[tauri::command]
+pub fn mcp_tool_confirm(
+    state: State<'_, AppState>,
+    request: AiToolConfirmRequest,
+) -> AppResult<AiToolAuditRecord> {
+    let storage = state.storage();
+    state.ai_tool_service().confirm(storage.as_ref(), request)
+}
+
+#[tauri::command]
+pub fn mcp_tool_pending(state: State<'_, AppState>) -> AppResult<Vec<AiToolPendingInvocation>> {
+    let storage = state.storage();
+    state.ai_tool_service().list_pending(storage.as_ref())
+}
+
+#[tauri::command]
+pub fn mcp_tool_audit(
+    state: State<'_, AppState>,
+    request: Option<AiToolAuditListRequest>,
+) -> AppResult<Vec<AiToolAuditRecord>> {
+    let storage = state.storage();
+    state
+        .ai_tool_service()
+        .list_audit_with_request(storage.as_ref(), request)
+}
+
+#[tauri::command]
+pub fn mcp_connection_approval_mode_get(
+    state: State<'_, AppState>,
+    saved_session_id: String,
+) -> AppResult<AiConnectionApprovalPolicy> {
+    let storage = state.storage();
+    get_ai_connection_approval_policy(storage.as_ref(), &saved_session_id)
+}
+
+#[tauri::command]
+pub fn mcp_connection_approval_mode_set(
+    state: State<'_, AppState>,
+    request: AiConnectionApprovalPolicyUpdateRequest,
+) -> AppResult<AiConnectionApprovalPolicy> {
+    let storage = state.storage();
+    upsert_ai_connection_approval_policy(
+        storage.as_ref(),
+        &request.saved_session_id,
+        request.approval_mode,
+    )
 }
 
 #[tauri::command]

@@ -1,7 +1,7 @@
 // Author: Liz
 import { invoke } from "@tauri-apps/api/core";
 
-import type { AiApprovalMode, AiToolPendingInvocation } from "./aiStore";
+import type { McpApprovalMode, McpToolPendingInvocation } from "./mcpStore";
 import type { RuntimeSessionInfo } from "../terminal/terminalStore";
 
 export interface AgentCodexSession {
@@ -9,7 +9,7 @@ export interface AgentCodexSession {
   target_runtime_session_id: string;
   target_saved_session_id: string | null;
   target_label: string;
-  approval_mode: AiApprovalMode;
+  approval_mode: McpApprovalMode;
   runtime: RuntimeSessionInfo;
 }
 
@@ -33,4 +33,4 @@ export async function closeAgentCodex(session: AgentCodexSession) {
   });
 }
 
-export type AgentPendingInvocation = AiToolPendingInvocation;
+export type AgentPendingInvocation = McpToolPendingInvocation;

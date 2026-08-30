@@ -1,6 +1,5 @@
 // Author: Liz
 pub mod agent;
-pub mod ai;
 pub mod command_completion;
 pub mod credential;
 pub mod external_launch;

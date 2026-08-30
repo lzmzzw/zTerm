@@ -27,7 +27,7 @@ use zterm_lib::{
     },
     services::{
         ai_tool_service::{AiToolCommandWriter, AiToolService},
-        credential_service::{CredentialService, MemorySecretStore},
+        credential_service::MemorySecretStore,
         mcp_service::{
             handle_http_request, AgentMcpBinding, McpHttpRequest, McpService, DEFAULT_MCP_PORT,
         },
@@ -219,8 +219,6 @@ async fn mcp_http_handler_supports_initialize_tools_list_and_pending_tool_call()
             "ftp.upload",
             "ftp.download",
             "transfer.list",
-            "llm_provider.list",
-            "llm_provider.save",
         ]
     );
     let listed_tools = list_body["result"]["tools"].as_array().expect("tools");
@@ -525,7 +523,7 @@ async fn sidebar_agent_token_is_scoped_to_its_bound_page_terminal() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a locally logged-in Codex CLI and performs one model request"]
-async fn codex_cli_discovers_sidebar_tools_with_non_lite_model_catalog() {
+async fn codex_cli_discovers_sidebar_tools_with_native_model_configuration() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
     let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
     let service = McpService::with_secret_store(Arc::new(MemorySecretStore::default()));
@@ -544,39 +542,15 @@ async fn codex_cli_discovers_sidebar_tools_with_non_lite_model_catalog() {
 
     let smoke_root = std::env::temp_dir().join(format!("zterm-codex-smoke-{}", Uuid::new_v4()));
     fs::create_dir_all(&smoke_root).expect("smoke directory should create");
-    let catalog_output = codex_command()
-        .args(["debug", "models"])
-        .output()
-        .await
-        .expect("Codex model catalog should load");
-    assert!(catalog_output.status.success());
-    let mut catalog: Value =
-        serde_json::from_slice(&catalog_output.stdout).expect("Codex model catalog JSON");
-    for model in catalog["models"].as_array_mut().expect("models") {
-        model["use_responses_lite"] = Value::Bool(false);
-    }
-    let catalog_path = smoke_root.join("models.json");
-    fs::write(
-        &catalog_path,
-        serde_json::to_vec_pretty(&catalog).expect("catalog bytes"),
-    )
-    .expect("catalog should write");
-
     let endpoint_config = format!("mcp_servers.zterm.url={}", toml_string(&access.endpoint));
     let token_config =
         "mcp_servers.zterm.bearer_token_env_var=\"ZTERM_AGENT_MCP_TOKEN\"".to_string();
     let approval_config = "mcp_servers.zterm.default_tools_approval_mode=\"approve\"".to_string();
-    let catalog_config = format!(
-        "model_catalog_json={}",
-        toml_string(&catalog_path.to_string_lossy())
-    );
     let mut command = codex_command();
     command
         .current_dir(&smoke_root)
         .env("ZTERM_AGENT_MCP_TOKEN", &access.token)
         .args([
-            "-m",
-            "gpt-5.6-sol",
             "-s",
             "read-only",
             "-a",
@@ -587,8 +561,6 @@ async fn codex_cli_discovers_sidebar_tools_with_non_lite_model_catalog() {
             &token_config,
             "-c",
             &approval_config,
-            "-c",
-            &catalog_config,
             "exec",
             "--ephemeral",
             "--ignore-user-config",
@@ -1068,47 +1040,6 @@ async fn mcp_password_session_requires_local_zterm_secret_input() {
         body["result"]["structuredContent"]["tool_id"],
         "sessions.save"
     );
-}
-
-#[tokio::test]
-async fn mcp_model_save_returns_sanitized_provider_data() {
-    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
-    let credentials = CredentialService::with_secret_store(
-        Arc::clone(&store),
-        Arc::new(MemorySecretStore::default()),
-    );
-    let tools = AiToolService::with_credential_service(Arc::new(FakeToolWriter), credentials);
-    let response = handle_http_request(
-        store,
-        tools,
-        "token-1",
-        authed_request(json!({
-            "jsonrpc": "2.0",
-            "id": 10,
-            "method": "tools/call",
-            "params": {
-                "name": "llm_provider.save",
-                "arguments": {
-                    "draft": {
-                        "name": "Local OpenAI",
-                        "kind": "openai_responses",
-                        "base_url": "http://127.0.0.1:11434/v1",
-                        "model": "local-model",
-                        "enabled": true,
-                        "is_default": true
-                    }
-                }
-            }
-        })),
-    )
-    .await
-    .expect("llm_provider.save should handle");
-    let body: Value = serde_json::from_slice(&response.body).expect("json body");
-    let provider = &body["result"]["structuredContent"]["result"]["provider"];
-    assert_eq!(provider["name"], "Local OpenAI");
-    assert_eq!(provider["model"], "local-model");
-    assert_eq!(provider["has_api_key"], false);
-    assert!(provider.get("api_key_ref").is_none());
 }
 
 #[tokio::test]

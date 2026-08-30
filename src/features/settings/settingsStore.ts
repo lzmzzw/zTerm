@@ -4,8 +4,7 @@ import { create } from "zustand";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 
-type CredentialKind = "ssh_password" | "ssh_key_passphrase" | "rdp_password" | "ai_api_key";
-export type AiProviderKind = "openai_chat" | "openai_responses" | "anthropic";
+type CredentialKind = "ssh_password" | "ssh_key_passphrase" | "rdp_password";
 export type AppLanguage = "zhCN" | "enUS";
 export type AppTheme = "dark" | "light" | "system";
 export type WorkspaceRestoreStrategy = "visible_first" | "connect_all" | "layout_only";
@@ -35,50 +34,6 @@ export interface CredentialDraft {
 
 interface CredentialSecret {
   secret: string;
-}
-
-export interface AiProviderProfile {
-  id: string;
-  name: string;
-  kind: AiProviderKind;
-  base_url: string;
-  model: string;
-  api_key_ref: string;
-  enabled: boolean;
-  is_default: boolean;
-  created_at_ms: number;
-  updated_at_ms: number;
-}
-
-export interface AiProviderProfileDraft {
-  id?: string | null;
-  name: string;
-  kind: AiProviderKind;
-  base_url: string;
-  model: string;
-  api_key?: string | null;
-  api_key_ref?: string | null;
-  enabled: boolean;
-  is_default?: boolean;
-}
-
-export interface AiProviderDraftTestRequest {
-  draft: AiProviderProfileDraft;
-  prompt: string;
-}
-
-export interface AiProviderDraftTestResult {
-  ok: boolean;
-  message: string;
-  output: string;
-}
-
-export interface AiProviderDraftTestStreamStartResult {
-  test_id: string;
-}
-
-export interface AiProviderDraftTestCancelResult {
-  cancelled: boolean;
 }
 
 export interface ShortcutBinding {
@@ -142,7 +97,6 @@ export interface TerminalProfileDraft {
 interface SettingsState {
   appSettings: AppSettings | null;
   credentials: CredentialRecord[];
-  providers: AiProviderProfile[];
   terminalProfiles: TerminalProfile[];
   shortcutDefinitions: ShortcutDefinition[];
   mcpStatus: McpServerStatus;
@@ -158,12 +112,6 @@ interface SettingsState {
   readCredentialSecret: (credentialRef: string) => Promise<string>;
   deleteCredential: (id: string) => Promise<void>;
   testCredential: (id: string) => Promise<void>;
-  saveProvider: (draft: AiProviderProfileDraft) => Promise<AiProviderProfile>;
-  deleteProvider: (id: string) => Promise<void>;
-  testProvider: (id: string) => Promise<string>;
-  testProviderDraft: (request: AiProviderDraftTestRequest) => Promise<AiProviderDraftTestResult>;
-  startProviderDraftTestStream: (request: AiProviderDraftTestRequest) => Promise<AiProviderDraftTestStreamStartResult>;
-  cancelProviderDraftTest: (testId: string) => Promise<AiProviderDraftTestCancelResult>;
   detectTerminalProfiles: () => Promise<TerminalProfile[]>;
   setDefaultTerminalProfile: (draft: TerminalProfileDraft) => Promise<TerminalProfile>;
 }
@@ -171,7 +119,6 @@ interface SettingsState {
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   appSettings: null,
   credentials: [],
-  providers: [],
   terminalProfiles: [],
   shortcutDefinitions: [],
   mcpStatus: { enabled: false, endpoint: null, token: null },
@@ -180,15 +127,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   async loadSettings() {
     set({ loading: true, error: null });
     try {
-      const [appSettings, shortcutDefinitions, credentials, providers, terminalProfiles, mcpStatus] = await Promise.all([
+      const [appSettings, shortcutDefinitions, credentials, terminalProfiles, mcpStatus] = await Promise.all([
         invoke<AppSettings>("settings_get"),
         invoke<ShortcutDefinition[]>("shortcut_registry_list"),
         invoke<CredentialRecord[]>("credentials_list"),
-        invoke<AiProviderProfile[]>("llm_provider_list"),
         invoke<TerminalProfile[]>("terminal_profile_list"),
         invoke<McpServerStatus>("mcp_server_status"),
       ]);
-      set({ appSettings, shortcutDefinitions, credentials, providers, terminalProfiles, mcpStatus, loading: false });
+      set({ appSettings, shortcutDefinitions, credentials, terminalProfiles, mcpStatus, loading: false });
     } catch (error) {
       set({ loading: false, error: unknownErrorMessage(error, "设置操作失败") });
     }
@@ -234,28 +180,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
   async testCredential(id) {
     await invoke("credentials_test", { id });
-  },
-  async saveProvider(draft) {
-    const provider = await invoke<AiProviderProfile>("llm_provider_save", { draft });
-    await get().loadSettings();
-    return provider;
-  },
-  async deleteProvider(id) {
-    await invoke("llm_provider_delete", { id });
-    await get().loadSettings();
-  },
-  async testProvider(id) {
-    const result = await invoke<{ ok: boolean; message: string }>("llm_provider_test", { id });
-    return result.message;
-  },
-  async testProviderDraft(request) {
-    return invoke<AiProviderDraftTestResult>("llm_provider_test_draft", { request });
-  },
-  async startProviderDraftTestStream(request) {
-    return invoke<AiProviderDraftTestStreamStartResult>("llm_provider_test_draft_stream", { request });
-  },
-  async cancelProviderDraftTest(testId) {
-    return invoke<AiProviderDraftTestCancelResult>("llm_provider_test_draft_cancel", { testId });
   },
   async detectTerminalProfiles() {
     const profiles = await invoke<TerminalProfile[]>("terminal_profile_detect");

@@ -85,12 +85,11 @@ const storeMocks = vi.hoisted(() => ({
   deleteHistoryEntries: vi.fn().mockResolvedValue(undefined),
   historyPanelProps: null as Record<string, unknown> | null,
   monitorPanelProps: null as Record<string, unknown> | null,
-  modelPanelProps: null as Record<string, unknown> | null,
   transferPanelProps: null as Record<string, unknown> | null,
   fileTransferPanelProps: null as Record<string, unknown> | null,
   aiPanelProps: null as Record<string, unknown> | null,
-  aiAffectedDomainsHandler: null as ((domains: string[]) => Promise<void> | void) | null,
-  aiAffectedDomainsHandlerSetCount: 0,
+  mcpAffectedDomainsHandler: null as ((domains: string[]) => Promise<void> | void) | null,
+  mcpAffectedDomainsHandlerSetCount: 0,
   loadCommandGroups: vi.fn().mockResolvedValue(undefined),
   saveCommandGroup: vi.fn().mockResolvedValue(undefined),
   searchHistory: vi.fn().mockResolvedValue(undefined),
@@ -342,18 +341,6 @@ vi.mock("../features/monitor/useServerInfoSnapshot", () => ({
   })),
 }));
 
-vi.mock("../features/models/ModelManagerPanel", () => ({
-  ModelManagerPanel: (props: Record<string, unknown>) => {
-    storeMocks.modelPanelProps = props;
-    const providers = props.providers as Array<{ name: string }>;
-    return (
-      <section aria-label="模型管理">
-        {providers.length === 0 ? "暂无模型" : providers.map((provider) => provider.name).join(", ")}
-      </section>
-    );
-  },
-}));
-
 vi.mock("../features/sessions/SessionTree", () => ({
   SessionTree: ({ onOpenSession }: { onOpenSession?: (session: unknown) => void }) => (
     <section aria-label="会话树">
@@ -472,20 +459,6 @@ vi.mock("../features/settings/settingsStore", () => {
   const settingsState = () => ({
     appSettings: storeMocks.settingsState.appSettings,
     credentials: [],
-    providers: [
-      {
-        id: "provider-1",
-        name: "OpenAI Compatible",
-        kind: "openai_responses",
-        base_url: "http://127.0.0.1:5555/v1",
-        model: "gpt-test",
-        api_key_ref: "",
-        enabled: true,
-        is_default: true,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ],
     terminalProfiles: [
       {
         id: "pwsh",
@@ -508,12 +481,6 @@ vi.mock("../features/settings/settingsStore", () => {
     readCredentialSecret: vi.fn().mockResolvedValue("saved-secret"),
     deleteCredential: storeMocks.asyncNoop,
     testCredential: storeMocks.asyncNoop,
-    saveProvider: storeMocks.asyncNoop,
-    deleteProvider: storeMocks.asyncNoop,
-    testProvider: vi.fn().mockResolvedValue("ok"),
-    testProviderDraft: vi.fn().mockResolvedValue({ ok: true, message: "ok", output: "pong" }),
-    startProviderDraftTestStream: vi.fn().mockResolvedValue({ test_id: "test-1" }),
-    cancelProviderDraftTest: vi.fn().mockResolvedValue({ cancelled: true }),
     detectTerminalProfiles: vi.fn().mockResolvedValue([]),
     setDefaultTerminalProfile: storeMocks.asyncNoop,
   });
@@ -525,40 +492,28 @@ vi.mock("../features/settings/settingsStore", () => {
   return { useSettingsStore };
 });
 
-vi.mock("../features/ai/aiStore", () => {
-  const aiState = () => ({
-    conversations: [],
-    activeConversationId: null,
+vi.mock("../features/ai/mcpStore", () => {
+  const mcpState = () => ({
     approvalMode: "safe",
     approvalSessionId: null,
-    messages: [],
-    conversationPreviews: {},
     pendingInvocations: [],
-    contextSnapshot: null,
     loading: false,
     error: null,
-    loadConversations: storeMocks.asyncNoop,
     loadPendingInvocations: storeMocks.asyncNoop,
-    captureContext: storeMocks.captureContext,
-    sendChat: storeMocks.asyncNoop,
     setApprovalMode: storeMocks.asyncNoop,
     bindApprovalModeToSession: storeMocks.bindApprovalModeToSession,
-    selectConversation: storeMocks.asyncNoop,
-    loadConversationPreview: storeMocks.asyncNoop,
-    newConversation: storeMocks.asyncNoop,
-    deleteConversation: storeMocks.asyncNoop,
     confirmTool: storeMocks.asyncNoop,
   });
-  const useAiStore = (selector?: (state: Record<string, unknown>) => unknown) => {
-    const state = aiState();
+  const useMcpStore = (selector?: (state: Record<string, unknown>) => unknown) => {
+    const state = mcpState();
     if (selector) return selector(state);
     return state;
   };
-  const setAiAffectedDomainsHandler = vi.fn((handler: ((domains: string[]) => Promise<void> | void) | null) => {
-    storeMocks.aiAffectedDomainsHandlerSetCount += 1;
-    storeMocks.aiAffectedDomainsHandler = handler;
+  const setMcpAffectedDomainsHandler = vi.fn((handler: ((domains: string[]) => Promise<void> | void) | null) => {
+    storeMocks.mcpAffectedDomainsHandlerSetCount += 1;
+    storeMocks.mcpAffectedDomainsHandler = handler;
   });
-  return { setAiAffectedDomainsHandler, useAiStore };
+  return { setMcpAffectedDomainsHandler, useMcpStore };
 });
 
 vi.mock("../features/files/fileStore", () => {
@@ -961,8 +916,8 @@ describe("AppShell", () => {
     vi.clearAllMocks();
     useFileTransferStore.setState({ prepareForSession: originalPrepareForSession });
     useSyncInputStore.getState().closeChannel();
-    storeMocks.aiAffectedDomainsHandler = null;
-    storeMocks.aiAffectedDomainsHandlerSetCount = 0;
+    storeMocks.mcpAffectedDomainsHandler = null;
+    storeMocks.mcpAffectedDomainsHandlerSetCount = 0;
     storeMocks.tauriEventHandlers.clear();
     storeMocks.tauriEventListenCounts.clear();
     storeMocks.pendingExternalLaunches = [];
@@ -1235,7 +1190,7 @@ describe("AppShell", () => {
     });
 
     expect(storeMocks.tauriEventListenCounts.get("zterm:tool-action")).toBe(1);
-    expect(storeMocks.aiAffectedDomainsHandlerSetCount).toBe(1);
+    expect(storeMocks.mcpAffectedDomainsHandlerSetCount).toBe(1);
 
     view.rerender(<AppShell />);
     await act(async () => {
@@ -1244,7 +1199,7 @@ describe("AppShell", () => {
     });
 
     expect(storeMocks.tauriEventListenCounts.get("zterm:tool-action")).toBe(1);
-    expect(storeMocks.aiAffectedDomainsHandlerSetCount).toBe(1);
+    expect(storeMocks.mcpAffectedDomainsHandlerSetCount).toBe(1);
     view.unmount();
   });
 
@@ -1674,7 +1629,7 @@ describe("AppShell", () => {
     expect(view.container.querySelector('.zt-left-rail [aria-label="Workspace"]')).not.toBe(null);
     expect(view.container.querySelector('.zt-left-rail [aria-label="Sessions"]')).not.toBe(null);
     expect(view.container.querySelector('.zt-left-rail [aria-label="File Transfer"]')).not.toBe(null);
-    expect(view.container.querySelector('.zt-left-rail [aria-label="Models"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-left-rail [aria-label="Models"]')).toBe(null);
     expect(view.container.querySelector('.zt-left-rail [aria-label="Open Settings"]')).not.toBe(null);
     expect(view.container.querySelector('[aria-label="Terminal Panes"]')).not.toBe(null);
     expect(view.container.textContent).toContain("New Terminal");
@@ -1764,14 +1719,13 @@ describe("AppShell", () => {
     const workspaceButton = button(view.container, "工作区");
     const sessionButton = button(view.container, "会话");
     const fileTransferButton = button(view.container, "文件传输");
-    const modelButton = button(view.container, "模型");
     const leftRailLabels = Array.from(view.container.querySelectorAll(".zt-left-rail button")).map((item) =>
       item.getAttribute("aria-label"),
     );
 
     expect(view.container.querySelector('[aria-label="左侧管理"]')).not.toBe(null);
     expect(view.container.querySelector('[aria-label="左侧管理切换"]')).not.toBe(null);
-    expect(leftRailLabels).toEqual(["会话", "工作区", "模型", "文件传输", "打开设置"]);
+    expect(leftRailLabels).toEqual(["会话", "工作区", "文件传输", "打开设置"]);
     expect(view.container.querySelector('[aria-label="工作区管理"]')).toBe(null);
     expect(view.container.querySelector('[aria-label="会话管理"]')).toBe(null);
     expect(view.container.querySelector('[aria-label="会话树"]')).toBe(null);
@@ -1785,7 +1739,7 @@ describe("AppShell", () => {
     expect(sessionButton.getAttribute("aria-expanded")).toBe("false");
     expect(fileTransferButton.getAttribute("aria-pressed")).toBe("false");
     expect(fileTransferButton.getAttribute("aria-expanded")).toBe("false");
-    expect(modelButton.querySelector("svg")?.classList.contains("lucide-bot")).toBe(true);
+    expect(view.container.querySelector('.zt-left-rail [aria-label="模型"]')).toBe(null);
 
     view.unmount();
   });
@@ -1819,18 +1773,6 @@ describe("AppShell", () => {
     expect(button(view.container, "会话").getAttribute("aria-pressed")).toBe("true");
     expect(button(view.container, "会话").getAttribute("aria-expanded")).toBe("true");
 
-    await clickButton(view.container, "模型");
-
-    expect(view.container.querySelector('[aria-label="模型管理"]')).not.toBe(null);
-    expect(view.container.querySelector('[aria-label="工作区管理"]')).toBe(null);
-    expect(view.container.querySelector('[aria-label="会话管理"]')).toBe(null);
-    expect(button(view.container, "模型").getAttribute("aria-pressed")).toBe("true");
-    expect(button(view.container, "模型").getAttribute("aria-expanded")).toBe("true");
-    expect(button(view.container, "会话").getAttribute("aria-pressed")).toBe("false");
-    expect(storeMocks.modelPanelProps?.providers).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "OpenAI Compatible" })]),
-    );
-
     await clickButton(view.container, "工作区");
 
     expect(view.container.querySelector('[aria-label="工作区管理"]')).not.toBe(null);
@@ -1853,7 +1795,6 @@ describe("AppShell", () => {
     await clickButton(view.container, "打开设置");
 
     expect(view.container.querySelector('[aria-label="设置分类"]')?.textContent).not.toContain("模型");
-    expect(view.container.querySelector('[aria-label="AI Provider 设置"]')).toBe(null);
 
     view.unmount();
   });
@@ -3421,7 +3362,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("refreshes affected workspace domains after AI tool completion", async () => {
+  it("refreshes affected workspace domains after MCP tool completion", async () => {
     const view = render(<AppShell />);
     await act(async () => {
       await Promise.resolve();
@@ -3429,7 +3370,7 @@ describe("AppShell", () => {
     storeMocks.workspaceList.mockClear();
 
     await act(async () => {
-      await storeMocks.aiAffectedDomainsHandler?.(["workspace"]);
+      await storeMocks.mcpAffectedDomainsHandler?.(["workspace"]);
     });
 
     expect(storeMocks.workspaceList).toHaveBeenCalledTimes(1);

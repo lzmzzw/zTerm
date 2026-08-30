@@ -7,7 +7,6 @@ use std::{
 };
 
 use serde::Serialize;
-use serde_json::Value;
 use tauri::{AppHandle, State};
 use tokio::{process::Command, time::timeout};
 use uuid::Uuid;
@@ -106,10 +105,7 @@ pub async fn agent_codex_open(
         cleanup_agent_artifacts(&state, &agent_session_id, &session_root);
         return Err(error.into());
     }
-    let (model_catalog_path, inherited_mcp_servers) = match tokio::try_join!(
-        write_codex_mcp_model_catalog(&session_root),
-        list_inherited_codex_mcp_servers(&session_root),
-    ) {
+    let inherited_mcp_servers = match list_inherited_codex_mcp_servers(&session_root).await {
         Ok(result) => result,
         Err(error) => {
             cleanup_agent_artifacts(&state, &agent_session_id, &session_root);
@@ -117,12 +113,7 @@ pub async fn agent_codex_open(
         }
     };
 
-    let (command, args) = codex_launch_command(
-        &access.endpoint,
-        approval_mode,
-        &model_catalog_path,
-        &inherited_mcp_servers,
-    );
+    let (command, args) = codex_launch_command(&access.endpoint, &inherited_mcp_servers);
     let opened = match state
         .terminal_manager()
         .open_agent_codex_session(AgentCodexPtyOptions {
@@ -206,12 +197,7 @@ pub fn agent_codex_close(
     remove_agent_session_directory(&agent_session_root(&agent_session_id)?)
 }
 
-fn codex_launch_command(
-    endpoint: &str,
-    _approval_mode: AiApprovalMode,
-    model_catalog_path: &Path,
-    inherited_mcp_servers: &[String],
-) -> (String, Vec<String>) {
+fn codex_launch_command(endpoint: &str, inherited_mcp_servers: &[String]) -> (String, Vec<String>) {
     let mut codex_args = vec![
         "--disable".to_string(),
         "apps".to_string(),
@@ -240,11 +226,6 @@ fn codex_launch_command(
         format!(
             "shell_environment_policy.exclude=[{}]",
             toml_string(AGENT_MCP_TOKEN_ENV)
-        ),
-        "-c".to_string(),
-        format!(
-            "model_catalog_json={}",
-            toml_string(&model_catalog_path.to_string_lossy())
         ),
     ];
     for server in inherited_mcp_servers {
@@ -305,29 +286,6 @@ fn parse_codex_mcp_list(output: &str) -> AppResult<Vec<String>> {
     servers.sort();
     servers.dedup();
     Ok(servers)
-}
-
-async fn write_codex_mcp_model_catalog(session_root: &Path) -> AppResult<PathBuf> {
-    let output = run_codex_probe(
-        session_root,
-        &["debug", "models"],
-        "读取本机 Codex 模型目录",
-    )
-    .await?;
-    if !output.status.success() {
-        return Err(AppError::ai(format!(
-            "本机 Codex 模型目录读取失败，退出状态: {}",
-            output.status
-        )));
-    }
-    let mut catalog = serde_json::from_slice::<Value>(&output.stdout)
-        .map_err(|error| AppError::ai(format!("本机 Codex 模型目录不是有效 JSON: {error}")))?;
-    disable_responses_lite(&mut catalog)?;
-    let path = session_root.join("codex-model-catalog.json");
-    let catalog_bytes = serde_json::to_vec_pretty(&catalog)
-        .map_err(|error| AppError::ai(format!("无法生成 Codex 模型目录: {error}")))?;
-    fs::write(&path, catalog_bytes)?;
-    Ok(path)
 }
 
 fn background_codex_command(arguments: &[&str]) -> Command {
@@ -444,23 +402,6 @@ fn remove_agent_session_directory(path: &Path) -> AppResult<()> {
     }
 }
 
-fn disable_responses_lite(catalog: &mut Value) -> AppResult<()> {
-    let models = catalog
-        .get_mut("models")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| AppError::ai("本机 Codex 模型目录缺少 models 数组"))?;
-    if models.is_empty() {
-        return Err(AppError::ai("本机 Codex 模型目录为空"));
-    }
-    for model in models {
-        let model = model
-            .as_object_mut()
-            .ok_or_else(|| AppError::ai("本机 Codex 模型目录包含无效模型项"))?;
-        model.insert("use_responses_lite".to_string(), Value::Bool(false));
-    }
-    Ok(())
-}
-
 fn agent_instructions(
     target_label: &str,
     saved_session_id: Option<&str>,
@@ -496,13 +437,11 @@ fn required_text(label: &str, value: &str) -> AppResult<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::OsStr, path::Path};
-
-    use serde_json::json;
+    use std::ffi::OsStr;
 
     use super::{
-        agent_instructions, background_codex_command, codex_launch_command, disable_responses_lite,
-        parse_codex_mcp_list, required_agent_session_id,
+        agent_instructions, background_codex_command, codex_launch_command, parse_codex_mcp_list,
+        required_agent_session_id,
     };
     use crate::models::ai::AiApprovalMode;
 
@@ -519,8 +458,6 @@ mod tests {
     fn codex_launch_uses_read_only_local_sandbox_and_scoped_mcp_token() {
         let (_command, args) = codex_launch_command(
             "http://127.0.0.1:9419/mcp",
-            AiApprovalMode::Safe,
-            Path::new("C:\\zterm-agent\\models.json"),
             &["stitch".to_string(), "node_repl".to_string()],
         );
         assert!(args.windows(2).any(|pair| pair == ["--disable", "apps"]));
@@ -537,7 +474,7 @@ mod tests {
         assert!(args
             .iter()
             .any(|arg| arg.contains("shell_environment_policy.exclude")));
-        assert!(args.iter().any(|arg| arg.contains("model_catalog_json")));
+        assert!(!args.iter().any(|arg| arg.contains("model_catalog_json")));
         assert!(args
             .iter()
             .any(|arg| arg == "mcp_servers.stitch.enabled=false"));
@@ -577,22 +514,6 @@ stitch https://example.test/mcp enabled Unknown\n";
         assert_eq!(arguments, ["/D", "/S", "/C", "codex", "mcp", "list"]);
         #[cfg(not(windows))]
         assert_eq!(arguments, ["mcp", "list"]);
-    }
-
-    #[test]
-    fn sidebar_model_catalog_disables_responses_lite_for_mcp_tool_visibility() {
-        let mut catalog = json!({
-            "models": [
-                { "slug": "gpt-5.6-sol", "use_responses_lite": true },
-                { "slug": "gpt-5.5", "use_responses_lite": false }
-            ]
-        });
-        disable_responses_lite(&mut catalog).expect("catalog should patch");
-        assert!(catalog["models"]
-            .as_array()
-            .expect("models")
-            .iter()
-            .all(|model| model["use_responses_lite"] == false));
     }
 
     #[test]

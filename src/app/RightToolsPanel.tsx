@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { AgentCodexPanel } from "../features/ai/AgentCodexPanel";
 import type { AgentCodexSession } from "../features/ai/agentCodexApi";
-import type { AiApprovalMode, AiToolPendingInvocation, AiToolSecretInputs } from "../features/ai/aiStore";
+import type { McpApprovalMode, McpToolPendingInvocation, McpToolSecretInputs } from "../features/ai/mcpStore";
 import { FileExplorerPanel } from "../features/files/FileExplorerPanel";
 import { TransferPanel } from "../features/files/TransferPanel";
 import type { FileEntry, TransferTask } from "../features/files/fileStore";
@@ -44,13 +44,13 @@ interface RightToolsPanelProps {
   activeConnectionKind: ActiveConnectionKind;
   agent: {
     session: AgentCodexSession | null;
-    approvalMode: AiApprovalMode;
+    approvalMode: McpApprovalMode;
     error: string | null;
     loading: boolean;
-    pendingInvocations: AiToolPendingInvocation[];
-    onApprovalModeChange: (mode: AiApprovalMode) => Promise<unknown> | unknown;
+    pendingInvocations: McpToolPendingInvocation[];
+    onApprovalModeChange: (mode: McpApprovalMode) => Promise<unknown> | unknown;
     onClose: () => Promise<unknown> | unknown;
-    onConfirmTool: (invocationId: string, approved: boolean, secretInputs?: AiToolSecretInputs) => Promise<unknown> | unknown;
+    onConfirmTool: (invocationId: string, approved: boolean, secretInputs?: McpToolSecretInputs) => Promise<unknown> | unknown;
     onRestart: () => Promise<unknown> | unknown;
   };
   files: {

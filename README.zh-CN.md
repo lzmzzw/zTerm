@@ -13,13 +13,13 @@ zTerm 是一个基于 Tauri 的桌面终端工作台，面向 SSH、SFTP、命�
 - 支持终端标签、横向/纵向分栏和工作区恢复。
 - 支持 SFTP 目录浏览、新建目录、上传、下载、重命名、删除和失败重试。
 - 按会话或本地终端 profile 捕获命令历史，支持搜索、复制和重新发送。
-- 凭据和 AI Provider API Key 写入操作系统 keyring，避免以明文保存在 SQLite 中。
+- 连接凭据写入操作系统 keyring，避免以明文保存在 SQLite 中。
 - 右侧 Agent 面板直接启动本机已登录的 Codex CLI；每个终端标签独立绑定一个 Codex 进程，切回已有标签时恢复显示。
 - 侧栏 Codex 只能通过会话级 MCP 读写绑定的终端页面；SSH 命令进入现有 SSH 终端并读取页面输出，不另建 SSH 连接。
 - 本机 MCP 可让 Codex 复用 zTerm 已保存的 SSH、SFTP、FTP 连接和 keyring 认证，经本地确认后上传、下载文件或目录，并查询传输进度。
 - 支持 SSH 服务器 CPU、内存、磁盘、负载、运行时间和网络流量快照监控。
 
-RDP 会话通过 Windows 系统远程桌面客户端在外部窗口中打开；工作区保留会话标签用于定位，但不内嵌或渲染远程桌面。侧栏 Codex 使用本机 Codex 的登录态，zTerm 不保存或代理 Codex 账号凭据。
+RDP 会话通过 Windows 系统远程桌面客户端在外部窗口中打开；工作区保留会话标签用于定位，但不内嵌或渲染远程桌面。侧栏 Agent 完全由本机 Codex CLI 实现，使用 Codex CLI 的登录态和模型配置；zTerm 不提供模型管理、内置模型调用，也不保存或代理 Codex 账号凭据。
 
 ## 界面截图
 
@@ -82,7 +82,7 @@ git push origin v0.1.0
 
 ## 安全说明
 
-不要提交真实主机、用户名、密码、API Key、私钥、token 或 smoke 测试环境文件。本地 AI agent 设置、内部项目说明、构建产物、运行时数据库和临时凭据默认会被忽略。
+不要提交真实主机、用户名、密码、API Key、私钥、token 或 smoke 测试环境文件。本地 Agent 设置、内部项目说明、构建产物、运行时数据库和临时凭据默认会被忽略。
 
 Windows 下可将 `ZTERM_RDP_SIGNING_CERT_THUMBPRINT` 设置为当前用户可用代码签名证书的 40 位 Thumbprint，修改环境变量后需重启 zTerm。zTerm 会在启动 `mstsc.exe` 前调用 `rdpsign.exe`；配置缺失、格式无效或签名失败时保持兼容，继续使用原有未签名 RDP 启动流程。
 

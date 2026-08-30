@@ -137,32 +137,8 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
         create table if not exists credential_records (
             id text primary key,
             name text not null check (length(trim(name)) > 0),
-            kind text not null check (kind in ('ssh_password', 'ssh_key_passphrase', 'rdp_password', 'ai_api_key')),
+            kind text not null check (kind in ('ssh_password', 'ssh_key_passphrase', 'rdp_password')),
             credential_ref text not null unique check (length(trim(credential_ref)) > 0),
-            created_at_ms integer not null,
-            updated_at_ms integer not null
-        );
-
-        create table if not exists ai_provider_profiles (
-            id text primary key,
-            name text not null check (length(trim(name)) > 0),
-            kind text not null default 'openai_chat' check (kind in ('openai_chat', 'openai_responses', 'anthropic')),
-            base_url text not null check (length(trim(base_url)) > 0),
-            model text not null check (length(trim(model)) > 0),
-            api_key_ref text not null default '',
-            enabled integer not null default 1 check (enabled in (0, 1)),
-            is_default integer not null default 0 check (is_default in (0, 1)),
-            created_at_ms integer not null,
-            updated_at_ms integer not null
-        );
-
-        create table if not exists ai_conversations (
-            id text primary key,
-            title text not null check (length(trim(title)) > 0),
-            scope_kind text not null check (length(trim(scope_kind)) > 0),
-            scope_ref_json text not null default '{}',
-            approval_mode text not null default 'safe' check (approval_mode in ('request_approval', 'safe', 'full_access')),
-            status text not null default 'idle' check (status in ('idle', 'running', 'archived')),
             created_at_ms integer not null,
             updated_at_ms integer not null
         );
@@ -171,16 +147,6 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
             saved_session_id text primary key references saved_sessions(id) on delete cascade,
             approval_mode text not null default 'safe' check (approval_mode in ('request_approval', 'safe', 'full_access')),
             updated_at_ms integer not null
-        );
-
-        create table if not exists ai_conversation_messages (
-            id text primary key,
-            conversation_id text not null references ai_conversations(id) on delete cascade,
-            role text not null check (role in ('user', 'assistant', 'system', 'tool')),
-            content text not null,
-            status text not null default 'complete' check (status in ('draft', 'streaming', 'complete', 'error')),
-            metadata_json text null,
-            created_at_ms integer not null
         );
 
         create table if not exists ai_tool_pending (
@@ -198,7 +164,6 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
             status text not null check (status in ('pending', 'rejected', 'succeeded', 'failed')),
             reason text null,
             requested_by text null,
-            conversation_id text null,
             run_id text null,
             step_id text null,
             created_at_ms integer not null
@@ -252,8 +217,6 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
         create index if not exists idx_command_history_scope_time on command_history(scope_kind, scope_id, started_at_ms desc);
         create index if not exists idx_transfer_tasks_session_status on transfer_tasks(saved_session_id, status);
         create index if not exists idx_credential_records_kind_name on credential_records(kind, name);
-        create index if not exists idx_ai_conversations_updated on ai_conversations(updated_at_ms desc);
-        create index if not exists idx_ai_conversation_messages_conversation on ai_conversation_messages(conversation_id, created_at_ms);
         create index if not exists idx_ai_tool_pending_created on ai_tool_pending(created_at_ms desc);
         create index if not exists idx_ai_tool_audits_completed on ai_tool_audits(completed_at_ms desc);
         create index if not exists idx_session_command_groups_session_sort on session_command_groups(saved_session_id, sort_order, updated_at_ms desc);
@@ -264,6 +227,7 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
     ensure_transfer_task_strategy_columns(&transaction)?;
     ensure_ai_tool_audit_columns(&transaction)?;
     ensure_ai_tool_pending_columns(&transaction)?;
+    purge_legacy_model_data(&transaction)?;
     enable_existing_ssh_container_entries(&transaction)?;
     reset_workspace_runtime_status(&transaction)?;
     drop_legacy_agent_runs(&transaction)?;
@@ -390,6 +354,100 @@ fn ensure_ai_tool_pending_columns(transaction: &rusqlite::Transaction<'_>) -> Ap
         "update ai_tool_pending set requires_secret_input = 0 where requires_secret_input is null",
         [],
     )?;
+    Ok(())
+}
+
+fn purge_legacy_model_data(transaction: &rusqlite::Transaction<'_>) -> AppResult<()> {
+    transaction.execute_batch(
+        "
+        drop table if exists ai_conversation_messages;
+        drop table if exists ai_conversations;
+        drop table if exists ai_provider_profiles;
+
+        delete from credential_records where kind = 'ai_api_key';
+        delete from ai_tool_pending
+        where tool_id like 'llm_provider.%'
+           or tool_id = 'settings.update_ai_security';
+        delete from ai_tool_audits
+        where tool_id like 'llm_provider.%'
+           or tool_id = 'settings.update_ai_security';
+        ",
+    )?;
+
+    let credential_table_sql = transaction
+        .query_row(
+            "select sql from sqlite_master where type = 'table' and name = 'credential_records'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if credential_table_sql
+        .as_deref()
+        .is_some_and(|sql| sql.contains("ai_api_key"))
+    {
+        transaction.execute_batch(
+            "
+            drop index if exists idx_credential_records_kind_name;
+            create table credential_records_next (
+                id text primary key,
+                name text not null check (length(trim(name)) > 0),
+                kind text not null check (kind in ('ssh_password', 'ssh_key_passphrase', 'rdp_password')),
+                credential_ref text not null unique check (length(trim(credential_ref)) > 0),
+                created_at_ms integer not null,
+                updated_at_ms integer not null
+            );
+            insert into credential_records_next (
+                id, name, kind, credential_ref, created_at_ms, updated_at_ms
+            )
+            select id, name, kind, credential_ref, created_at_ms, updated_at_ms
+            from credential_records
+            where kind <> 'ai_api_key';
+            drop table credential_records;
+            alter table credential_records_next rename to credential_records;
+            create index idx_credential_records_kind_name on credential_records(kind, name);
+            ",
+        )?;
+    }
+
+    if sqlite_column_exists(transaction, "ai_tool_pending", "conversation_id")? {
+        transaction.execute_batch(
+            "
+            drop index if exists idx_ai_tool_pending_created;
+            create table ai_tool_pending_next (
+                id text primary key,
+                tool_id text not null check (length(trim(tool_id)) > 0),
+                tool_title text not null check (length(trim(tool_title)) > 0),
+                risk_level text not null check (risk_level in ('low', 'medium', 'high', 'critical')),
+                arguments_summary text not null,
+                arguments_json text not null,
+                target_summary text null,
+                risk_summary text null,
+                requires_confirmation integer not null check (requires_confirmation in (0, 1)),
+                requires_secret_input integer not null default 0 check (requires_secret_input in (0, 1)),
+                secret_input_label text null,
+                status text not null check (status in ('pending', 'rejected', 'succeeded', 'failed')),
+                reason text null,
+                requested_by text null,
+                run_id text null,
+                step_id text null,
+                created_at_ms integer not null
+            );
+            insert into ai_tool_pending_next (
+                id, tool_id, tool_title, risk_level, arguments_summary, arguments_json,
+                target_summary, risk_summary, requires_confirmation, requires_secret_input,
+                secret_input_label, status, reason, requested_by, run_id, step_id, created_at_ms
+            )
+            select id, tool_id, tool_title, risk_level, arguments_summary, arguments_json,
+                   target_summary, risk_summary, requires_confirmation, requires_secret_input,
+                   secret_input_label, status, reason, requested_by, run_id, step_id, created_at_ms
+            from ai_tool_pending
+            where conversation_id is null;
+            drop table ai_tool_pending;
+            alter table ai_tool_pending_next rename to ai_tool_pending;
+            create index idx_ai_tool_pending_created on ai_tool_pending(created_at_ms desc);
+            ",
+        )?;
+    }
     Ok(())
 }
 

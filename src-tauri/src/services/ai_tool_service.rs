@@ -27,12 +27,11 @@ use crate::{
     error::{AppError, AppResult},
     models::{
         ai::{
-            AiApprovalMode, AiMessageRole, AiToolAuditListRequest, AiToolAuditRecord,
-            AiToolConfirmRequest, AiToolDefinition, AiToolFrontendActionEvent,
-            AiToolInvocationStatus, AiToolPendingInvocation, AiToolPrepareRequest,
-            AiToolSecretInputs, RiskLevel,
+            AiApprovalMode, AiToolAuditListRequest, AiToolAuditRecord, AiToolConfirmRequest,
+            AiToolDefinition, AiToolFrontendActionEvent, AiToolInvocationStatus,
+            AiToolPendingInvocation, AiToolPrepareRequest, AiToolSecretInputs, RiskLevel,
         },
-        credential::{AiProviderProfile, AiProviderProfileDraft, CredentialDraft, CredentialKind},
+        credential::{CredentialDraft, CredentialKind},
         history::{HistoryScopeKind, HistorySearchOptions},
         server_info::{ServerInfoRequest, ServerInfoSnapshot},
         session::{AuthMode, SavedSession, SavedSessionDraft, SessionGroupDraft, SessionType},
@@ -50,10 +49,8 @@ use crate::{
     security::redaction::redact_sensitive,
     storage::{
         ai::{
-            delete_ai_tool_pending, get_ai_provider_profile, get_ai_tool_pending_state,
-            insert_ai_conversation_message, insert_ai_tool_audit, list_ai_provider_profiles,
-            list_ai_tool_audits, list_ai_tool_pending, update_ai_conversation_approval_mode,
-            upsert_ai_tool_pending,
+            delete_ai_tool_pending, get_ai_tool_pending_state, insert_ai_tool_audit,
+            list_ai_tool_audits, list_ai_tool_pending, upsert_ai_tool_pending,
         },
         history::{clear_command_history, search_command_history},
         sessions::{
@@ -325,7 +322,7 @@ impl AiToolService {
         reject_secret_argument_values(&arguments)?;
         validate_arguments(&tool.id, &arguments)?;
         let risk = assess_risk(&tool, &arguments);
-        let secret_input = secret_input_requirement(store, &tool.id, &arguments)?;
+        let secret_input = secret_input_requirement(&tool.id, &arguments)?;
         let requires_confirmation =
             requires_confirmation(&tool.id, approval_mode, risk.level) || secret_input.required;
         let pending = AiToolPendingInvocation {
@@ -341,7 +338,6 @@ impl AiToolService {
             secret_input_label: secret_input.label,
             status: AiToolInvocationStatus::Pending,
             created_at_ms: now_ms(),
-            conversation_id: normalize_optional(request.conversation_id),
             run_id: normalize_optional(request.run_id),
             step_id: normalize_optional(request.step_id),
             reason: normalize_optional(request.reason),
@@ -441,7 +437,6 @@ impl AiToolService {
             },
         };
         insert_ai_tool_audit(store, &audit)?;
-        persist_tool_message(store, &pending, &audit)?;
         Ok((audit, structured_content))
     }
 
@@ -645,50 +640,6 @@ impl AiToolService {
                 validate_session_draft_for_test(store, draft)?;
                 Ok(execution_result("会话配置测试通过。", ["sessions"]))
             }
-            "llm_provider.list" => {
-                let query =
-                    optional_string_arg(arguments, "query").map(|value| value.to_ascii_lowercase());
-                let providers = list_ai_provider_profiles(store)?;
-                let sanitized_providers = providers
-                    .iter()
-                    .filter(|provider| {
-                        query.as_ref().is_none_or(|query| {
-                            provider.name.to_ascii_lowercase().contains(query)
-                                || provider.model.to_ascii_lowercase().contains(query)
-                        })
-                    })
-                    .map(sanitized_provider_value)
-                    .collect::<Vec<_>>();
-                Ok(structured_execution_result(
-                    format!("LLM Provider 已读取：{} 个。", providers.len()),
-                    ["models"],
-                    json!({ "providers": sanitized_providers }),
-                ))
-            }
-            "llm_provider.create" | "llm_provider.update" => {
-                let mut draft = object_arg::<AiProviderProfileDraft>(arguments, "draft")?;
-                apply_ai_provider_secret_input(&mut draft, secret_inputs)?;
-                let credentials = self.credential_service()?;
-                let profile = credentials.save_ai_provider(draft)?;
-                Ok(structured_execution_result(
-                    format!("LLM Provider 已保存：{}。", profile.name),
-                    ["models"],
-                    json!({ "provider": sanitized_provider_value(&profile) }),
-                ))
-            }
-            "llm_provider.delete" => {
-                let id = string_arg(arguments, "id")?;
-                self.credential_service()?.delete_ai_provider(&id)?;
-                Ok(execution_result("LLM Provider 已删除。", ["models"]))
-            }
-            "llm_provider.test" => {
-                let id = string_arg(arguments, "id")?;
-                let result = self.credential_service()?.test_ai_provider(&id)?;
-                Ok(execution_result(
-                    format!("LLM Provider 测试结果：{}。", result.message),
-                    ["models"],
-                ))
-            }
             "settings.get" => {
                 let settings = get_app_settings(store)?;
                 Ok(execution_result(
@@ -698,12 +649,6 @@ impl AiToolService {
                     ),
                     ["settings"],
                 ))
-            }
-            "settings.update_ai_security" => {
-                let conversation_id = string_arg(arguments, "conversation_id")?;
-                let approval_mode = ai_approval_mode_arg(arguments)?;
-                update_ai_conversation_approval_mode(store, &conversation_id, approval_mode)?;
-                Ok(execution_result("AI 会话审批模式已更新。", ["ai"]))
             }
             "workspace.list" => {
                 let workspaces = list_workspaces(store)?;
@@ -1002,9 +947,6 @@ impl AiToolService {
         if tool_id == "sessions.save" {
             return self.prepare_session_save_arguments(store, arguments);
         }
-        if tool_id == "llm_provider.create" || tool_id == "llm_provider.update" {
-            return self.prepare_llm_provider_save_arguments(arguments);
-        }
         Ok(arguments)
     }
 
@@ -1169,55 +1111,6 @@ impl AiToolService {
                     .cloned()
                     .unwrap_or(Value::Null),
             );
-        }
-        Ok(arguments)
-    }
-
-    fn prepare_llm_provider_save_arguments(&self, mut arguments: Value) -> AppResult<Value> {
-        let Some(root) = arguments.as_object_mut() else {
-            return Ok(arguments);
-        };
-        let top_curl = take_nonempty_string(root, "curl")
-            .or_else(|| take_nonempty_string(root, "request"))
-            .or_else(|| take_nonempty_string(root, "command"))
-            .or_else(|| take_nonempty_string(root, "value"));
-        let top_url = take_nonempty_string(root, "url")
-            .or_else(|| take_nonempty_string(root, "endpoint"))
-            .or_else(|| take_nonempty_string(root, "base_url"));
-        let top_model = take_nonempty_string(root, "model");
-        let top_kind = take_nonempty_string(root, "kind");
-        let top_name = take_nonempty_string(root, "name");
-        let source = top_curl.as_deref();
-        let parsed_url = top_url
-            .or_else(|| source.and_then(extract_first_http_url))
-            .map(|url| normalize_provider_base_url(&url));
-        let parsed_model = top_model
-            .or_else(|| source.and_then(|value| extract_json_string_field(value, "model")));
-        let parsed_kind = top_kind
-            .or_else(|| parsed_url.as_deref().map(infer_provider_kind_from_url))
-            .unwrap_or_else(|| "openai_chat".to_string());
-
-        let draft_value = root
-            .entry("draft".to_string())
-            .or_insert_with(|| Value::Object(Map::new()));
-        let Some(draft_object) = draft_value.as_object_mut() else {
-            return Ok(arguments);
-        };
-        if let Some(name) = top_name.or_else(|| parsed_model.clone()) {
-            set_missing_string(draft_object, "name", &name);
-        }
-        if let Some(url) = parsed_url {
-            set_missing_string(draft_object, "base_url", &url);
-        }
-        if let Some(model) = parsed_model {
-            set_missing_string(draft_object, "model", &model);
-        }
-        set_missing_string(draft_object, "kind", &parsed_kind);
-        if !draft_object.contains_key("enabled") {
-            draft_object.insert("enabled".to_string(), Value::Bool(true));
-        }
-        if !draft_object.contains_key("is_default") {
-            draft_object.insert("is_default".to_string(), Value::Bool(false));
         }
         Ok(arguments)
     }
@@ -1417,19 +1310,17 @@ impl AiToolService {
 
     fn zterm_context(&self, store: &SqliteStore) -> AppResult<AiToolExecutionResult> {
         let sessions = list_sessions(store)?;
-        let providers = list_ai_provider_profiles(store)?;
         let workspaces = list_workspaces(store)?;
         let terminals = self.writer.list_terminals()?;
         Ok(execution_result(
             format!(
-                "zTerm 上下文：{} 个分组，{} 个会话，{} 个模型，{} 个工作区，{} 个运行终端。",
+                "zTerm 上下文：{} 个分组，{} 个会话，{} 个工作区，{} 个运行终端。",
                 sessions.groups.len(),
                 sessions.sessions.len(),
-                providers.len(),
                 workspaces.len(),
                 terminals.len()
             ),
-            ["sessions", "models", "workspace", "terminal"],
+            ["sessions", "workspace", "terminal"],
         ))
     }
 
@@ -1440,7 +1331,6 @@ impl AiToolService {
     ) -> AppResult<AiToolExecutionResult> {
         let query = string_arg(arguments, "query")?.to_ascii_lowercase();
         let sessions = list_sessions(store)?;
-        let providers = list_ai_provider_profiles(store)?;
         let workspaces = list_workspaces(store)?;
         let session_matches = sessions
             .sessions
@@ -1449,14 +1339,6 @@ impl AiToolService {
                 session.name.to_ascii_lowercase().contains(&query)
                     || session.host.to_ascii_lowercase().contains(&query)
                     || session.id.to_ascii_lowercase().contains(&query)
-            })
-            .count();
-        let provider_matches = providers
-            .iter()
-            .filter(|provider| {
-                provider.name.to_ascii_lowercase().contains(&query)
-                    || provider.model.to_ascii_lowercase().contains(&query)
-                    || provider.id.to_ascii_lowercase().contains(&query)
             })
             .count();
         let workspace_matches = workspaces
@@ -1468,10 +1350,10 @@ impl AiToolService {
             .count();
         Ok(execution_result(
             format!(
-                "搜索完成：会话 {} 个，模型 {} 个，工作区 {} 个。",
-                session_matches, provider_matches, workspace_matches
+                "搜索完成：会话 {} 个，工作区 {} 个。",
+                session_matches, workspace_matches
             ),
-            ["sessions", "models", "workspace"],
+            ["sessions", "workspace"],
         ))
     }
 }
@@ -1540,48 +1422,6 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
             "读取 zTerm 应用设置摘要",
             RiskLevel::Low,
             false,
-        ),
-        (
-            "settings.update_ai_security",
-            "更新 AI 安全设置",
-            "更新 AI 工具审批策略",
-            RiskLevel::High,
-            true,
-        ),
-        (
-            "llm_provider.list",
-            "列出 LLM Provider",
-            "读取 Provider 配置摘要",
-            RiskLevel::Low,
-            false,
-        ),
-        (
-            "llm_provider.create",
-            "创建 LLM Provider",
-            "新增模型 Provider 配置",
-            RiskLevel::Medium,
-            false,
-        ),
-        (
-            "llm_provider.update",
-            "更新 LLM Provider",
-            "修改模型 Provider 配置",
-            RiskLevel::Medium,
-            false,
-        ),
-        (
-            "llm_provider.delete",
-            "删除 LLM Provider",
-            "删除模型 Provider 配置",
-            RiskLevel::Critical,
-            true,
-        ),
-        (
-            "llm_provider.test",
-            "测试 LLM Provider",
-            "调用 Provider 测试请求",
-            RiskLevel::Medium,
-            true,
         ),
         (
             "sessions.list",
@@ -1845,7 +1685,7 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
         (
             "zterm.search",
             "搜索 zTerm 资源",
-            "按关键词搜索会话、模型和工作区",
+            "按关键词搜索会话和工作区",
             RiskLevel::Low,
             false,
         ),
@@ -1900,25 +1740,15 @@ fn validate_arguments(tool_id: &str, arguments: &Value) -> AppResult<()> {
             let _ = history_scope_kind_arg(arguments)?;
             let _ = string_arg(arguments, "scope_id")?;
         }
-        "settings.get" | "llm_provider.list" | "sessions.list" | "terminal.list" => {}
+        "settings.get" | "sessions.list" | "terminal.list" => {}
         "session_groups.save" => {
             let _ = object_arg::<SessionGroupDraft>(arguments, "draft")?;
         }
-        "session_groups.delete"
-        | "sessions.delete"
-        | "llm_provider.delete"
-        | "llm_provider.test" => {
+        "session_groups.delete" | "sessions.delete" => {
             let _ = string_arg(arguments, "id")?;
         }
         "sessions.save" | "sessions.test" => {
             let _ = object_arg::<SavedSessionDraft>(arguments, "draft")?;
-        }
-        "llm_provider.create" | "llm_provider.update" => {
-            let _ = object_arg::<AiProviderProfileDraft>(arguments, "draft")?;
-        }
-        "settings.update_ai_security" => {
-            let _ = string_arg(arguments, "conversation_id")?;
-            let _ = ai_approval_mode_arg(arguments)?;
         }
         "workspace.get" | "workspace.delete" | "workspace.restore" => {
             let _ = string_arg(arguments, "workspace_id")?;
@@ -1985,11 +1815,7 @@ struct SecretInputRequirement {
     label: Option<String>,
 }
 
-fn secret_input_requirement(
-    store: &SqliteStore,
-    tool_id: &str,
-    arguments: &Value,
-) -> AppResult<SecretInputRequirement> {
+fn secret_input_requirement(tool_id: &str, arguments: &Value) -> AppResult<SecretInputRequirement> {
     if tool_id == "sessions.save" {
         let draft = object_arg::<SavedSessionDraft>(arguments, "draft")?;
         if draft.auth_mode == AuthMode::Password && draft.credential_ref.is_none() {
@@ -2000,69 +1826,7 @@ fn secret_input_requirement(
         }
         return Ok(SecretInputRequirement::default());
     }
-    if !matches!(tool_id, "llm_provider.create" | "llm_provider.update") {
-        return Ok(SecretInputRequirement::default());
-    }
-    let draft = object_arg::<AiProviderProfileDraft>(arguments, "draft")?;
-    if ai_provider_draft_has_api_key_material(store, &draft) {
-        return Ok(SecretInputRequirement::default());
-    }
-    if crate::services::credential_service::allows_empty_api_key(draft.kind) {
-        return Ok(SecretInputRequirement::default());
-    }
-    Ok(SecretInputRequirement {
-        required: true,
-        label: Some("API Key".to_string()),
-    })
-}
-
-fn ai_provider_draft_has_api_key_material(
-    store: &SqliteStore,
-    draft: &AiProviderProfileDraft,
-) -> bool {
-    if draft
-        .api_key
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-    {
-        return true;
-    }
-    if draft
-        .api_key_ref
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-    {
-        return true;
-    }
-    draft
-        .id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .and_then(|id| get_ai_provider_profile(store, id).ok())
-        .is_some_and(|profile| !profile.api_key_ref.trim().is_empty())
-}
-
-fn apply_ai_provider_secret_input(
-    draft: &mut AiProviderProfileDraft,
-    secret_inputs: Option<&AiToolSecretInputs>,
-) -> AppResult<()> {
-    let Some(api_key) = secret_inputs_api_key(secret_inputs) else {
-        return Ok(());
-    };
-    draft.api_key = Some(api_key);
-    Ok(())
-}
-
-fn secret_inputs_api_key(secret_inputs: Option<&AiToolSecretInputs>) -> Option<String> {
-    secret_inputs?
-        .api_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+    Ok(SecretInputRequirement::default())
 }
 
 fn secret_inputs_password(secret_inputs: Option<&AiToolSecretInputs>) -> Option<String> {
@@ -2081,7 +1845,7 @@ fn secret_inputs_present_for_tool(
     if tool_id == "sessions.save" {
         secret_inputs_password(secret_inputs).is_some()
     } else {
-        secret_inputs_api_key(secret_inputs).is_some()
+        false
     }
 }
 
@@ -2137,8 +1901,6 @@ fn force_confirmation_tool(tool_id: &str) -> bool {
                 | "sftp.delete"
                 | "transfer.cancel"
                 | "transfer.delete"
-                | "settings.update_ai_security"
-                | "llm_provider.delete"
                 | "sessions.delete"
                 | "ssh.upload"
                 | "ssh.download"
@@ -2174,46 +1936,6 @@ fn target_summary(arguments: &Value) -> Option<String> {
         None
     } else {
         Some(parts.join(", "))
-    }
-}
-
-fn persist_tool_message(
-    store: &SqliteStore,
-    pending: &AiToolPendingInvocation,
-    audit: &AiToolAuditRecord,
-) -> AppResult<()> {
-    let Some(conversation_id) = pending
-        .conversation_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(());
-    };
-    let content = audit
-        .result_summary
-        .clone()
-        .or_else(|| audit.error.clone())
-        .unwrap_or_else(|| "工具调用已完成。".to_string());
-    let metadata = json!({
-        "invocation_id": audit.invocation_id,
-        "tool_id": audit.tool_id,
-        "status": audit.status.as_str(),
-        "risk_level": audit.risk_level.as_str(),
-        "affected_domains": audit.affected_domains
-    })
-    .to_string();
-    match insert_ai_conversation_message(
-        store,
-        &Uuid::new_v4().to_string(),
-        conversation_id,
-        AiMessageRole::Tool,
-        &content,
-        Some(&metadata),
-    ) {
-        Ok(_) => Ok(()),
-        Err(AppError::NotFound(_)) => Ok(()),
-        Err(error) => Err(error),
     }
 }
 
@@ -2287,84 +2009,6 @@ fn set_missing_string(object: &mut Map<String, Value>, key: &str, value: &str) {
         .is_some_and(|value| !value.is_empty());
     if !has_value && !value.trim().is_empty() {
         object.insert(key.to_string(), Value::String(value.trim().to_string()));
-    }
-}
-
-fn extract_first_http_url(value: &str) -> Option<String> {
-    let start = value.find("http://").or_else(|| value.find("https://"))?;
-    let tail = &value[start..];
-    let end = tail
-        .char_indices()
-        .find_map(|(index, ch)| {
-            if ch.is_whitespace() || matches!(ch, '\'' | '"' | '\\' | ')' | ']') {
-                Some(index)
-            } else {
-                None
-            }
-        })
-        .unwrap_or(tail.len());
-    let url = tail[..end].trim_matches([',', ';']);
-    if url.is_empty() {
-        None
-    } else {
-        Some(url.to_string())
-    }
-}
-
-fn normalize_provider_base_url(url: &str) -> String {
-    let mut value = url.trim().trim_end_matches('/').to_string();
-    for suffix in ["/chat/completions", "/responses", "/messages"] {
-        if value.ends_with(suffix) {
-            value.truncate(value.len().saturating_sub(suffix.len()));
-            break;
-        }
-    }
-    value
-}
-
-fn infer_provider_kind_from_url(url: &str) -> String {
-    let normalized = url.to_ascii_lowercase();
-    if normalized.contains("/responses") {
-        "openai_responses".to_string()
-    } else if normalized.contains("anthropic") || normalized.contains("/messages") {
-        "anthropic".to_string()
-    } else {
-        "openai_chat".to_string()
-    }
-}
-
-fn extract_json_string_field(value: &str, field: &str) -> Option<String> {
-    let needle = format!("\"{field}\"");
-    let start = value.find(&needle)?;
-    let after_key = &value[start + needle.len()..];
-    let colon = after_key.find(':')?;
-    let after_colon = after_key[colon + 1..].trim_start();
-    let mut chars = after_colon.chars();
-    if chars.next()? != '"' {
-        return None;
-    }
-    let mut output = String::new();
-    let mut escaped = false;
-    for ch in chars {
-        if escaped {
-            output.push(ch);
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if ch == '"' {
-            break;
-        }
-        output.push(ch);
-    }
-    let output = output.trim();
-    if output.is_empty() {
-        None
-    } else {
-        Some(output.to_string())
     }
 }
 
@@ -2668,12 +2312,6 @@ fn object_arg<T: DeserializeOwned>(arguments: &Value, key: &str) -> AppResult<T>
         .map_err(|error| AppError::validation(format!("工具参数 {key} 无效: {error}")))
 }
 
-fn ai_approval_mode_arg(arguments: &Value) -> AppResult<AiApprovalMode> {
-    let value = string_arg(arguments, "approval_mode")?;
-    AiApprovalMode::from_db(&value)
-        .ok_or_else(|| AppError::validation("审批模式必须是 request_approval、safe 或 full_access"))
-}
-
 fn execution_result(
     summary: impl Into<String>,
     affected_domains: impl IntoIterator<Item = impl AsRef<str>>,
@@ -2723,8 +2361,6 @@ fn affected_domains_for_tool(tool_id: &str) -> Vec<String> {
         | "terminal.close" | "terminal.split" | "terminal.focus" | "ssh.execute" => &["terminal"],
         "workspace.open_tool" => &["workspace"],
         "settings.get" => &["settings"],
-        "settings.update_ai_security" => &["ai"],
-        tool if tool.starts_with("llm_provider.") => &["models"],
         "sessions.list"
         | "sessions.open"
         | "sessions.test"
@@ -2740,7 +2376,7 @@ fn affected_domains_for_tool(tool_id: &str) -> Vec<String> {
         tool if tool.starts_with("transfer.") => &["transfer"],
         "server_info.snapshot" => &["monitor"],
         "ssh_container.list" => &["terminal"],
-        "zterm.context" | "zterm.search" => &["sessions", "models", "workspace", "terminal"],
+        "zterm.context" | "zterm.search" => &["sessions", "workspace", "terminal"],
         _ => &[],
     };
     domains.iter().map(|value| (*value).to_string()).collect()
@@ -3057,21 +2693,6 @@ fn sanitized_session_value(session: &SavedSession) -> Value {
         "tags": session.tags,
         "sort_order": session.sort_order,
         "last_used_at_ms": session.last_used_at_ms
-    })
-}
-
-fn sanitized_provider_value(provider: &AiProviderProfile) -> Value {
-    json!({
-        "id": provider.id,
-        "name": provider.name,
-        "kind": provider.kind.as_str(),
-        "base_url": provider.base_url,
-        "model": provider.model,
-        "has_api_key": !provider.api_key_ref.trim().is_empty(),
-        "enabled": provider.enabled,
-        "is_default": provider.is_default,
-        "created_at_ms": provider.created_at_ms,
-        "updated_at_ms": provider.updated_at_ms
     })
 }
 

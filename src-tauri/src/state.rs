@@ -8,15 +8,11 @@ use tauri::AppHandle;
 
 use crate::{
     services::{
-        ai_chat_service::AiChatService,
-        ai_chat_stream_service::AiChatStreamService,
-        ai_conversation_service::AiConversationService,
         ai_tool_service::{AiToolService, RuntimeAiToolWriter},
         command_completion_service::CommandCompletionService,
         command_history_service::CommandHistoryService,
         credential_service::CredentialService,
         external_launch_service::ExternalLaunchService,
-        llm_provider_test_stream_service::LlmProviderTestStreamService,
         mcp_service::McpService,
         server_info_service::ServerInfoService,
         sftp_service::SftpService,
@@ -37,10 +33,6 @@ pub struct AppState {
     command_history_service: Arc<CommandHistoryService>,
     credential_service: CredentialService,
     external_launch_service: ExternalLaunchService,
-    llm_provider_test_stream_service: LlmProviderTestStreamService,
-    ai_chat_stream_service: AiChatStreamService,
-    ai_chat_service: AiChatService,
-    ai_conversation_service: AiConversationService,
     ai_tool_service: AiToolService,
     mcp_service: Arc<McpService>,
     server_info_service: ServerInfoService,
@@ -85,10 +77,6 @@ impl AppState {
             command_completion_service: CommandCompletionService::new(),
             command_history_service,
             external_launch_service,
-            llm_provider_test_stream_service: LlmProviderTestStreamService::default(),
-            ai_chat_stream_service: AiChatStreamService::default(),
-            ai_chat_service: AiChatService,
-            ai_conversation_service: AiConversationService,
             ai_tool_service: AiToolService::with_runtime_services(
                 ai_tool_writer,
                 credential_service.clone(),
@@ -138,22 +126,6 @@ impl AppState {
         self.external_launch_service.clone()
     }
 
-    pub fn llm_provider_test_stream_service(&self) -> LlmProviderTestStreamService {
-        self.llm_provider_test_stream_service.clone()
-    }
-
-    pub fn ai_chat_stream_service(&self) -> AiChatStreamService {
-        self.ai_chat_stream_service.clone()
-    }
-
-    pub fn ai_chat_service(&self) -> AiChatService {
-        self.ai_chat_service.clone()
-    }
-
-    pub fn ai_conversation_service(&self) -> AiConversationService {
-        self.ai_conversation_service.clone()
-    }
-
     pub fn ai_tool_service(&self) -> AiToolService {
         self.ai_tool_service.clone()
     }
@@ -183,12 +155,6 @@ impl AppState {
             return Ok(());
         }
         let mut failures = Vec::new();
-        if let Err(error) = self.ai_chat_stream_service.cancel_all() {
-            failures.push(error.to_string());
-        }
-        if let Err(error) = self.llm_provider_test_stream_service.cancel_all() {
-            failures.push(error.to_string());
-        }
         if let Err(error) = self.transfer_queue.cancel_all_controls() {
             failures.push(error.to_string());
         }

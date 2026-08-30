@@ -642,19 +642,7 @@ fn handle_json_rpc(store: &SqliteStore, tools: &AiToolService, body: Value) -> A
                     "error": { "code": -32602, "message": message }
                 }));
             }
-            let mapped_name = match name {
-                "llm_provider.save"
-                    if arguments
-                        .pointer("/draft/id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|value| !value.trim().is_empty()) =>
-                {
-                    "llm_provider.update"
-                }
-                "llm_provider.save" => "llm_provider.create",
-                _ => name,
-            };
-            match mcp_tool_call_result(store, tools, mapped_name, arguments) {
+            match mcp_tool_call_result(store, tools, name, arguments) {
                 Ok(result) => result,
                 Err(error) => {
                     return Ok(json!({
@@ -857,45 +845,6 @@ pub fn mcp_tool_catalog() -> Vec<McpToolDefinition> {
                 &[],
             ),
         ),
-        mcp_tool(
-            "llm_provider.list",
-            "列出模型",
-            "返回不含 API Key 的模型 Provider 列表",
-            RiskLevel::Low,
-            false,
-            object_schema(
-                json!({
-                    "query": { "type": "string", "description": "按名称或模型筛选。" }
-                }),
-                &[],
-            ),
-        ),
-        mcp_tool(
-            "llm_provider.save",
-            "保存模型",
-            "创建或更新模型 Provider；需要 API Key 时在 zTerm 本地确认",
-            RiskLevel::Medium,
-            false,
-            object_schema(
-                json!({
-                    "draft": {
-                        "type": "object",
-                        "properties": {
-                            "id": { "type": "string" },
-                            "name": { "type": "string" },
-                            "kind": { "type": "string", "enum": ["openai_chat", "openai_responses", "anthropic"] },
-                            "base_url": { "type": "string" },
-                            "model": { "type": "string" },
-                            "enabled": { "type": "boolean" },
-                            "is_default": { "type": "boolean" }
-                        },
-                        "required": ["name", "kind", "base_url", "model", "enabled"],
-                        "additionalProperties": false
-                    }
-                }),
-                &["draft"],
-            ),
-        ),
     ]
 }
 
@@ -996,7 +945,6 @@ fn mcp_tool_call_result(
             arguments,
             reason: Some("MCP tools/call".to_string()),
             requested_by: Some("mcp".to_string()),
-            conversation_id: None,
             run_id: None,
             step_id: None,
         },
@@ -1099,7 +1047,7 @@ fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), Stri
         .as_object()
         .ok_or_else(|| "MCP tool arguments must be an object".to_string())?;
     let allowed = match tool_name {
-        "sessions.list" | "llm_provider.list" => &["query"][..],
+        "sessions.list" => &["query"][..],
         "sessions.save" => &["draft", "reuse_auth_from_session_id"][..],
         "terminal.list" => &["saved_session_id"][..],
         "terminal.open" => &["saved_session_id"][..],
@@ -1116,7 +1064,6 @@ fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), Stri
             "conflict_policy",
         ][..],
         "transfer.list" => &["saved_session_id", "limit"][..],
-        "llm_provider.save" => &["draft"][..],
         _ => return Err(format!("tool not exposed by zTerm MCP: {tool_name}")),
     };
     reject_unknown_mcp_keys(object, allowed, "arguments")?;
@@ -1125,32 +1072,20 @@ fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), Stri
     }
 
     if let Some(draft) = object.get("draft").and_then(Value::as_object) {
-        let draft_allowed = if tool_name == "sessions.save" {
-            &[
-                "id",
-                "name",
-                "type",
-                "group_id",
-                "group_name",
-                "host",
-                "port",
-                "username",
-                "auth_mode",
-                "description",
-                "tags",
-                "sort_order",
-            ][..]
-        } else {
-            &[
-                "id",
-                "name",
-                "kind",
-                "base_url",
-                "model",
-                "enabled",
-                "is_default",
-            ][..]
-        };
+        let draft_allowed = &[
+            "id",
+            "name",
+            "type",
+            "group_id",
+            "group_name",
+            "host",
+            "port",
+            "username",
+            "auth_mode",
+            "description",
+            "tags",
+            "sort_order",
+        ][..];
         reject_unknown_mcp_keys(draft, draft_allowed, "arguments.draft")?;
     }
     Ok(())

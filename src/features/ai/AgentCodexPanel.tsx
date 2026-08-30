@@ -6,7 +6,7 @@ import { ZtSelect } from "../../components/ZtSelect";
 import { ZtInlineError } from "../../components/ZtUi";
 import { XtermPane } from "../terminal/XtermPane";
 import { useTerminalStore } from "../terminal/terminalStore";
-import type { AiApprovalMode, AiToolSecretInputs } from "./aiStore";
+import type { McpApprovalMode, McpToolSecretInputs } from "./mcpStore";
 import type { AgentCodexSession, AgentPendingInvocation } from "./agentCodexApi";
 
 export function AgentCodexPanel({
@@ -23,11 +23,11 @@ export function AgentCodexPanel({
   session: AgentCodexSession | null;
   loading: boolean;
   error: string | null;
-  approvalMode: AiApprovalMode;
+  approvalMode: McpApprovalMode;
   pendingInvocations: AgentPendingInvocation[];
-  onApprovalModeChange: (mode: AiApprovalMode) => Promise<unknown> | unknown;
+  onApprovalModeChange: (mode: McpApprovalMode) => Promise<unknown> | unknown;
   onClose: () => Promise<unknown> | unknown;
-  onConfirmTool: (invocationId: string, approved: boolean, secretInputs?: AiToolSecretInputs) => Promise<unknown> | unknown;
+  onConfirmTool: (invocationId: string, approved: boolean, secretInputs?: McpToolSecretInputs) => Promise<unknown> | unknown;
   onRestart: () => Promise<unknown> | unknown;
 }) {
   const [secretInputs, setSecretInputs] = useState<Record<string, string>>({});
@@ -64,7 +64,7 @@ export function AgentCodexPanel({
             className={`zt-ai-approval-select mode-${approvalMode}`}
             value={approvalMode}
             options={approvalOptions}
-            onChange={(value) => void onApprovalModeChange(value as AiApprovalMode)}
+            onChange={(value) => void onApprovalModeChange(value as McpApprovalMode)}
           />
         </label>
       </header>
@@ -97,7 +97,7 @@ export function AgentCodexPanel({
                     void onConfirmTool(
                       invocation.id,
                       true,
-                      invocation.requires_secret_input ? { api_key: secretInputs[invocation.id] } : undefined,
+                      invocation.requires_secret_input ? { password: secretInputs[invocation.id] } : undefined,
                     )
                   }
                 >批准</button>

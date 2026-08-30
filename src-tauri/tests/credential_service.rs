@@ -211,12 +211,8 @@ fn credential_plaintext_hits(store: &SqliteStore, secret: &str) -> i64 {
         .with_connection(|connection| {
             let hits = connection.query_row(
                 "
-                select
-                  (select count(*) from credential_records
-                   where id = ?1 or name = ?1 or kind = ?1 or credential_ref = ?1)
-                  +
-                  (select count(*) from ai_provider_profiles
-                   where id = ?1 or name = ?1 or base_url = ?1 or model = ?1 or api_key_ref = ?1)
+                select count(*) from credential_records
+                where id = ?1 or name = ?1 or kind = ?1 or credential_ref = ?1
                 ",
                 [secret],
                 |row| row.get::<_, i64>(0),

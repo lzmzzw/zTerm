@@ -1,5 +1,5 @@
 // Author: Liz
-import { ArrowLeftRight, Bot, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-react";
+import { ArrowLeftRight, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -24,15 +24,14 @@ import { visibleRightTools, type ActiveConnectionKind, type RightTool } from "./
 import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
 import { ZtCenteredPageLayout, ZtConfirmDialog, ZtInlineError, ZtModalOverlay, ZtSurfaceFrame } from "../components/ZtUi";
-import { setAiAffectedDomainsHandler, useAiStore } from "../features/ai/aiStore";
 import { closeAgentCodex, openAgentCodex, type AgentCodexSession } from "../features/ai/agentCodexApi";
+import { setMcpAffectedDomainsHandler, useMcpStore } from "../features/ai/mcpStore";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
 import { useFileTransferStore } from "../features/files/fileTransferStore";
 import { useFileStore, type TransferConflict, type TransferConflictPolicy } from "../features/files/fileStore";
 import type { CommandHistoryView } from "../features/history/CommandHistoryPanel";
 import { resolveHistoryScope } from "../features/history/historyScopeModel";
 import { useHistoryStore } from "../features/history/historyStore";
-import { ModelManagerPanel } from "../features/models/ModelManagerPanel";
 import { LOCAL_SERVER_INFO_TARGET_ID } from "../features/monitor/serverInfoApi";
 import { SessionTree } from "../features/sessions/SessionTree";
 import { SessionGroupDialog } from "../features/sessions/SessionTreeDialogs";
@@ -89,7 +88,7 @@ import type {
 import { scheduleIdleTask } from "../lib/renderScheduling";
 import { fallbackOnlyErrorMessage, unknownErrorMessage } from "../lib/unknownErrorMessage";
 
-type LeftTool = "workspace" | "sessions" | "models";
+type LeftTool = "workspace" | "sessions";
 
 type ConnectionDialogTarget = {
   workspaceId: string;
@@ -113,9 +112,9 @@ type ZtermToolActionEvent = {
   affected_domains?: string[];
 };
 
-const EMPTY_AI_PANEL_STATE = {
-  aiApprovalMode: "safe" as const,
-  aiPendingInvocations: [],
+const EMPTY_MCP_PANEL_STATE = {
+  mcpApprovalMode: "safe" as const,
+  mcpPendingInvocations: [],
   agentLoading: false,
   agentError: null,
 };
@@ -240,7 +239,6 @@ export function AppShell() {
   );
   const {
     appSettings,
-    providers,
     terminalProfiles,
     shortcutDefinitions,
     mcpStatus,
@@ -251,10 +249,6 @@ export function AppShell() {
     resetAppSettingsSection,
     saveCredential,
     readCredentialSecret,
-    saveProvider,
-    deleteProvider,
-    startProviderDraftTestStream,
-    cancelProviderDraftTest,
     detectTerminalProfiles,
     setDefaultTerminalProfile,
     setMcpEnabled,
@@ -262,7 +256,6 @@ export function AppShell() {
   } = useSettingsStore(
     useShallow((state) => ({
       appSettings: state.appSettings,
-      providers: state.providers,
       terminalProfiles: state.terminalProfiles,
       shortcutDefinitions: state.shortcutDefinitions,
       mcpStatus: state.mcpStatus,
@@ -273,10 +266,6 @@ export function AppShell() {
       resetAppSettingsSection: state.resetAppSettingsSection,
       saveCredential: state.saveCredential,
       readCredentialSecret: state.readCredentialSecret,
-      saveProvider: state.saveProvider,
-      deleteProvider: state.deleteProvider,
-      startProviderDraftTestStream: state.startProviderDraftTestStream,
-      cancelProviderDraftTest: state.cancelProviderDraftTest,
       detectTerminalProfiles: state.detectTerminalProfiles,
       setDefaultTerminalProfile: state.setDefaultTerminalProfile,
       setMcpEnabled: state.setMcpEnabled,
@@ -329,7 +318,7 @@ export function AppShell() {
     bindApprovalModeToSession,
     setApprovalMode,
     confirmTool,
-  } = useAiStore(
+  } = useMcpStore(
     useShallow((state) => ({
       loadPendingInvocations: state.loadPendingInvocations,
       bindApprovalModeToSession: state.bindApprovalModeToSession,
@@ -338,20 +327,20 @@ export function AppShell() {
     })),
   );
   const {
-    aiApprovalMode,
-    aiPendingInvocations,
+    mcpApprovalMode,
+    mcpPendingInvocations,
     agentLoading,
     agentError,
-  } = useAiStore(
+  } = useMcpStore(
     useShallow((state) =>
       activeTool === "agent"
         ? {
-            aiApprovalMode: state.approvalMode,
-            aiPendingInvocations: state.pendingInvocations,
+            mcpApprovalMode: state.approvalMode,
+            mcpPendingInvocations: state.pendingInvocations,
             agentLoading: state.loading,
             agentError: state.error,
           }
-        : EMPTY_AI_PANEL_STATE,
+        : EMPTY_MCP_PANEL_STATE,
     ),
   );
   const {
@@ -526,7 +515,7 @@ export function AppShell() {
   const activePaneTab = activeLeaf ? getActiveTerminalTab(activeLeaf) : null;
   const activeSavedSessionId = activePaneTab?.saved_session_id ?? null;
   const activeSavedSession = activeSavedSessionId ? sessions.find((session) => session.id === activeSavedSessionId) ?? null : null;
-  const aiApprovalSessionId = activeSavedSession?.type === "ssh" ? activeSavedSession.id : null;
+  const mcpApprovalSessionId = activeSavedSession?.type === "ssh" ? activeSavedSession.id : null;
   const activeExternalSshSession =
     activeSavedSessionId && isExternalSessionId(activeSavedSessionId) ? (externalSshSessions[activeSavedSessionId] ?? null) : null;
   const activeExternalSshOptions = activeExternalSshSession
@@ -640,8 +629,8 @@ export function AppShell() {
   useDomI18n(language);
 
   useEffect(() => {
-    void bindApprovalModeToSession(aiApprovalSessionId);
-  }, [aiApprovalSessionId, bindApprovalModeToSession]);
+    void bindApprovalModeToSession(mcpApprovalSessionId);
+  }, [mcpApprovalSessionId, bindApprovalModeToSession]);
 
   useEffect(() => {
     if (previousAgentTabIdRef.current === activeAgentTabId) return;
@@ -873,10 +862,10 @@ export function AppShell() {
   const handleZtermToolActionRef = useLatestRef(handleZtermToolAction);
 
   useEffect(() => {
-    setAiAffectedDomainsHandler((domains) => {
+    setMcpAffectedDomainsHandler((domains) => {
       void refreshAffectedDomainsRef.current(domains);
     });
-    return () => setAiAffectedDomainsHandler(null);
+    return () => setMcpAffectedDomainsHandler(null);
   }, [refreshAffectedDomainsRef]);
 
   const handleExternalSshLaunch = useCallback(
@@ -1008,7 +997,7 @@ export function AppShell() {
     if (domainSet.has("sessions")) {
       await loadSessions();
     }
-    if (domainSet.has("models") || domainSet.has("settings") || domainSet.has("terminal")) {
+    if (domainSet.has("settings") || domainSet.has("terminal")) {
       await loadSettings();
     }
     if (domainSet.has("workspace")) {
@@ -1951,12 +1940,6 @@ export function AppShell() {
             onClick={() => toggleLeftTool("workspace")}
           />
           <ToolButton
-            label="模型"
-            active={activeLeftTool === "models"}
-            icon={<Bot size={16} aria-hidden="true" />}
-            onClick={() => toggleLeftTool("models")}
-          />
-          <ToolButton
             label="文件传输"
             active={fileTransferDialogOpen}
             className="zt-left-rail-transfer"
@@ -2030,17 +2013,6 @@ export function AppShell() {
               </section>
             ) : null}
 
-            {activeLeftTool === "models" ? (
-              <ModelManagerPanel
-                providers={providers}
-                loading={settingsLoading}
-                error={settingsError}
-                onSaveProvider={saveProvider}
-                onDeleteProvider={deleteProvider}
-                onStartProviderDraftTest={startProviderDraftTestStream}
-                onCancelProviderDraftTest={cancelProviderDraftTest}
-              />
-            ) : null}
           </div>
         ) : null}
       </aside>
@@ -2211,10 +2183,10 @@ export function AppShell() {
         activeConnectionKind={activeConnectionKind}
         agent={{
           session: activeAgentSession,
-          approvalMode: aiApprovalMode,
+          approvalMode: mcpApprovalMode,
           error: agentOpenError ?? agentError,
           loading: agentLoading || agentOpeningTabId === activeAgentTabId,
-          pendingInvocations: aiPendingInvocations,
+          pendingInvocations: mcpPendingInvocations,
           onApprovalModeChange: setApprovalMode,
           onClose: closeActiveAgentCodex,
           onConfirmTool: confirmTool,

@@ -352,7 +352,6 @@ function mcpToolGroupLabel(language: AppLanguage, key: string) {
     terminal_profile: "mcpToolGroupTerminal",
     workspace: "mcpToolGroupWorkspace",
     settings: "mcpToolGroupSettings",
-    llm_provider: "mcpToolGroupModels",
     sessions: "mcpToolGroupSessions",
     session_groups: "mcpToolGroupSessions",
     sftp: "mcpToolGroupFiles",
