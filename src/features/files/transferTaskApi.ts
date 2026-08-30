@@ -1,24 +1,24 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
+import { invokeTauri } from "../../lib/tauriClient";
 
 import type { TransferTask } from "./fileTypes";
 
 export function retryTransferTask(taskId: string) {
-  return invoke<TransferTask>("transfer_retry", { taskId });
+  return invokeTauri<TransferTask>("transfer_retry", { taskId });
 }
 
 export function pauseTransferTask(taskId: string) {
-  return invoke<TransferTask>("transfer_pause", { taskId });
+  return invokeTauri<TransferTask>("transfer_pause", { taskId });
 }
 
 export function resumeTransferTask(taskId: string) {
-  return invoke<TransferTask>("transfer_resume", { taskId });
+  return invokeTauri<TransferTask>("transfer_resume", { taskId });
 }
 
 export function cancelTransferTask(taskId: string) {
-  return invoke<TransferTask>("transfer_cancel", { taskId });
+  return invokeTauri<TransferTask>("transfer_cancel", { taskId });
 }
 
 export async function deleteTransferTask(taskId: string) {
-  await invoke("transfer_delete", { taskId });
+  await invokeTauri("transfer_delete", { taskId });
 }

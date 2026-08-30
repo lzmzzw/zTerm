@@ -19,7 +19,7 @@ const appErrorCodes = new Set([
   "unsupported",
 ]);
 
-export interface TauriAppError {
+interface TauriAppError {
   code: string;
   message: string;
 }

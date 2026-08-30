@@ -12,7 +12,7 @@ export interface FileEntry {
   permissions: string | null;
 }
 
-export type TransferDirection = "upload" | "download";
+type TransferDirection = "upload" | "download";
 export type TransferStatus = "queued" | "running" | "paused" | "done" | "failed" | "cancelled";
 type TransferTaskOrigin = "sftp_panel" | "file_transfer";
 type TransferEndpointKind = "local" | "saved_session";

@@ -1,4 +1,4 @@
-export const CONTEXT_MENU_VIEWPORT_GUTTER = 8;
+const CONTEXT_MENU_VIEWPORT_GUTTER = 8;
 
 export function resolveContextMenuPosition({
   anchor,

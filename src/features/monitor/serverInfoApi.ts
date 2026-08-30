@@ -1,5 +1,5 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
+import { invokeTauri } from "../../lib/tauriClient";
 
 export const LOCAL_SERVER_INFO_TARGET_ID = "local-machine";
 
@@ -75,7 +75,7 @@ interface ServerGpuInfo {
 }
 
 export async function getServerInfoSnapshot(targetId: string): Promise<ServerInfoSnapshot> {
-  return invoke<ServerInfoSnapshot>("server_info_snapshot", {
+  return invokeTauri<ServerInfoSnapshot>("server_info_snapshot", {
     savedSessionId: targetId === LOCAL_SERVER_INFO_TARGET_ID ? null : targetId,
   });
 }

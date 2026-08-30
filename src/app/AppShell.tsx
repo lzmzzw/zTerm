@@ -1,6 +1,5 @@
 // Author: Liz
 import { ArrowLeftRight, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-react";
-import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -12,6 +11,7 @@ import {
   SyncChannelDialog,
   type ConnectionChoice,
 } from "./AppShellDialogs";
+import { ExternalSshTunnelEditorDialog, SshTunnelEditorDialog } from "./SshTunnelDialogs";
 import { RightToolsPanel } from "./RightToolsPanel";
 import { PanelHeader, ToolButton } from "./ShellControls";
 import { TitleBar } from "./TitleBar";
@@ -23,7 +23,29 @@ import { openSavedSessionTarget } from "./savedSessionActions";
 import { visibleRightTools, type ActiveConnectionKind, type RightTool } from "./rightTools";
 import { useAppShortcutKeys } from "./useAppShortcutKeys";
 import { useAppTextInputDialog } from "./useAppTextInputDialog";
-import { ZtCenteredPageLayout, ZtConfirmDialog, ZtInlineError, ZtModalOverlay, ZtSurfaceFrame } from "../components/ZtUi";
+import {
+  DEFAULT_EXTERNAL_SSH_OPTIONS,
+  EMPTY_CONTAINER_PANEL_STATE,
+  EMPTY_FILE_PANEL_STATE,
+  EMPTY_HISTORY_PANEL_STATE,
+  EMPTY_MCP_PANEL_STATE,
+  EMPTY_TRANSFER_PANEL_STATE,
+  EMPTY_WORKSPACE_SIDEBAR_STATE,
+  collectTerminalTabIds,
+  readString,
+  rightToolFromValue,
+  savedSessionDraftWithSshOptions,
+  waitForUiTurn,
+  type ActiveSshTunnelTarget,
+  type ConnectionDialogTarget,
+  type LeftTool,
+  type PendingSshTunnelDelete,
+  type SshTunnelEditorState,
+  type TransferConflictDialogState,
+  type WorkspaceEditorState,
+  type ZtermToolActionEvent,
+} from "./appShellModel";
+import { ZtCenteredPageLayout, ZtConfirmDialog, ZtInlineError } from "../components/ZtUi";
 import { closeAgentCodex, openAgentCodex, type AgentCodexSession } from "../features/ai/agentCodexApi";
 import { setMcpAffectedDomainsHandler, useMcpStore } from "../features/ai/mcpStore";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
@@ -36,10 +58,9 @@ import { useHistoryStore } from "../features/history/historyStore";
 import { LOCAL_SERVER_INFO_TARGET_ID } from "../features/monitor/serverInfoApi";
 import { SessionTree } from "../features/sessions/SessionTree";
 import { SessionGroupDialog } from "../features/sessions/SessionTreeDialogs";
-import { emptySshTunnel, sshTunnelMode } from "../features/sessions/sshSessionModel";
+import { emptySshTunnel } from "../features/sessions/sshSessionModel";
 import { useSessionStore } from "../features/sessions/sessionStore";
-import { SshTunnelsSection } from "../features/sessions/SshTunnelsSection";
-import type { SavedSession, SavedSessionDraft, SshOptions, SshTunnel, SshTunnelMode } from "../features/sessions/types";
+import type { SavedSession, SshOptions, SshTunnel } from "../features/sessions/types";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { applyAppSettings } from "../features/settings/applyAppSettings";
 import { useDomI18n } from "../features/settings/domI18n";
@@ -80,127 +101,10 @@ import {
   type WorkspaceSidebarItem,
 } from "../features/workspace/workspaceShellModel";
 import { useWorkspaceStore } from "../features/workspace/workspaceStore";
-import type {
-  PaneNode,
-  WorkspaceDefinition,
-  WorkspaceDefinitionDraft,
-  WorkspaceSummary,
-} from "../features/workspace/types";
+import type { WorkspaceDefinition, WorkspaceDefinitionDraft, WorkspaceSummary } from "../features/workspace/types";
 import { scheduleIdleTask } from "../lib/renderScheduling";
+import { listenTauri } from "../lib/tauriClient";
 import { fallbackOnlyErrorMessage, unknownErrorMessage } from "../lib/unknownErrorMessage";
-
-type LeftTool = "workspace" | "sessions";
-
-type ConnectionDialogTarget = {
-  workspaceId: string;
-  workspaceTabId: string;
-  paneId: string;
-};
-
-type WorkspaceEditorState = {
-  mode: "create" | "edit";
-  workspace: WorkspaceDefinition;
-};
-
-type TransferConflictDialogState = {
-  conflicts: TransferConflict[];
-  resolve: (policy: TransferConflictPolicy | null) => void;
-};
-
-type ZtermToolActionEvent = {
-  action: string;
-  arguments?: Record<string, unknown> | null;
-  affected_domains?: string[];
-};
-
-const EMPTY_MCP_PANEL_STATE = {
-  mcpApprovalMode: "safe" as const,
-  mcpPendingInvocations: [],
-  agentLoading: false,
-  agentError: null,
-};
-
-const EMPTY_FILE_PANEL_STATE = {
-  fileEntries: [],
-  filePath: "/",
-  selectedPaths: [],
-  filesLoading: false,
-  fileError: null,
-};
-
-const EMPTY_TRANSFER_PANEL_STATE = {
-  transfers: [],
-};
-
-const EMPTY_CONTAINER_PANEL_STATE = {
-  items: [] as SshContainerInfo[],
-  loading: false,
-  error: null as string | null,
-};
-
-const DEFAULT_EXTERNAL_SSH_OPTIONS: SshOptions = {
-  connect_timeout_ms: null,
-  keepalive_interval_ms: null,
-  proxy_command: null,
-  identity_file: null,
-  jump_hosts: [],
-  tunnels: [],
-  container: {
-    enabled: true,
-    runtime: "docker",
-    container: "",
-    shell: "/bin/sh",
-    user: null,
-    workdir: null,
-  },
-};
-
-const EMPTY_HISTORY_PANEL_STATE = {
-  historyEntries: [],
-  commandGroups: [],
-  historyLoading: false,
-  historyError: null,
-  historyGroupLoading: false,
-  historyGroupError: null,
-};
-
-const EMPTY_WORKSPACE_SIDEBAR_STATE = {
-  workspaceDefinitions: {} as Record<string, WorkspaceDefinition>,
-};
-
-type ActiveSshTunnelTarget = {
-  sessionId: string;
-  savedSession: SavedSession | null;
-  baseOptions: SshOptions;
-  host: string;
-  hostServiceTargetHost: string;
-  external: boolean;
-};
-
-type SshTunnelEditorState = ActiveSshTunnelTarget & {
-  mode: "create" | "edit";
-  index: number | null;
-  tunnel: SshTunnel;
-};
-
-type PendingSshTunnelDelete = ActiveSshTunnelTarget & {
-  index: number;
-  tunnel: SshTunnel;
-};
-
-function readString(value: Record<string, unknown>, key: string) {
-  const item = value[key];
-  return typeof item === "string" && item.trim() ? item.trim() : null;
-}
-
-function rightToolFromValue(value: string | null | undefined): RightTool | null {
-  if (!value) return null;
-  const normalized = value.trim();
-  if (["agent", "files", "history", "monitor", "tunnels", "containers"].includes(normalized)) {
-    return normalized as RightTool;
-  }
-  return null;
-}
 
 async function stopAgentCodexSession(session: AgentCodexSession) {
   await closeAgentCodex(session);
@@ -945,7 +849,7 @@ export function AppShell() {
       drainPendingExternalLaunches().catch((error) => {
         if (!disposed) setTerminalError(fallbackOnlyErrorMessage(error, "读取外部启动请求失败"));
       });
-    void listen("zterm:external-ssh-launch", () => {
+    void listenTauri("zterm:external-ssh-launch", () => {
       void drain();
     })
       .then((unlisten) => {
@@ -969,7 +873,7 @@ export function AppShell() {
   useEffect(() => {
     let disposed = false;
     let cleanup: (() => void) | null = null;
-    void listen<ZtermToolActionEvent>("zterm:tool-action", (event) => {
+    void listenTauri<ZtermToolActionEvent>("zterm:tool-action", (event) => {
       void handleZtermToolActionRef.current(event.payload);
     }).then((unlisten) => {
       if (disposed) {
@@ -1790,7 +1694,7 @@ export function AppShell() {
   useEffect(() => {
     let disposed = false;
     let cleanup: (() => void) | null = null;
-    void listen("zterm:tool-pending", () => {
+    void listenTauri("zterm:tool-pending", () => {
       void loadPendingInvocations();
     }).then((unlisten) => {
       if (disposed) unlisten();
@@ -2336,153 +2240,4 @@ export function AppShell() {
       />
     </div>
   );
-}
-
-function waitForUiTurn() {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-}
-
-function ExternalSshTunnelEditorDialog({
-  host,
-  hostServiceTargetHost,
-  initialOptions,
-  onCancel,
-  onSave,
-}: {
-  host: string;
-  hostServiceTargetHost: string;
-  initialOptions: SshOptions;
-  onCancel: () => void;
-  onSave: (options: SshOptions) => void;
-}) {
-  const [sshOptions, setSshOptions] = useState<SshOptions>(initialOptions);
-  const [newTunnelMode, setNewTunnelMode] = useState<SshTunnelMode>("host_service");
-
-  return (
-    <ZtModalOverlay className="zt-session-modal-backdrop">
-      <ZtSurfaceFrame
-        className="zt-session-dialog zt-session-editor-dialog zt-transient-tunnel-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="临时 SSH 隧道"
-      >
-        <header>
-          <strong>临时 SSH 隧道</strong>
-          <button type="button" aria-label="关闭临时 SSH 隧道编辑" onClick={onCancel}>
-            ×
-          </button>
-        </header>
-        <div className="zt-session-editor-body zt-transient-tunnel-body">
-          <div className="zt-session-editor-fields zt-transient-tunnel-fields">
-            <SshTunnelsSection
-              sshOptions={sshOptions}
-              host={host}
-              hostServiceTargetHost={hostServiceTargetHost}
-              hostServiceTargetEditable={true}
-              newTunnelMode={newTunnelMode}
-              onNewTunnelModeChange={setNewTunnelMode}
-              onSshOptionsChange={setSshOptions}
-            />
-          </div>
-        </div>
-        <div className="zt-session-editor-messages" aria-live="polite">
-          <p className="zt-settings-status">临时隧道保存后需要重连当前 SSH 才会生效。</p>
-        </div>
-        <footer>
-          <button type="button" onClick={onCancel}>
-            取消
-          </button>
-          <button type="button" aria-label="保存临时隧道" onClick={() => onSave(sshOptions)}>
-            保存临时隧道
-          </button>
-        </footer>
-      </ZtSurfaceFrame>
-    </ZtModalOverlay>
-  );
-}
-
-function collectTerminalTabIds(root: PaneNode): string[] {
-  if (root.kind === "leaf") {
-    return getLeafTerminalTabs(root).map((tab) => tab.id);
-  }
-  return [...collectTerminalTabIds(root.first), ...collectTerminalTabIds(root.second)];
-}
-
-function SshTunnelEditorDialog({
-  editor,
-  onCancel,
-  onSave,
-}: {
-  editor: SshTunnelEditorState;
-  onCancel: () => void;
-  onSave: (tunnel: SshTunnel) => void;
-}) {
-  const [sshOptions, setSshOptions] = useState<SshOptions>({ ...editor.baseOptions, tunnels: [editor.tunnel] });
-  const [tunnelMode, setTunnelMode] = useState<SshTunnelMode>(sshTunnelMode(editor.tunnel));
-  const tunnel = sshOptions.tunnels?.[0] ?? null;
-  const title = editor.mode === "create" ? "新增 SSH 隧道" : "编辑 SSH 隧道";
-
-  return (
-    <ZtModalOverlay className="zt-session-modal-backdrop">
-      <ZtSurfaceFrame
-        className="zt-session-dialog zt-session-editor-dialog zt-transient-tunnel-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-      >
-        <header>
-          <strong>{title}</strong>
-          <button type="button" aria-label={`关闭${title}`} onClick={onCancel}>
-            ×
-          </button>
-        </header>
-        <div className="zt-session-editor-body zt-transient-tunnel-body">
-          <div className="zt-session-editor-fields zt-transient-tunnel-fields">
-            <SshTunnelsSection
-              sshOptions={sshOptions}
-              host={editor.host}
-              hostServiceTargetHost={editor.hostServiceTargetHost}
-              hostServiceTargetEditable={editor.external}
-              maxTunnels={1}
-              singleTunnelEditor
-              newTunnelMode={tunnelMode}
-              onNewTunnelModeChange={setTunnelMode}
-              onSshOptionsChange={setSshOptions}
-            />
-          </div>
-        </div>
-        <div className="zt-session-editor-messages">
-          <p className="zt-settings-status">隧道配置将在当前 SSH 连接重连后生效。</p>
-        </div>
-        <footer>
-          <button type="button" onClick={onCancel}>
-            取消
-          </button>
-          <button type="button" aria-label="保存隧道" disabled={!tunnel} onClick={() => tunnel && onSave(tunnel)}>
-            保存隧道
-          </button>
-        </footer>
-      </ZtSurfaceFrame>
-    </ZtModalOverlay>
-  );
-}
-
-function savedSessionDraftWithSshOptions(session: SavedSession, sshOptions: SshOptions): SavedSessionDraft {
-  return {
-    id: session.id,
-    name: session.name,
-    type: session.type,
-    group_id: session.group_id,
-    host: session.host,
-    port: session.port,
-    username: session.username,
-    auth_mode: session.auth_mode,
-    credential_ref: session.credential_ref,
-    description: session.description,
-    tags: session.tags,
-    sort_order: session.sort_order,
-    ssh_options: sshOptions,
-    rdp_options: session.rdp_options,
-    local_options: session.local_options,
-  };
 }

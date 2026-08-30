@@ -12,7 +12,7 @@ export interface TransferTaskGroupMeta {
   groupName?: string;
 }
 
-export interface TransferTaskGroup {
+interface TransferTaskGroup {
   id: string | null;
   name: string | null;
   tasks: TransferTask[];

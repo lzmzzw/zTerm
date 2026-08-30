@@ -1,5 +1,6 @@
 // Author: Liz
 pub mod ai_risk;
+mod ai_tool_catalog;
 pub mod ai_tool_service;
 pub mod command_completion_service;
 pub mod command_history_service;
@@ -10,6 +11,7 @@ pub mod local_pty_service;
 pub mod mcp_service;
 pub mod rdp_service;
 pub mod server_info_service;
+mod sftp_local;
 pub mod sftp_service;
 pub mod ssh_command_service;
 pub mod ssh_container_service;

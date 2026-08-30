@@ -1,8 +1,7 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
+import { invokeTauri, listenTauri, type UnlistenFn } from "../../lib/tauriClient";
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 import type {
   FileEntry,
@@ -24,7 +23,7 @@ import {
 
 export type FileTransferSide = "left" | "right";
 
-export interface FileTransferViewState {
+interface FileTransferViewState {
   left: TransferEndpoint;
   right: TransferEndpoint;
 }
@@ -129,7 +128,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   viewStateInitialized: false,
   async loadDefaultLocalPath() {
     if (!localPathRequest) {
-      localPathRequest = invoke<string>("file_transfer_default_local_path");
+      localPathRequest = invokeTauri<string>("file_transfer_default_local_path");
     }
     try {
       const path = await localPathRequest;
@@ -143,7 +142,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   },
   async loadLocalRoots() {
     try {
-      const roots = await invoke<string[]>("file_transfer_local_roots");
+      const roots = await invokeTauri<string[]>("file_transfer_local_roots");
       set({ localRoots: roots });
       return roots;
     } catch (error) {
@@ -153,7 +152,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   },
   async restoreViewState() {
     try {
-      const viewState = await invoke<FileTransferViewState | null>("file_transfer_view_state_get");
+      const viewState = await invokeTauri<FileTransferViewState | null>("file_transfer_view_state_get");
       if (viewState) {
         set({
           left: paneStateForEndpoint(viewState.left),
@@ -173,7 +172,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     const viewState = { left: get().left.endpoint, right: get().right.endpoint };
     if (!isPersistableEndpoint(viewState.left) || !isPersistableEndpoint(viewState.right)) return null;
     try {
-      return await invoke<FileTransferViewState>("file_transfer_view_state_save", { viewState });
+      return await invokeTauri<FileTransferViewState>("file_transfer_view_state_save", { viewState });
     } catch (error) {
       set({ transferError: fileTransferErrorMessage(error) });
       return null;
@@ -245,7 +244,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   async renameEndpoint(side, from, to) {
     const endpoint = { ...get()[side].endpoint, path: from };
     try {
-      await invoke("file_transfer_rename_endpoint", { endpoint, to });
+      await invokeTauri("file_transfer_rename_endpoint", { endpoint, to });
       await get().loadEndpoint(side);
     } catch (error) {
       updatePane(set, side, { error: fileTransferErrorMessage(error) });
@@ -256,7 +255,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     let operationError: unknown = null;
     try {
       for (const path of paths) {
-        await invoke("file_transfer_delete_endpoint", {
+        await invokeTauri("file_transfer_delete_endpoint", {
           endpoint: { ...paneEndpoint, path },
           recursive,
         });
@@ -268,10 +267,10 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     if (operationError) updatePane(set, side, { error: fileTransferErrorMessage(operationError) });
   },
   checkConflicts(items) {
-    return invoke<TransferEndpointConflict[]>("file_transfer_check_conflicts", { items });
+    return invokeTauri<TransferEndpointConflict[]>("file_transfer_check_conflicts", { items });
   },
   async enqueueTransfer(source, destination, options = {}) {
-    const task = await invoke<TransferTask>("file_transfer_enqueue", {
+    const task = await invokeTauri<TransferTask>("file_transfer_enqueue", {
       source,
       destination,
       kind: options.kind,
@@ -287,7 +286,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     transferListRequestId = requestId;
     set({ transferLoading: true, transferError: null });
     try {
-      const transfers = await invoke<TransferTask[]>("file_transfer_list", { limit: 1000 });
+      const transfers = await invokeTauri<TransferTask[]>("file_transfer_list", { limit: 1000 });
       if (transferListRequestId === requestId) {
         set({ transfers, transferLoading: false });
       }
@@ -338,10 +337,10 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   },
   async bindTransferEvents() {
     try {
-      const progress = await listen<TransferTask>("transfer:progress", (event) => {
+      const progress = await listenTauri<TransferTask>("transfer:progress", (event) => {
         upsertTransfer(set, event.payload);
       });
-      const done = await listen<TransferDoneEvent>("transfer:done", (event) => {
+      const done = await listenTauri<TransferDoneEvent>("transfer:done", (event) => {
         if (event.payload.task) upsertTransfer(set, event.payload.task);
         if (event.payload.error) set({ transferError: event.payload.error });
       });

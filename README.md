@@ -52,10 +52,16 @@ Windows builds should use the MSVC Rust target
 ```bash
 npm install
 npm run dev
+npm run dev:browser
+npm run quality:check
 npm run typecheck
 npm run test:frontend
 npm run build
 ```
+
+`npm run dev:browser` is limited to UI development and visual regression in a regular browser. It explicitly enables a lightweight Tauri mock through Vite's `browser` mode; the default dev command, production builds, and real Tauri runtime do not enable it. Native terminal, SSH/SFTP, file, and system capabilities still require Tauri/WebView2 verification.
+
+`npm run quality:check` enforces the single frontend IPC gateway, base/feature/app dependency direction, unique cross-file ownership of Tauri commands, and removal of exports with no external references. It is included in `npm run check`.
 
 Rust and Tauri checks:
 

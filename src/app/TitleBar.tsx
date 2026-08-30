@@ -4,7 +4,7 @@ import { Copy, Minus, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { MouseEvent } from "react";
 import zTermLogoUrl from "../assets/zterm-logo.svg";
-import { isMacOS } from "./platform";
+import { isMacOS } from "../lib/platform";
 
 export function TitleBar({ centerContent = null }: { centerContent?: string | null }) {
   const [maximized, setMaximized] = useState(false);

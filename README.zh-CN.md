@@ -44,10 +44,16 @@ Windows 构建建议使用 `x86_64-pc-windows-msvc` Rust target 和 Visual Studi
 ```bash
 npm install
 npm run dev
+npm run dev:browser
+npm run quality:check
 npm run typecheck
 npm run test:frontend
 npm run build
 ```
+
+`npm run dev:browser` 仅用于普通浏览器中的界面开发和视觉回归。它通过 Vite `browser` mode 显式启用轻量 Tauri Mock；默认 `npm run dev`、生产构建和真实 Tauri 运行态均不会启用。Mock 只覆盖启动与只读界面所需命令，原生终端、SSH/SFTP、文件和系统能力仍需在 Tauri/WebView2 中验证。
+
+`npm run quality:check` 检查前端 IPC 单一入口、基础层/feature/app 依赖方向、Tauri command 跨文件重复所有权和无外部引用的导出；`npm run check` 已包含该门禁。
 
 Rust 和 Tauri 检查：
 

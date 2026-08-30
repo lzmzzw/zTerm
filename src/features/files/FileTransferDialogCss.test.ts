@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import css from "../../index.css?raw";
+import { globalCssSource as css } from "../../test/globalCssSource";
 
 function ruleBody(selector: string) {
   const match = css.replace(/\r\n/g, "\n").match(new RegExp(`${selector.replace(".", "\\.")}\\s*\\{([^}]*)\\}`));

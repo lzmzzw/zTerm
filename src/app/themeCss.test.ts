@@ -1,7 +1,7 @@
 // Author: Liz
 import { describe, expect, it } from "vitest";
 
-import css from "../index.css?raw";
+import { globalCssEntrySource as indexCss, globalCssSource as css } from "../test/globalCssSource";
 
 function variableForSelector(selector: string, name: string) {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -31,6 +31,14 @@ function ruleBodiesForSelector(selector: string) {
 }
 
 describe("global dark theme colors", () => {
+  it("loads the global CSS layers in stable cascade order", () => {
+    const imports = ["tokens", "primitives", "shell", "features", "responsive"].map((layer) =>
+      indexCss.indexOf(`./styles/${layer}.css`),
+    );
+    expect(imports.every((index) => index >= 0)).toBe(true);
+    expect(imports).toEqual([...imports].sort((left, right) => left - right));
+  });
+
   it("defines shared geometry tokens for cross-module alignment", () => {
     expect(rootVariable("--zt-titlebar-height")).toBe("30px");
     expect(rootVariable("--zt-rail-width")).toBe("40px");

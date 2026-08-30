@@ -1,6 +1,9 @@
-export type DesktopPlatform = "macos" | "windows" | "linux" | "unknown";
+// Author: Liz
+type DesktopPlatform = "macos" | "windows" | "linux" | "unknown";
 
-export function currentDesktopPlatform(navigatorLike: Pick<Navigator, "platform" | "userAgent"> = navigator): DesktopPlatform {
+export function currentDesktopPlatform(
+  navigatorLike: Pick<Navigator, "platform" | "userAgent"> = navigator,
+): DesktopPlatform {
   const value = `${navigatorLike.platform} ${navigatorLike.userAgent}`.toLowerCase();
   if (value.includes("mac")) return "macos";
   if (value.includes("win")) return "windows";

@@ -30,7 +30,7 @@ type ZtButtonVariant = "default" | "primary" | "danger" | "ghost";
 type ZtDialogSize = "compact" | "medium" | "large";
 type ZtAlertTone = "error" | "warning" | "info" | "success";
 
-export const ztIconSizes = {
+const ztIconSizes = {
   dense: 14,
   default: 16,
   large: 18,

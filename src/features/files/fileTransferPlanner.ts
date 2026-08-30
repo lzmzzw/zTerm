@@ -2,14 +2,14 @@
 import type { FileEntry, LocalPathInfo, TransferConflictPolicy, TransferKind } from "./fileTypes";
 import { joinRemotePath, remoteFileName } from "./remotePath";
 
-export interface PlannedUploadTransfer {
+interface PlannedUploadTransfer {
   localPath: string;
   remotePath: string;
   kind: TransferKind;
   conflictPolicy: TransferConflictPolicy;
 }
 
-export interface PlannedDownloadTransfer {
+interface PlannedDownloadTransfer {
   remotePath: string;
   localPath: string;
   kind: TransferKind;

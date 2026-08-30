@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 
 import { ZtFloatingSurface } from "./ZtUi";
 
-export interface ZtSelectOption {
+interface ZtSelectOption {
   value: string;
   label: string;
   description?: string;

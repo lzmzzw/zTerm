@@ -1,8 +1,7 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
+import { invokeTauri, listenTauri, type UnlistenFn } from "../../lib/tauriClient";
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 import { nextSelectedFilePaths, type FileSelectionEvent } from "./fileSelectionModel";
 import type {
@@ -109,7 +108,7 @@ export const useFileStore = create<FileState>((set, get) => ({
     listFilesRequestId = requestId;
     set({ activeSavedSessionId: savedSessionId, loading: true, error: null, path });
     try {
-      const entries = await invoke<FileEntry[]>("sftp_list", { savedSessionId, path });
+      const entries = await invokeTauri<FileEntry[]>("sftp_list", { savedSessionId, path });
       if (listFilesRequestId === requestId) {
         set({ entries, loading: false, selectedPaths: [], selectionAnchorPath: null });
       }
@@ -120,11 +119,11 @@ export const useFileStore = create<FileState>((set, get) => ({
     }
   },
   async mkdir(savedSessionId, path) {
-    await invoke("sftp_mkdir", { savedSessionId, path });
+    await invokeTauri("sftp_mkdir", { savedSessionId, path });
     await get().listFiles(savedSessionId);
   },
   async upload(savedSessionId, localPath, remotePath, options = {}) {
-    const task = await invoke<TransferTask>("sftp_upload", {
+    const task = await invokeTauri<TransferTask>("sftp_upload", {
       savedSessionId,
       localPath,
       remotePath,
@@ -136,7 +135,7 @@ export const useFileStore = create<FileState>((set, get) => ({
     upsertTransfer(set, task);
   },
   async download(savedSessionId, remotePath, localPath, options = {}) {
-    const task = await invoke<TransferTask>("sftp_download", {
+    const task = await invokeTauri<TransferTask>("sftp_download", {
       savedSessionId,
       remotePath,
       localPath,
@@ -148,18 +147,18 @@ export const useFileStore = create<FileState>((set, get) => ({
     upsertTransfer(set, task);
   },
   async deletePath(savedSessionId, path, recursive) {
-    await invoke("sftp_delete", { savedSessionId, path, recursive });
+    await invokeTauri("sftp_delete", { savedSessionId, path, recursive });
     await get().listFiles(savedSessionId);
   },
   async renamePath(savedSessionId, from, to) {
-    await invoke("sftp_rename", { savedSessionId, from, to });
+    await invokeTauri("sftp_rename", { savedSessionId, from, to });
     await get().listFiles(savedSessionId);
   },
   async classifyLocalPaths(paths) {
-    return invoke<LocalPathInfo[]>("sftp_classify_local_paths", { paths });
+    return invokeTauri<LocalPathInfo[]>("sftp_classify_local_paths", { paths });
   },
   async checkTransferConflicts(savedSessionId, items) {
-    return invoke<TransferConflict[]>("sftp_check_transfer_conflicts", { savedSessionId, items });
+    return invokeTauri<TransferConflict[]>("sftp_check_transfer_conflicts", { savedSessionId, items });
   },
   async loadTransfers(savedSessionId) {
     const requestId = transferListRequestId + 1;
@@ -170,7 +169,7 @@ export const useFileStore = create<FileState>((set, get) => ({
     }
     set({ transferLoading: true, transferSessionId: savedSessionId });
     try {
-      const transfers = await invoke<TransferTask[]>("transfer_list", { savedSessionId, limit: 1000 });
+      const transfers = await invokeTauri<TransferTask[]>("transfer_list", { savedSessionId, limit: 1000 });
       if (transferListRequestId !== requestId) {
         return;
       }
@@ -207,10 +206,10 @@ export const useFileStore = create<FileState>((set, get) => ({
     set((state) => ({ transfers: state.transfers.filter((task) => task.id !== taskId) }));
   },
   async bindTransferEvents() {
-    const progress = await listen<TransferTask>("transfer:progress", (event) => {
+    const progress = await listenTauri<TransferTask>("transfer:progress", (event) => {
       upsertTransfer(set, event.payload);
     });
-    const done = await listen<TransferDoneEvent>("transfer:done", (event) => {
+    const done = await listenTauri<TransferDoneEvent>("transfer:done", (event) => {
       const task = event.payload.task;
       if (task) {
         upsertTransfer(set, task);

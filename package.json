@@ -10,15 +10,17 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
+    "dev:browser": "vite --host 127.0.0.1 --port 1420 --mode browser",
     "build": "npm run typecheck && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "quality:check": "node scripts/quality-guard.mjs",
     "test:frontend": "vitest run --passWithNoTests",
     "version:check": "node scripts/version.mjs check",
     "version:set": "node scripts/version.mjs set",
     "tauri": "tauri",
     "tauri:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tauri-msvc.ps1 dev",
     "tauri:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tauri-msvc.ps1 build",
-    "check": "npm run typecheck && npm run test:frontend && npm run build"
+    "check": "npm run quality:check && npm run typecheck && npm run test:frontend && npm run build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

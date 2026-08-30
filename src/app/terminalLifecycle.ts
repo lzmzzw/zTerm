@@ -1,6 +1,6 @@
 // Author: Liz
 
-export interface CloseTerminalRuntimesResult {
+interface CloseTerminalRuntimesResult {
   failedReason: unknown | null;
   closedRuntimeSessionIds: string[];
 }

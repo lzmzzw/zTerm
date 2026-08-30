@@ -1,5 +1,5 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
+import { invokeTauri } from "../../lib/tauriClient";
 
 export interface SshContainerInfo {
   id: string;
@@ -17,5 +17,5 @@ export async function listSshContainers(
   if (options.runtimeSessionId) {
     payload.runtimeSessionId = options.runtimeSessionId;
   }
-  return invoke<SshContainerInfo[]>("ssh_container_list", payload);
+  return invokeTauri<SshContainerInfo[]>("ssh_container_list", payload);
 }

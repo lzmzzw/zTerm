@@ -6,7 +6,7 @@ const UNSAFE_CONTROL_CHARACTER_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001
 const UNICODE_DIRECTIONAL_CONTROL_PATTERN = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 const BYTE_ORDER_MARK_PATTERN = /\ufeff/g;
 
-export interface ClipboardTextReader {
+interface ClipboardTextReader {
   readText(): Promise<string>;
 }
 

@@ -1,9 +1,9 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
+import { invokeTauri, listenTauri, type UnlistenFn } from "../../lib/tauriClient";
 import { useWorkspaceStore } from "../workspace/workspaceStore";
+import { listSshContainers as listSshContainersApi, type SshContainerInfo } from "./sshContainerApi";
 import {
   consumeTerminalZmodemData,
   releaseTerminalZmodemRuntime,
@@ -36,14 +36,6 @@ export interface CommandCompletionCandidate {
   };
   score: number;
   source_label: string;
-}
-
-export interface SshContainerInfo {
-  id: string;
-  name: string;
-  image: string;
-  status: string;
-  running: boolean;
 }
 
 interface TerminalDataEvent {
@@ -145,7 +137,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     terminalEventSubscribers += 1;
     if (!terminalEventBinding) {
       terminalEventBinding = Promise.all([
-        listen<TerminalDataEvent>("terminal:data", (event) => {
+        listenTauri<TerminalDataEvent>("terminal:data", (event) => {
           consumeTerminalZmodemData(
             {
               runtimeSessionId: event.payload.runtime_session_id,
@@ -157,7 +149,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             },
           );
         }),
-        listen<TerminalExitEvent>("terminal:exit", (event) => {
+        listenTauri<TerminalExitEvent>("terminal:exit", (event) => {
           const message = terminalExitMessage(event.payload);
           get().appendOutput(event.payload.runtime_session_id, `\r\n[已断开] ${message}\r\n`);
           useWorkspaceStore.getState().markRuntimeExited(
@@ -167,7 +159,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           );
           get().forgetTerminalRuntime(event.payload.runtime_session_id);
         }),
-        listen<TerminalHistoryChangedEvent>("terminal:history-changed", (event) => {
+        listenTauri<TerminalHistoryChangedEvent>("terminal:history-changed", (event) => {
           set((state) => ({
             inputSerialByRuntime: {
               ...state.inputSerialByRuntime,
@@ -198,7 +190,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     });
   },
   async openTerminal(savedSessionId, paneId, workingDirectory) {
-    const runtime = await invoke<RuntimeSessionInfo>("terminal_open", {
+    const runtime = await invokeTauri<RuntimeSessionInfo>("terminal_open", {
       savedSessionId,
       paneId,
       workingDirectory,
@@ -209,7 +201,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return runtime;
   },
   async openSshContainerTerminal(savedSessionId, paneId, containerId, containerName) {
-    const runtime = await invoke<RuntimeSessionInfo>("terminal_open_ssh_container", {
+    const runtime = await invokeTauri<RuntimeSessionInfo>("terminal_open_ssh_container", {
       savedSessionId,
       paneId,
       containerId,
@@ -221,7 +213,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return runtime;
   },
   async enterSshContainerRuntime(savedSessionId, runtimeSessionId, containerId) {
-    await invoke("ssh_container_enter_runtime", {
+    await invokeTauri("ssh_container_enter_runtime", {
       savedSessionId,
       runtimeSessionId,
       containerId,
@@ -234,10 +226,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }));
   },
   async listSshContainers(savedSessionId) {
-    return invoke<SshContainerInfo[]>("ssh_container_list", { savedSessionId });
+    return listSshContainersApi(savedSessionId);
   },
   async openDefaultLocalTerminal(paneId, workingDirectory) {
-    const runtime = await invoke<RuntimeSessionInfo>("terminal_open_default_local", {
+    const runtime = await invokeTauri<RuntimeSessionInfo>("terminal_open_default_local", {
       paneId,
       workingDirectory,
     });
@@ -247,7 +239,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return runtime;
   },
   async writeTerminal(runtimeSessionId, data) {
-    await invoke("terminal_write", { runtimeSessionId, data });
+    await invokeTauri("terminal_write", { runtimeSessionId, data });
     if (isSubmittedTerminalInput(data)) {
       set((state) => ({
         inputSerialByRuntime: {
@@ -267,7 +259,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       limit: 8,
       cwd,
     };
-    let candidates = await invoke<CommandCompletionCandidate[]>("command_completion_suggest", { request });
+    let candidates = await invokeTauri<CommandCompletionCandidate[]>("command_completion_suggest", { request });
     const pathCompletion = isPathCompletionInput(input);
     if (pathCompletion) {
       candidates = candidates.filter((candidate) => candidate.provider === "path");
@@ -284,14 +276,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       if (completionRequestGenerationByRuntime[runtimeSessionId] !== generation) {
         return candidates;
       }
-      candidates = await invoke<CommandCompletionCandidate[]>("command_completion_suggest", { request });
+      candidates = await invokeTauri<CommandCompletionCandidate[]>("command_completion_suggest", { request });
       candidates = candidates.filter((candidate) => candidate.provider === "path");
       if (candidates.length > 0) break;
     }
     return candidates;
   },
   async resolveCwd(runtimeSessionId, currentCwd, target) {
-    return invoke<string | null>("command_completion_resolve_cwd", {
+    return invokeTauri<string | null>("command_completion_resolve_cwd", {
       request: {
         runtime_session_id: runtimeSessionId,
         current_cwd: currentCwd,
@@ -300,7 +292,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     });
   },
   async resizeTerminal(runtimeSessionId, cols, rows) {
-    await invoke("terminal_resize", { runtimeSessionId, cols, rows });
+    await invokeTauri("terminal_resize", { runtimeSessionId, cols, rows });
     replayBuffersByRuntime[runtimeSessionId]?.resize(cols, rows);
     set((state) => {
       const runtime = state.runtimes[runtimeSessionId];
@@ -314,7 +306,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     });
   },
   async closeTerminal(runtimeSessionId, options) {
-    await invoke("terminal_close", {
+    await invokeTauri("terminal_close", {
       runtimeSessionId,
       releaseExternalSession: options?.releaseExternalSession,
     });

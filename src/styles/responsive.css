@@ -1,0 +1,176 @@
+/* Author: Liz */
+@media (max-width: 760px) {
+  body {
+    min-width: 0;
+  }
+
+  .zt-sync-channel-dialog {
+    width: calc(100vw - 32px);
+    height: min(640px, calc(100vh - 48px));
+  }
+
+  .zt-sync-channel-columns {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(180px, 1fr) minmax(180px, 1fr);
+  }
+
+  .zt-workbench {
+    grid-template-columns:
+      minmax(260px, var(--zt-left-sidebar-width)) minmax(0, 1fr)
+      minmax(var(--zt-rail-width), 32vw);
+    min-width: 0;
+  }
+
+  .zt-workbench-right-collapsed {
+    grid-template-columns:
+      minmax(260px, var(--zt-left-sidebar-width)) minmax(0, 1fr) var(--zt-rail-width);
+  }
+
+  .zt-workbench-left-collapsed {
+    grid-template-columns:
+      var(--zt-rail-width) minmax(0, 1fr) minmax(var(--zt-rail-width), 32vw);
+  }
+
+  .zt-workbench-left-collapsed.zt-workbench-right-collapsed {
+    grid-template-columns: var(--zt-rail-width) minmax(0, 1fr) var(--zt-rail-width);
+  }
+
+  .zt-workbench-settings {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0 16px 24px;
+  }
+
+  .zt-settings-page {
+    width: calc(100vw - 32px);
+    height: min(var(--zt-dialog-height-large), calc(100vh - 48px));
+  }
+
+  .zt-settings-page-body {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .zt-settings-page-tabs {
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 10px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--zt-border-subtle);
+  }
+
+  .zt-settings-page-tabs button {
+    min-width: 88px;
+    text-align: center;
+  }
+
+  .zt-session-modal-backdrop {
+    padding: 24px 16px;
+  }
+
+  .zt-session-dialog {
+    width: min(var(--zt-dialog-width-large), calc(100vw - 32px));
+    height: min(var(--zt-dialog-height-large), calc(100vh - 48px));
+  }
+
+  .zt-transient-tunnel-dialog {
+    width: min(920px, calc(100vw - 32px));
+    height: min(720px, calc(100vh - 48px));
+    grid-template-rows: 52px minmax(0, 1fr) auto auto;
+  }
+
+  .zt-workspace-preview-dialog {
+    width: min(var(--zt-dialog-width-large), calc(100vw - 32px));
+    height: min(var(--zt-dialog-height-large), calc(100vh - 48px));
+  }
+
+  .zt-workspace-preview-layout-editor {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(260px, 1fr) auto;
+  }
+
+  .zt-workspace-preview-canvas > .zt-workspace-layout-preview {
+    min-width: 420px;
+    min-height: 300px;
+  }
+
+  .zt-workspace-preview-inspector {
+    max-height: 240px;
+  }
+
+  .zt-session-editor-dialog form {
+    grid-template-rows: 52px auto minmax(0, 1fr) auto auto;
+  }
+
+  .zt-session-type-tabs {
+    grid-template-columns: 1fr;
+    padding: 12px;
+  }
+
+  .zt-session-editor-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .zt-session-editor-nav {
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    overflow-x: auto;
+    padding: 10px 12px;
+    border-right: none;
+    border-bottom: 1px solid var(--zt-border-subtle);
+  }
+
+  .zt-session-editor-nav button {
+    justify-content: center;
+    min-width: 88px;
+  }
+
+  .zt-session-editor-fields {
+    padding: 12px;
+  }
+
+  .zt-transient-tunnel-dialog .zt-transient-tunnel-fields {
+    padding: 12px;
+  }
+
+  .zt-settings-form {
+    grid-template-columns: 1fr;
+  }
+
+  .zt-session-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .zt-settings-row {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .zt-mcp-row {
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+  }
+
+  .zt-mcp-tool-item {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 4px;
+  }
+
+  .zt-mcp-tool-item > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .zt-settings-page-body,
+  .zt-shortcut-row,
+  .zt-ssh-tunnel-mode-grid,
+  .zt-ssh-tunnel-card-grid,
+  .zt-env-row {
+    grid-template-columns: 1fr;
+  }
+
+  .zt-ssh-tunnel-card-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+

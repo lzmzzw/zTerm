@@ -1,7 +1,7 @@
 // Author: Liz
 import type { IBufferLine, IDecoration, IMarker, Terminal } from "@xterm/xterm";
 
-export type TerminalSemanticRole =
+type TerminalSemanticRole =
   | "permissionType"
   | "permissionRead"
   | "permissionWrite"
@@ -29,9 +29,9 @@ export interface TerminalSemanticHighlight {
   start: number;
 }
 
-export type TerminalSemanticPalette = Record<TerminalSemanticRole, string>;
+type TerminalSemanticPalette = Record<TerminalSemanticRole, string>;
 
-export interface TerminalLineHighlightPalette {
+interface TerminalLineHighlightPalette {
   commandLineBackground: string;
   cursorLineBackground: string;
 }

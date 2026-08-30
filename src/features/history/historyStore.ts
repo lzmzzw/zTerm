@@ -1,5 +1,5 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
+import { invokeTauri } from "../../lib/tauriClient";
 import { create } from "zustand";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
@@ -94,7 +94,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     const requestId = (historySearchRequestId += 1);
     set({ loading: true, error: null });
     try {
-      const entries = await invoke<CommandHistoryEntry[]>("history_search", {
+      const entries = await invokeTauri<CommandHistoryEntry[]>("history_search", {
         query: query.trim() || null,
         scopeKind,
         scopeId,
@@ -113,13 +113,13 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
       set({ entries: [], loading: false, error: null });
       return;
     }
-    await invoke("history_clear", { scopeKind, scopeId });
+    await invokeTauri("history_clear", { scopeKind, scopeId });
     await get().searchHistory({ query: "", scopeKind, scopeId });
   },
   async deleteHistoryEntries(scopeKind, scopeId, entryIds) {
     if (!scopeKind || !scopeId || entryIds.length === 0) return;
     try {
-      await invoke("history_delete_entries", { scopeKind, scopeId, entryIds });
+      await invokeTauri("history_delete_entries", { scopeKind, scopeId, entryIds });
     } catch (error) {
       set({ error: unknownErrorMessage(error, "历史命令操作失败") });
       throw error;
@@ -133,7 +133,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
     }
     set({ groupLoading: true, groupError: null });
     try {
-      const commandGroups = await invoke<SessionCommandGroup[]>("history_command_group_list", {
+      const commandGroups = await invokeTauri<SessionCommandGroup[]>("history_command_group_list", {
         scopeKind,
         scopeId,
       });
@@ -147,8 +147,8 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   async saveCommandGroup(draft) {
     set({ groupLoading: true, groupError: null });
     try {
-      await invoke<SessionCommandGroup>("history_command_group_save", { draft });
-      const commandGroups = await invoke<SessionCommandGroup[]>("history_command_group_list", {
+      await invokeTauri<SessionCommandGroup>("history_command_group_save", { draft });
+      const commandGroups = await invokeTauri<SessionCommandGroup[]>("history_command_group_list", {
         scopeKind: draft.scope_kind,
         scopeId: draft.scope_id,
       });
@@ -161,7 +161,7 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   async deleteCommandGroup(groupId) {
     set({ groupLoading: true, groupError: null });
     try {
-      await invoke("history_command_group_delete", { groupId });
+      await invokeTauri("history_command_group_delete", { groupId });
       set((state) => ({
         commandGroups: state.commandGroups.filter((group) => group.id !== groupId),
         groupLoading: false,

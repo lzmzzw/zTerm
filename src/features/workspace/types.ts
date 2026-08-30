@@ -54,7 +54,7 @@ export type PaneNode =
       second: PaneNode;
     };
 
-export type WorkspaceStatus = "running" | "closed";
+type WorkspaceStatus = "running" | "closed";
 
 export interface WorkspaceSummary {
   id: string;

@@ -23,7 +23,7 @@ export function parseOsc7Cwd(payload: string): string | null {
   }
 }
 
-export interface SimpleCdTarget {
+interface SimpleCdTarget {
   target: string | null;
 }
 

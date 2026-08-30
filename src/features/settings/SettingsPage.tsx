@@ -1,5 +1,5 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
+import { invokeTauri } from "../../lib/tauriClient";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
@@ -11,7 +11,7 @@ import packageJson from "../../../package.json";
 
 import { stringifiedErrorMessage } from "../../lib/unknownErrorMessage";
 import { acceleratorFromKeyboardEvent, bindingsWithDefaults, detectShortcutConflicts } from "./shortcutManager";
-import { displayAccelerator } from "../../app/platform";
+import { displayAccelerator } from "../../lib/platform";
 import { t } from "./i18n";
 import { useDomI18n } from "./domI18n";
 import {
@@ -71,7 +71,7 @@ export function SettingsPage({
   mcpStatus = { enabled: false, endpoint: null, token: null },
   onSetMcpEnabled = async () => ({ enabled: false, endpoint: null, token: null }),
   onRotateMcpToken = async () => ({ enabled: false, endpoint: null, token: null }),
-  onLoadMcpTools = () => invoke<McpToolDefinition[]>("mcp_tool_catalog_list"),
+  onLoadMcpTools = () => invokeTauri<McpToolDefinition[]>("mcp_tool_catalog_list"),
 }: SettingsPageProps) {
   const [tab, setTab] = useState<SettingsTab>("general");
   const [draft, setDraft] = useState<AppSettings>(settings ?? fallbackSettings);

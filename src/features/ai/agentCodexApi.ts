@@ -1,5 +1,5 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
+import { invokeTauri } from "../../lib/tauriClient";
 
 import type { McpApprovalMode, McpToolPendingInvocation } from "./mcpStore";
 import type { RuntimeSessionInfo } from "../terminal/terminalStore";
@@ -19,15 +19,11 @@ export async function openAgentCodex(request: {
   targetSavedSessionId: string | null;
   targetLabel: string;
 }) {
-  return invoke<AgentCodexSession>("agent_codex_open", request);
-}
-
-export async function unbindAgentCodex(agentSessionId: string) {
-  await invoke("agent_codex_unbind", { agentSessionId });
+  return invokeTauri<AgentCodexSession>("agent_codex_open", request);
 }
 
 export async function closeAgentCodex(session: AgentCodexSession) {
-  await invoke("agent_codex_close", {
+  await invokeTauri("agent_codex_close", {
     agentSessionId: session.agent_session_id,
     runtimeSessionId: session.runtime.runtime_session_id,
   });

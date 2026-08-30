@@ -1,5 +1,5 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
+import { invokeTauri } from "../../lib/tauriClient";
 import { open } from "@tauri-apps/plugin-dialog";
 import Zmodem, {
   type ZmodemDetection,
@@ -424,16 +424,16 @@ function withDefaultDependencies(dependencies: ZmodemTransferDependencies): Zmod
     ...dependencies,
     sendBytes:
       dependencies.sendBytes ??
-      ((runtimeSessionId, data) => invoke("terminal_write_bytes", { runtimeSessionId, data })),
+      ((runtimeSessionId, data) => invokeTauri("terminal_write_bytes", { runtimeSessionId, data })),
     selectUploadFiles: dependencies.selectUploadFiles ?? selectUploadFiles,
     selectDownloadDirectory: dependencies.selectDownloadDirectory ?? selectDownloadDirectory,
     readLocalFiles:
       dependencies.readLocalFiles ??
-      ((paths) => invoke<TerminalZmodemLocalFile[]>("terminal_zmodem_read_files", { paths })),
+      ((paths) => invokeTauri<TerminalZmodemLocalFile[]>("terminal_zmodem_read_files", { paths })),
     saveFile:
       dependencies.saveFile ??
       ((directory, fileName, data) =>
-        invoke<TerminalZmodemSavedFile>("terminal_zmodem_save_file", { directory, fileName, data })),
+        invokeTauri<TerminalZmodemSavedFile>("terminal_zmodem_save_file", { directory, fileName, data })),
   };
 }
 

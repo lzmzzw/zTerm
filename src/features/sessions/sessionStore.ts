@@ -1,5 +1,5 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
+import { invokeTauri } from "../../lib/tauriClient";
 import { create } from "zustand";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
@@ -36,37 +36,37 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async loadSessions() {
     set({ loading: true, error: null });
     try {
-      const snapshot = await invoke<SessionTreeSnapshot>("sessions_list");
+      const snapshot = await invokeTauri<SessionTreeSnapshot>("sessions_list");
       set({ ...snapshot, loading: false });
     } catch (error) {
       set({ loading: false, error: unknownErrorMessage(error, "会话操作失败") });
     }
   },
   async saveGroup(draft) {
-    const group = await invoke<SessionGroup>("sessions_save_group", { draft });
+    const group = await invokeTauri<SessionGroup>("sessions_save_group", { draft });
     await get().loadSessions();
     return group;
   },
   async deleteGroup(groupId) {
-    await invoke("sessions_delete_group", { id: groupId });
+    await invokeTauri("sessions_delete_group", { id: groupId });
     await get().loadSessions();
   },
   async saveSession(draft) {
-    const session = await invoke<SavedSession>("sessions_save_session", { draft });
+    const session = await invokeTauri<SavedSession>("sessions_save_session", { draft });
     await get().loadSessions();
     return session;
   },
   async deleteSession(sessionId) {
-    await invoke("sessions_delete_session", { id: sessionId });
+    await invokeTauri("sessions_delete_session", { id: sessionId });
     await get().loadSessions();
   },
   async testSession(request) {
-    return invoke<SessionTestResult>("sessions_test_connection", {
+    return invokeTauri<SessionTestResult>("sessions_test_connection", {
       draft: request.draft,
       secret: request.secret ?? null,
     });
   },
   async exportCsv(targetPath) {
-    return invoke("sessions_export_csv", { targetPath });
+    return invokeTauri("sessions_export_csv", { targetPath });
   },
 }));

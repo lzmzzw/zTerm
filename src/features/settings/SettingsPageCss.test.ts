@@ -1,7 +1,7 @@
 // Author: Liz
 import { describe, expect, it } from "vitest";
 
-import css from "../../index.css?raw";
+import { globalCssSource as css } from "../../test/globalCssSource";
 
 function ruleBodiesForSelector(selector: string) {
   const bodies: string[] = [];

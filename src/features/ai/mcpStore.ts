@@ -1,5 +1,5 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
+import { invokeTauri } from "../../lib/tauriClient";
 import { create } from "zustand";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
@@ -72,7 +72,7 @@ export const useMcpStore = create<McpState>((set, get) => ({
   error: null,
   async loadPendingInvocations() {
     try {
-      const pendingInvocations = await invoke<McpToolPendingInvocation[]>("mcp_tool_pending");
+      const pendingInvocations = await invokeTauri<McpToolPendingInvocation[]>("mcp_tool_pending");
       set({ pendingInvocations, error: null });
     } catch (error) {
       set({ error: unknownErrorMessage(error, "MCP 工具状态加载失败") });
@@ -89,7 +89,7 @@ export const useMcpStore = create<McpState>((set, get) => ({
     }
     set({ approvalSessionId: normalizedSessionId, approvalMode: "safe", error: null });
     try {
-      const policy = await invoke<McpConnectionApprovalPolicy>("mcp_connection_approval_mode_get", {
+      const policy = await invokeTauri<McpConnectionApprovalPolicy>("mcp_connection_approval_mode_get", {
         savedSessionId: normalizedSessionId,
       });
       if (approvalBindingRequestId === requestId && get().approvalSessionId === normalizedSessionId) {
@@ -111,7 +111,7 @@ export const useMcpStore = create<McpState>((set, get) => ({
     const requestId = approvalUpdateRequestId + 1;
     approvalUpdateRequestId = requestId;
     try {
-      const policy = await invoke<McpConnectionApprovalPolicy>("mcp_connection_approval_mode_set", {
+      const policy = await invokeTauri<McpConnectionApprovalPolicy>("mcp_connection_approval_mode_set", {
         request: {
           saved_session_id: approvalSessionId,
           approval_mode: mode,
@@ -129,7 +129,7 @@ export const useMcpStore = create<McpState>((set, get) => ({
   async confirmTool(invocationId, approved, secretInputs) {
     set({ loading: true, error: null });
     try {
-      const audit = await invoke<McpToolAuditRecord>("mcp_tool_confirm", {
+      const audit = await invokeTauri<McpToolAuditRecord>("mcp_tool_confirm", {
         request: {
           invocation_id: invocationId,
           approved,
@@ -138,7 +138,7 @@ export const useMcpStore = create<McpState>((set, get) => ({
         },
       });
       await notifyAffectedDomains(audit);
-      const pendingInvocations = await invoke<McpToolPendingInvocation[]>("mcp_tool_pending");
+      const pendingInvocations = await invokeTauri<McpToolPendingInvocation[]>("mcp_tool_pending");
       set({ pendingInvocations, loading: false });
     } catch (error) {
       set({ loading: false, error: unknownErrorMessage(error, "MCP 工具确认失败") });

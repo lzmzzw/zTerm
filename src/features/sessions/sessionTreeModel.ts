@@ -9,7 +9,7 @@ export interface SessionGroupTreeNode {
   sessions: SavedSession[];
 }
 
-export interface SessionTreeModel {
+interface SessionTreeModel {
   groups: SessionGroupTreeNode[];
   rootSessions: SavedSession[];
   isEmpty: boolean;

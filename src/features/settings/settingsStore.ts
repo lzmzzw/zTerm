@@ -1,5 +1,5 @@
 // Author: Liz
-import { invoke } from "@tauri-apps/api/core";
+import { invokeTauri } from "../../lib/tauriClient";
 import { create } from "zustand";
 
 import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
@@ -11,7 +11,7 @@ export type WorkspaceRestoreStrategy = "visible_first" | "connect_all" | "layout
 export type SettingsSection = "general" | "shortcuts";
 type ShortcutScope = "app";
 
-export interface McpSettings {
+interface McpSettings {
   enabled: boolean;
   port?: number | null;
 }
@@ -128,11 +128,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const [appSettings, shortcutDefinitions, credentials, terminalProfiles, mcpStatus] = await Promise.all([
-        invoke<AppSettings>("settings_get"),
-        invoke<ShortcutDefinition[]>("shortcut_registry_list"),
-        invoke<CredentialRecord[]>("credentials_list"),
-        invoke<TerminalProfile[]>("terminal_profile_list"),
-        invoke<McpServerStatus>("mcp_server_status"),
+        invokeTauri<AppSettings>("settings_get"),
+        invokeTauri<ShortcutDefinition[]>("shortcut_registry_list"),
+        invokeTauri<CredentialRecord[]>("credentials_list"),
+        invokeTauri<TerminalProfile[]>("terminal_profile_list"),
+        invokeTauri<McpServerStatus>("mcp_server_status"),
       ]);
       set({ appSettings, shortcutDefinitions, credentials, terminalProfiles, mcpStatus, loading: false });
     } catch (error) {
@@ -140,54 +140,54 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
   async saveAppSettings(settings) {
-    const saved = await invoke<AppSettings>("settings_save", { settings });
+    const saved = await invokeTauri<AppSettings>("settings_save", { settings });
     set({ appSettings: saved });
     return saved;
   },
   async resetAppSettingsSection(section) {
-    const saved = await invoke<AppSettings>("settings_reset", { section });
+    const saved = await invokeTauri<AppSettings>("settings_reset", { section });
     set({ appSettings: saved });
     return saved;
   },
   async loadMcpStatus() {
-    const status = await invoke<McpServerStatus>("mcp_server_status");
+    const status = await invokeTauri<McpServerStatus>("mcp_server_status");
     set({ mcpStatus: status });
     return status;
   },
   async setMcpEnabled(enabled, port) {
-    const status = await invoke<McpServerStatus>("mcp_server_set_enabled", { enabled, port: port ?? null });
-    const appSettings = await invoke<AppSettings>("settings_get");
+    const status = await invokeTauri<McpServerStatus>("mcp_server_set_enabled", { enabled, port: port ?? null });
+    const appSettings = await invokeTauri<AppSettings>("settings_get");
     set({ mcpStatus: status, appSettings });
     return status;
   },
   async rotateMcpToken() {
-    const status = await invoke<McpServerStatus>("mcp_server_rotate_token");
+    const status = await invokeTauri<McpServerStatus>("mcp_server_rotate_token");
     set({ mcpStatus: status });
     return status;
   },
   async saveCredential(draft) {
-    const credential = await invoke<CredentialRecord>("credentials_save", { draft });
+    const credential = await invokeTauri<CredentialRecord>("credentials_save", { draft });
     await get().loadSettings();
     return credential;
   },
   async readCredentialSecret(credentialRef) {
-    const result = await invoke<CredentialSecret>("credentials_read_secret", { credentialRef });
+    const result = await invokeTauri<CredentialSecret>("credentials_read_secret", { credentialRef });
     return result.secret;
   },
   async deleteCredential(id) {
-    await invoke("credentials_delete", { id });
+    await invokeTauri("credentials_delete", { id });
     await get().loadSettings();
   },
   async testCredential(id) {
-    await invoke("credentials_test", { id });
+    await invokeTauri("credentials_test", { id });
   },
   async detectTerminalProfiles() {
-    const profiles = await invoke<TerminalProfile[]>("terminal_profile_detect");
+    const profiles = await invokeTauri<TerminalProfile[]>("terminal_profile_detect");
     set({ terminalProfiles: profiles });
     return profiles;
   },
   async setDefaultTerminalProfile(draft) {
-    const profile = await invoke<TerminalProfile>("terminal_profile_set_default", { draft });
+    const profile = await invokeTauri<TerminalProfile>("terminal_profile_set_default", { draft });
     await get().loadSettings();
     return profile;
   },

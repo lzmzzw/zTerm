@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { currentDesktopPlatform, displayAccelerator } from "./platform";
+import { currentDesktopPlatform, displayAccelerator } from "../lib/platform";
 
 describe("desktop platform helpers", () => {
   it("detects macOS without depending on a deprecated platform-only check", () => {

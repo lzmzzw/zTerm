@@ -1,5 +1,5 @@
 // Author: Liz
-export type FileDragDropDecision =
+type FileDragDropDecision =
   | { active: boolean; kind: "hover" }
   | { kind: "upload"; paths: string[] }
   | { kind: "clear" }
