@@ -18,8 +18,9 @@ panes in the center, and files/history/monitor/Codex tools on the right.
 - Capture command history by session or local profile, search it, copy commands, and send commands back to the active terminal.
 - Store connection credentials in the operating system keyring instead of plain SQLite rows.
 - Launch the locally authenticated Codex CLI in the Agent sidebar, with one retained process per terminal tab.
-- Restrict sidebar Codex sessions to session-scoped MCP tools that read and write the bound terminal page; SSH commands reuse the visible SSH terminal instead of opening another SSH connection.
-- Let Codex use the local MCP server to upload or download files and directories through saved SSH, SFTP, and FTP connections after local approval, without exposing keyring credentials.
+- Give sidebar Codex a Visible Terminal Profile: every server command and output stays in zTerm scrollback, while additional saved SSH servers can be opened and operated in new tabs or horizontal/vertical splits.
+- Give external Codex App clients a Headless Profile: native SSH execution and transfers return structured results without opening, reading, or writing terminal scrollback.
+- Use Efficient Approval by default: inspections, transfers, and routine operations run automatically, while high-risk or irreversible actions are confirmed once in zTerm as the final approval owner.
 - Monitor SSH server CPU, memory, disk, load, uptime, and network traffic snapshots.
 
 RDP sessions open in the Windows system Remote Desktop client. The workspace

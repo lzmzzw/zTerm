@@ -1203,6 +1203,56 @@ describe("AppShell", () => {
     view.unmount();
   });
 
+  it("opens a saved SSH connection in a requested visible split for sidebar Codex", async () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "session-1",
+        name: "生产机",
+        type: "ssh",
+        group_id: null,
+        host: "10.20.30.40",
+        port: 22,
+        username: "ops",
+        auth_mode: "none",
+        credential_ref: null,
+        description: null,
+        tags: [],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+        last_used_at_ms: null,
+      },
+    ];
+    const view = render(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const handler = storeMocks.tauriEventHandlers.get("zterm:tool-action");
+    expect(handler).toBeDefined();
+    await act(async () => {
+      handler?.({
+        payload: {
+          action: "terminal.open",
+          arguments: {
+            saved_session_id: "session-1",
+            placement: "split_vertical",
+          },
+          affected_domains: ["terminal"],
+        },
+      });
+      await new Promise((resolve) => window.setTimeout(resolve, 1));
+    });
+
+    expect(storeMocks.splitActivePane).toHaveBeenCalledWith("vertical");
+    expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1");
+    expect(storeMocks.splitActivePane.mock.invocationCallOrder[0]).toBeLessThan(
+      storeMocks.openTerminal.mock.invocationCallOrder[0],
+    );
+    view.unmount();
+  });
+
   it("shows the active SSH host in the titlebar", () => {
     storeMocks.sessionState.sessions = [
       {

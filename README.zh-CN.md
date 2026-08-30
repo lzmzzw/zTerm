@@ -15,8 +15,9 @@ zTerm 是一个基于 Tauri 的桌面终端工作台，面向 SSH、SFTP、命�
 - 按会话或本地终端 profile 捕获命令历史，支持搜索、复制和重新发送。
 - 连接凭据写入操作系统 keyring，避免以明文保存在 SQLite 中。
 - 右侧 Agent 面板直接启动本机已登录的 Codex CLI；每个终端标签独立绑定一个 Codex 进程，切回已有标签时恢复显示。
-- 侧栏 Codex 只能通过会话级 MCP 读写绑定的终端页面；SSH 命令进入现有 SSH 终端并读取页面输出，不另建 SSH 连接。
-- 本机 MCP 可让 Codex 复用 zTerm 已保存的 SSH、SFTP、FTP 连接和 keyring 认证，经本地确认后上传、下载文件或目录，并查询传输进度。
+- 侧栏 Codex 使用 Visible Terminal Profile：所有服务器命令和输出都进入 zTerm 滚动屏；需要多服务器协作时，可在新标签或横向/纵向分屏中打开其他已保存 SSH 连接并分别操作。
+- 外部 Codex App 使用 Headless Profile：通过独立 SSH 执行和文件传输返回结构化结果，不打开、读取或写入终端滚动屏。
+- 默认“高效审批”自动放行巡检、文件传输和常规运维，仅高风险或不可逆操作在 zTerm 中确认；Codex 客户端信任 zTerm 工具，由 zTerm 作为唯一最终审批点，避免双重审批。
 - 支持 SSH 服务器 CPU、内存、磁盘、负载、运行时间和网络流量快照监控。
 
 RDP 会话通过 Windows 系统远程桌面客户端在外部窗口中打开；工作区保留会话标签用于定位，但不内嵌或渲染远程桌面。侧栏 Agent 完全由本机 Codex CLI 实现，使用 Codex CLI 的登录态和模型配置；zTerm 不提供模型管理、内置模型调用，也不保存或代理 Codex 账号凭据。

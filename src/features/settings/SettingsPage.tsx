@@ -240,6 +240,7 @@ function McpSettings({
       </div>
       <div className="zt-settings-list" aria-label={t(language, "mcpLocalService")}>
         {!status.enabled ? <div className="zt-empty-line">{t(language, "mcpDisabled")}</div> : null}
+        <div className="zt-empty-line">{t(language, "mcpSingleApprovalHint")}</div>
         <div className="zt-settings-row zt-mcp-row">
           <ExternalLink size={14} aria-hidden="true" />
           <div>

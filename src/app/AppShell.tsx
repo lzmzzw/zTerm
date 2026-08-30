@@ -860,6 +860,7 @@ export function AppShell() {
 
   const refreshAffectedDomainsRef = useLatestRef(refreshAffectedDomains);
   const handleZtermToolActionRef = useLatestRef(handleZtermToolAction);
+  const openSavedSessionRef = useLatestRef(openSavedSession);
 
   useEffect(() => {
     setMcpAffectedDomainsHandler((domains) => {
@@ -1042,7 +1043,12 @@ export function AppShell() {
         if (!savedSessionId) break;
         const session = sessions.find((item) => item.id === savedSessionId);
         if (session) {
-          await openSavedSession(session);
+          const placement = readString(args, "placement") ?? "tab";
+          if (placement === "split_horizontal" || placement === "split_vertical") {
+            handleSplitPane(placement === "split_vertical" ? "vertical" : "horizontal");
+            await waitForUiTurn();
+          }
+          await openSavedSessionRef.current(session);
         }
         break;
       }
@@ -2329,6 +2335,10 @@ export function AppShell() {
       />
     </div>
   );
+}
+
+function waitForUiTurn() {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, 0));
 }
 
 function ExternalSshTunnelEditorDialog({

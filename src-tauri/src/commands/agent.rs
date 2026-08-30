@@ -409,15 +409,15 @@ fn agent_instructions(
 ) -> String {
     format!(
         "# zTerm Codex 侧栏\n\n\
-你仅用于操作 zTerm 当前绑定的服务器终端。\n\n\
+你通过 zTerm 的可见终端操作服务器；所有命令和输出都必须出现在对应终端的滚动屏中。\n\n\
 - 目标：`{target_label}`\n\
 - 已保存连接 ID：`{saved_session_id}`\n\
 - zTerm 审批模式：`{approval_mode}`\n\n\
-必须使用 zTerm MCP 的 `terminal.read` 和 `terminal.write` 读写已绑定终端。\
-远程命令要通过 `terminal.write` 写入 SSH 终端页面，再用 `terminal.read` 读取页面输出。\
-不得新建 SSH 连接，不得使用本地 `ssh`/`scp`/`sftp` 或其他网络客户端绕过 zTerm。\
+默认使用 `terminal.read` 和 `terminal.write` 读写当前绑定终端。远程命令必须通过 `terminal.write` 写入 SSH 终端页面，再用 `terminal.read` 读取页面输出。\
+需要同时操作其他服务器时，先用 `sessions.list` 查找 zTerm 已保存的 SSH 连接，再用 `terminal.open` 在新标签或分屏中建立可见连接；随后用 `terminal.list` 获取 runtime，并在 `terminal.read`、`terminal.write` 或 `terminal.close` 中明确指定目标 runtime。\
+不得使用 `ssh.execute`，不得使用本地 `ssh`/`scp`/`sftp` 或其他网络客户端绕过 zTerm 可见终端。\
 不得把密码、token、私钥或完整连接串写入对话、文件或工具参数。\
-写操作是否自动执行由 zTerm 中该 SSH 连接的审批模式决定。\n",
+zTerm 是这些工具的唯一审批点；不要重复请求批准。若工具返回 pending，等待用户在 zTerm 中处理。写操作是否自动执行由目标 SSH 连接的审批模式决定。\n",
         saved_session_id = saved_session_id.unwrap_or("未保存"),
         approval_mode = approval_mode.as_str(),
     )
@@ -448,9 +448,14 @@ mod tests {
     #[test]
     fn sidebar_instructions_force_page_terminal_transport() {
         let content = agent_instructions("prod", Some("ssh-1"), AiApprovalMode::FullAccess);
+        assert!(content.contains("sessions.list"));
+        assert!(content.contains("terminal.open"));
+        assert!(content.contains("terminal.list"));
         assert!(content.contains("terminal.read"));
         assert!(content.contains("terminal.write"));
-        assert!(content.contains("不得新建 SSH 连接"));
+        assert!(content.contains("新标签或分屏"));
+        assert!(content.contains("不得使用 `ssh.execute`"));
+        assert!(content.contains("唯一审批点"));
         assert!(content.contains("full_access"));
     }
 

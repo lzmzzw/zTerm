@@ -74,6 +74,12 @@ export function AgentCodexPanel({
           {pendingInvocations.map((invocation) => (
             <section key={invocation.id} className={`zt-ai-tool-card risk-${invocation.risk_level}`}>
               <strong>{invocation.tool_id}</strong>
+              <div className="zt-ai-tool-summary">
+                {invocation.target_summary ? (
+                  <p><span>目标</span><strong>{invocation.target_summary}</strong></p>
+                ) : null}
+                <p><span>参数</span><code>{invocation.arguments_summary}</code></p>
+              </div>
               <span>{invocation.risk_summary || invocation.reason || "Codex 请求操作当前终端"}</span>
               {invocation.requires_secret_input ? (
                 <label className="zt-ai-tool-secret">
@@ -141,7 +147,7 @@ export function AgentCodexPanel({
 }
 
 const approvalOptions = [
-  { value: "request_approval", label: "请求批准" },
-  { value: "safe", label: "安全审批" },
-  { value: "full_access", label: "完全访问" },
+  { value: "request_approval", label: "每次批准" },
+  { value: "safe", label: "高效审批" },
+  { value: "full_access", label: "完全自动" },
 ];

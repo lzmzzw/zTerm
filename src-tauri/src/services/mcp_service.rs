@@ -22,12 +22,15 @@ use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    models::ai::{AiApprovalMode, AiToolAuditRecord, AiToolPrepareRequest, RiskLevel},
+    models::{
+        ai::{AiApprovalMode, AiToolAuditRecord, AiToolPrepareRequest, RiskLevel},
+        session::SessionType,
+    },
     services::{
         ai_tool_service::AiToolService,
         credential_service::{SecretStore, SystemSecretStore},
     },
-    storage::{ai::get_ai_connection_approval_mode, sqlite::SqliteStore},
+    storage::{ai::get_ai_connection_approval_mode, sessions::get_session, sqlite::SqliteStore},
 };
 
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
@@ -587,7 +590,8 @@ fn handle_json_rpc(store: &SqliteStore, tools: &AiToolService, body: Value) -> A
         "initialize" => json!({
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": { "tools": {} },
-            "serverInfo": { "name": "zTerm", "version": env!("CARGO_PKG_VERSION") }
+            "serverInfo": { "name": "zTerm Headless", "version": env!("CARGO_PKG_VERSION") },
+            "instructions": "这是 zTerm 的外部 Headless Profile。服务器命令通过独立 SSH 执行并返回结构化结果，不打开、不读取也不写入任何终端滚动屏。zTerm 负责最终风险判断与本地 pending 审批；请直接调用工具，不要在客户端重复请求安全审批。"
         }),
         "tools/list" => {
             let tools = mcp_tool_catalog()
@@ -715,64 +719,9 @@ pub fn mcp_tool_catalog() -> Vec<McpToolDefinition> {
             ),
         ),
         mcp_tool(
-            "terminal.list",
-            "列出终端",
-            "返回 zTerm 当前运行终端及 runtime ID",
-            RiskLevel::Low,
-            false,
-            object_schema(
-                json!({
-                    "saved_session_id": { "type": "string", "description": "可选的连接 ID 筛选。" }
-                }),
-                &[],
-            ),
-        ),
-        mcp_tool(
-            "terminal.open",
-            "打开终端",
-            "在 zTerm 中打开已保存连接；随后通过 terminal.list 获取 runtime ID",
-            RiskLevel::Medium,
-            true,
-            object_schema(
-                json!({
-                    "saved_session_id": { "type": "string" }
-                }),
-                &["saved_session_id"],
-            ),
-        ),
-        mcp_tool(
-            "terminal.read",
-            "读取终端",
-            "按 runtime_session_id 读取既有 zTerm 终端输出；不改变标签或焦点",
-            RiskLevel::Low,
-            false,
-            terminal_read_schema(),
-        ),
-        mcp_tool(
-            "terminal.write",
-            "写入终端",
-            "按 runtime_session_id 向既有 zTerm 终端写入数据并回读输出；不改变标签或焦点",
-            RiskLevel::High,
-            true,
-            terminal_write_schema(),
-        ),
-        mcp_tool(
-            "terminal.close",
-            "关闭终端",
-            "关闭指定 zTerm 运行终端",
-            RiskLevel::Medium,
-            true,
-            object_schema(
-                json!({
-                    "runtime_session_id": { "type": "string" }
-                }),
-                &["runtime_session_id"],
-            ),
-        ),
-        mcp_tool(
             "ssh.execute",
             "执行 SSH 命令",
-            "通过已保存连接执行非交互脚本并复用 zTerm 的认证和 SSH 连接",
+            "通过已保存连接执行非交互脚本并复用 zTerm 认证；不会打开或写入终端滚动屏",
             RiskLevel::High,
             true,
             object_schema(
@@ -787,48 +736,48 @@ pub fn mcp_tool_catalog() -> Vec<McpToolDefinition> {
             "ssh.upload",
             "SSH 上传",
             "基于已有 SSH 连接和认证，通过 SFTP 子系统上传本地文件或目录",
-            RiskLevel::High,
-            true,
+            RiskLevel::Medium,
+            false,
             file_transfer_schema("上传目标远程路径"),
         ),
         mcp_tool(
             "ssh.download",
             "SSH 下载",
             "基于已有 SSH 连接和认证，通过 SFTP 子系统下载远程文件或目录",
-            RiskLevel::Medium,
-            true,
+            RiskLevel::Low,
+            false,
             file_transfer_schema("下载来源远程路径"),
         ),
         mcp_tool(
             "sftp.upload",
             "SFTP 上传",
             "基于已有 SSH/SFTP 连接和认证上传本地文件或目录",
-            RiskLevel::High,
-            true,
+            RiskLevel::Medium,
+            false,
             file_transfer_schema("上传目标远程路径"),
         ),
         mcp_tool(
             "sftp.download",
             "SFTP 下载",
             "基于已有 SSH/SFTP 连接和认证下载远程文件或目录",
-            RiskLevel::Medium,
-            true,
+            RiskLevel::Low,
+            false,
             file_transfer_schema("下载来源远程路径"),
         ),
         mcp_tool(
             "ftp.upload",
             "FTP 上传",
             "基于已有 FTP 连接和认证上传本地文件或目录",
-            RiskLevel::High,
-            true,
+            RiskLevel::Medium,
+            false,
             file_transfer_schema("上传目标远程路径"),
         ),
         mcp_tool(
             "ftp.download",
             "FTP 下载",
             "基于已有 FTP 连接和认证下载远程文件或目录",
-            RiskLevel::Medium,
-            true,
+            RiskLevel::Low,
+            false,
             file_transfer_schema("下载来源远程路径"),
         ),
         mcp_tool(
@@ -876,29 +825,6 @@ fn object_schema(properties: Value, required: &[&str]) -> Value {
         schema["required"] = json!(required);
     }
     schema
-}
-
-fn terminal_read_schema() -> Value {
-    object_schema(
-        json!({
-            "runtime_session_id": { "type": "string", "description": "既有 zTerm 终端 runtime ID。" },
-            "cursor": { "type": "integer", "minimum": 0 },
-            "max_chars": { "type": "integer", "minimum": 1, "maximum": 4000 }
-        }),
-        &["runtime_session_id"],
-    )
-}
-
-fn terminal_write_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "runtime_session_id": { "type": "string", "description": "既有 zTerm 终端 runtime ID。" },
-            "data": { "type": "string", "description": "写入终端的数据，命令通常以回车结尾。" }
-        },
-        "required": ["runtime_session_id", "data"],
-        "additionalProperties": false
-    })
 }
 
 fn file_transfer_schema(remote_path_description: &str) -> Value {
@@ -1049,11 +975,6 @@ fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), Stri
     let allowed = match tool_name {
         "sessions.list" => &["query"][..],
         "sessions.save" => &["draft", "reuse_auth_from_session_id"][..],
-        "terminal.list" => &["saved_session_id"][..],
-        "terminal.open" => &["saved_session_id"][..],
-        "terminal.read" => &["runtime_session_id", "cursor", "max_chars"][..],
-        "terminal.write" => &["runtime_session_id", "data"][..],
-        "terminal.close" => &["runtime_session_id"][..],
         "ssh.execute" => &["saved_session_id", "script"][..],
         "ssh.upload" | "ssh.download" | "sftp.upload" | "sftp.download" | "ftp.upload"
         | "ftp.download" => &[
@@ -1067,10 +988,6 @@ fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), Stri
         _ => return Err(format!("tool not exposed by zTerm MCP: {tool_name}")),
     };
     reject_unknown_mcp_keys(object, allowed, "arguments")?;
-    if matches!(tool_name, "terminal.read" | "terminal.write") {
-        validate_terminal_target_selector(object)?;
-    }
-
     if let Some(draft) = object.get("draft").and_then(Value::as_object) {
         let draft_allowed = &[
             "id",
@@ -1089,18 +1006,6 @@ fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), Stri
         reject_unknown_mcp_keys(draft, draft_allowed, "arguments.draft")?;
     }
     Ok(())
-}
-
-fn validate_terminal_target_selector(
-    object: &serde_json::Map<String, Value>,
-) -> Result<(), String> {
-    let runtime_session_id = object
-        .get("runtime_session_id")
-        .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty());
-    runtime_session_id
-        .then_some(())
-        .ok_or_else(|| "terminal.read 和 terminal.write 必须提供 runtime_session_id".to_string())
 }
 
 fn reject_unknown_mcp_keys(
@@ -1193,27 +1098,66 @@ fn handle_agent_json_rpc(
         "initialize" => json!({
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": { "tools": {} },
-            "serverInfo": { "name": "zTerm Agent", "version": env!("CARGO_PKG_VERSION") }
+            "serverInfo": { "name": "zTerm Visible Terminal", "version": env!("CARGO_PKG_VERSION") },
+            "instructions": "这是 zTerm 侧栏 Codex CLI 的 Visible Terminal Profile。所有服务器命令必须写入可见 SSH 终端并保留在滚动屏；可以列出连接、在标签或新分屏打开其他 SSH 连接，再按 runtime_session_id 操作其滚动屏。不得使用 headless ssh.execute。zTerm 负责最终风险判断与本地 pending 审批，请不要重复询问同一安全审批。"
         }),
         "ping" => json!({}),
         "tools/list" => json!({
             "tools": [
                 {
-                    "name": "terminal.read",
-                    "title": "读取当前终端",
-                    "description": format!("读取与本 Codex 会话绑定的 zTerm 终端输出：{}", binding.target_label),
+                    "name": "sessions.list",
+                    "title": "列出 SSH 连接",
+                    "description": "列出 zTerm 已保存且不含认证 secret 的 SSH 连接，供打开新的可见终端。",
                     "inputSchema": object_schema(json!({
+                        "query": { "type": "string", "description": "按连接名称、主机或用户名筛选。" }
+                    }), &[])
+                },
+                {
+                    "name": "terminal.list",
+                    "title": "列出可见 SSH 终端",
+                    "description": "列出 zTerm 当前滚动屏中的 SSH 终端及 runtime_session_id。",
+                    "inputSchema": object_schema(json!({}), &[])
+                },
+                {
+                    "name": "terminal.open",
+                    "title": "打开可见 SSH 终端",
+                    "description": "在当前分栏的新标签或新分屏中打开已保存 SSH 连接；命令和输出始终显示在其滚动屏。",
+                    "inputSchema": object_schema(json!({
+                        "saved_session_id": { "type": "string" },
+                        "placement": {
+                            "type": "string",
+                            "enum": ["tab", "split_horizontal", "split_vertical"],
+                            "default": "tab",
+                            "description": "tab 在当前分栏新建标签；split_horizontal 或 split_vertical 新建分屏。"
+                        }
+                    }), &["saved_session_id"])
+                },
+                {
+                    "name": "terminal.read",
+                    "title": "读取可见终端",
+                    "description": format!("读取 zTerm 可见 SSH 终端的滚动屏；不提供 runtime_session_id 时使用初始绑定终端：{}", binding.target_label),
+                    "inputSchema": object_schema(json!({
+                        "runtime_session_id": { "type": "string", "description": "可选；来自 terminal.list。" },
                         "cursor": { "type": "integer", "minimum": 0 },
                         "max_chars": { "type": "integer", "minimum": 1, "maximum": 4000 }
                     }), &[])
                 },
                 {
                     "name": "terminal.write",
-                    "title": "操作当前终端",
-                    "description": "将数据写入已绑定的 zTerm 终端页面并回读输出；SSH 操作不会新建独立连接。",
+                    "title": "操作可见终端",
+                    "description": "将数据写入指定可见 SSH 终端并回读新增输出；指令和输出保留在该终端滚动屏。",
                     "inputSchema": object_schema(json!({
+                        "runtime_session_id": { "type": "string", "description": "可选；不提供时使用初始绑定终端。" },
                         "data": { "type": "string", "minLength": 1, "maxLength": 16384 }
                     }), &["data"])
+                },
+                {
+                    "name": "terminal.close",
+                    "title": "关闭可见终端",
+                    "description": "关闭指定可见 SSH 终端；不提供 runtime_session_id 时关闭初始绑定终端。",
+                    "inputSchema": object_schema(json!({
+                        "runtime_session_id": { "type": "string", "description": "可选；来自 terminal.list。" }
+                    }), &[])
                 }
             ]
         }),
@@ -1223,36 +1167,127 @@ fn handle_agent_json_rpc(
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if !matches!(name, "terminal.read" | "terminal.write") {
+            if !matches!(
+                name,
+                "sessions.list"
+                    | "terminal.list"
+                    | "terminal.open"
+                    | "terminal.read"
+                    | "terminal.write"
+                    | "terminal.close"
+            ) {
                 return Ok(json!({
                     "jsonrpc": "2.0", "id": id,
-                    "error": { "code": -32601, "message": "sidebar Codex may only read or write its bound zTerm terminal" }
+                    "error": { "code": -32601, "message": "sidebar Codex may only operate visible zTerm SSH terminals" }
                 }));
             }
             let mut arguments = params
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            let object = arguments
-                .as_object_mut()
-                .ok_or_else(|| AppError::validation("MCP tool arguments must be an object"))?;
-            let allowed = if name == "terminal.read" {
-                &["cursor", "max_chars"][..]
-            } else {
-                &["data"][..]
-            };
-            reject_unknown_mcp_keys(object, allowed, "arguments").map_err(AppError::validation)?;
-            if name == "terminal.write" && object.get("data").and_then(Value::as_str).is_none() {
+            if mcp_contains_plaintext_secret(&arguments) {
                 return Ok(json!({
                     "jsonrpc": "2.0", "id": id,
-                    "error": { "code": -32602, "message": "terminal.write requires data" }
+                    "error": { "code": -32602, "message": "MCP tool arguments must not contain plaintext secrets; provide authentication in zTerm" }
                 }));
             }
-            object.insert(
-                "runtime_session_id".to_string(),
-                Value::String(binding.runtime_session_id.clone()),
-            );
-            mcp_tool_call_result(store, tools, name, arguments)?
+            let Some(object) = arguments.as_object_mut() else {
+                return Ok(mcp_json_rpc_error(
+                    id,
+                    -32602,
+                    "MCP tool arguments must be an object",
+                ));
+            };
+            let allowed = match name {
+                "sessions.list" => &["query"][..],
+                "terminal.list" => &[][..],
+                "terminal.open" => &["saved_session_id", "placement"][..],
+                "terminal.read" => &["runtime_session_id", "cursor", "max_chars"][..],
+                "terminal.write" => &["runtime_session_id", "data"][..],
+                "terminal.close" => &["runtime_session_id"][..],
+                _ => unreachable!(),
+            };
+            if let Err(message) = reject_unknown_mcp_keys(object, allowed, "arguments") {
+                return Ok(mcp_json_rpc_error(id, -32602, message));
+            }
+            match name {
+                "sessions.list" => {
+                    object.insert("session_type".to_string(), Value::String("ssh".to_string()));
+                }
+                "terminal.list" => {
+                    object.insert("ssh_only".to_string(), Value::Bool(true));
+                }
+                "terminal.open" => {
+                    let Some(saved_session_id) = object
+                        .get("saved_session_id")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    else {
+                        return Ok(mcp_json_rpc_error(
+                            id,
+                            -32602,
+                            "terminal.open requires saved_session_id",
+                        ));
+                    };
+                    let session = match get_session(store, saved_session_id) {
+                        Ok(session) => session,
+                        Err(error) => return Ok(mcp_json_rpc_error(id, -32602, error)),
+                    };
+                    if session.session_type != SessionType::Ssh {
+                        return Ok(mcp_json_rpc_error(
+                            id,
+                            -32602,
+                            "zTerm 侧栏只能为已保存 SSH 连接打开可见终端",
+                        ));
+                    }
+                    let placement = object
+                        .get("placement")
+                        .and_then(Value::as_str)
+                        .unwrap_or("tab")
+                        .to_string();
+                    if !matches!(
+                        placement.as_str(),
+                        "tab" | "split_horizontal" | "split_vertical"
+                    ) {
+                        return Ok(mcp_json_rpc_error(
+                            id,
+                            -32602,
+                            "terminal.open placement 无效",
+                        ));
+                    }
+                    object.insert("placement".to_string(), Value::String(placement));
+                }
+                "terminal.read" | "terminal.write" | "terminal.close" => {
+                    if name == "terminal.write"
+                        && object.get("data").and_then(Value::as_str).is_none()
+                    {
+                        return Ok(json!({
+                            "jsonrpc": "2.0", "id": id,
+                            "error": { "code": -32602, "message": "terminal.write requires data" }
+                        }));
+                    }
+                    let runtime_session_id = object
+                        .get("runtime_session_id")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or(binding.runtime_session_id.as_str())
+                        .to_string();
+                    if let Err(error) = tools.ensure_visible_ssh_runtime(&runtime_session_id) {
+                        return Ok(mcp_json_rpc_error(id, -32602, error));
+                    }
+                    object.insert(
+                        "runtime_session_id".to_string(),
+                        Value::String(runtime_session_id),
+                    );
+                }
+                _ => unreachable!(),
+            }
+            match mcp_tool_call_result(store, tools, name, arguments) {
+                Ok(result) => result,
+                Err(error) => return Ok(mcp_json_rpc_error(id, -32602, error)),
+            }
         }
         _ => {
             return Ok(json!({
@@ -1262,6 +1297,14 @@ fn handle_agent_json_rpc(
         }
     };
     Ok(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+}
+
+fn mcp_json_rpc_error(id: Value, code: i64, message: impl ToString) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": code, "message": message.to_string() }
+    })
 }
 
 async fn read_http_request(stream: &mut TcpStream) -> AppResult<McpHttpRequest> {

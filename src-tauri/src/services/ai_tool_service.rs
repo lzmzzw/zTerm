@@ -39,7 +39,7 @@ use crate::{
             TransferConflictPolicy, TransferDirection, TransferEndpoint, TransferEndpointKind,
             TransferKind, TransferStatus, TransferTask, TransferTaskOrigin,
         },
-        terminal::RuntimeSessionInfo,
+        terminal::{RuntimeSessionInfo, RuntimeSessionKind},
         terminal_profile::TerminalProfileDraft,
         workspace::{
             PaneNode, WorkspaceDefinitionDraft, WorkspaceStatus, WorkspaceTabDraft,
@@ -262,6 +262,27 @@ impl AiToolService {
             .into_iter()
             .find(|runtime| runtime.runtime_session_id == runtime_session_id)
             .and_then(|runtime| runtime.saved_session_id))
+    }
+
+    pub fn ensure_visible_ssh_runtime(&self, runtime_session_id: &str) -> AppResult<()> {
+        let runtime_session_id = required_text("运行时会话 ID", runtime_session_id)?;
+        let runtime = self
+            .writer
+            .list_terminals()?
+            .into_iter()
+            .find(|runtime| runtime.runtime_session_id == runtime_session_id)
+            .ok_or_else(|| {
+                AppError::not_found(format!("终端运行态不存在: {runtime_session_id}"))
+            })?;
+        if !matches!(
+            runtime.kind,
+            RuntimeSessionKind::Ssh | RuntimeSessionKind::SshContainer
+        ) {
+            return Err(AppError::validation(
+                "zTerm 侧栏只允许操作可见的 SSH 服务器终端",
+            ));
+        }
+        Ok(())
     }
 
     pub fn prepare(
@@ -494,6 +515,10 @@ impl AiToolService {
             }
             "terminal.list" => {
                 let saved_session_id = optional_string_arg(arguments, "saved_session_id");
+                let ssh_only = arguments
+                    .get("ssh_only")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 let terminals = self
                     .writer
                     .list_terminals()?
@@ -502,6 +527,13 @@ impl AiToolService {
                         saved_session_id.as_ref().is_none_or(|saved_session_id| {
                             terminal.saved_session_id.as_deref() == Some(saved_session_id.as_str())
                         })
+                    })
+                    .filter(|terminal| {
+                        !ssh_only
+                            || matches!(
+                                terminal.kind,
+                                RuntimeSessionKind::Ssh | RuntimeSessionKind::SshContainer
+                            )
                     })
                     .collect::<Vec<_>>();
                 Ok(structured_execution_result(
@@ -579,6 +611,7 @@ impl AiToolService {
                 let sessions = list_sessions(store)?;
                 let query =
                     optional_string_arg(arguments, "query").map(|value| value.to_ascii_lowercase());
+                let session_type = optional_string_arg(arguments, "session_type");
                 let sanitized_sessions = sessions
                     .sessions
                     .iter()
@@ -587,6 +620,11 @@ impl AiToolService {
                             session.name.to_ascii_lowercase().contains(query)
                                 || session.host.to_ascii_lowercase().contains(query)
                                 || session.username.to_ascii_lowercase().contains(query)
+                        })
+                    })
+                    .filter(|session| {
+                        session_type.as_ref().is_none_or(|session_type| {
+                            session.session_type.as_str() == session_type.as_str()
                         })
                     })
                     .map(sanitized_session_value)
@@ -1476,15 +1514,15 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
             "ssh.upload",
             "SSH 上传",
             "通过 SSH 连接的 SFTP 子系统上传本地文件或目录",
-            RiskLevel::High,
-            true,
+            RiskLevel::Medium,
+            false,
         ),
         (
             "ssh.download",
             "SSH 下载",
             "通过 SSH 连接的 SFTP 子系统下载远程文件或目录",
-            RiskLevel::Medium,
-            true,
+            RiskLevel::Low,
+            false,
         ),
         (
             "sftp.list",
@@ -1504,15 +1542,15 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
             "sftp.upload",
             "SFTP 上传",
             "上传本地文件到远程路径",
-            RiskLevel::High,
-            true,
+            RiskLevel::Medium,
+            false,
         ),
         (
             "sftp.download",
             "SFTP 下载",
             "下载远程文件到本地路径",
-            RiskLevel::Medium,
-            true,
+            RiskLevel::Low,
+            false,
         ),
         (
             "sftp.delete",
@@ -1532,15 +1570,15 @@ fn tool_definitions() -> Vec<AiToolDefinition> {
             "ftp.upload",
             "FTP 上传",
             "通过已保存 FTP 连接上传本地文件或目录",
-            RiskLevel::High,
-            true,
+            RiskLevel::Medium,
+            false,
         ),
         (
             "ftp.download",
             "FTP 下载",
             "通过已保存 FTP 连接下载远程文件或目录",
-            RiskLevel::Medium,
-            true,
+            RiskLevel::Low,
+            false,
         ),
         (
             "history.search",
@@ -1877,7 +1915,8 @@ fn requires_confirmation(
     approval_mode: AiApprovalMode,
     risk_level: RiskLevel,
 ) -> bool {
-    if force_confirmation_tool(tool_id)
+    if matches!(risk_level, RiskLevel::Critical)
+        || force_confirmation_tool(tool_id)
         || (!matches!(approval_mode, AiApprovalMode::FullAccess)
             && matches!(tool_id, "terminal.write" | "ssh.execute")
             && matches!(risk_level, RiskLevel::High | RiskLevel::Critical))
@@ -1902,12 +1941,6 @@ fn force_confirmation_tool(tool_id: &str) -> bool {
                 | "transfer.cancel"
                 | "transfer.delete"
                 | "sessions.delete"
-                | "ssh.upload"
-                | "ssh.download"
-                | "sftp.upload"
-                | "sftp.download"
-                | "ftp.upload"
-                | "ftp.download"
         )
 }
 

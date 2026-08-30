@@ -29,7 +29,8 @@ use zterm_lib::{
         ai_tool_service::{AiToolCommandWriter, AiToolService},
         credential_service::MemorySecretStore,
         mcp_service::{
-            handle_http_request, AgentMcpBinding, McpHttpRequest, McpService, DEFAULT_MCP_PORT,
+            handle_http_request, mcp_tool_catalog, AgentMcpBinding, McpHttpRequest, McpService,
+            DEFAULT_MCP_PORT,
         },
     },
     storage::{
@@ -49,18 +50,32 @@ impl AiToolCommandWriter for FakeToolWriter {
     }
 
     fn list_terminals(&self) -> AppResult<Vec<RuntimeSessionInfo>> {
-        Ok(vec![RuntimeSessionInfo {
-            runtime_session_id: "runtime-1".to_string(),
-            saved_session_id: Some("session-1".to_string()),
-            history_scope_kind: None,
-            history_scope_id: None,
-            pane_id: "pane-1".to_string(),
-            title: "Production".to_string(),
-            kind: RuntimeSessionKind::Ssh,
-            initial_cwd: None,
-            cols: 120,
-            rows: 32,
-        }])
+        Ok(vec![
+            RuntimeSessionInfo {
+                runtime_session_id: "runtime-1".to_string(),
+                saved_session_id: Some("session-1".to_string()),
+                history_scope_kind: None,
+                history_scope_id: None,
+                pane_id: "pane-1".to_string(),
+                title: "Production".to_string(),
+                kind: RuntimeSessionKind::Ssh,
+                initial_cwd: None,
+                cols: 120,
+                rows: 32,
+            },
+            RuntimeSessionInfo {
+                runtime_session_id: "runtime-local".to_string(),
+                saved_session_id: None,
+                history_scope_kind: None,
+                history_scope_id: None,
+                pane_id: "pane-2".to_string(),
+                title: "PowerShell".to_string(),
+                kind: RuntimeSessionKind::Local,
+                initial_cwd: None,
+                cols: 120,
+                rows: 32,
+            },
+        ])
     }
 
     fn terminal_output_cursor(&self, _runtime_session_id: &str) -> AppResult<Option<usize>> {
@@ -171,6 +186,14 @@ async fn mcp_http_handler_supports_initialize_tools_list_and_pending_tool_call()
     assert_eq!(initialize.status, 200);
     let initialize_body: Value = serde_json::from_slice(&initialize.body).expect("json body");
     assert_eq!(initialize_body["result"]["protocolVersion"], "2025-11-25");
+    assert_eq!(
+        initialize_body["result"]["serverInfo"]["name"],
+        "zTerm Headless"
+    );
+    assert!(initialize_body["result"]["instructions"]
+        .as_str()
+        .expect("headless instructions")
+        .contains("不写入任何终端滚动屏"));
 
     let initialized = handle_http_request(
         Arc::clone(&store),
@@ -206,11 +229,6 @@ async fn mcp_http_handler_supports_initialize_tools_list_and_pending_tool_call()
         vec![
             "sessions.list",
             "sessions.save",
-            "terminal.list",
-            "terminal.open",
-            "terminal.read",
-            "terminal.write",
-            "terminal.close",
             "ssh.execute",
             "ssh.upload",
             "ssh.download",
@@ -227,15 +245,6 @@ async fn mcp_http_handler_supports_initialize_tools_list_and_pending_tool_call()
         assert_ne!(tool["inputSchema"]["properties"], json!({}));
         assert_eq!(tool["inputSchema"]["additionalProperties"], false);
     }
-    let terminal_write = listed_tools
-        .iter()
-        .find(|tool| tool["name"] == "terminal.write")
-        .expect("terminal.write schema");
-    assert_eq!(
-        terminal_write["inputSchema"]["required"],
-        json!(["runtime_session_id", "data"])
-    );
-
     let call = handle_http_request(
         store,
         tools,
@@ -427,8 +436,30 @@ async fn disabling_mcp_cancels_preaccepted_request_before_tool_execution() {
 }
 
 #[tokio::test]
-async fn sidebar_agent_token_is_scoped_to_its_bound_page_terminal() {
+async fn sidebar_agent_token_is_scoped_to_visible_ssh_terminals() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    save_session(
+        store.as_ref(),
+        SavedSessionDraft {
+            id: Some("session-1".to_string()),
+            name: "Production".to_string(),
+            session_type: SessionType::Ssh,
+            group_id: None,
+            host: "ssh.example.test".to_string(),
+            port: 22,
+            username: "ops".to_string(),
+            auth_mode: AuthMode::None,
+            credential_ref: None,
+            description: None,
+            tags: Vec::new(),
+            sort_order: 0,
+            ssh_options: None,
+            rdp_options: None,
+            local_options: None,
+            ftp_options: None,
+        },
+    )
+    .expect("SSH session should save");
     let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
     let service = McpService::with_secret_store(Arc::new(MemorySecretStore::default()));
     service
@@ -453,6 +484,15 @@ async fn sidebar_agent_token_is_scoped_to_its_bound_page_terminal() {
         .await
         .expect("initialize should send");
     assert_eq!(initialize.status(), StatusCode::OK);
+    let initialize_body = initialize.json::<Value>().await.expect("initialize JSON");
+    assert_eq!(
+        initialize_body["result"]["serverInfo"]["name"],
+        "zTerm Visible Terminal"
+    );
+    assert!(initialize_body["result"]["instructions"]
+        .as_str()
+        .expect("visible terminal instructions")
+        .contains("滚动屏"));
 
     let initialized = client
         .post(&access.endpoint)
@@ -483,14 +523,91 @@ async fn sidebar_agent_token_is_scoped_to_its_bound_page_terminal() {
         .iter()
         .map(|tool| tool["name"].as_str().expect("tool name"))
         .collect::<Vec<_>>();
-    assert_eq!(names, vec!["terminal.read", "terminal.write"]);
+    assert_eq!(
+        names,
+        vec![
+            "sessions.list",
+            "terminal.list",
+            "terminal.open",
+            "terminal.read",
+            "terminal.write",
+            "terminal.close"
+        ]
+    );
+
+    let sessions = client
+        .post(&access.endpoint)
+        .bearer_auth(&access.token)
+        .json(&json!({
+            "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+            "params": { "name": "sessions.list", "arguments": {} }
+        }))
+        .send()
+        .await
+        .expect("sessions.list should send")
+        .json::<Value>()
+        .await
+        .expect("sessions.list JSON");
+    assert_eq!(
+        sessions["result"]["structuredContent"]["result"]["sessions"][0]["id"],
+        "session-1"
+    );
+
+    let terminals = client
+        .post(&access.endpoint)
+        .bearer_auth(&access.token)
+        .json(&json!({
+            "jsonrpc": "2.0", "id": 11, "method": "tools/call",
+            "params": { "name": "terminal.list", "arguments": {} }
+        }))
+        .send()
+        .await
+        .expect("terminal.list should send")
+        .json::<Value>()
+        .await
+        .expect("terminal.list JSON");
+    assert_eq!(
+        terminals["result"]["structuredContent"]["result"]["terminals"][0]["runtime_session_id"],
+        "runtime-1"
+    );
+    assert_eq!(
+        terminals["result"]["structuredContent"]["result"]["terminals"]
+            .as_array()
+            .expect("visible SSH terminals")
+            .len(),
+        1
+    );
+
+    let opened = client
+        .post(&access.endpoint)
+        .bearer_auth(&access.token)
+        .json(&json!({
+            "jsonrpc": "2.0", "id": 12, "method": "tools/call",
+            "params": {
+                "name": "terminal.open",
+                "arguments": {
+                    "saved_session_id": "session-1",
+                    "placement": "split_horizontal"
+                }
+            }
+        }))
+        .send()
+        .await
+        .expect("terminal.open should send")
+        .json::<Value>()
+        .await
+        .expect("terminal.open JSON");
+    assert_eq!(opened["result"]["structuredContent"]["status"], "succeeded");
 
     let read = client
         .post(&access.endpoint)
         .bearer_auth(&access.token)
         .json(&json!({
             "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": { "name": "terminal.read", "arguments": {} }
+            "params": {
+                "name": "terminal.read",
+                "arguments": { "runtime_session_id": "runtime-1" }
+            }
         }))
         .send()
         .await
@@ -502,6 +619,24 @@ async fn sidebar_agent_token_is_scoped_to_its_bound_page_terminal() {
         read["result"]["structuredContent"]["result"]["runtime_session_id"],
         "runtime-1"
     );
+
+    let local_rejected = client
+        .post(&access.endpoint)
+        .bearer_auth(&access.token)
+        .json(&json!({
+            "jsonrpc": "2.0", "id": 13, "method": "tools/call",
+            "params": {
+                "name": "terminal.read",
+                "arguments": { "runtime_session_id": "runtime-local" }
+            }
+        }))
+        .send()
+        .await
+        .expect("local terminal rejection should send")
+        .json::<Value>()
+        .await
+        .expect("local terminal rejection JSON");
+    assert_eq!(local_rejected["error"]["code"], -32602);
 
     let rejected = client
         .post(&access.endpoint)
@@ -619,6 +754,18 @@ fn mcp_default_port_is_stable_for_external_client_configuration() {
     assert_eq!(DEFAULT_MCP_PORT, 9419);
 }
 
+#[test]
+fn visible_terminal_profile_rejects_local_runtimes() {
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+    tools
+        .ensure_visible_ssh_runtime("runtime-1")
+        .expect("SSH runtime should be visible to sidebar Codex");
+    let error = tools
+        .ensure_visible_ssh_runtime("runtime-local")
+        .expect_err("local runtime must remain outside the visible SSH profile");
+    assert!(error.to_string().contains("SSH 服务器终端"));
+}
+
 #[tokio::test]
 async fn mcp_token_is_reused_and_rotation_persists_across_service_instances() {
     let secrets = Arc::new(MemorySecretStore::default());
@@ -695,7 +842,7 @@ async fn enabled_mcp_setting_starts_listener_without_opening_settings_page() {
 }
 
 #[tokio::test]
-async fn mcp_terminal_list_returns_structured_runtime_data() {
+async fn headless_mcp_rejects_visible_terminal_listing() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
     let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
     let response = handle_http_request(
@@ -710,16 +857,13 @@ async fn mcp_terminal_list_returns_structured_runtime_data() {
         })),
     )
     .await
-    .expect("terminal.list should handle");
+    .expect("terminal.list rejection should handle");
     let body: Value = serde_json::from_slice(&response.body).expect("json body");
-    assert_eq!(
-        body["result"]["structuredContent"]["result"]["terminals"][0]["runtime_session_id"],
-        "runtime-1"
-    );
-    assert_eq!(
-        body["result"]["structuredContent"]["result"]["terminals"][0]["saved_session_id"],
-        "session-1"
-    );
+    assert_eq!(body["error"]["code"], -32601);
+    assert!(body["error"]["message"]
+        .as_str()
+        .expect("error message")
+        .contains("not exposed"));
 }
 
 #[tokio::test]
@@ -797,7 +941,7 @@ async fn mcp_rejects_hidden_credential_reference_arguments() {
 }
 
 #[tokio::test]
-async fn mcp_terminal_read_and_write_return_output_with_cursor() {
+async fn headless_mcp_rejects_visible_terminal_read_and_write() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
     let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
     let read = handle_http_request(
@@ -815,16 +959,9 @@ async fn mcp_terminal_read_and_write_return_output_with_cursor() {
         })),
     )
     .await
-    .expect("terminal.read should handle");
+    .expect("terminal.read rejection should handle");
     let read_body: Value = serde_json::from_slice(&read.body).expect("json body");
-    assert_eq!(
-        read_body["result"]["structuredContent"]["result"]["cursor"],
-        42
-    );
-    assert!(read_body["result"]["structuredContent"]["result"]["output"]
-        .as_str()
-        .expect("terminal output")
-        .contains("/home/ops"));
+    assert_eq!(read_body["error"]["code"], -32601);
 
     let write = handle_http_request(
         store,
@@ -841,16 +978,9 @@ async fn mcp_terminal_read_and_write_return_output_with_cursor() {
         })),
     )
     .await
-    .expect("terminal.write should handle");
+    .expect("terminal.write rejection should handle");
     let write_body: Value = serde_json::from_slice(&write.body).expect("json body");
-    assert_eq!(
-        write_body["result"]["structuredContent"]["result"]["cursor"],
-        42
-    );
-    assert_eq!(
-        write_body["result"]["structuredContent"]["result"]["output"],
-        "/home/ops"
-    );
+    assert_eq!(write_body["error"]["code"], -32601);
 }
 
 #[tokio::test]
@@ -885,11 +1015,24 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
     )
     .expect("connection policy should save");
     let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
-    let pending = handle_http_request(
-        Arc::clone(&store),
-        tools.clone(),
-        "token-1",
-        authed_request(json!({
+    let service = McpService::with_secret_store(Arc::new(MemorySecretStore::default()));
+    service
+        .start(Arc::clone(&store), tools, Some(0))
+        .await
+        .expect("MCP service should start");
+    let access = service
+        .register_agent_binding(AgentMcpBinding {
+            agent_session_id: "agent-policy".to_string(),
+            runtime_session_id: "runtime-1".to_string(),
+            saved_session_id: Some("session-1".to_string()),
+            target_label: "Policy SSH".to_string(),
+        })
+        .expect("agent binding should register");
+    let client = reqwest::Client::new();
+    let pending_body = client
+        .post(&access.endpoint)
+        .bearer_auth(&access.token)
+        .json(&json!({
             "jsonrpc": "2.0",
             "id": 30,
             "method": "tools/call",
@@ -897,11 +1040,13 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
                 "name": "terminal.read",
                 "arguments": { "runtime_session_id": "runtime-1" }
             }
-        })),
-    )
-    .await
-    .expect("terminal.read should handle");
-    let pending_body: Value = serde_json::from_slice(&pending.body).expect("json body");
+        }))
+        .send()
+        .await
+        .expect("terminal.read should send")
+        .json::<Value>()
+        .await
+        .expect("terminal.read JSON");
     assert_eq!(
         pending_body["result"]["structuredContent"]["status"],
         "pending"
@@ -924,11 +1069,10 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
         zterm_lib::models::ai::AiApprovalMode::FullAccess,
     )
     .expect("connection policy should update");
-    let executed = handle_http_request(
-        store,
-        tools,
-        "token-1",
-        authed_request(json!({
+    let executed_body = client
+        .post(&access.endpoint)
+        .bearer_auth(&access.token)
+        .json(&json!({
             "jsonrpc": "2.0",
             "id": 31,
             "method": "tools/call",
@@ -936,15 +1080,18 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
                 "name": "terminal.read",
                 "arguments": { "runtime_session_id": "runtime-1" }
             }
-        })),
-    )
-    .await
-    .expect("terminal.read should handle");
-    let executed_body: Value = serde_json::from_slice(&executed.body).expect("json body");
+        }))
+        .send()
+        .await
+        .expect("terminal.read should send")
+        .json::<Value>()
+        .await
+        .expect("terminal.read JSON");
     assert_eq!(
         executed_body["result"]["structuredContent"]["status"],
         "succeeded"
     );
+    service.stop_and_wait().await.expect("service should stop");
 }
 
 #[tokio::test]
@@ -1074,7 +1221,66 @@ async fn mcp_ssh_execute_keeps_high_risk_scripts_pending() {
 }
 
 #[tokio::test]
-async fn mcp_file_transfers_expose_complete_schemas_and_require_local_confirmation() {
+async fn mcp_full_automation_still_requires_critical_command_approval() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    save_session(
+        store.as_ref(),
+        SavedSessionDraft {
+            id: Some("critical-session".to_string()),
+            name: "Critical SSH".to_string(),
+            session_type: SessionType::Ssh,
+            group_id: None,
+            host: "ssh.example.test".to_string(),
+            port: 22,
+            username: "ops".to_string(),
+            auth_mode: AuthMode::None,
+            credential_ref: None,
+            description: None,
+            tags: Vec::new(),
+            sort_order: 0,
+            ssh_options: None,
+            rdp_options: None,
+            local_options: None,
+            ftp_options: None,
+        },
+    )
+    .expect("SSH session should save");
+    upsert_ai_connection_approval_policy(
+        store.as_ref(),
+        "critical-session",
+        zterm_lib::models::ai::AiApprovalMode::FullAccess,
+    )
+    .expect("full automation policy should save");
+    let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
+    let response = handle_http_request(
+        store,
+        tools,
+        "token-1",
+        authed_request(json!({
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": {
+                "name": "ssh.execute",
+                "arguments": {
+                    "saved_session_id": "critical-session",
+                    "script": "rm -rf /"
+                }
+            }
+        })),
+    )
+    .await
+    .expect("critical ssh.execute should create pending");
+    let body: Value = serde_json::from_slice(&response.body).expect("json body");
+    assert_eq!(body["result"]["structuredContent"]["status"], "pending");
+    assert_eq!(
+        body["result"]["structuredContent"]["risk_level"],
+        "critical"
+    );
+}
+
+#[tokio::test]
+async fn mcp_file_transfers_expose_complete_schemas_for_efficient_approval() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
     let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
     let list = handle_http_request(
@@ -1110,33 +1316,26 @@ async fn mcp_file_transfers_expose_complete_schemas_and_require_local_confirmati
         );
     }
 
-    let response = handle_http_request(
-        store,
-        tools,
-        "token-1",
-        authed_request(json!({
-            "jsonrpc": "2.0",
-            "id": 21,
-            "method": "tools/call",
-            "params": {
-                "name": "ftp.download",
-                "arguments": {
-                    "saved_session_id": "ftp-1",
-                    "remote_path": "/exports/report.csv",
-                    "local_path": "C:\\Downloads\\report.csv",
-                    "conflict_policy": "rename"
-                }
-            }
-        })),
-    )
-    .await
-    .expect("ftp.download should create pending");
-    let body: Value = serde_json::from_slice(&response.body).expect("json body");
-    assert_eq!(body["result"]["structuredContent"]["status"], "pending");
-    assert_eq!(
-        body["result"]["structuredContent"]["tool_id"],
-        "ftp.download"
-    );
+    let catalog = mcp_tool_catalog();
+    for name in [
+        "ssh.upload",
+        "ssh.download",
+        "sftp.upload",
+        "sftp.download",
+        "ftp.upload",
+        "ftp.download",
+    ] {
+        let tool = catalog
+            .iter()
+            .find(|tool| tool.id == name)
+            .expect("file transfer definition");
+        assert!(!tool.requires_confirmation);
+        if name.ends_with(".download") {
+            assert_eq!(tool.risk_level.as_str(), "low");
+        } else {
+            assert_eq!(tool.risk_level.as_str(), "medium");
+        }
+    }
 }
 
 fn authed_request(body: Value) -> McpHttpRequest {
