@@ -259,10 +259,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       cwd,
     };
     let candidates = await invoke<CommandCompletionCandidate[]>("command_completion_suggest", { request });
+    const pathCompletion = isPathCompletionInput(input);
+    if (pathCompletion) {
+      candidates = candidates.filter((candidate) => candidate.provider === "path");
+    }
     if (
       get().runtimes[runtimeSessionId]?.kind !== "ssh" ||
-      !isPathCompletionInput(input) ||
-      candidates.some((candidate) => candidate.provider === "path")
+      !isPathCompletionLookupInput(input) ||
+      candidates.length > 0
     ) {
       return candidates;
     }
@@ -272,7 +276,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         return candidates;
       }
       candidates = await invoke<CommandCompletionCandidate[]>("command_completion_suggest", { request });
-      if (candidates.some((candidate) => candidate.provider === "path")) break;
+      candidates = candidates.filter((candidate) => candidate.provider === "path");
+      if (candidates.length > 0) break;
     }
     return candidates;
   },
@@ -370,6 +375,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 }));
 
 function isPathCompletionInput(input: string) {
+  const segment = input.split(/[|;&](?![|&])/).at(-1)?.trimStart() ?? "";
+  return /^(?:cd|cp|mv|rm|ls|cat)(?:\s|$)/i.test(segment);
+}
+
+function isPathCompletionLookupInput(input: string) {
   const segment = input.split(/[|;&](?![|&])/).at(-1)?.trimStart() ?? "";
   return /^(?:cd|cp|mv|rm|ls|cat)\s+/i.test(segment);
 }

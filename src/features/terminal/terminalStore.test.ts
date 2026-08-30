@@ -189,9 +189,81 @@ describe("terminalStore", () => {
     const current = useTerminalStore.getState().suggestCompletion("runtime-ssh", "cat log", 7, "/srv");
     await vi.advanceTimersByTimeAsync(800);
 
-    await expect(stale).resolves.toEqual([systemCandidate]);
+    await expect(stale).resolves.toEqual([]);
     await expect(current).resolves.toEqual([pathCandidate]);
     expect(invokeMock).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("does not show a history candidate while a path command is waiting for its argument", async () => {
+    useTerminalStore.setState({
+      runtimes: {
+        "runtime-ssh": {
+          runtime_session_id: "runtime-ssh",
+          saved_session_id: "session-1",
+          history_scope_kind: "saved_session",
+          history_scope_id: "session-1",
+          pane_id: "pane-1",
+          title: "SSH",
+          kind: "ssh",
+          initial_cwd: null,
+          cols: 120,
+          rows: 32,
+        },
+      },
+    });
+    invokeMock.mockResolvedValue([
+      {
+        provider: "history",
+        replacement_text: "cd config",
+        suffix: " config",
+        replacement_range: { start: 0, end: 2 },
+        score: 0.9,
+        source_label: "当前会话历史",
+      },
+    ]);
+
+    await expect(
+      useTerminalStore.getState().suggestCompletion("runtime-ssh", "cd", 2, "/root"),
+    ).resolves.toEqual([]);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never falls back to history when a remote path lookup has no matching entry", async () => {
+    vi.useFakeTimers();
+    useTerminalStore.setState({
+      runtimes: {
+        "runtime-ssh": {
+          runtime_session_id: "runtime-ssh",
+          saved_session_id: "session-1",
+          history_scope_kind: "saved_session",
+          history_scope_id: "session-1",
+          pane_id: "pane-1",
+          title: "SSH",
+          kind: "ssh",
+          initial_cwd: null,
+          cols: 120,
+          rows: 32,
+        },
+      },
+    });
+    const historyCandidate = {
+      provider: "history",
+      replacement_text: "cd config",
+      suffix: "onfig",
+      replacement_range: { start: 3, end: 4 },
+      score: 0.9,
+      source_label: "当前会话历史",
+    };
+    invokeMock.mockResolvedValue([historyCandidate]);
+
+    const pending = useTerminalStore
+      .getState()
+      .suggestCompletion("runtime-ssh", "cd c", 4, "/root");
+    await vi.advanceTimersByTimeAsync(800);
+
+    await expect(pending).resolves.toEqual([]);
+    expect(invokeMock).toHaveBeenCalledTimes(3);
     vi.useRealTimers();
   });
 

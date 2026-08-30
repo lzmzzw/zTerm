@@ -66,6 +66,7 @@ const POSIX_BUILTINS: &[&str] = &[
     "false", "fg", "jobs", "kill", "printf", "pwd", "read", "return", "set", "shift", "test",
     "times", "trap", "true", "type", "ulimit", "umask", "unalias", "unset", "wait",
 ];
+const PATH_ARGUMENT_COMMANDS: &[&str] = &["cat", "cd", "cp", "ls", "mv", "rm"];
 
 #[derive(Clone, Default)]
 pub struct CommandCompletionService {
@@ -149,8 +150,26 @@ impl CommandCompletionService {
         let context = self.runtime_context(&request.runtime_session_id)?;
         let mut candidates = Vec::new();
         let mut seen_replacements = HashSet::new();
+        let local = context.kind == RuntimeSessionKind::Local;
+        let path_context = matches!(
+            context.kind,
+            RuntimeSessionKind::Local | RuntimeSessionKind::Ssh
+        ) && (path_query(&request.prefix, request.cwd.as_deref(), local)
+            .is_some()
+            || path_command_waiting_for_argument(&request.prefix));
 
         self.push_path_candidates(&request, &context, &mut seen_replacements, &mut candidates)?;
+        if path_context {
+            candidates.sort_by(|left, right| {
+                right
+                    .score
+                    .partial_cmp(&left.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| left.replacement_text.cmp(&right.replacement_text))
+            });
+            candidates.truncate(request.limit);
+            return Ok(candidates);
+        }
         self.push_history_candidates(
             store,
             &request,
@@ -611,6 +630,9 @@ impl CommandCompletionService {
             if query.directories_only && entry.kind != FileKind::Directory {
                 continue;
             }
+            if query.name_prefix.is_empty() && entry.name.starts_with('.') {
+                continue;
+            }
             if !path_name_starts_with(&entry.name, &query.name_prefix, local) {
                 continue;
             }
@@ -717,6 +739,7 @@ impl CommandCompletionService {
         canonical_directory: &str,
         mut entries: Vec<FileEntry>,
     ) {
+        sort_path_entries(&mut entries);
         entries.truncate(MAX_PATH_ENTRIES);
         let cached = CachedPathEntries {
             entries,
@@ -889,7 +912,7 @@ fn path_query(prefix: &str, cwd: Option<&str>, local: bool) -> Option<PathQuery>
     let segment = prefix.chars().skip(segment_start).collect::<String>();
     let tokens = shell_tokens(&segment, segment_start);
     let command = tokens.first()?.value.to_ascii_lowercase();
-    if !matches!(command.as_str(), "cd" | "cp" | "mv" | "rm" | "ls" | "cat") {
+    if !is_path_argument_command(&command) {
         return None;
     }
     let ends_with_space = prefix.chars().last().is_some_and(char::is_whitespace);
@@ -934,6 +957,19 @@ fn path_query(prefix: &str, cwd: Option<&str>, local: bool) -> Option<PathQuery>
         separator,
         directories_only: command == "cd",
     })
+}
+
+fn is_path_argument_command(command: &str) -> bool {
+    PATH_ARGUMENT_COMMANDS.contains(&command.to_ascii_lowercase().as_str())
+}
+
+fn path_command_waiting_for_argument(prefix: &str) -> bool {
+    let segment_start = command_segment_start(prefix);
+    let segment = prefix.chars().skip(segment_start).collect::<String>();
+    let command = segment.trim();
+    !command.is_empty()
+        && !command.chars().any(char::is_whitespace)
+        && is_path_argument_command(command)
 }
 
 fn shell_tokens(value: &str, offset: usize) -> Vec<ShellToken> {
@@ -1123,8 +1159,25 @@ fn list_local_path_entries(directory: &str) -> Vec<FileEntry> {
             })
         })
         .collect::<Vec<_>>();
-    result.sort_by_key(|entry| entry.name.to_lowercase());
+    sort_path_entries(&mut result);
     result
+}
+
+fn sort_path_entries(entries: &mut [FileEntry]) {
+    entries.sort_by(|left, right| {
+        path_kind_rank(left.kind)
+            .cmp(&path_kind_rank(right.kind))
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+}
+
+fn path_kind_rank(kind: FileKind) -> u8 {
+    if kind == FileKind::Directory {
+        0
+    } else {
+        1
+    }
 }
 
 fn path_name_starts_with(name: &str, prefix: &str, local: bool) -> bool {
@@ -1708,6 +1761,118 @@ mod tests {
             );
         }
         assert!(service.inner.remote_paths.lock().expect("path cache").len() <= 128);
+    }
+
+    #[test]
+    fn path_commands_never_fall_back_to_history_when_the_directory_has_no_match() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+        let session = save_session(store.as_ref(), ssh_draft("path context")).expect("session");
+        insert_command_history(
+            store.as_ref(),
+            CommandHistoryDraft {
+                scope_kind: Some(HistoryScopeKind::SavedSession),
+                scope_id: Some(session.id.clone()),
+                runtime_session_id: "runtime-path".to_string(),
+                command: "cd config".to_string(),
+                cwd: Some("/root".to_string()),
+                exit_code: Some(0),
+                started_at_ms: 10,
+                finished_at_ms: Some(11),
+            },
+        )
+        .expect("history insert");
+
+        let service = CommandCompletionService::new();
+        service.register_runtime(
+            "runtime-path",
+            RuntimeSessionKind::Ssh,
+            Some(session.id.clone()),
+            Some(HistoryScopeKind::SavedSession),
+            Some(session.id.clone()),
+        );
+        service.store_remote_path_entries(
+            &session.id,
+            "/root",
+            "/root",
+            vec![
+                path_entry(".cache", FileKind::Directory),
+                path_entry("snap", FileKind::Directory),
+                path_entry("ssh", FileKind::Directory),
+                path_entry(".vim", FileKind::Directory),
+            ],
+        );
+
+        for input in ["cd", "cd c"] {
+            let candidates = service
+                .suggest(
+                    store.as_ref(),
+                    CommandCompletionRequest {
+                        runtime_session_id: "runtime-path".to_string(),
+                        input: input.to_string(),
+                        cursor: input.chars().count(),
+                        limit: Some(8),
+                        cwd: Some("/root".to_string()),
+                    },
+                )
+                .expect("path completion");
+            assert!(candidates.is_empty(), "unexpected candidates for {input:?}");
+        }
+
+        let visible = service
+            .suggest(
+                store.as_ref(),
+                CommandCompletionRequest {
+                    runtime_session_id: "runtime-path".to_string(),
+                    input: "cd s".to_string(),
+                    cursor: 4,
+                    limit: Some(8),
+                    cwd: Some("/root".to_string()),
+                },
+            )
+            .expect("visible path completion");
+        assert_eq!(visible.len(), 2);
+        assert!(visible
+            .iter()
+            .all(|candidate| candidate.provider == CommandCompletionProvider::Path));
+        assert!(visible
+            .iter()
+            .any(|candidate| candidate.replacement_text == "cd snap/"));
+        assert!(visible
+            .iter()
+            .any(|candidate| candidate.replacement_text == "cd ssh/"));
+
+        let root = service
+            .suggest(
+                store.as_ref(),
+                CommandCompletionRequest {
+                    runtime_session_id: "runtime-path".to_string(),
+                    input: "cd ".to_string(),
+                    cursor: 3,
+                    limit: Some(8),
+                    cwd: Some("/root".to_string()),
+                },
+            )
+            .expect("root path completion");
+        assert!(root
+            .iter()
+            .all(|candidate| !candidate.replacement_text.contains(".cache")
+                && !candidate.replacement_text.contains(".vim")));
+
+        let hidden = service
+            .suggest(
+                store.as_ref(),
+                CommandCompletionRequest {
+                    runtime_session_id: "runtime-path".to_string(),
+                    input: "cd .".to_string(),
+                    cursor: 4,
+                    limit: Some(8),
+                    cwd: Some("/root".to_string()),
+                },
+            )
+            .expect("hidden path completion");
+        assert!(hidden
+            .iter()
+            .any(|candidate| candidate.replacement_text == "cd .cache/"));
     }
 
     #[test]
