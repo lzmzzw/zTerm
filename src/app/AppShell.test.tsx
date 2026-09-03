@@ -14,6 +14,7 @@ const storeMocks = vi.hoisted(() => ({
   noop: vi.fn(),
   asyncNoop: vi.fn().mockResolvedValue(undefined),
   bindApprovalModeToSession: vi.fn().mockResolvedValue(undefined),
+  loadPendingInvocations: vi.fn().mockResolvedValue([]),
   saveSession: vi.fn().mockResolvedValue(undefined),
   bindEvents: vi.fn().mockResolvedValue(() => undefined),
   addPaneTab: vi.fn(),
@@ -499,7 +500,7 @@ vi.mock("../features/ai/mcpStore", () => {
     pendingInvocations: [],
     loading: false,
     error: null,
-    loadPendingInvocations: storeMocks.asyncNoop,
+    loadPendingInvocations: storeMocks.loadPendingInvocations,
     setApprovalMode: storeMocks.asyncNoop,
     bindApprovalModeToSession: storeMocks.bindApprovalModeToSession,
     confirmTool: storeMocks.asyncNoop,
@@ -920,6 +921,7 @@ describe("AppShell", () => {
     storeMocks.mcpAffectedDomainsHandlerSetCount = 0;
     storeMocks.tauriEventHandlers.clear();
     storeMocks.tauriEventListenCounts.clear();
+    storeMocks.loadPendingInvocations.mockResolvedValue([]);
     storeMocks.pendingExternalLaunches = [];
     storeMocks.takePendingExternalLaunches.mockImplementation(async () =>
       storeMocks.pendingExternalLaunches.splice(0),
@@ -1200,6 +1202,37 @@ describe("AppShell", () => {
 
     expect(storeMocks.tauriEventListenCounts.get("zterm:tool-action")).toBe(1);
     expect(storeMocks.mcpAffectedDomainsHandlerSetCount).toBe(1);
+    view.unmount();
+  });
+
+  it("opens the Agent approval surface when an external MCP call becomes pending", async () => {
+    const view = render(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(view.container.querySelector('[aria-label="AI 面板"]')).toBe(null);
+    storeMocks.loadPendingInvocations.mockResolvedValueOnce([
+      {
+        id: "pending-1",
+        tool_id: "ssh.execute",
+        tool_title: "执行 SSH 命令",
+        risk_level: "high",
+        arguments_summary: "saved_session_id=session-1, script=[redacted]",
+        requires_confirmation: true,
+        status: "pending",
+      },
+    ]);
+
+    const handler = storeMocks.tauriEventHandlers.get("zterm:tool-pending");
+    expect(handler).toBeDefined();
+    await act(async () => {
+      handler?.({ payload: null });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(view.container.querySelector('[aria-label="AI 面板"]')).not.toBe(null);
     view.unmount();
   });
 

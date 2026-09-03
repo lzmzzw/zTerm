@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { invokeTauri, listenTauri, type UnlistenFn } from "../../lib/tauriClient";
 import { useWorkspaceStore } from "../workspace/workspaceStore";
 import { listSshContainers as listSshContainersApi, type SshContainerInfo } from "./sshContainerApi";
+import { parseSimpleCdTarget, trackTerminalInput } from "./terminalCwd";
 import {
   consumeTerminalZmodemData,
   releaseTerminalZmodemRuntime,
@@ -62,9 +63,9 @@ interface TerminalHistoryChangedEvent {
 const MAX_TERMINAL_OUTPUT_CHARS = 50_000;
 const MAX_TERMINAL_VISUAL_TAIL_CHARS = 8_000;
 const PATH_COMMAND_CONTEXT =
-  /^(?:cat|cd|cp|ls|mv|rm|tar|unzip|zip)(?:\s|$)/i;
+  /^(?:cat|cd|cmp|cp|diff|du|file|head|less|ln|ls|mkdir|more|mv|nano|readlink|realpath|rm|rmdir|stat|tail|tar|touch|unzip|vi|vim|wc|zip)(?:\s|$)/i;
 const PATH_COMMAND_LOOKUP =
-  /^(?:cat|cd|cp|ls|mv|rm|tar|unzip|zip)\s+/i;
+  /^(?:cat|cd|cmp|cp|diff|du|file|head|less|ln|ls|mkdir|more|mv|nano|readlink|realpath|rm|rmdir|stat|tail|tar|touch|unzip|vi|vim|wc|zip)\s+/i;
 const DOCKER_COMPOSE_CONTEXT = /^(?:docker\s+compose|docker-compose)(?:\s|$)/i;
 const DOCKER_COMPOSE_PATH_CONTEXT =
   /(?:^|\s)(?:-f|--file|--env-file|--project-directory)(?:=[^\s]*|\s+[^\s]*)?$/i;
@@ -102,6 +103,7 @@ interface TerminalState {
     currentCwd: string | null,
     target: string | null,
   ) => Promise<string | null>;
+  recordCwd: (runtimeSessionId: string, cwd: string) => void;
   resizeTerminal: (runtimeSessionId: string, cols: number, rows: number) => Promise<void>;
   closeTerminal: (runtimeSessionId: string, options?: { releaseExternalSession?: boolean }) => Promise<void>;
   forgetTerminalRuntime: (runtimeSessionId: string) => void;
@@ -120,6 +122,9 @@ const visualOutputTailByRuntime: Record<string, string> = {};
 const liveOutputSubscriptions: Record<string, number> = {};
 const replayBuffersByRuntime: Record<string, TerminalReplayBuffer> = {};
 const completionRequestGenerationByRuntime: Record<string, number> = {};
+const commandInputByRuntime: Record<string, string> = {};
+const knownCwdByRuntime: Record<string, string> = {};
+const cwdResolutionByRuntime: Record<string, Promise<void>> = {};
 
 export function resetTerminalOutputCachesForTest() {
   clearRecord(outputTailByRuntime);
@@ -127,6 +132,9 @@ export function resetTerminalOutputCachesForTest() {
   clearRecord(liveOutputSubscriptions);
   clearReplayBuffers();
   clearRecord(completionRequestGenerationByRuntime);
+  clearRecord(commandInputByRuntime);
+  clearRecord(knownCwdByRuntime);
+  clearRecord(cwdResolutionByRuntime);
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -240,6 +248,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
   async writeTerminal(runtimeSessionId, data) {
     await invokeTauri("terminal_write", { runtimeSessionId, data });
+    const tracked = trackTerminalInput(commandInputByRuntime[runtimeSessionId] ?? "", data);
+    commandInputByRuntime[runtimeSessionId] = tracked.buffer;
+    for (const command of tracked.submittedCommands) {
+      const parsedCd = parseSimpleCdTarget(command);
+      if (parsedCd) queueRuntimeCwdResolution(runtimeSessionId, parsedCd.target, get);
+    }
     if (isSubmittedTerminalInput(data)) {
       set((state) => ({
         inputSerialByRuntime: {
@@ -252,12 +266,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   async suggestCompletion(runtimeSessionId, input, cursor, cwd) {
     const generation = (completionRequestGenerationByRuntime[runtimeSessionId] ?? 0) + 1;
     completionRequestGenerationByRuntime[runtimeSessionId] = generation;
+    if (cwd && !knownCwdByRuntime[runtimeSessionId] && !cwdResolutionByRuntime[runtimeSessionId]) {
+      knownCwdByRuntime[runtimeSessionId] = cwd;
+    }
+    await cwdResolutionByRuntime[runtimeSessionId]?.catch(() => undefined);
     const request = {
       runtime_session_id: runtimeSessionId,
       input,
       cursor,
       limit: 8,
-      cwd,
+      cwd: knownCwdByRuntime[runtimeSessionId] ?? cwd,
     };
     let candidates = await invokeTauri<CommandCompletionCandidate[]>("command_completion_suggest", { request });
     const pathCompletion = isPathCompletionInput(input);
@@ -283,13 +301,20 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return candidates;
   },
   async resolveCwd(runtimeSessionId, currentCwd, target) {
-    return invokeTauri<string | null>("command_completion_resolve_cwd", {
+    const resolved = await invokeTauri<string | null>("command_completion_resolve_cwd", {
       request: {
         runtime_session_id: runtimeSessionId,
         current_cwd: currentCwd,
         target,
       },
     });
+    if (resolved && get().runtimes[runtimeSessionId]) knownCwdByRuntime[runtimeSessionId] = resolved;
+    return resolved;
+  },
+  recordCwd(runtimeSessionId, cwd) {
+    if (get().runtimes[runtimeSessionId] && cwd.trim()) {
+      knownCwdByRuntime[runtimeSessionId] = cwd;
+    }
   },
   async resizeTerminal(runtimeSessionId, cols, rows) {
     await invokeTauri("terminal_resize", { runtimeSessionId, cols, rows });
@@ -322,6 +347,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       delete visualOutputTailByRuntime[runtimeSessionId];
       delete liveOutputSubscriptions[runtimeSessionId];
       delete completionRequestGenerationByRuntime[runtimeSessionId];
+      delete commandInputByRuntime[runtimeSessionId];
+      delete knownCwdByRuntime[runtimeSessionId];
+      delete cwdResolutionByRuntime[runtimeSessionId];
       disposeReplayBuffer(runtimeSessionId);
       return { runtimes, outputChunks, inputSerialByRuntime };
     });
@@ -374,6 +402,36 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     };
   },
 }));
+
+function queueRuntimeCwdResolution(
+  runtimeSessionId: string,
+  target: string | null,
+  getState: () => TerminalState,
+) {
+  const previous = cwdResolutionByRuntime[runtimeSessionId] ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(async () => {
+    const currentCwd = knownCwdByRuntime[runtimeSessionId]
+      ?? getState().runtimes[runtimeSessionId]?.initial_cwd
+      ?? null;
+    const resolved = await invokeTauri<string | null>("command_completion_resolve_cwd", {
+      request: {
+        runtime_session_id: runtimeSessionId,
+        current_cwd: currentCwd,
+        target,
+      },
+    });
+    if (resolved && getState().runtimes[runtimeSessionId]) {
+      knownCwdByRuntime[runtimeSessionId] = resolved;
+    }
+  });
+  cwdResolutionByRuntime[runtimeSessionId] = current;
+  const release = () => {
+    if (cwdResolutionByRuntime[runtimeSessionId] === current) {
+      delete cwdResolutionByRuntime[runtimeSessionId];
+    }
+  };
+  void current.then(release, release);
+}
 
 function isPathCompletionInput(input: string) {
   const segment = input.split(/[|;&](?![|&])/).at(-1)?.trimStart() ?? "";

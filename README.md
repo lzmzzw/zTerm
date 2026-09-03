@@ -20,7 +20,8 @@ panes in the center, and files/history/monitor/Codex tools on the right.
 - Launch the locally authenticated Codex CLI in the Agent sidebar, with one retained process per terminal tab.
 - Give sidebar Codex a Visible Terminal Profile: every server command and output stays in zTerm scrollback, while additional saved SSH servers can be opened and operated in new tabs or horizontal/vertical splits.
 - Give external Codex App clients a Headless Profile: native SSH execution and transfers return structured results without opening, reading, or writing terminal scrollback.
-- Use Efficient Approval by default: inspections, transfers, and routine operations run automatically, while high-risk or irreversible actions are confirmed once in zTerm as the final approval owner.
+- Use Efficient Approval by default: inspections, transfers, and routine operations run automatically, while genuinely high-risk or irreversible actions are confirmed once in zTerm. Pending approval brings zTerm forward, opens the Agent approval surface, and returns the decision to the original Codex tool call without resubmission.
+- Use Full Automation for trusted personal environments: writes, deletes, and critical commands run without approval and remain audited; only operations that require local secret input still wait for the user.
 - Monitor SSH server CPU, memory, disk, load, uptime, and network traffic snapshots.
 
 RDP sessions open in the Windows system Remote Desktop client. The workspace

@@ -347,6 +347,7 @@ function LeafPane({
   const writeTerminal = useTerminalStore((state) => state.writeTerminal);
   const suggestCompletion = useTerminalStore((state) => state.suggestCompletion);
   const resolveCwd = useTerminalStore((state) => state.resolveCwd);
+  const recordCwd = useTerminalStore((state) => state.recordCwd);
   const resizeTerminal = useTerminalStore((state) => state.resizeTerminal);
   const syncChannel = useSyncInputStore((state) => state.channel);
   const leaveSyncChannel = useSyncInputStore((state) => state.leaveChannel);
@@ -459,6 +460,15 @@ function LeafPane({
       return Promise.resolve(null);
     },
     [resolveCwd, runtime],
+  );
+
+  const handleCwdChange = useCallback(
+    (cwd: string) => {
+      if (runtime && isInteractiveTerminalRuntime(runtime.kind)) {
+        recordCwd(runtime.runtime_session_id, cwd);
+      }
+    },
+    [recordCwd, runtime],
   );
 
   const handleClosePane = useCallback(() => {
@@ -781,6 +791,7 @@ function LeafPane({
           replayKind={xtermReplay.kind}
           streamId={runtime.runtime_session_id}
           onCompletionRequest={handleCompletionRequest}
+          onCwdChange={handleCwdChange}
           onCwdResolve={handleCwdResolve}
           onDisconnect={
             isSshLikeTerminalRuntime(runtime.kind) && activeTerminalTab.runtime_session_id

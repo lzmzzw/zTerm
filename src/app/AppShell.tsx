@@ -1695,7 +1695,9 @@ export function AppShell() {
     let disposed = false;
     let cleanup: (() => void) | null = null;
     void listenTauri("zterm:tool-pending", () => {
-      void loadPendingInvocations();
+      void loadPendingInvocations().then((pendingInvocations) => {
+        if (!disposed && pendingInvocations.length > 0) setActiveTool("agent");
+      });
     }).then((unlisten) => {
       if (disposed) unlisten();
       else cleanup = unlisten;

@@ -9,7 +9,8 @@ pub struct CommandRisk {
 }
 
 pub fn classify_command(command: &str) -> CommandRisk {
-    let normalized = command.trim().to_ascii_lowercase();
+    let command = command.trim();
+    let normalized = command.to_ascii_lowercase();
     if normalized.is_empty() {
         return risk(RiskLevel::Medium, "空命令无法判断风险", "不会执行任何操作");
     }
@@ -46,17 +47,51 @@ pub fn classify_command(command: &str) -> CommandRisk {
             "chmod -r 777",
             "systemctl stop",
             "systemctl disable",
-            "service stop",
-            "service ",
             "shutdown",
             "reboot",
             "ufw allow",
-            "iptables",
-            "firewall-cmd",
             "netsh advfirewall",
             "kubectl delete",
             "docker rm",
             "docker compose down",
+        ],
+    ) || command_has_mutating_argument(
+        &normalized,
+        "service",
+        &["start", "stop", "restart", "reload", "force-reload"],
+    ) || command_has_mutating_argument(
+        &normalized,
+        "firewall-cmd",
+        &[
+            "--reload",
+            "--complete-reload",
+            "--runtime-to-permanent",
+            "--permanent",
+            "--add-",
+            "--remove-",
+            "--new-",
+            "--delete-",
+            "--set-",
+            "--change-interface",
+        ],
+    ) || command_has_mutating_argument(
+        command,
+        "iptables",
+        &["-A", "-D", "-I", "-R", "-F", "-X", "-P", "-N", "-E"],
+    ) || command_has_mutating_argument(
+        &normalized,
+        "iptables",
+        &[
+            "--append",
+            "--delete",
+            "--insert",
+            "--replace",
+            "--flush",
+            "--zero",
+            "--policy",
+            "--new-chain",
+            "--delete-chain",
+            "--rename-chain",
         ],
     ) {
         return risk(
@@ -87,6 +122,37 @@ pub fn classify_command(command: &str) -> CommandRisk {
 
 fn contains_any(value: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| value.contains(needle))
+}
+
+fn command_has_mutating_argument(value: &str, command: &str, mutating_arguments: &[&str]) -> bool {
+    value
+        .lines()
+        .flat_map(|line| line.split([';', '|']))
+        .any(|segment| {
+            let tokens = segment
+                .split_whitespace()
+                .map(normalize_shell_token)
+                .collect::<Vec<_>>();
+            tokens.iter().enumerate().any(|(index, token)| {
+                command_name(token) == command
+                    && tokens[index + 1..].iter().any(|argument| {
+                        mutating_arguments.iter().any(|candidate| {
+                            argument == candidate
+                                || (candidate.ends_with('-') && argument.starts_with(candidate))
+                        })
+                    })
+            })
+        })
+}
+
+fn normalize_shell_token(token: &str) -> &str {
+    token.trim_matches(|character: char| {
+        character.is_ascii_punctuation() && !matches!(character, '-' | '_' | '/' | '\\')
+    })
+}
+
+fn command_name(token: &str) -> &str {
+    token.rsplit(['/', '\\']).next().unwrap_or(token)
 }
 
 fn risk(risk_level: RiskLevel, reason: &str, expected_effect: &str) -> CommandRisk {

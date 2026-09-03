@@ -37,7 +37,7 @@
 | `mcp_server_set_enabled` | `{ enabled, port? }` | `McpServerStatus` | 启用或关闭本机 MCP Streamable HTTP 服务，并同步保存 `AppSettings.mcp` |
 | `mcp_server_rotate_token` | 无 | `McpServerStatus` | 轮换当前运行期 Bearer token；token 不写入 `AppSettings` |
 | `mcp_tool_catalog_list` | 无 | `McpToolDefinition[]` | 返回 MCP 专用 allowlist、风险信息和输入 schema，供设置页展示 |
-| `agent_codex_open` | `{ tabId, targetRuntimeSessionId, targetSavedSessionId?, targetLabel }` | `AgentCodexSession` | 为当前终端标签启动本机 Codex CLI PTY，注入 Visible Terminal Profile 的会话级 MCP 身份；初始绑定目标可省略 runtime 参数，其他可见 SSH 终端必须显式指定 runtime。不会覆盖 Codex CLI 模型配置；会话启动时禁用用户配置中除 scoped `zterm` 外的 MCP，并将 scoped zTerm 工具设为客户端直接批准，由 zTerm 连接策略承担唯一最终审批 |
+| `agent_codex_open` | `{ tabId, targetRuntimeSessionId, targetSavedSessionId?, targetLabel }` | `AgentCodexSession` | 为当前终端标签启动本机 Codex CLI PTY，注入 Visible Terminal Profile 的会话级 MCP 身份，并显式设置 `TERM=xterm-256color`、`COLORTERM=truecolor` 与 `TERM_PROGRAM=zTerm`，避免继承宿主的 `TERM=dumb` 导致交互式 TUI 降级；初始绑定目标可省略 runtime 参数，其他可见 SSH 终端必须显式指定 runtime。不会覆盖 Codex CLI 模型配置；会话启动时禁用用户配置中除 scoped `zterm` 外的 MCP，并将 scoped zTerm 工具设为客户端直接批准，由 zTerm 连接策略承担唯一最终审批 |
 | `agent_codex_unbind` | `{ agentSessionId }` | `null` | 终端标签被删除，或用户从 Agent 终端菜单关闭、重启 Codex CLI 时，撤销该会话的 MCP bearer 绑定 |
 
 `AppSettings.workspace_restore_strategy` 支持 `visible_first`、`connect_all`、`layout_only`，旧设置 JSON 缺字段时默认 `visible_first`。`visible_first` 先显示布局，再优先恢复当前可见 pane/tab；`connect_all` 显示布局后尽快低并发连接全部标签；`layout_only` 只恢复布局和 queued 状态，不自动打开终端。`settings_get` 和 `settings_reset` 返回的 `AppSettings.shortcuts` 会合并当前 `shortcut_registry_list` 中缺失的动作，调用方应以返回值作为 UI 展示和后续保存的有效配置。
@@ -115,7 +115,7 @@ FileZilla 格式文件传输可直接使用 `zTerm.exe "sftp://user:password@hos
 | `command_completion_suggest` | `{ request: { runtime_session_id, input, cursor, limit?, cwd? } }` | `CommandCompletionCandidate[]` | 按当前 runtime 输入前缀和已知 cwd 返回命令/路径补全候选；Local/SSH 支持，RDP 占位不返回候选；冷缓存时先返回可用候选并后台刷新 |
 | `command_completion_resolve_cwd` | `{ request: { runtime_session_id, current_cwd?, target? } }` | `string?` | 仅解析简单 `cd` 目标；Local 使用本地 canonicalize，SSH 使用 SFTP canonicalize；无法安全验证时返回空值 |
 
-`CommandCompletionCandidate` 包含 `provider`（`history`、`system` 或 `path`）、`replacement_text`、`suffix`、`replacement_range { start, end }`、`score` 和 `source_label`。候选由后端聚合当前会话历史、系统命令、全局历史和简单路径项；历史候选过滤明显敏感命令；本地系统命令来自 PATH/PATHEXT 和常见内建命令；SSH 系统命令在连接后后台探测远端 PATH 并缓存，路径列表按 `saved_session_id + canonical lookup directory` 缓存。路径补全覆盖 `cd`、`cp`、`mv`、`rm`、`ls`、`cat` 的相对/绝对/`.`/`..`/`~` 和带空格引号路径；`cd` 仅返回目录。缓存有短 TTL、数量上限、in-flight 去重和失败静默降级，冷缓存不阻塞终端输入。已知 cwd 来自 Local 初始工作目录、shell 发出的 OSC 7、简单且已验证的 `cd`，或 SSH canonicalize fallback；复杂 shell 表达式不猜测。SSH 容器 runtime 不使用宿主机远端命令缓存，继续只提供会话历史、全局历史和基础 POSIX builtins。前端只用最佳候选展示幽灵后缀，位置按 xterm 当前光标和实际行列网格计算，并在光标、滚动或尺寸变化时同步；`Tab` 通常只写入缺失 suffix，需要补齐引号时按 `replacement_range` 重写当前路径 token。
+`CommandCompletionCandidate` 包含 `provider`（`history`、`system` 或 `path`）、`replacement_text`、`suffix`、`replacement_range { start, end }`、`score` 和 `source_label`。候选由后端聚合当前会话历史、系统命令、全局历史和简单路径项；历史候选过滤明显敏感命令；本地系统命令来自 PATH/PATHEXT 和常见内建命令；SSH 系统命令在连接后后台探测远端 PATH 并缓存，路径列表按 `saved_session_id + canonical lookup directory` 缓存。路径补全覆盖 `cd/cp/mv/rm/ls/cat`、常用查看/编辑/元数据命令、`tar/zip/unzip` 和 `docker compose` 的路径参数；`cd/mkdir/rmdir` 只返回目录，文件型参数保留目录候选以继续下钻更深路径。相对/绝对/`.`/`..`/`~` 和带空格引号路径均受支持。缓存有短 TTL、数量上限、in-flight 去重和失败静默降级，冷缓存不阻塞终端输入。已知 cwd 来自 Local 初始工作目录、shell 发出的 OSC 7，以及经 zTerm 任意输入入口写入并通过 canonicalize 验证的简单 `cd`；连接后指令、指令组和同步输入与键盘直输共用同一 runtime cwd，复杂 shell 表达式不猜测。SSH 容器 runtime 不使用宿主机远端命令缓存，继续只提供会话历史、全局历史和基础 POSIX builtins。前端只用最佳候选展示幽灵后缀，位置按 xterm 当前光标和实际行列网格计算，并在光标、滚动或尺寸变化时同步；`Tab` 通常只写入缺失 suffix，需要补齐引号时按 `replacement_range` 重写当前路径 token。
 
 ## History
 
@@ -190,7 +190,7 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 
 | Command | 入参 | 返回 | 说明 |
 | --- | --- | --- | --- |
-| `mcp_tool_confirm` | `{ request: AiToolConfirmRequest }` | `AiToolAuditRecord` | 用户确认或拒绝 MCP pending；执行结果写入审计并删除 pending |
+| `mcp_tool_confirm` | `{ request: AiToolConfirmRequest }` | `AiToolAuditRecord` | 用户确认或拒绝 MCP pending；执行结果写入审计、删除 pending，并唤醒等待该 invocation 的原 MCP 调用 |
 | `mcp_tool_pending` | 无 | `AiToolPendingInvocation[]` | 按创建时间倒序列出待确认 MCP 工具 |
 | `mcp_tool_audit` | `{ request?: AiToolAuditListRequest }` | `AiToolAuditRecord[]` | 按完成时间倒序列出 MCP 工具审计，默认最多 100 条 |
 | `mcp_connection_approval_mode_get` | `{ savedSessionId }` | `AiConnectionApprovalPolicy` | 读取已保存 SSH 连接的审批模式；未配置时返回 `safe` |
@@ -198,11 +198,11 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 
 侧栏 Codex 的 Visible Terminal Profile 中，`sessions.list` 仅返回已保存 SSH 连接；`terminal.list` 仅返回可见 SSH/SSH Container runtime；`terminal.open(saved_session_id, placement?)` 只允许打开已保存 SSH 连接，`placement` 为 `tab`、`split_horizontal` 或 `split_vertical`。`terminal.read` 使用运行期 ring buffer，可读取最近输出或指定 cursor 后最多 4000 字符增量；`terminal.write` 写入后等待输出短暂稳定并返回新 cursor。侧栏不暴露 `ssh.execute`，因此所有服务器命令与输出都进入目标滚动屏。
 
-审批策略按目标已保存 SSH 连接生效：`request_approval`（每次批准）对每次工具调用创建 pending；默认 `safe`（高效审批）自动执行 low/medium 的巡检、传输和常规运维，仅 high/critical 创建 pending；`full_access`（完全自动）放行非 critical 命令，但 critical、删除和其他显式不可逆工具始终进入 pending。命令型 `terminal.write`/`ssh.execute` 使用脚本内容动态风险分类。zTerm 是最终审批和审计拥有者；侧栏启动参数把 scoped zTerm MCP 设为客户端直接批准，外部 Codex App 也应信任本机 zTerm MCP，避免同一操作在客户端和 zTerm 各审批一次。外部 Skill 可约束 Agent 行为，但不能替代服务端 allowlist、目标校验、风险分类和 pending。
+审批策略按目标已保存 SSH 连接生效：`request_approval`（每次批准）对每次工具调用创建 pending；默认 `safe`（高效审批）自动执行 low/medium 的巡检、传输和常规运维，high/critical 与显式不可逆工具创建 pending；`full_access`（完全自动）免除所有非 secret 输入审批，包括 critical、删除和其他写操作。需要本地 secret 的调用在任何模式下都保持 pending，因为 secret 只能由 zTerm 本地输入。命令型 `terminal.write`/`ssh.execute` 使用脚本内容动态风险分类；`service`、`firewall-cmd`、`iptables` 仅在真实变更子命令出现时提升为 high，只读状态查询不因命令名或输出标题误判。zTerm 仍是最终审批和审计拥有者；侧栏启动参数把 scoped zTerm MCP 设为客户端直接批准，外部 Codex App 也应信任本机 zTerm MCP，避免客户端自身再审批一次。
 
-自动或人工批准执行后写入 `ai_tool_audits`，记录 `affected_domains` 供前端按域刷新 Session、Workspace、Terminal、History、Transfer 等状态。表名作为既有 MCP 审计存储继续保留。`terminal.write` 会等待终端输出短暂稳定并返回回读摘要；会话/分组、工作区定义、终端 profile、传输控制、历史、服务器资源快照、SSH 容器列表和 SFTP/FTP 文件操作复用现有 storage/service 入口。
+自动或人工批准执行后写入 `ai_tool_audits`，记录 `affected_domains` 供前端按域刷新 Session、Workspace、Terminal、History、Transfer 等状态。人工 pending 创建后会唤起 zTerm 主窗口并自动打开 Agent 审批面板；批准、拒绝或执行失败都通过进程内 completion broker 唤醒原 `tools/call`，结构化结果只在内存中短期保留，不写入审计表。表名作为既有 MCP 审计存储继续保留。`terminal.write` 会等待终端输出短暂稳定并返回回读摘要；会话/分组、工作区定义、终端 profile、传输控制、历史、服务器资源快照、SSH 容器列表和 SFTP/FTP 文件操作复用现有 storage/service 入口。
 
-本机 MCP v1 采用 MCP 2025-11-25 Streamable HTTP，endpoint 固定为 `http://127.0.0.1:<port>/mcp`，默认端口为 `9419`，默认关闭，不提供 stdio sidecar；用户启用后会随 zTerm 启动自动监听。服务验证 `Authorization: Bearer <token>` 和 `Origin`，仅允许无 Origin 或 localhost/127.0.0.1/::1/`tauri://localhost`。当前 JSON-RPC 支持 `initialize`、`tools/list`、`tools/call`；客户端 notification（包括 `notifications/initialized`）返回 HTTP `202 Accepted` 空响应。外部 Headless Profile allowlist 只开放 `sessions.list/save`、`ssh.execute`、`ssh.upload/download`、`sftp.upload/download`、`ftp.upload/download`、`transfer.list`；对 `terminal.*` 和目录外工具均返回 `-32601`。所有工具提供非空 input schema，未知参数返回 `-32602`。调用参数包含 `saved_session_id` 时按该连接读取审批策略；Visible Terminal Profile 的 runtime 目标先回溯其 `saved_session_id`。读取和保存操作通过 `structuredContent.result` 返回脱敏结构，不返回 `credential_ref` 或 secret。
+本机 MCP v1 采用 MCP 2025-11-25 Streamable HTTP，endpoint 固定为 `http://127.0.0.1:<port>/mcp`，默认端口为 `9419`，默认关闭，不提供 stdio sidecar；用户启用后会随 zTerm 启动自动监听。服务验证 `Authorization: Bearer <token>` 和 `Origin`，仅允许无 Origin 或 localhost/127.0.0.1/::1/`tauri://localhost`。当前 JSON-RPC 支持 `initialize`、`tools/list`、`tools/call`；客户端 notification（包括 `notifications/initialized`）返回 HTTP `202 Accepted` 空响应。外部 Headless Profile allowlist 开放 `approval.wait`、`sessions.list/save`、`ssh.execute`、`ssh.upload/download`、`sftp.upload/download`、`ftp.upload/download`、`transfer.list`；对 `terminal.*` 和目录外工具均返回 `-32601`。默认 `tools/call` 最多等待本地审批 10 分钟并直接返回结果；客户端发送 `Prefer: respond-async` 时立即取得 pending receipt，随后以 `approval.wait(invocation_id)` 等待或领取同一次完成结果，不得重放原副作用工具。审批未完成前，相同 MCP 主体、工具和标准化参数的重试复用原 invocation，不新建审批单。所有工具提供非空 input schema，未知参数返回 `-32602`。调用参数包含 `saved_session_id` 时按该连接读取审批策略；Visible Terminal Profile 的 runtime 目标先回溯其 `saved_session_id`。读取和保存操作通过 `structuredContent.result` 返回脱敏结构，不返回 `credential_ref` 或 secret。
 
 外部 `ssh.execute` 输入 `saved_session_id` 和 `script`，通过 zTerm 保存连接复用密码、密钥、SSH Agent、跳板机和 SSH 连接缓存，返回 stdout、stderr、exit code、截断标记和耗时，不触碰终端滚动屏。侧栏 `terminal.open` 通过 `zterm:tool-action` 在前端打开保存连接；调用方随后轮询 `terminal.list` 获取新 runtime ID，再通过 `terminal.read/write/close` 操作对应滚动屏。`sessions.save.reuse_auth_from_session_id` 可复用另一连接的认证引用而不向 MCP 暴露引用；密码型新连接会创建 pending，并通过 `zterm:tool-pending` 让 zTerm Agent 面板刷新本地 secret 输入。MCP 参数递归拒绝 password、token、API Key、private key 等明文 secret。
 
@@ -218,11 +218,11 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 | `transfer:progress` | `TransferTask` | 传输状态或进度更新 |
 | `transfer:done` | `TransferTask` | 传输完成、失败或取消 |
 | `zterm:tool-action` | `{ action, arguments, affected_domains }` | 后端 MCP 工具通过审批后请求前端执行运行态动作 |
-| `zterm:tool-pending` | 无 | 外部 MCP 创建待确认工具后通知前端刷新 pending 列表，不携带参数或 secret |
+| `zterm:tool-pending` | 无 | 外部 MCP 创建待确认工具后通知前端刷新 pending 列表、唤起主窗口并打开 Agent 审批面板，不携带参数或 secret |
 
 ## Security Notes
 
 - Secret、API Key、密码和私钥片段不得写入 SQLite、文档、日志或 UI 列表；MCP 保存密码连接时，密码只允许经本地确认进入 OS keyring，SQLite 只保存 `credential_ref`。
-- MCP 工具参数摘要、pending 和审计记录必须脱敏；未审批的写入不得进入终端，高危命令不能绕过当前连接审批策略。
+- MCP 工具参数摘要、pending 和审计记录必须脱敏；`request_approval`/`safe` 下未审批的写入不得执行；`full_access` 的免审批是用户对该连接的显式策略，仍不能绕过工具 allowlist、目标校验、secret 输入隔离和审计。
 - MCP Bearer token 不写入 SQLite 或审计摘要；Origin 非本机时拒绝。MCP 工具参数不得携带 SSH 密码、私钥正文、API Key 或其他明文 secret。
 - ZMODEM 下载文件名只取安全 basename 后写入用户选择目录；上传只读取用户通过本次文件选择器选择的路径。ZMODEM 原始字节不写入命令历史或 SQLite。

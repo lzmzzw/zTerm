@@ -1,9 +1,15 @@
 // Author: Liz
-use std::{path::Path, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use serde::de::DeserializeOwned;
 use serde_json::{json, Map, Value};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::services::{
@@ -46,7 +52,8 @@ use crate::{
     security::redaction::redact_sensitive,
     storage::{
         ai::{
-            delete_ai_tool_pending, get_ai_tool_pending_state, insert_ai_tool_audit,
+            ai_tool_pending_exists, delete_ai_tool_pending, find_ai_tool_pending_by_request,
+            get_ai_tool_audit_by_invocation_id, get_ai_tool_pending_state, insert_ai_tool_audit,
             list_ai_tool_audits, list_ai_tool_pending, upsert_ai_tool_pending,
         },
         history::{clear_command_history, search_command_history},
@@ -121,6 +128,66 @@ pub struct AiToolService {
     sftp_service: Option<SftpService>,
     server_info_service: Option<ServerInfoService>,
     ssh_command_service: Option<SshCommandService>,
+    completion_broker: Arc<AiToolCompletionBroker>,
+}
+
+const COMPLETION_TTL: Duration = Duration::from_secs(15 * 60);
+const COMPLETION_MAX_ENTRIES: usize = 128;
+
+#[derive(Default)]
+struct AiToolCompletionBroker {
+    completed: Mutex<HashMap<String, (Instant, AiToolExecutionOutcome)>>,
+    changed: Notify,
+}
+
+impl AiToolCompletionBroker {
+    fn publish(&self, outcome: AiToolExecutionOutcome) -> AppResult<()> {
+        let invocation_id = outcome
+            .audit_record
+            .as_ref()
+            .map(|audit| audit.invocation_id.clone())
+            .ok_or_else(|| AppError::ai("MCP 审批完成结果缺少审计记录"))?;
+        let mut completed = self
+            .completed
+            .lock()
+            .map_err(|_| AppError::ai("MCP 审批完成状态锁已损坏"))?;
+        prune_completions(&mut completed);
+        completed.insert(invocation_id, (Instant::now(), outcome));
+        prune_completions(&mut completed);
+        drop(completed);
+        self.changed.notify_waiters();
+        Ok(())
+    }
+
+    fn get(&self, invocation_id: &str) -> AppResult<Option<AiToolExecutionOutcome>> {
+        let mut completed = self
+            .completed
+            .lock()
+            .map_err(|_| AppError::ai("MCP 审批完成状态锁已损坏"))?;
+        prune_completions(&mut completed);
+        Ok(completed
+            .get(invocation_id)
+            .map(|(_, outcome)| outcome.clone()))
+    }
+}
+
+fn prune_completions(completed: &mut HashMap<String, (Instant, AiToolExecutionOutcome)>) {
+    let now = Instant::now();
+    completed.retain(|_, (created_at, _)| now.duration_since(*created_at) <= COMPLETION_TTL);
+    if completed.len() <= COMPLETION_MAX_ENTRIES {
+        return;
+    }
+    let mut ranked = completed
+        .iter()
+        .map(|(invocation_id, (created_at, _))| (invocation_id.clone(), *created_at))
+        .collect::<Vec<_>>();
+    ranked.sort_by_key(|(_, created_at)| *created_at);
+    for (invocation_id, _) in ranked
+        .into_iter()
+        .take(completed.len() - COMPLETION_MAX_ENTRIES)
+    {
+        completed.remove(&invocation_id);
+    }
 }
 
 #[derive(Clone)]
@@ -167,6 +234,11 @@ impl AiToolCommandWriter for RuntimeAiToolWriter {
             app_handle
                 .emit("zterm:tool-pending", ())
                 .map_err(|error| AppError::ai(format!("通知待确认工具失败: {error}")))?;
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
         }
         Ok(())
     }
@@ -211,6 +283,7 @@ impl AiToolService {
             sftp_service: None,
             server_info_service: None,
             ssh_command_service: None,
+            completion_broker: Arc::new(AiToolCompletionBroker::default()),
         }
     }
 
@@ -225,6 +298,7 @@ impl AiToolService {
             sftp_service: None,
             server_info_service: None,
             ssh_command_service: None,
+            completion_broker: Arc::new(AiToolCompletionBroker::default()),
         }
     }
 
@@ -243,6 +317,7 @@ impl AiToolService {
             sftp_service: Some(sftp_service),
             server_info_service: Some(server_info_service),
             ssh_command_service: Some(ssh_command_service),
+            completion_broker: Arc::new(AiToolCompletionBroker::default()),
         }
     }
 
@@ -302,6 +377,25 @@ impl AiToolService {
     ) -> AppResult<AiToolExecutionOutcome> {
         let (pending, arguments) = self.build_pending(store, request, approval_mode)?;
         if pending.requires_confirmation {
+            if let Some(requested_by) = pending
+                .requested_by
+                .as_deref()
+                .filter(|requested_by| *requested_by == "mcp")
+            {
+                if let Some(existing) = find_ai_tool_pending_by_request(
+                    store,
+                    &pending.tool_id,
+                    &arguments,
+                    requested_by,
+                )? {
+                    let _ = self.writer.notify_pending_tools();
+                    return Ok(AiToolExecutionOutcome {
+                        pending_invocation: Some(existing),
+                        audit_record: None,
+                        structured_content: None,
+                    });
+                }
+            }
             upsert_ai_tool_pending(store, &pending, &arguments)?;
             let _ = self.writer.notify_pending_tools();
             return Ok(AiToolExecutionOutcome {
@@ -373,7 +467,8 @@ impl AiToolService {
     ) -> AppResult<AiToolAuditRecord> {
         let invocation_id = required_text("待确认工具调用 ID", request.invocation_id)?;
         let (pending, arguments) = get_ai_tool_pending_state(store, &invocation_id)?;
-        let (audit, _) = self.audit_execution(
+        let requested_by_mcp = pending.requested_by.as_deref() == Some("mcp");
+        let (audit, structured_content) = self.audit_execution(
             store,
             invocation_id,
             pending,
@@ -383,7 +478,50 @@ impl AiToolService {
             normalize_optional(request.audit_context_json),
         )?;
         delete_ai_tool_pending(store, &audit.invocation_id)?;
+        if requested_by_mcp {
+            self.completion_broker.publish(AiToolExecutionOutcome {
+                pending_invocation: None,
+                audit_record: Some(audit.clone()),
+                structured_content,
+            })?;
+        }
         Ok(audit)
+    }
+
+    pub async fn wait_for_mcp_completion(
+        &self,
+        store: &SqliteStore,
+        invocation_id: &str,
+        timeout: Duration,
+    ) -> AppResult<Option<AiToolExecutionOutcome>> {
+        let invocation_id = required_text("MCP 工具调用 ID", invocation_id)?;
+        let wait = async {
+            loop {
+                let changed = self.completion_broker.changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                if let Some(outcome) = self.completion_broker.get(&invocation_id)? {
+                    return Ok(Some(outcome));
+                }
+                if let Some(audit) = get_ai_tool_audit_by_invocation_id(store, &invocation_id)? {
+                    return Ok(Some(AiToolExecutionOutcome {
+                        pending_invocation: None,
+                        audit_record: Some(audit),
+                        structured_content: None,
+                    }));
+                }
+                if !ai_tool_pending_exists(store, &invocation_id)? {
+                    return Err(AppError::not_found(format!(
+                        "MCP tool invocation not found: {invocation_id}"
+                    )));
+                }
+                changed.as_mut().await;
+            }
+        };
+        match tokio::time::timeout(timeout, wait).await {
+            Ok(result) => result,
+            Err(_) => Ok(None),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1561,17 +1699,12 @@ fn requires_confirmation(
     approval_mode: AiApprovalMode,
     risk_level: RiskLevel,
 ) -> bool {
-    if matches!(risk_level, RiskLevel::Critical)
-        || force_confirmation_tool(tool_id)
-        || (!matches!(approval_mode, AiApprovalMode::FullAccess)
-            && matches!(tool_id, "terminal.write" | "ssh.execute")
-            && matches!(risk_level, RiskLevel::High | RiskLevel::Critical))
-    {
-        return true;
-    }
     match approval_mode {
         AiApprovalMode::RequestApproval => true,
-        AiApprovalMode::Safe => matches!(risk_level, RiskLevel::High | RiskLevel::Critical),
+        AiApprovalMode::Safe => {
+            force_confirmation_tool(tool_id)
+                || matches!(risk_level, RiskLevel::High | RiskLevel::Critical)
+        }
         AiApprovalMode::FullAccess => false,
     }
 }

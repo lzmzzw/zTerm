@@ -28,6 +28,9 @@ use crate::{
 use super::terminal::spawn_terminal_reader;
 
 const AGENT_MCP_TOKEN_ENV: &str = "ZTERM_AGENT_MCP_TOKEN";
+const AGENT_TERM: &str = "xterm-256color";
+const AGENT_COLORTERM: &str = "truecolor";
+const AGENT_TERM_PROGRAM: &str = "zTerm";
 const CODEX_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Serialize)]
@@ -121,7 +124,7 @@ pub async fn agent_codex_open(
             command_path: command,
             args,
             cwd: session_root.clone(),
-            environment: vec![(AGENT_MCP_TOKEN_ENV.to_string(), access.token)],
+            environment: agent_codex_environment(access.token),
             pane_id: format!("agent:{tab_id}"),
             title: format!("Codex · {target_label}"),
             cols: 80,
@@ -158,6 +161,19 @@ pub async fn agent_codex_open(
         approval_mode,
         runtime: opened.info,
     })
+}
+
+fn agent_codex_environment(mcp_token: String) -> Vec<(String, String)> {
+    vec![
+        (AGENT_MCP_TOKEN_ENV.to_string(), mcp_token),
+        ("TERM".to_string(), AGENT_TERM.to_string()),
+        ("COLORTERM".to_string(), AGENT_COLORTERM.to_string()),
+        ("TERM_PROGRAM".to_string(), AGENT_TERM_PROGRAM.to_string()),
+        (
+            "TERM_PROGRAM_VERSION".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        ),
+    ]
 }
 
 #[tauri::command]
@@ -433,8 +449,8 @@ mod tests {
     use std::ffi::OsStr;
 
     use super::{
-        agent_instructions, background_codex_command, codex_launch_command, parse_codex_mcp_list,
-        required_agent_session_id,
+        agent_codex_environment, agent_instructions, background_codex_command,
+        codex_launch_command, parse_codex_mcp_list, required_agent_session_id,
     };
     use crate::models::ai::AiApprovalMode;
 
@@ -483,6 +499,26 @@ mod tests {
             .iter()
             .any(|arg| arg == "mcp_servers.zterm.enabled=true"));
         assert!(!args.iter().any(|arg| arg.contains("ssh.execute")));
+    }
+
+    #[test]
+    fn codex_launch_overrides_dumb_parent_terminal_capabilities() {
+        let environment = agent_codex_environment("scoped-token".to_string());
+        let value = |name: &str| {
+            environment
+                .iter()
+                .find_map(|(key, value)| (key == name).then_some(value.as_str()))
+        };
+
+        assert_eq!(value("ZTERM_AGENT_MCP_TOKEN"), Some("scoped-token"));
+        assert_eq!(value("TERM"), Some("xterm-256color"));
+        assert_eq!(value("COLORTERM"), Some("truecolor"));
+        assert_eq!(value("TERM_PROGRAM"), Some("zTerm"));
+        assert_eq!(
+            value("TERM_PROGRAM_VERSION"),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_ne!(value("TERM"), Some("dumb"));
     }
 
     #[test]

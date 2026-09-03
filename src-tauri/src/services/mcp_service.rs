@@ -42,6 +42,7 @@ const MAX_HTTP_BODY_BYTES: usize = 1024 * 1024;
 const MAX_CONSECUTIVE_ACCEPT_ERRORS: u32 = 5;
 const MAX_CONCURRENT_CONNECTIONS: usize = 32;
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const MCP_APPROVAL_WAIT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const DEFAULT_MCP_PORT: u16 = 9419;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -576,11 +577,17 @@ pub async fn handle_http_request(
     if body.get("id").is_none() {
         return Ok(accepted_response());
     }
-    let response = handle_json_rpc(storage.as_ref(), &tools, body)?;
+    let wait_for_approval = !request_prefers_async(&request.headers);
+    let response = handle_json_rpc(storage.as_ref(), &tools, body, wait_for_approval).await?;
     Ok(json_response(200, response))
 }
 
-fn handle_json_rpc(store: &SqliteStore, tools: &AiToolService, body: Value) -> AppResult<Value> {
+async fn handle_json_rpc(
+    store: &SqliteStore,
+    tools: &AiToolService,
+    body: Value,
+    wait_for_approval: bool,
+) -> AppResult<Value> {
     let id = body.get("id").cloned().unwrap_or(Value::Null);
     let method = body
         .get("method")
@@ -591,7 +598,7 @@ fn handle_json_rpc(store: &SqliteStore, tools: &AiToolService, body: Value) -> A
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "zTerm Headless", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "这是 zTerm 的外部 Headless Profile。服务器命令通过独立 SSH 执行并返回结构化结果，不打开、不读取也不写入任何终端滚动屏。zTerm 负责最终风险判断与本地 pending 审批；请直接调用工具，不要在客户端重复请求安全审批。"
+            "instructions": "这是 zTerm 的外部 Headless Profile。服务器命令通过独立 SSH 执行并返回结构化结果，不打开、不读取也不写入任何终端滚动屏。zTerm 负责最终风险判断与本地 pending 审批；需要确认时原 tools/call 会等待 zTerm 的结果，不要重新提交原操作。若收到 pending，请只用 approval.wait 继续等待同一 invocation_id。"
         }),
         "tools/list" => {
             let tools = mcp_tool_catalog()
@@ -646,7 +653,7 @@ fn handle_json_rpc(store: &SqliteStore, tools: &AiToolService, body: Value) -> A
                     "error": { "code": -32602, "message": message }
                 }));
             }
-            match mcp_tool_call_result(store, tools, name, arguments) {
+            match mcp_tool_call_result(store, tools, name, arguments, wait_for_approval).await {
                 Ok(result) => result,
                 Err(error) => {
                     return Ok(json!({
@@ -670,6 +677,19 @@ fn handle_json_rpc(store: &SqliteStore, tools: &AiToolService, body: Value) -> A
 
 pub fn mcp_tool_catalog() -> Vec<McpToolDefinition> {
     vec![
+        mcp_tool(
+            "approval.wait",
+            "等待审批结果",
+            "仅在工具返回 pending 时使用；按 invocation_id 等待原调用在 zTerm 中确认并返回执行结果，不会重放原操作",
+            RiskLevel::Low,
+            false,
+            object_schema(
+                json!({
+                    "invocation_id": { "type": "string", "description": "pending 响应返回的调用 ID。" }
+                }),
+                &["invocation_id"],
+            ),
+        ),
         mcp_tool(
             "sessions.list",
             "列出连接",
@@ -857,12 +877,38 @@ fn file_transfer_schema(remote_path_description: &str) -> Value {
     )
 }
 
-fn mcp_tool_call_result(
+async fn mcp_tool_call_result(
     store: &SqliteStore,
     tools: &AiToolService,
     name: &str,
     arguments: Value,
+    wait_for_approval: bool,
 ) -> AppResult<Value> {
+    if name == "approval.wait" {
+        let invocation_id = arguments
+            .get("invocation_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AppError::validation("approval.wait 缺少 invocation_id"))?;
+        let timeout = if wait_for_approval {
+            MCP_APPROVAL_WAIT_TIMEOUT
+        } else {
+            Duration::ZERO
+        };
+        return match tools
+            .wait_for_mcp_completion(store, invocation_id, timeout)
+            .await?
+        {
+            Some(outcome) => mcp_completed_outcome(outcome),
+            None => Ok(mcp_pending_result(
+                invocation_id,
+                "approval.wait",
+                None,
+                true,
+            )),
+        };
+    }
     let approval_mode = mcp_tool_approval_mode(store, tools, &arguments)?;
     let outcome = tools.execute_if_allowed(
         store,
@@ -877,24 +923,62 @@ fn mcp_tool_call_result(
         approval_mode,
     )?;
     if let Some(pending) = outcome.pending_invocation {
-        return Ok(json!({
-            "content": [
-                { "type": "text", "text": format!("工具 {} 等待 zTerm 内确认。", pending.tool_id) }
-            ],
-            "structuredContent": {
-                "status": "pending",
-                "invocation_id": pending.id,
-                "tool_id": pending.tool_id,
-                "risk_level": pending.risk_level.as_str(),
-                "affected_domains": []
-            },
-            "isError": false
-        }));
+        if wait_for_approval {
+            if let Some(outcome) = tools
+                .wait_for_mcp_completion(store, &pending.id, MCP_APPROVAL_WAIT_TIMEOUT)
+                .await?
+            {
+                return mcp_completed_outcome(outcome);
+            }
+        }
+        return Ok(mcp_pending_result(
+            &pending.id,
+            &pending.tool_id,
+            Some(pending.risk_level),
+            wait_for_approval,
+        ));
     }
+    mcp_completed_outcome(outcome)
+}
+
+fn mcp_completed_outcome(
+    outcome: crate::services::ai_tool_service::AiToolExecutionOutcome,
+) -> AppResult<Value> {
     let audit = outcome
         .audit_record
         .ok_or_else(|| AppError::ai("MCP 工具调用未产生结果"))?;
     Ok(mcp_audit_result(audit, outcome.structured_content))
+}
+
+fn mcp_pending_result(
+    invocation_id: &str,
+    tool_id: &str,
+    risk_level: Option<RiskLevel>,
+    wait_timed_out: bool,
+) -> Value {
+    let text = if wait_timed_out {
+        format!(
+            "工具 {tool_id} 仍在等待 zTerm 内确认。不要重新提交原操作；请使用 approval.wait 并传入 invocation_id={invocation_id} 继续等待。"
+        )
+    } else {
+        format!(
+            "工具 {tool_id} 等待 zTerm 内确认。请使用 approval.wait 并传入 invocation_id={invocation_id} 获取原调用结果，不要重新提交原操作。"
+        )
+    };
+    let mut structured_content = json!({
+        "status": "pending",
+        "invocation_id": invocation_id,
+        "tool_id": tool_id,
+        "affected_domains": []
+    });
+    if let Some(risk_level) = risk_level {
+        structured_content["risk_level"] = Value::String(risk_level.as_str().to_string());
+    }
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "structuredContent": structured_content,
+        "isError": false
+    })
 }
 
 fn mcp_tool_approval_mode(
@@ -974,6 +1058,7 @@ fn validate_mcp_arguments(tool_name: &str, arguments: &Value) -> Result<(), Stri
         .ok_or_else(|| "MCP tool arguments must be an object".to_string())?;
     let allowed = match tool_name {
         "sessions.list" => &["query"][..],
+        "approval.wait" => &["invocation_id"][..],
         "sessions.save" => &["draft", "reuse_auth_from_session_id"][..],
         "ssh.execute" => &["saved_session_id", "script"][..],
         "ssh.upload" | "ssh.download" | "sftp.upload" | "sftp.download" | "ftp.upload"
@@ -1079,15 +1164,18 @@ async fn handle_agent_http_request(
     if body.get("id").is_none() {
         return Ok(accepted_response());
     }
-    let response = handle_agent_json_rpc(storage.as_ref(), &tools, &binding, body)?;
+    let wait_for_approval = !request_prefers_async(&request.headers);
+    let response =
+        handle_agent_json_rpc(storage.as_ref(), &tools, &binding, body, wait_for_approval).await?;
     Ok(json_response(200, response))
 }
 
-fn handle_agent_json_rpc(
+async fn handle_agent_json_rpc(
     store: &SqliteStore,
     tools: &AiToolService,
     binding: &AgentMcpBinding,
     body: Value,
+    wait_for_approval: bool,
 ) -> AppResult<Value> {
     let id = body.get("id").cloned().unwrap_or(Value::Null);
     let method = body
@@ -1099,7 +1187,7 @@ fn handle_agent_json_rpc(
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "zTerm Visible Terminal", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "这是 zTerm 侧栏 Codex CLI 的 Visible Terminal Profile。所有服务器命令必须写入可见 SSH 终端并保留在滚动屏；可以列出连接、在标签或新分屏打开其他 SSH 连接，再按 runtime_session_id 操作其滚动屏。不得使用 headless ssh.execute。zTerm 负责最终风险判断与本地 pending 审批，请不要重复询问同一安全审批。"
+            "instructions": "这是 zTerm 侧栏 Codex CLI 的 Visible Terminal Profile。所有服务器命令必须写入可见 SSH 终端并保留在滚动屏；可以列出连接、在标签或新分屏打开其他 SSH 连接，再按 runtime_session_id 操作其滚动屏。不得使用 headless ssh.execute。zTerm 负责最终风险判断与本地 pending 审批；需要确认时原 tools/call 会等待 zTerm 的结果，不要重新提交原操作。"
         }),
         "ping" => json!({}),
         "tools/list" => json!({
@@ -1284,7 +1372,7 @@ fn handle_agent_json_rpc(
                 }
                 _ => unreachable!(),
             }
-            match mcp_tool_call_result(store, tools, name, arguments) {
+            match mcp_tool_call_result(store, tools, name, arguments, wait_for_approval).await {
                 Ok(result) => result,
                 Err(error) => return Ok(mcp_json_rpc_error(id, -32602, error)),
             }
@@ -1425,6 +1513,14 @@ fn header_map(headers: &[(String, String)]) -> HashMap<String, String> {
         .iter()
         .map(|(key, value)| (key.to_ascii_lowercase(), value.clone()))
         .collect()
+}
+
+fn request_prefers_async(headers: &[(String, String)]) -> bool {
+    header(headers, "prefer").is_some_and(|value| {
+        value
+            .split(',')
+            .any(|preference| preference.trim().eq_ignore_ascii_case("respond-async"))
+    })
 }
 
 fn origin_is_allowed(origin: Option<String>) -> bool {

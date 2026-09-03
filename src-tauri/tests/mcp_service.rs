@@ -21,6 +21,7 @@ use zterm_lib::{
     commands::mcp::start_mcp_if_enabled,
     error::AppResult,
     models::{
+        ai::AiToolConfirmRequest,
         session::{AuthMode, SavedSessionDraft, SessionType},
         settings::McpSettings,
         terminal::{RuntimeSessionInfo, RuntimeSessionKind},
@@ -227,6 +228,7 @@ async fn mcp_http_handler_supports_initialize_tools_list_and_pending_tool_call()
     assert_eq!(
         tool_names,
         vec![
+            "approval.wait",
             "sessions.list",
             "sessions.save",
             "ssh.execute",
@@ -1017,7 +1019,7 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
     let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
     let service = McpService::with_secret_store(Arc::new(MemorySecretStore::default()));
     service
-        .start(Arc::clone(&store), tools, Some(0))
+        .start(Arc::clone(&store), tools.clone(), Some(0))
         .await
         .expect("MCP service should start");
     let access = service
@@ -1029,32 +1031,44 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
         })
         .expect("agent binding should register");
     let client = reqwest::Client::new();
-    let pending_body = client
-        .post(&access.endpoint)
-        .bearer_auth(&access.token)
-        .json(&json!({
-            "jsonrpc": "2.0",
-            "id": 30,
-            "method": "tools/call",
-            "params": {
-                "name": "terminal.read",
-                "arguments": { "runtime_session_id": "runtime-1" }
+    let endpoint = access.endpoint.clone();
+    let token = access.token.clone();
+    let pending_request = tokio::spawn(async move {
+        client
+            .post(endpoint)
+            .bearer_auth(token)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 30,
+                "method": "tools/call",
+                "params": {
+                    "name": "terminal.read",
+                    "arguments": { "runtime_session_id": "runtime-1" }
+                }
+            }))
+            .send()
+            .await
+            .expect("terminal.read should send")
+            .json::<Value>()
+            .await
+            .expect("terminal.read JSON")
+    });
+    let pending_id = timeout(Duration::from_secs(1), async {
+        loop {
+            if let Some(pending) = tools
+                .list_pending(store.as_ref())
+                .expect("pending tools should list")
+                .into_iter()
+                .find(|pending| pending.tool_id == "terminal.read")
+            {
+                break pending.id;
             }
-        }))
-        .send()
-        .await
-        .expect("terminal.read should send")
-        .json::<Value>()
-        .await
-        .expect("terminal.read JSON");
-    assert_eq!(
-        pending_body["result"]["structuredContent"]["status"],
-        "pending"
-    );
-    let pending_id = pending_body["result"]["structuredContent"]["invocation_id"]
-        .as_str()
-        .expect("pending invocation ID");
-    let (pending, arguments) = get_ai_tool_pending_state(store.as_ref(), pending_id)
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("terminal.read should become pending");
+    let (pending, arguments) = get_ai_tool_pending_state(store.as_ref(), &pending_id)
         .expect("resolved MCP pending arguments should persist");
     assert!(pending
         .target_summary
@@ -1063,13 +1077,36 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
         .contains("runtime_session_id=runtime-1"));
     assert_eq!(arguments["runtime_session_id"], "runtime-1");
 
+    tools
+        .confirm(
+            store.as_ref(),
+            AiToolConfirmRequest {
+                invocation_id: pending_id,
+                approved: true,
+                audit_context_json: None,
+                secret_inputs: None,
+            },
+        )
+        .expect("zTerm approval should execute the original invocation");
+    let approved_body = pending_request
+        .await
+        .expect("pending request task should finish");
+    assert_eq!(
+        approved_body["result"]["structuredContent"]["status"],
+        "succeeded"
+    );
+    assert_eq!(
+        approved_body["result"]["structuredContent"]["result"]["output"],
+        "recent terminal output"
+    );
+
     upsert_ai_connection_approval_policy(
         store.as_ref(),
         "session-1",
         zterm_lib::models::ai::AiApprovalMode::FullAccess,
     )
     .expect("connection policy should update");
-    let executed_body = client
+    let executed_body = reqwest::Client::new()
         .post(&access.endpoint)
         .bearer_auth(&access.token)
         .json(&json!({
@@ -1160,7 +1197,7 @@ async fn mcp_password_session_requires_local_zterm_secret_input() {
         store,
         tools,
         "token-1",
-        authed_request(json!({
+        authed_async_request(json!({
             "jsonrpc": "2.0",
             "id": 9,
             "method": "tools/call",
@@ -1194,10 +1231,10 @@ async fn mcp_ssh_execute_keeps_high_risk_scripts_pending() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
     let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
     let response = handle_http_request(
-        store,
-        tools,
+        Arc::clone(&store),
+        tools.clone(),
         "token-1",
-        authed_request(json!({
+        authed_async_request(json!({
             "jsonrpc": "2.0",
             "id": 12,
             "method": "tools/call",
@@ -1218,10 +1255,83 @@ async fn mcp_ssh_execute_keeps_high_risk_scripts_pending() {
         body["result"]["structuredContent"]["tool_id"],
         "ssh.execute"
     );
+    assert!(body["result"]["content"][0]["text"]
+        .as_str()
+        .expect("pending guidance")
+        .contains("approval.wait"));
+    let invocation_id = body["result"]["structuredContent"]["invocation_id"]
+        .as_str()
+        .expect("pending invocation ID")
+        .to_string();
+    let retried = handle_http_request(
+        Arc::clone(&store),
+        tools.clone(),
+        "token-1",
+        authed_async_request(json!({
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": {
+                "name": "ssh.execute",
+                "arguments": {
+                    "saved_session_id": "missing-session",
+                    "script": "rm -rf /tmp/zterm-risk-check"
+                }
+            }
+        })),
+    )
+    .await
+    .expect("identical pending retry should handle");
+    let retried_body: Value = serde_json::from_slice(&retried.body).expect("json body");
+    assert_eq!(
+        retried_body["result"]["structuredContent"]["invocation_id"],
+        invocation_id
+    );
+    assert_eq!(
+        tools
+            .list_pending(store.as_ref())
+            .expect("pending tools should list")
+            .len(),
+        1
+    );
+    let audit = tools
+        .confirm(
+            store.as_ref(),
+            AiToolConfirmRequest {
+                invocation_id: invocation_id.clone(),
+                approved: true,
+                audit_context_json: None,
+                secret_inputs: None,
+            },
+        )
+        .expect("approval should produce a failed audit for the missing test session");
+    assert_eq!(audit.status.as_str(), "failed");
+
+    let waited = handle_http_request(
+        store,
+        tools,
+        "token-1",
+        authed_request(json!({
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "tools/call",
+            "params": {
+                "name": "approval.wait",
+                "arguments": { "invocation_id": invocation_id }
+            }
+        })),
+    )
+    .await
+    .expect("approval.wait should return the original completion");
+    let waited_body: Value = serde_json::from_slice(&waited.body).expect("json body");
+    assert_eq!(
+        waited_body["result"]["structuredContent"]["status"],
+        "failed"
+    );
 }
 
 #[tokio::test]
-async fn mcp_full_automation_still_requires_critical_command_approval() {
+async fn mcp_full_automation_executes_critical_commands_without_pending() {
     let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
     save_session(
         store.as_ref(),
@@ -1230,8 +1340,8 @@ async fn mcp_full_automation_still_requires_critical_command_approval() {
             name: "Critical SSH".to_string(),
             session_type: SessionType::Ssh,
             group_id: None,
-            host: "ssh.example.test".to_string(),
-            port: 22,
+            host: "127.0.0.1".to_string(),
+            port: 1,
             username: "ops".to_string(),
             auth_mode: AuthMode::None,
             credential_ref: None,
@@ -1253,8 +1363,8 @@ async fn mcp_full_automation_still_requires_critical_command_approval() {
     .expect("full automation policy should save");
     let tools = AiToolService::with_writer(Arc::new(FakeToolWriter));
     let response = handle_http_request(
-        store,
-        tools,
+        Arc::clone(&store),
+        tools.clone(),
         "token-1",
         authed_request(json!({
             "jsonrpc": "2.0",
@@ -1270,13 +1380,17 @@ async fn mcp_full_automation_still_requires_critical_command_approval() {
         })),
     )
     .await
-    .expect("critical ssh.execute should create pending");
+    .expect("critical ssh.execute should execute without approval");
     let body: Value = serde_json::from_slice(&response.body).expect("json body");
-    assert_eq!(body["result"]["structuredContent"]["status"], "pending");
+    assert_eq!(body["result"]["structuredContent"]["status"], "failed");
     assert_eq!(
-        body["result"]["structuredContent"]["risk_level"],
-        "critical"
+        body["result"]["structuredContent"]["tool_id"],
+        "ssh.execute"
     );
+    assert!(tools
+        .list_pending(store.as_ref())
+        .expect("pending tools should list")
+        .is_empty());
 }
 
 #[tokio::test]
@@ -1342,6 +1456,16 @@ fn authed_request(body: Value) -> McpHttpRequest {
     request(
         body,
         vec![("authorization".to_string(), "Bearer token-1".to_string())],
+    )
+}
+
+fn authed_async_request(body: Value) -> McpHttpRequest {
+    request(
+        body,
+        vec![
+            ("authorization".to_string(), "Bearer token-1".to_string()),
+            ("prefer".to_string(), "respond-async".to_string()),
+        ],
     )
 }
 

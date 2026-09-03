@@ -90,6 +90,60 @@ describe("terminalStore", () => {
     });
   });
 
+  it("uses a validated cwd from commands sent outside the xterm input handler", async () => {
+    useTerminalStore.setState({
+      runtimes: {
+        "runtime-ssh": {
+          runtime_session_id: "runtime-ssh",
+          saved_session_id: "session-1",
+          history_scope_kind: "saved_session",
+          history_scope_id: "session-1",
+          pane_id: "pane-1",
+          title: "SSH",
+          kind: "ssh",
+          initial_cwd: null,
+          cols: 120,
+          rows: 32,
+        },
+      },
+    });
+    const pathCandidate = {
+      provider: "path",
+      replacement_text: "tail lss.log",
+      suffix: "ss.log",
+      replacement_range: { start: 5, end: 6 },
+      score: 0.95,
+      source_label: "远端路径",
+    };
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "command_completion_resolve_cwd") return Promise.resolve("/root/lss");
+      if (command === "command_completion_suggest") return Promise.resolve([pathCandidate]);
+      return Promise.resolve(undefined);
+    });
+
+    await useTerminalStore.getState().writeTerminal("runtime-ssh", "cd lss\r");
+    await expect(
+      useTerminalStore.getState().suggestCompletion("runtime-ssh", "tail l", 6, "/root"),
+    ).resolves.toEqual([pathCandidate]);
+
+    expect(invokeMock).toHaveBeenCalledWith("command_completion_resolve_cwd", {
+      request: {
+        runtime_session_id: "runtime-ssh",
+        current_cwd: null,
+        target: "lss",
+      },
+    });
+    expect(invokeMock).toHaveBeenCalledWith("command_completion_suggest", {
+      request: {
+        runtime_session_id: "runtime-ssh",
+        input: "tail l",
+        cursor: 6,
+        limit: 8,
+        cwd: "/root/lss",
+      },
+    });
+  });
+
   it("retries a cold path cache a bounded number of times and returns the refreshed path", async () => {
     vi.useFakeTimers();
     useTerminalStore.setState({

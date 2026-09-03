@@ -10,8 +10,66 @@ use std::{
 
 use zterm_lib::{
     models::{session::LocalOptions, terminal_profile::TerminalProfile},
-    services::terminal_manager::TerminalManager,
+    services::terminal_manager::{AgentCodexPtyOptions, TerminalManager},
 };
+
+#[cfg(windows)]
+#[test]
+fn agent_codex_pty_overrides_inherited_dumb_terminal_environment() {
+    let manager = TerminalManager::default();
+    let opened = manager
+        .open_agent_codex_session(AgentCodexPtyOptions {
+            command_path: "cmd.exe".to_string(),
+            args: vec![
+                "/D".to_string(),
+                "/S".to_string(),
+                "/C".to_string(),
+                "echo TERM=%TERM% COLORTERM=%COLORTERM% TERM_PROGRAM=%TERM_PROGRAM%".to_string(),
+            ],
+            cwd: std::env::temp_dir(),
+            environment: vec![
+                ("TERM".to_string(), "xterm-256color".to_string()),
+                ("COLORTERM".to_string(), "truecolor".to_string()),
+                ("TERM_PROGRAM".to_string(), "zTerm".to_string()),
+            ],
+            pane_id: "agent:terminal-env-smoke".to_string(),
+            title: "Codex terminal environment smoke".to_string(),
+            cols: 80,
+            rows: 30,
+        })
+        .expect("agent Codex PTY should open");
+    let runtime_id = opened.info.runtime_session_id.clone();
+    let reader = opened.reader;
+    let (sender, receiver) = mpsc::channel::<Option<String>>();
+    thread::spawn(move || read_terminal(reader, sender));
+    let mut output = String::new();
+    let mut answered_cpr = false;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match receiver.recv_timeout(Duration::from_millis(200)) {
+            Ok(Some(chunk)) => {
+                if !answered_cpr && chunk.contains("\u{1b}[6n") {
+                    answered_cpr = true;
+                    manager
+                        .write(&runtime_id, "\u{1b}[1;1R")
+                        .expect("agent Codex PTY should accept CPR response");
+                }
+                output.push_str(&chunk);
+            }
+            Ok(None) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(error) => panic!("agent PTY reader channel failed: {error}"),
+        }
+    }
+    let _ = manager.close(&runtime_id);
+
+    assert!(
+        output.contains("TERM=xterm-256color COLORTERM=truecolor TERM_PROGRAM=zTerm"),
+        "agent Codex PTY did not receive terminal capability overrides: {}",
+        terminal_tail(&output)
+    );
+    assert!(!output.contains("TERM=dumb"));
+}
 
 #[test]
 fn local_cmd_runtime_executes_basic_command() {

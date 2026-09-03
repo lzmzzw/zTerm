@@ -1,7 +1,7 @@
 // Author: Liz
 import { describe, expect, it } from "vitest";
 
-import { parseOsc7Cwd, parseSimpleCdTarget } from "./terminalCwd";
+import { parseOsc7Cwd, parseSimpleCdTarget, trackTerminalInput } from "./terminalCwd";
 
 describe("parseOsc7Cwd", () => {
   it("accepts and decodes absolute file URLs", () => {
@@ -32,5 +32,29 @@ describe("parseSimpleCdTarget", () => {
     expect(parseSimpleCdTarget("cd $(pwd)")).toBeNull();
     expect(parseSimpleCdTarget("cd logs && ls")).toBeNull();
     expect(parseSimpleCdTarget("cd logs; pwd")).toBeNull();
+  });
+});
+
+describe("trackTerminalInput", () => {
+  it("tracks character-by-character and whole-command submissions", () => {
+    expect(trackTerminalInput("cd log", "s\r")).toEqual({
+      buffer: "",
+      submittedCommands: ["cd logs"],
+    });
+    expect(trackTerminalInput("", "cd /srv/app\r")).toEqual({
+      buffer: "",
+      submittedCommands: ["cd /srv/app"],
+    });
+  });
+
+  it("handles backspace, cancellation, and CRLF without duplicate submissions", () => {
+    expect(trackTerminalInput("cd logx", "\x7fs\r\n")).toEqual({
+      buffer: "",
+      submittedCommands: ["cd logs"],
+    });
+    expect(trackTerminalInput("cd unsafe", "\x03")).toEqual({
+      buffer: "",
+      submittedCommands: [],
+    });
   });
 });

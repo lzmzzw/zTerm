@@ -50,7 +50,7 @@ interface McpState {
   pendingInvocations: McpToolPendingInvocation[];
   loading: boolean;
   error: string | null;
-  loadPendingInvocations: () => Promise<void>;
+  loadPendingInvocations: () => Promise<McpToolPendingInvocation[]>;
   bindApprovalModeToSession: (savedSessionId: string | null) => Promise<void>;
   setApprovalMode: (mode: McpApprovalMode) => Promise<void>;
   confirmTool: (invocationId: string, approved: boolean, secretInputs?: McpToolSecretInputs) => Promise<void>;
@@ -74,8 +74,10 @@ export const useMcpStore = create<McpState>((set, get) => ({
     try {
       const pendingInvocations = await invokeTauri<McpToolPendingInvocation[]>("mcp_tool_pending");
       set({ pendingInvocations, error: null });
+      return pendingInvocations;
     } catch (error) {
       set({ error: unknownErrorMessage(error, "MCP 工具状态加载失败") });
+      return [];
     }
   },
   async bindApprovalModeToSession(savedSessionId) {

@@ -49,3 +49,29 @@ fn read_only_commands_are_low_risk() {
     assert_eq!(classify_command("ls -la").risk_level, RiskLevel::Low);
     assert_eq!(classify_command("whoami").risk_level, RiskLevel::Low);
 }
+
+#[test]
+fn read_only_inventory_scripts_do_not_trigger_high_risk_from_labels_or_query_flags() {
+    let script = r#"
+printf '%s\n' '== service states =='
+systemctl show sshd.service --no-pager -p ActiveState
+command -v firewall-cmd >/dev/null && firewall-cmd --state
+firewall-cmd --list-all
+iptables -L -n
+iptables -L -p tcp
+"#;
+
+    assert_eq!(classify_command(script).risk_level, RiskLevel::Medium);
+}
+
+#[test]
+fn service_and_firewall_mutations_remain_high_risk() {
+    for command in [
+        "service nginx restart",
+        "firewall-cmd --permanent --add-port=8443/tcp",
+        "iptables -A INPUT -p tcp --dport 8443 -j ACCEPT",
+        "iptables -P INPUT DROP",
+    ] {
+        assert_eq!(classify_command(command).risk_level, RiskLevel::High);
+    }
+}

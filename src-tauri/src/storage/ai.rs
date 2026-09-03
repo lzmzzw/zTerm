@@ -162,6 +162,37 @@ pub fn list_ai_tool_pending(store: &SqliteStore) -> AppResult<Vec<AiToolPendingI
     })
 }
 
+pub fn find_ai_tool_pending_by_request(
+    store: &SqliteStore,
+    tool_id: &str,
+    arguments: &Value,
+    requested_by: &str,
+) -> AppResult<Option<AiToolPendingInvocation>> {
+    let tool_id = required_text("MCP 工具 ID", tool_id)?;
+    let requested_by = required_text("MCP 请求主体", requested_by)?;
+    let arguments_json = serde_json::to_string(arguments)
+        .map_err(|error| AppError::storage(format!("serialize tool arguments: {error}")))?;
+    store.with_connection(|connection| {
+        let pending = connection
+            .query_row(
+                "
+                select id, tool_id, tool_title, risk_level, arguments_summary, target_summary,
+                       risk_summary, requires_confirmation, requires_secret_input,
+                       secret_input_label, status, created_at_ms, run_id, step_id, reason,
+                       requested_by
+                from ai_tool_pending
+                where tool_id = ?1 and arguments_json = ?2 and requested_by = ?3
+                order by created_at_ms desc
+                limit 1
+                ",
+                params![tool_id, arguments_json, requested_by],
+                map_ai_tool_pending,
+            )
+            .optional()?;
+        Ok(pending)
+    })
+}
+
 pub fn get_ai_tool_pending_state(
     store: &SqliteStore,
     id: &str,
@@ -193,6 +224,21 @@ pub fn get_ai_tool_pending_state(
             )
             .optional()?
             .ok_or_else(|| AppError::not_found(format!("MCP tool pending not found: {id}")))
+    })
+}
+
+pub fn ai_tool_pending_exists(store: &SqliteStore, id: &str) -> AppResult<bool> {
+    let id = required_text("MCP 工具调用 ID", id)?;
+    store.with_connection(|connection| {
+        let exists = connection
+            .query_row(
+                "select 1 from ai_tool_pending where id = ?1 limit 1",
+                [&id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        Ok(exists)
     })
 }
 
@@ -253,6 +299,31 @@ pub fn list_ai_tool_audits(store: &SqliteStore, limit: usize) -> AppResult<Vec<A
             .query_map([limit as i64], map_ai_tool_audit)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(records)
+    })
+}
+
+pub fn get_ai_tool_audit_by_invocation_id(
+    store: &SqliteStore,
+    invocation_id: &str,
+) -> AppResult<Option<AiToolAuditRecord>> {
+    let invocation_id = required_text("MCP 工具调用 ID", invocation_id)?;
+    store.with_connection(|connection| {
+        let audit = connection
+            .query_row(
+                "
+                select id, invocation_id, tool_id, tool_title, risk_level, arguments_summary,
+                       risk_summary, status, result_summary, error, audit_context_json,
+                       affected_domains_json, created_at_ms, completed_at_ms
+                from ai_tool_audits
+                where invocation_id = ?1
+                order by completed_at_ms desc
+                limit 1
+                ",
+                [&invocation_id],
+                map_ai_tool_audit,
+            )
+            .optional()?;
+        Ok(audit)
     })
 }
 

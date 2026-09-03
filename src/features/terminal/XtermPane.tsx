@@ -47,6 +47,7 @@ interface XtermPaneProps {
     cwd: string | null,
   ) => Promise<CommandCompletionCandidate[]>;
   onCwdResolve?: (currentCwd: string | null, target: string | null) => Promise<string | null>;
+  onCwdChange?: (cwd: string) => void;
   onDisconnect?: () => void;
   onInput?: (data: string, metadata?: { source: TerminalInputSource }) => void;
   onCloseTerminal?: () => void;
@@ -126,6 +127,7 @@ export function XtermPane({
   contextMenuSearchEnabled = true,
   onCompletionRequest,
   onCwdResolve,
+  onCwdChange,
   onDisconnect,
   onInput,
   onCloseTerminal,
@@ -158,6 +160,7 @@ export function XtermPane({
   const pasteInFlightRef = useRef<Promise<void> | null>(null);
   const onInputRef = useRef(onInput);
   const onCwdResolveRef = useRef(onCwdResolve);
+  const onCwdChangeRef = useRef(onCwdChange);
   const onResizeRef = useRef(onResize);
   const [ghostCandidate, setGhostCandidate] = useState<CommandCompletionCandidate | null>(null);
   const [lineInput, setLineInput] = useState("");
@@ -257,8 +260,9 @@ export function XtermPane({
   useEffect(() => {
     onInputRef.current = onInput;
     onCwdResolveRef.current = onCwdResolve;
+    onCwdChangeRef.current = onCwdChange;
     onResizeRef.current = onResize;
-  }, [onCwdResolve, onInput, onResize]);
+  }, [onCwdChange, onCwdResolve, onInput, onResize]);
 
   useEffect(() => {
     ghostCandidateRef.current = ghostCandidate;
@@ -442,6 +446,7 @@ export function XtermPane({
       if (cwd) {
         cwdResolveGenerationRef.current += 1;
         cwdRef.current = cwd;
+        onCwdChangeRef.current?.(cwd);
       }
       return true;
     });

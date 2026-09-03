@@ -66,8 +66,12 @@ const POSIX_BUILTINS: &[&str] = &[
     "false", "fg", "jobs", "kill", "printf", "pwd", "read", "return", "set", "shift", "test",
     "times", "trap", "true", "type", "ulimit", "umask", "unalias", "unset", "wait",
 ];
-const PATH_OPERAND_COMMANDS: &[&str] = &["cat", "cp", "ls", "mv", "rm"];
-const DIRECTORY_OPERAND_COMMANDS: &[&str] = &["cd"];
+const PATH_OPERAND_COMMANDS: &[&str] = &[
+    "cmp", "cp", "diff", "du", "file", "ln", "ls", "mv", "readlink", "realpath", "rm", "stat",
+    "touch", "vi", "vim", "wc",
+];
+const FILE_OPERAND_COMMANDS: &[&str] = &["cat", "head", "less", "more", "nano", "tail"];
+const DIRECTORY_OPERAND_COMMANDS: &[&str] = &["cd", "mkdir", "rmdir"];
 
 #[derive(Clone, Default)]
 pub struct CommandCompletionService {
@@ -952,9 +956,8 @@ enum PathEntryFilter {
 impl PathEntryFilter {
     fn accepts(self, kind: FileKind) -> bool {
         match self {
-            Self::Any => true,
+            Self::Any | Self::Files => true,
             Self::Directories => kind == FileKind::Directory,
-            Self::Files => kind == FileKind::File,
         }
     }
 }
@@ -1020,6 +1023,14 @@ fn path_query(prefix: &str, cwd: Option<&str>, local: bool) -> Option<PathQuery>
     }
     let separator = if local && cfg!(windows) { "\\" } else { "/" };
     let (display_directory, name_prefix) = split_path_token(&token.value, local);
+    if !local
+        && cwd.is_none()
+        && !display_directory.starts_with('/')
+        && display_directory != "~"
+        && !display_directory.starts_with("~/")
+    {
+        return None;
+    }
     let cwd = cwd
         .map(str::to_string)
         .or_else(|| {
@@ -1070,6 +1081,10 @@ fn path_argument_target(
     if DIRECTORY_OPERAND_COMMANDS.contains(&command.as_str()) {
         return (!current.starts_with('-'))
             .then_some(PathArgumentTarget::new(PathEntryFilter::Directories));
+    }
+    if FILE_OPERAND_COMMANDS.contains(&command.as_str()) {
+        return (!current.starts_with('-'))
+            .then_some(PathArgumentTarget::new(PathEntryFilter::Files));
     }
     if PATH_OPERAND_COMMANDS.contains(&command.as_str()) {
         return (!current.starts_with('-'))
@@ -1242,6 +1257,7 @@ fn path_command_waiting_for_argument(prefix: &str) -> bool {
     };
     if tokens.len() == 1 {
         return DIRECTORY_OPERAND_COMMANDS.contains(&command.as_str())
+            || FILE_OPERAND_COMMANDS.contains(&command.as_str())
             || PATH_OPERAND_COMMANDS.contains(&command.as_str())
             || matches!(command.as_str(), "tar" | "zip" | "unzip");
     }
@@ -1937,6 +1953,8 @@ mod tests {
 
     #[test]
     fn path_query_supports_relative_absolute_home_and_quoted_paths() {
+        assert!(path_query("cat lo", None, false).is_none());
+
         let relative = path_query("cp ../lo", Some("/srv/app"), false).expect("relative path");
         assert_eq!(relative.lookup_directory, "/srv/app/..");
         assert_eq!(relative.display_directory, "../");
@@ -1946,9 +1964,14 @@ mod tests {
         assert_eq!(absolute.lookup_directory, "/var");
         assert_eq!(absolute.display_directory, "/var/");
 
+        let absolute_without_cwd =
+            path_query("ls /var/lo", None, false).expect("absolute path without cwd");
+        assert_eq!(absolute_without_cwd.lookup_directory, "/var");
+
         let home = path_query("cat ~/Do", Some("/srv/app"), false).expect("home path");
         assert_eq!(home.lookup_directory, "~");
         assert_eq!(home.name_prefix, "Do");
+        assert!(path_query("cat ~/Do", None, false).is_some());
 
         let quoted = path_query("mv \"My Fi", Some("/srv/app"), false).expect("quoted path");
         assert_eq!(quoted.name_prefix, "My Fi");
@@ -2009,7 +2032,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_path_cache_is_scoped_and_cd_only_returns_directories() {
+    fn remote_path_cache_is_scoped_and_commands_filter_entry_kinds() {
         let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
         let service = CommandCompletionService::new();
         service.register_runtime(
@@ -2066,6 +2089,40 @@ mod tests {
         assert!(cat
             .iter()
             .any(|candidate| candidate.replacement_text == "cat local.txt"));
+
+        let less = service
+            .suggest(
+                store.as_ref(),
+                CommandCompletionRequest {
+                    runtime_session_id: "runtime-a".to_string(),
+                    input: "less lo".to_string(),
+                    cursor: 7,
+                    limit: Some(8),
+                    cwd: Some("/srv".to_string()),
+                },
+            )
+            .expect("less completion");
+        assert!(less
+            .iter()
+            .any(|candidate| candidate.replacement_text == "less logs/"));
+        assert!(less
+            .iter()
+            .any(|candidate| candidate.replacement_text == "less local.txt"));
+
+        let mkdir = service
+            .suggest(
+                store.as_ref(),
+                CommandCompletionRequest {
+                    runtime_session_id: "runtime-a".to_string(),
+                    input: "mkdir lo".to_string(),
+                    cursor: 8,
+                    limit: Some(8),
+                    cwd: Some("/srv".to_string()),
+                },
+            )
+            .expect("mkdir completion");
+        assert_eq!(mkdir.len(), 1);
+        assert_eq!(mkdir[0].replacement_text, "mkdir logs/");
         let closed_quote = service
             .suggest(
                 store.as_ref(),
@@ -2264,7 +2321,7 @@ mod tests {
     }
 
     #[test]
-    fn archive_and_compose_commands_return_only_matching_filesystem_entries() {
+    fn archive_and_compose_commands_keep_matching_navigation_directories() {
         let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
         let service = CommandCompletionService::new();
         service.register_runtime(
@@ -2313,9 +2370,18 @@ mod tests {
                     },
                 )
                 .expect("tool path completion");
-            assert_eq!(candidates.len(), 1, "unexpected candidates for {input:?}");
-            assert_eq!(candidates[0].provider, CommandCompletionProvider::Path);
-            assert_eq!(candidates[0].replacement_text, expected);
+            assert!(
+                candidates
+                    .iter()
+                    .all(|candidate| candidate.provider == CommandCompletionProvider::Path),
+                "unexpected provider for {input:?}"
+            );
+            assert!(
+                candidates
+                    .iter()
+                    .any(|candidate| candidate.replacement_text == expected),
+                "missing expected candidate for {input:?}"
+            );
         }
 
         let compose_files = service
@@ -2332,7 +2398,7 @@ mod tests {
             .expect("compose files");
         assert!(compose_files
             .iter()
-            .all(|candidate| !candidate.replacement_text.ends_with("config/")));
+            .any(|candidate| candidate.replacement_text.ends_with("config/")));
     }
 
     #[test]

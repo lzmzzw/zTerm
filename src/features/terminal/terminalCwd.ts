@@ -27,6 +27,11 @@ interface SimpleCdTarget {
   target: string | null;
 }
 
+interface TrackedTerminalInput {
+  buffer: string;
+  submittedCommands: string[];
+}
+
 export function parseSimpleCdTarget(commandLine: string): SimpleCdTarget | null {
   const match = commandLine.trim().match(/^cd(?:\s+(.*))?$/i);
   if (!match) return null;
@@ -44,4 +49,36 @@ export function parseSimpleCdTarget(commandLine: string): SimpleCdTarget | null 
   }
   if (!target || target === "-" || /[\r\n\0]/.test(target)) return null;
   return { target };
+}
+
+export function trackTerminalInput(current: string, data: string): TrackedTerminalInput {
+  if (data.startsWith("\x1b")) {
+    return { buffer: current, submittedCommands: [] };
+  }
+  let buffer = current;
+  const submittedCommands: string[] = [];
+  let pendingCr = false;
+  for (const character of data) {
+    if (character === "\r") {
+      submittedCommands.push(buffer);
+      buffer = "";
+      pendingCr = true;
+    } else if (character === "\n") {
+      if (!pendingCr) submittedCommands.push(buffer);
+      buffer = "";
+      pendingCr = false;
+    } else if (character === "\x03") {
+      buffer = "";
+      pendingCr = false;
+    } else if (character === "\b" || character === "\x7f") {
+      buffer = Array.from(buffer).slice(0, -1).join("");
+      pendingCr = false;
+    } else if (character === "\t") {
+      pendingCr = false;
+    } else if (character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127) {
+      buffer += character;
+      pendingCr = false;
+    }
+  }
+  return { buffer, submittedCommands };
 }
