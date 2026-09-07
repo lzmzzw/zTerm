@@ -2660,6 +2660,27 @@
   font-size: var(--zt-font-size-ui);
 }
 
+.zt-workspace-startup-directory,
+.zt-workspace-startup-advanced[open] {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.zt-workspace-startup-advanced summary {
+  cursor: pointer;
+  color: var(--zt-text-secondary);
+  font-size: var(--zt-font-size-ui);
+}
+
+.zt-workspace-startup-hint {
+  margin: 0;
+  color: var(--zt-text-secondary);
+  font-size: var(--zt-font-size-ui);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .zt-session-confirm-dialog form > p,
 .zt-session-confirm-body {
   margin: 0;

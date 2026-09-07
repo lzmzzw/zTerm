@@ -149,6 +149,18 @@ describe("ZtSelect", () => {
     expect(input("搜索选择项")).toBeTruthy();
   });
 
+  it("reserves space for search and makes a long option list scrollable", async () => {
+    render(<ZtSelect ariaLabel="选择终端 Profile" value="" options={options(12)} searchable onChange={vi.fn()} />);
+
+    await click(trigger("选择终端 Profile"));
+
+    const list = document.querySelector<HTMLElement>(".zt-select-list");
+    const popover = document.querySelector<HTMLElement>(".zt-select-popover");
+    expect(list).toBeTruthy();
+    expect(popover?.style.maxHeight).toBe("280px");
+    expect(popover?.style.getPropertyValue("--zt-select-list-max-height")).toBe("229px");
+  });
+
   it("filters by label and description while preserving empty state", async () => {
     render(<ZtSelect ariaLabel="选择主机" value="" placeholder="请选择 SSH 主机" options={options(8)} searchable onChange={vi.fn()} />);
 

@@ -90,6 +90,47 @@ function emptyWorkspaceDefinition(): WorkspaceDefinition {
 }
 
 describe("WorkspacePreviewDialog", () => {
+  it("saves a local directory override and can return to inheritance", () => {
+    const workspace = emptyWorkspaceDefinition();
+    const pane = workspace.tabs[0].root;
+    if (pane.kind !== "leaf") throw new Error("Expected leaf");
+    pane.title = "Local";
+    pane.terminal_tabs![0].title = "Local";
+    pane.terminal_tabs![0].saved_session_id = "local-1";
+    pane.terminal_tabs![0].connection_source = "saved_session";
+    const session = {
+      id: "local-1", name: "Local", type: "local" as const,
+      host: "", port: 0, username: "", auth_mode: "none" as const,
+      credential_ref: null, description: null, group_id: null, tags: [],
+      sort_order: 0, created_at_ms: 1, updated_at_ms: 1, last_used_at_ms: null,
+      local_options: { working_directory: "C:\\default" },
+    };
+    const onSave = vi.fn();
+    const view = render(<WorkspacePreviewDialog workspace={workspace} sessions={[session]} onCancel={vi.fn()} onSave={onSave} />);
+    const choose = (label: string) => {
+      act(() => (view.container.querySelector('[aria-label="启动目录来源"]') as HTMLButtonElement).click());
+      const option = Array.from(document.querySelectorAll('[role="option"]')).find((node) => node.textContent === label);
+      act(() => (option as HTMLButtonElement).click());
+    };
+    const save = () => act(() => (view.container.querySelector('[aria-label="保存工作区"]') as HTMLButtonElement).click());
+    expect(view.container.textContent).toContain("C:\\default");
+    expect(view.container.querySelector('[aria-label="编辑启动目录"]')).toBeNull();
+    expect(view.container.querySelector("details")?.open).toBe(false);
+    choose("自定义");
+    change(input(view.container, "编辑启动目录"), "  C:\\project  ");
+    save();
+    expect(onSave.mock.lastCall?.[0].tabs[0].root.terminal_tabs[0].path).toBe("C:\\project");
+    choose("继承连接默认目录");
+    expect(view.container.textContent).toContain("C:\\default");
+    save();
+    expect(onSave.mock.lastCall?.[0].tabs[0].root.terminal_tabs[0].path).toBeNull();
+    expect(session.local_options.working_directory).toBe("C:\\default");
+    choose("自定义");
+    change(input(view.container, "编辑启动目录"), "   ");
+    save();
+    expect(onSave.mock.lastCall?.[0].tabs[0].root.terminal_tabs[0].path).toBeNull();
+    view.unmount();
+  });
   it("hides empty placeholder terminal tabs in preview tab labels", () => {
     const view = render(
       <WorkspacePreviewDialog
@@ -236,7 +277,7 @@ describe("WorkspacePreviewDialog", () => {
     );
 
     change(input(view.container, "编辑工作区名称"), "发布窗口");
-    change(textarea(view.container, "编辑连接后指令"), "source ./env.sh");
+    change(textarea(view.container, "编辑启动命令"), "source ./env.sh");
 
     act(() => {
       (view.container.querySelector('[aria-label="保存工作区"]') as HTMLButtonElement).click();

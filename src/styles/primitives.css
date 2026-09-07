@@ -807,8 +807,10 @@ a[href]:focus-visible,
 .zt-select-list {
   display: grid;
   gap: 3px;
-  max-height: inherit;
-  overflow: auto;
+  min-height: 0;
+  max-height: var(--zt-select-list-max-height, 268px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .zt-select-option.zt-select-option {
@@ -935,4 +937,3 @@ a[href]:focus-visible,
 .zt-select-tree-row .zt-select-option-label {
   font-weight: 400;
 }
-

@@ -114,15 +114,18 @@ export function ZtSelect({
     if (!rect) return;
     const gap = 6;
     const maxHeight = Math.min(280, Math.max(180, window.innerHeight - 24));
+    const listMaxHeight = Math.max(80, maxHeight - (showSearch ? 51 : 12));
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
     const openUpward = spaceBelow < 220 && spaceAbove > spaceBelow;
-    setPanelStyle({
+    const nextPanelStyle: CSSProperties & Record<"--zt-select-list-max-height", string> = {
       left: Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8)),
       width: rect.width,
       maxHeight,
+      "--zt-select-list-max-height": `${listMaxHeight}px`,
       ...(openUpward ? { bottom: Math.max(8, window.innerHeight - rect.top + gap) } : { top: rect.bottom + gap }),
-    });
+    };
+    setPanelStyle(nextPanelStyle);
   }
 
   function openPanel() {

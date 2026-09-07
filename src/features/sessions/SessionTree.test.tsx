@@ -682,11 +682,11 @@ describe("SessionTree", () => {
     expect(button(view.container, "SSH").disabled).toBe(true);
     expect(button(view.container, "Local").disabled).toBe(false);
     expect(button(view.container, "RDP").disabled).toBe(true);
-    expect(dialog(view.container).textContent).not.toContain("标签");
+    expect(view.container.querySelector('input[aria-label="标签"]')).toBeNull();
     expect(dialog(view.container).textContent).not.toContain("代理");
     expect(dialog(view.container).textContent).not.toContain("跳板机");
     expect(dialog(view.container).textContent).toContain("环境变量");
-    expect(editorFields(view.container).textContent).toContain("工作目录");
+    expect(editorFields(view.container).textContent).toContain("默认启动目录");
     expect(editorFields(view.container).textContent).not.toContain("环境变量名");
 
     await click(button(view.container, "环境变量"));

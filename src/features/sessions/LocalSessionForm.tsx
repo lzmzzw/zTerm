@@ -37,9 +37,9 @@ export function LocalSessionForm({ section, options, terminalProfiles, onOptions
             />
           </label>
           <label className="zt-session-form-wide">
-            <span>工作目录</span>
+            <span>默认启动目录</span>
             <input
-              aria-label="工作目录"
+              aria-label="默认启动目录"
               value={options.working_directory ?? ""}
               onChange={(event) =>
                 onOptionsChange({
@@ -47,8 +47,9 @@ export function LocalSessionForm({ section, options, terminalProfiles, onOptions
                   working_directory: event.currentTarget.value.trim() || null,
                 })
               }
-              placeholder="留空使用终端默认目录"
+              placeholder="留空使用 zTerm 启动时的默认目录"
             />
+            <small>独立打开连接时使用，工作区可为单个标签覆盖此目录。</small>
           </label>
         </>
       ) : null}

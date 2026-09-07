@@ -12,6 +12,7 @@ import {
   updateTerminalTabInRoot,
 } from "./workspaceLayout";
 import { WorkspaceLayoutPreview } from "./WorkspaceLayoutPreview";
+import { WorkspaceStartupDirectory } from "./WorkspaceStartupDirectory";
 import type {
   PaneNode,
   PaneTerminalTab,
@@ -197,6 +198,8 @@ function TerminalTabInspector({
       ? "__missing__"
       : selectedTerminalTab.saved_session_id ?? "__default_local__";
   const visibleTerminalTabs = terminalTabs.filter((terminalTab) => !isEmptyTerminalTab(terminalTab));
+  const session = sessions.find((candidate) => candidate.id === connectionValue);
+  const isLocal = connectionValue === "__default_local__" || session?.type === "local";
 
   return (
     <>
@@ -246,7 +249,14 @@ function TerminalTabInspector({
             }
           />
         </label>
-        <label>
+        {isLocal ? (
+          <WorkspaceStartupDirectory
+            key={`${paneId}:${selectedTerminalTab.id}:${connectionValue}`}
+            path={selectedTerminalTab.path}
+            defaultDirectory={session?.local_options?.working_directory}
+            onChange={(path) => onUpdate(paneId, selectedTerminalTab.id, (current) => ({ ...current, path }))}
+          />
+        ) : <label>
           路径
           <ZtInput
             aria-label="编辑标签路径"
@@ -255,11 +265,13 @@ function TerminalTabInspector({
               onUpdate(paneId, selectedTerminalTab.id, (current) => ({ ...current, path: event.target.value }))
             }
           />
-        </label>
-        <label>
-          连接后指令
+        </label>}
+        <details key={`${paneId}:${selectedTerminalTab.id}`} className="zt-workspace-startup-advanced" open={Boolean(selectedTerminalTab.startup_command)}>
+          <summary>高级配置</summary>
+          <label>
+          启动命令
           <ZtTextarea
-            aria-label="编辑连接后指令"
+            aria-label="编辑启动命令"
             value={selectedTerminalTab.startup_command ?? ""}
             controlSize="dense"
             rows={3}
@@ -270,7 +282,10 @@ function TerminalTabInspector({
               }))
             }
           />
-        </label>
+          </label>
+          <p className="zt-workspace-startup-hint">终端启动后执行，可用于激活环境或启动服务。</p>
+          {isLocal ? <p className="zt-workspace-startup-hint">如需指定目录，请使用启动目录；命令中的 cd 仍可再次改变目录。</p> : null}
+        </details>
         {selectedTerminalTab.restore_status === "failed" ? (
           <ZtInlineError className="zt-workspace-preview-error">
             {selectedTerminalTab.restore_error ?? "恢复失败"}
@@ -343,6 +358,7 @@ function normalizePane(root: PaneNode): PaneNode {
       const startupCommand = terminalTab.startup_command?.trimEnd();
       return {
         ...terminalTab,
+        path: terminalTab.path?.trim() || null,
         startup_command: startupCommand && startupCommand.trim() ? startupCommand : null,
       };
     }),

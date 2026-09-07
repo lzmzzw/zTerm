@@ -2136,7 +2136,7 @@ describe("AppShell", () => {
     expect(dialog?.querySelector(".zt-workspace-layout-pane.selected")?.getAttribute("data-pane-id")).toBe("pane-4");
     expect(dialog?.querySelector('[aria-label="切换工作区标签 备用"]')).not.toBe(null);
     expect(dialog?.querySelector('[aria-label="终端标签 pane-4-tab-1"]')).not.toBe(null);
-    expect(dialog?.querySelector('[aria-label="编辑标签路径"]')).toHaveProperty("value", "");
+    expect(dialog?.querySelector('[aria-label="启动目录来源"]')).toHaveProperty("value", "inherit");
 
     await act(async () => {
       (dialog?.querySelector('[data-pane-id="pane-5"]') as HTMLButtonElement).click();
@@ -2465,8 +2465,8 @@ describe("AppShell", () => {
 
     const dialog = view.container.querySelector('.zt-workspace-preview-dialog[aria-label="编辑工作区 运维巡检"]');
     expect(dialog).not.toBe(null);
-    expect(input(dialog!, "编辑标签路径")).toHaveProperty("value", "C:\\existing");
-    change(textarea(dialog!, "编辑连接后指令"), "npm run dev");
+    expect(input(dialog!, "编辑启动目录")).toHaveProperty("value", "C:\\existing");
+    change(textarea(dialog!, "编辑启动命令"), "npm run dev");
 
     await act(async () => {
       button(dialog as HTMLElement, "保存工作区").click();
