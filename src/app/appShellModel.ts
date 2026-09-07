@@ -2,8 +2,7 @@
 import type { TransferConflict, TransferConflictPolicy } from "../features/files/fileTypes";
 import type { SavedSession, SavedSessionDraft, SshOptions, SshTunnel } from "../features/sessions/types";
 import type { SshContainerInfo } from "../features/terminal/sshContainerApi";
-import { getLeafTerminalTabs } from "../features/workspace/workspaceLayout";
-import type { PaneNode, WorkspaceDefinition } from "../features/workspace/types";
+import type { WorkspaceDefinition } from "../features/workspace/types";
 import type { RightTool } from "./rightTools";
 
 export type LeftTool = "workspace" | "sessions";
@@ -121,13 +120,6 @@ export function rightToolFromValue(value: string | null | undefined): RightTool 
 
 export function waitForUiTurn() {
   return new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-}
-
-export function collectTerminalTabIds(root: PaneNode): string[] {
-  if (root.kind === "leaf") {
-    return getLeafTerminalTabs(root).map((tab) => tab.id);
-  }
-  return [...collectTerminalTabIds(root.first), ...collectTerminalTabIds(root.second)];
 }
 
 export function savedSessionDraftWithSshOptions(session: SavedSession, sshOptions: SshOptions): SavedSessionDraft {

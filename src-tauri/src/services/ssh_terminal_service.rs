@@ -29,6 +29,9 @@ use crate::{
     validation::required_text,
 };
 
+const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+const DEFAULT_KEEPALIVE_MAX: usize = 3;
+
 pub struct SshTerminalSpawn {
     pub runtime: SshTerminalRuntime,
     pub auth_secret: Option<String>,
@@ -322,13 +325,6 @@ pub fn build_ssh_arguments(session: &SavedSession) -> AppResult<Vec<String>> {
             args.push("-o".to_string());
             args.push(format!("ConnectTimeout={}", timeout_ms.div_ceil(1000)));
         }
-        if let Some(keepalive_ms) = options.keepalive_interval_ms {
-            args.push("-o".to_string());
-            args.push(format!(
-                "ServerAliveInterval={}",
-                keepalive_ms.div_ceil(1000)
-            ));
-        }
         if let Some(proxy_command) = options
             .proxy_command
             .as_deref()
@@ -352,10 +348,34 @@ pub fn build_ssh_arguments(session: &SavedSession) -> AppResult<Vec<String>> {
             push_tunnel_args(&mut args, tunnel)?;
         }
     }
+    let keepalive_interval = effective_keepalive_interval(session);
+    args.push("-o".to_string());
+    args.push(format!(
+        "ServerAliveInterval={}",
+        keepalive_interval
+            .map(|interval| interval.as_millis().div_ceil(1_000).max(1))
+            .unwrap_or(0)
+    ));
+    if keepalive_interval.is_some() {
+        args.push("-o".to_string());
+        args.push(format!("ServerAliveCountMax={DEFAULT_KEEPALIVE_MAX}"));
+    }
     args.push("-p".to_string());
     args.push(session.port.to_string());
     args.push(ssh_target(session));
     Ok(args)
+}
+
+fn effective_keepalive_interval(session: &SavedSession) -> Option<Duration> {
+    match session
+        .ssh_options
+        .as_ref()
+        .and_then(|options| options.keepalive_interval_ms)
+    {
+        Some(0) => None,
+        Some(interval_ms) => Some(Duration::from_millis(interval_ms)),
+        None => Some(DEFAULT_KEEPALIVE_INTERVAL),
+    }
 }
 
 pub fn build_ssh_container_arguments(
@@ -535,11 +555,7 @@ impl NativeSshTarget {
                 .and_then(|options| options.connect_timeout_ms)
                 .map(Duration::from_millis),
             host,
-            keepalive_interval: session
-                .ssh_options
-                .as_ref()
-                .and_then(|options| options.keepalive_interval_ms)
-                .map(Duration::from_millis),
+            keepalive_interval: effective_keepalive_interval(session),
             port: session.port,
             username,
         })
@@ -574,6 +590,7 @@ async fn connect_native_ssh(
     let config = client::Config {
         inactivity_timeout: None,
         keepalive_interval: target.keepalive_interval,
+        keepalive_max: DEFAULT_KEEPALIVE_MAX,
         ..Default::default()
     };
     let connect = client::connect(
@@ -889,7 +906,12 @@ fn native_pty_modes() -> Vec<(Pty, u32)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ssh_container_terminal_transport, SshContainerTerminalTransport};
+    use std::time::Duration;
+
+    use super::{
+        build_ssh_arguments, effective_keepalive_interval, ssh_container_terminal_transport,
+        SshContainerTerminalTransport,
+    };
     use crate::models::session::{
         AuthMode, SavedSession, SessionType, SshContainerOptions, SshOptions, SshTunnel,
         SshTunnelKind,
@@ -960,6 +982,45 @@ mod tests {
             ssh_container_terminal_transport(&session),
             SshContainerTerminalTransport::System
         );
+    }
+
+    #[test]
+    fn ssh_keepalive_uses_the_safe_default_when_options_are_missing() {
+        let missing = ssh_session_with_options(SshOptions {
+            connect_timeout_ms: None,
+            keepalive_interval_ms: None,
+            proxy_command: None,
+            identity_file: None,
+            jump_hosts: Vec::new(),
+            tunnels: Vec::new(),
+            container: None,
+        });
+        assert_eq!(
+            effective_keepalive_interval(&missing),
+            Some(Duration::from_secs(30))
+        );
+
+        let zero = ssh_session_with_options(SshOptions {
+            keepalive_interval_ms: Some(0),
+            ..missing.ssh_options.expect("options should exist")
+        });
+        assert_eq!(effective_keepalive_interval(&zero), None);
+        let zero_args = build_ssh_arguments(&zero).expect("zero keepalive should build");
+        assert!(ssh_option_is_set(&zero_args, "ServerAliveInterval=0"));
+        assert!(!ssh_option_is_set(&zero_args, "ServerAliveCountMax=3"));
+
+        let configured = ssh_session_with_options(SshOptions {
+            keepalive_interval_ms: Some(1_500),
+            ..zero.ssh_options.expect("options should exist")
+        });
+        let configured_args = build_ssh_arguments(&configured).expect("configured keepalive");
+        assert!(ssh_option_is_set(&configured_args, "ServerAliveInterval=2"));
+        assert!(ssh_option_is_set(&configured_args, "ServerAliveCountMax=3"));
+    }
+
+    fn ssh_option_is_set(args: &[String], expected: &str) -> bool {
+        args.windows(2)
+            .any(|pair| pair[0] == "-o" && pair[1] == expected)
     }
 
     fn ssh_session_with_options(ssh_options: SshOptions) -> SavedSession {

@@ -79,6 +79,8 @@ fn ssh_arguments_include_tunnels_proxy_and_jump_hosts() {
     let args = build_ssh_arguments(&session).expect("ssh args should build");
 
     assert!(args.iter().any(|arg| arg == "-tt"));
+    assert!(has_arg_pair(&args, "-o", "ServerAliveInterval=30"));
+    assert!(has_arg_pair(&args, "-o", "ServerAliveCountMax=3"));
     assert!(has_arg_pair(&args, "-p", "2222"));
     assert!(has_arg_pair(&args, "-J", "jump-1,jump-2"));
     assert!(has_arg_pair(&args, "-o", "ProxyCommand=nc proxy 22"));
@@ -139,6 +141,8 @@ fn ssh_key_auth_uses_selected_identity_file() {
         "-o",
         "PreferredAuthentications=publickey"
     ));
+    assert!(has_arg_pair(&args, "-o", "ServerAliveInterval=30"));
+    assert!(has_arg_pair(&args, "-o", "ServerAliveCountMax=3"));
 }
 
 #[test]

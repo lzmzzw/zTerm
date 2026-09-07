@@ -589,6 +589,10 @@ vi.mock("../features/terminal/terminalStore", () => {
       enterSshContainerRuntime: storeMocks.enterSshContainerRuntime,
       openDefaultLocalTerminal: storeMocks.openDefaultLocalTerminal,
       closeTerminal: storeMocks.closeTerminal,
+      forgetTerminalRuntime: (runtimeSessionId: string) => {
+        const { [runtimeSessionId]: _runtime, ...runtimes } = storeMocks.terminalState.runtimes;
+        storeMocks.terminalState.runtimes = runtimes;
+      },
       writeTerminal: storeMocks.writeTerminal,
       resizeTerminal: vi.fn().mockResolvedValue(undefined),
       suggestCompletion: vi.fn().mockResolvedValue([]),
@@ -617,7 +621,15 @@ vi.mock("../features/terminal/terminalStore", () => {
     const state = terminalState(true);
     return selector ? selector(state) : state;
   };
-  (useTerminalStore as unknown as { setState: (updater: unknown) => void }).setState = vi.fn();
+  (useTerminalStore as unknown as { setState: (updater: unknown) => void }).setState = vi.fn((updater: unknown) => {
+    const current = terminalState(false);
+    const next = typeof updater === "function"
+      ? (updater as (state: Record<string, unknown>) => Record<string, unknown>)(current)
+      : updater;
+    if (next && typeof next === "object" && "runtimes" in next) {
+      storeMocks.terminalState.runtimes = (next as { runtimes: Record<string, Record<string, unknown>> }).runtimes;
+    }
+  });
   useTerminalStore.getState = () => terminalState(false);
   return { useTerminalStore };
 });
@@ -908,6 +920,38 @@ function activeTerminalWorkspaceTab() {
           saved_session_id: "session-1",
         },
       ],
+    },
+  };
+}
+
+function sharedSshConnectionWorkspaceTab(activePaneTabId = "pane-1-tab-1") {
+  const terminalTabs = [
+    {
+      id: "pane-1-tab-1",
+      title: "开发机 A",
+      runtime_session_id: "runtime-1",
+      saved_session_id: "session-1",
+    },
+    {
+      id: "pane-1-tab-2",
+      title: "开发机 A（第二标签）",
+      runtime_session_id: "runtime-2",
+      saved_session_id: "session-1",
+    },
+  ];
+  const active = terminalTabs.find((terminalTab) => terminalTab.id === activePaneTabId) ?? terminalTabs[0];
+  return {
+    id: "tab-1",
+    title: active.title,
+    active_pane_id: "pane-1",
+    root: {
+      kind: "leaf",
+      id: "pane-1",
+      title: active.title,
+      runtime_session_id: active.runtime_session_id,
+      saved_session_id: active.saved_session_id,
+      active_terminal_tab_id: active.id,
+      terminal_tabs: terminalTabs,
     },
   };
 }
@@ -3361,6 +3405,350 @@ describe("AppShell", () => {
       }),
     );
 
+    view.unmount();
+  });
+
+  it("shares one Codex session between terminal tabs opened from the same SSH connection", async () => {
+    storeMocks.workspaceState.tabs = [sharedSshConnectionWorkspaceTab()];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(1);
+    expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }));
+
+    storeMocks.workspaceState.tabs = [sharedSshConnectionWorkspaceTab("pane-1-tab-2")];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    view.rerender(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(1);
+    expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }));
+
+    const secondConnectionTab = sharedSshConnectionWorkspaceTab("pane-1-tab-2");
+    secondConnectionTab.root.terminal_tabs = [
+      {
+        id: "pane-1-tab-2",
+        title: "开发机 A（第二标签）",
+        runtime_session_id: "runtime-2",
+        saved_session_id: "session-1",
+      },
+    ];
+    secondConnectionTab.root.active_terminal_tab_id = "pane-1-tab-2";
+    secondConnectionTab.root.runtime_session_id = "runtime-2";
+    storeMocks.workspaceState.tabs = [secondConnectionTab];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    view.rerender(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(vi.mocked(closeAgentCodex)).not.toHaveBeenCalled();
+
+    storeMocks.workspaceState.tabs = [
+      {
+        ...activeTerminalWorkspaceTab(),
+        root: {
+          ...activeTerminalWorkspaceTab().root,
+          runtime_session_id: null,
+          saved_session_id: null,
+          terminal_tabs: [{ id: "pane-1-tab-empty", title: "新建终端", runtime_session_id: null, saved_session_id: null }],
+        },
+      },
+    ];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    view.rerender(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(vi.mocked(closeAgentCodex)).toHaveBeenCalledWith(
+      expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }),
+    );
+    view.unmount();
+  });
+
+  it("keeps the Codex terminal mounted when switching from Agent to another sidebar tool", async () => {
+    storeMocks.sessionState.sessions = [
+      {
+        id: "session-1",
+        name: "开发机 A",
+        host: "172.16.41.180",
+        port: 22,
+        username: "ubuntu",
+        type: "ssh",
+        auth_mode: "none",
+        group_id: null,
+        tags: [],
+        sort_order: 0,
+        created_at_ms: 1,
+        updated_at_ms: 1,
+      },
+    ];
+    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      (view.container.querySelector('.zt-tool-rail [aria-label="历史"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(view.container.querySelector('[aria-label="AI 面板"]')).not.toBeNull();
+    expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }));
+    view.unmount();
+  });
+
+  it("closes an opening Codex session when its last connection tab disappears", async () => {
+    const opening = deferred<Awaited<ReturnType<typeof openAgentCodex>>>();
+    vi.mocked(openAgentCodex).mockImplementationOnce(() => opening.promise);
+    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(1);
+
+    storeMocks.workspaceState.tabs = [
+      {
+        ...activeTerminalWorkspaceTab(),
+        root: {
+          ...activeTerminalWorkspaceTab().root,
+          runtime_session_id: null,
+          saved_session_id: null,
+          terminal_tabs: [{ id: "pane-1-tab-empty", title: "新建终端", runtime_session_id: null, saved_session_id: null }],
+        },
+      },
+    ];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    view.rerender(<AppShell />);
+
+    opening.resolve({
+      agent_session_id: "agent-opening",
+      target_runtime_session_id: "runtime-1",
+      target_saved_session_id: "session-1",
+      target_label: "开发机 A",
+      approval_mode: "safe",
+      runtime: {
+        runtime_session_id: "agent-runtime-opening",
+        saved_session_id: null,
+        history_scope_kind: null,
+        history_scope_id: null,
+        pane_id: "agent:pane-1-tab-1",
+        title: "Codex · 开发机 A",
+        kind: "local",
+        initial_cwd: null,
+        cols: 80,
+        rows: 30,
+      },
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(vi.mocked(closeAgentCodex)).toHaveBeenCalledWith(expect.objectContaining({ agent_session_id: "agent-opening" }));
+    view.unmount();
+  });
+
+  it("keeps an opening Codex session when the same SSH connection is reopened before launch resolves", async () => {
+    const opening = deferred<Awaited<ReturnType<typeof openAgentCodex>>>();
+    vi.mocked(openAgentCodex).mockImplementationOnce(() => opening.promise);
+    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    storeMocks.workspaceState.tabs = [
+      {
+        ...activeTerminalWorkspaceTab(),
+        root: {
+          ...activeTerminalWorkspaceTab().root,
+          runtime_session_id: null,
+          saved_session_id: null,
+          terminal_tabs: [{ id: "pane-1-tab-empty", title: "新建终端", runtime_session_id: null, saved_session_id: null }],
+        },
+      },
+    ];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    view.rerender(<AppShell />);
+
+    const reopened = sharedSshConnectionWorkspaceTab("pane-1-tab-2");
+    reopened.root.terminal_tabs = [reopened.root.terminal_tabs[1]];
+    storeMocks.workspaceState.tabs = [reopened];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    view.rerender(<AppShell />);
+
+    opening.resolve({
+      agent_session_id: "agent-reopened",
+      target_runtime_session_id: "runtime-1",
+      target_saved_session_id: "session-1",
+      target_label: "开发机 A",
+      approval_mode: "safe",
+      runtime: {
+        runtime_session_id: "agent-runtime-reopened",
+        saved_session_id: null,
+        history_scope_kind: null,
+        history_scope_id: null,
+        pane_id: "agent:pane-1-tab-1",
+        title: "Codex · 开发机 A",
+        kind: "local",
+        initial_cwd: null,
+        cols: 80,
+        rows: 30,
+      },
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(closeAgentCodex)).not.toHaveBeenCalled();
+    expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ agent_session_id: "agent-reopened" }));
+    view.unmount();
+  });
+
+  it("does not let a concurrent close callback remove the restarted shared Codex session", async () => {
+    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    const onRestart = storeMocks.aiPanelProps?.onRestart as () => Promise<void>;
+    const onClose = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
+    const restartClose = deferred<void>();
+    const staleClose = deferred<void>();
+    vi.mocked(closeAgentCodex)
+      .mockImplementationOnce(() => restartClose.promise)
+      .mockImplementationOnce(() => staleClose.promise);
+    vi.mocked(openAgentCodex).mockImplementationOnce(async (request) => ({
+      agent_session_id: "agent-restarted",
+      target_runtime_session_id: request.targetRuntimeSessionId,
+      target_saved_session_id: request.targetSavedSessionId,
+      target_label: request.targetLabel,
+      approval_mode: "safe",
+      runtime: {
+        runtime_session_id: "agent-runtime-restarted",
+        saved_session_id: null,
+        history_scope_kind: null,
+        history_scope_id: null,
+        pane_id: "agent:pane-1-tab-1",
+        title: "Codex · 开发机 A",
+        kind: "local",
+        initial_cwd: null,
+        cols: 80,
+        rows: 30,
+      },
+    }));
+
+    let restarting!: Promise<void>;
+    let closing!: Promise<void>;
+    await act(async () => {
+      restarting = onRestart();
+      closing = onClose();
+    });
+    restartClose.resolve();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    staleClose.resolve();
+    await act(async () => {
+      await Promise.all([restarting, closing]);
+    });
+
+    expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(closeAgentCodex)).toHaveBeenCalledTimes(2);
+    expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ agent_session_id: "agent-restarted" }));
+    view.unmount();
+  });
+
+  it("does not collapse a newly selected Agent panel when an earlier connection closes asynchronously", async () => {
+    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    const closeFirstConnection = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
+    const delayedClose = deferred<void>();
+    vi.mocked(closeAgentCodex).mockImplementationOnce(() => delayedClose.promise);
+    let closingFirstConnection!: Promise<void>;
+    await act(async () => {
+      closingFirstConnection = closeFirstConnection();
+    });
+
+    const secondConnection = activeTerminalWorkspaceTab();
+    secondConnection.root = {
+      ...secondConnection.root,
+      title: "开发机 B",
+      runtime_session_id: "runtime-2",
+      saved_session_id: "session-2",
+      active_terminal_tab_id: "pane-1-tab-2",
+      terminal_tabs: [{ id: "pane-1-tab-2", title: "开发机 B", runtime_session_id: "runtime-2", saved_session_id: "session-2" }],
+    };
+    storeMocks.workspaceState.tabs = [secondConnection];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    view.rerender(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    delayedClose.resolve();
+    await act(async () => {
+      await closingFirstConnection;
+    });
+
+    expect((view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).getAttribute("aria-pressed")).toBe("true");
+    expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ agent_session_id: "agent-pane-1-tab-2" }));
+    view.unmount();
+  });
+
+  it("clears the shared Agent binding after its Codex PTY exits naturally", async () => {
+    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(storeMocks.terminalState.runtimes).toHaveProperty("agent-runtime-pane-1-tab-1");
+
+    storeMocks.terminalState.runtimes = {};
+    view.rerender(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(vi.mocked(closeAgentCodex)).toHaveBeenCalledWith(
+      expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }),
+    );
+    expect(storeMocks.aiPanelProps?.session).toBeNull();
     view.unmount();
   });
 

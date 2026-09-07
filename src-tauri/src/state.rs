@@ -8,6 +8,7 @@ use tauri::AppHandle;
 
 use crate::{
     services::{
+        agent_codex_registry::AgentCodexRegistry,
         ai_tool_service::{AiToolService, RuntimeAiToolWriter},
         command_completion_service::CommandCompletionService,
         command_history_service::CommandHistoryService,
@@ -26,6 +27,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct AppState {
+    pub(crate) agent_codex_registry: Arc<AgentCodexRegistry>,
     storage: Arc<SqliteStore>,
     terminal_manager: Arc<TerminalManager>,
     terminal_output_dispatcher: TerminalOutputDispatcher,
@@ -74,6 +76,7 @@ impl AppState {
         let server_info_service = ServerInfoService::new();
         let ssh_command_service = SshCommandService::new();
         Self {
+            agent_codex_registry: Arc::new(AgentCodexRegistry::default()),
             command_completion_service: CommandCompletionService::new(),
             command_history_service,
             external_launch_service,

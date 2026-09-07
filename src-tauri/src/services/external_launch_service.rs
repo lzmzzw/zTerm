@@ -150,7 +150,7 @@ impl ExternalLaunchService {
             last_used_at_ms: None,
             ssh_options: Some(SshOptions {
                 connect_timeout_ms: None,
-                keepalive_interval_ms: None,
+                keepalive_interval_ms: Some(30_000),
                 proxy_command: None,
                 identity_file: request
                     .identity_file
@@ -1244,7 +1244,7 @@ fn parse_port(value: &str) -> AppResult<u16> {
 fn default_external_ssh_options() -> SshOptions {
     SshOptions {
         connect_timeout_ms: None,
-        keepalive_interval_ms: None,
+        keepalive_interval_ms: Some(30_000),
         proxy_command: None,
         identity_file: None,
         jump_hosts: Vec::new(),
@@ -1765,6 +1765,7 @@ mod tests {
         assert!(container.enabled);
         assert_eq!(container.runtime, "docker");
         assert_eq!(container.shell.as_deref(), Some("/bin/sh"));
+        assert_eq!(options.keepalive_interval_ms, Some(30_000));
         assert!(options.tunnels.is_empty());
     }
 

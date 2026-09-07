@@ -6,18 +6,15 @@ use std::{
     time::Duration,
 };
 
-use serde::Serialize;
 use tauri::{AppHandle, State};
 use tokio::{process::Command, time::timeout};
 use uuid::Uuid;
 
 use crate::{
     error::{AppError, AppResult},
-    models::{
-        ai::AiApprovalMode,
-        terminal::{RuntimeSessionInfo, RuntimeSessionKind},
-    },
+    models::{ai::AiApprovalMode, terminal::RuntimeSessionKind},
     paths::AppPaths,
+    services::agent_codex_registry::{connection_key, AgentCodexSession},
     services::mcp_service::AgentMcpBinding,
     services::terminal_manager::AgentCodexPtyOptions,
     state::AppState,
@@ -33,16 +30,6 @@ const AGENT_COLORTERM: &str = "truecolor";
 const AGENT_TERM_PROGRAM: &str = "zTerm";
 const CODEX_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
-#[derive(Debug, Serialize)]
-pub struct AgentCodexSession {
-    pub agent_session_id: String,
-    pub target_runtime_session_id: String,
-    pub target_saved_session_id: Option<String>,
-    pub target_label: String,
-    pub approval_mode: AiApprovalMode,
-    pub runtime: RuntimeSessionInfo,
-}
-
 #[tauri::command]
 pub async fn agent_codex_open(
     app: AppHandle,
@@ -52,7 +39,7 @@ pub async fn agent_codex_open(
     target_saved_session_id: Option<String>,
     target_label: String,
 ) -> AppResult<AgentCodexSession> {
-    let tab_id = required_text("标签页 ID", &tab_id)?;
+    required_text("标签页 ID", &tab_id)?;
     let target_runtime_session_id =
         required_text("目标终端 runtime ID", &target_runtime_session_id)?;
     let target_label = required_text("目标终端名称", &target_label)?;
@@ -74,6 +61,28 @@ pub async fn agent_codex_open(
         return Err(AppError::validation("目标 SSH 连接与运行终端绑定不一致"));
     }
     let saved_session_id = target_runtime.saved_session_id.clone();
+    let key = connection_key(
+        saved_session_id
+            .as_deref()
+            .filter(|_| target_runtime.kind == RuntimeSessionKind::Ssh),
+        &target_runtime_session_id,
+    );
+    let mut shared_session = state.agent_codex_registry.lock(&key).await?;
+    if let Some(existing) = shared_session.as_ref() {
+        if state
+            .terminal_manager()
+            .runtime_info(&existing.runtime.runtime_session_id)
+            .is_ok()
+        {
+            return Ok(existing.clone());
+        }
+        cleanup_agent_artifacts(
+            &state,
+            &existing.agent_session_id,
+            &agent_session_root(&existing.agent_session_id)?,
+        );
+    }
+    *shared_session = None;
     let approval_mode = saved_session_id
         .as_deref()
         .map(|session_id| get_ai_connection_approval_mode(state.storage().as_ref(), session_id))
@@ -96,6 +105,7 @@ pub async fn agent_codex_open(
             agent_session_id: agent_session_id.clone(),
             runtime_session_id: target_runtime_session_id.clone(),
             saved_session_id: saved_session_id.clone(),
+            target_runtime_kind: target_runtime.kind,
             target_label: target_label.clone(),
         })?;
     let session_root = agent_session_root(&agent_session_id)?;
@@ -125,7 +135,7 @@ pub async fn agent_codex_open(
             args,
             cwd: session_root.clone(),
             environment: agent_codex_environment(access.token),
-            pane_id: format!("agent:{tab_id}"),
+            pane_id: format!("agent:{key}"),
             title: format!("Codex · {target_label}"),
             cols: 80,
             rows: 30,
@@ -139,6 +149,9 @@ pub async fn agent_codex_open(
     let cleanup_mcp = state.mcp_service();
     let cleanup_agent_session_id = agent_session_id.clone();
     let cleanup_session_root = session_root.clone();
+    let cleanup_registry = Arc::clone(&state.agent_codex_registry);
+    let cleanup_connection_key = key.clone();
+    let cleanup_executor = tokio::runtime::Handle::current();
     spawn_terminal_reader(
         app,
         state.terminal_manager(),
@@ -151,16 +164,24 @@ pub async fn agent_codex_open(
         Some(Arc::new(move || {
             let _ = cleanup_mcp.unregister_agent_binding(&cleanup_agent_session_id);
             let _ = remove_agent_session_directory(&cleanup_session_root);
+            let registry = Arc::clone(&cleanup_registry);
+            let key = cleanup_connection_key.clone();
+            let agent_session_id = cleanup_agent_session_id.clone();
+            cleanup_executor.spawn(async move {
+                let _ = registry.clear(&key, &agent_session_id).await;
+            });
         })),
     );
-    Ok(AgentCodexSession {
+    let session = AgentCodexSession {
         agent_session_id,
         target_runtime_session_id,
         target_saved_session_id: saved_session_id,
         target_label,
         approval_mode,
         runtime: opened.info,
-    })
+    };
+    *shared_session = Some(session.clone());
+    Ok(session)
 }
 
 fn agent_codex_environment(mcp_token: String) -> Vec<(String, String)> {
@@ -177,8 +198,19 @@ fn agent_codex_environment(mcp_token: String) -> Vec<(String, String)> {
 }
 
 #[tauri::command]
-pub fn agent_codex_unbind(state: State<'_, AppState>, agent_session_id: String) -> AppResult<()> {
+pub async fn agent_codex_unbind(
+    state: State<'_, AppState>,
+    agent_session_id: String,
+) -> AppResult<()> {
     let agent_session_id = required_agent_session_id(&agent_session_id)?;
+    if state
+        .agent_codex_registry
+        .find(&agent_session_id)
+        .await?
+        .is_some()
+    {
+        return Err(AppError::validation("请通过关闭 Agent 会话释放活动绑定"));
+    }
     state
         .mcp_service()
         .unregister_agent_binding(&agent_session_id)?;
@@ -186,13 +218,30 @@ pub fn agent_codex_unbind(state: State<'_, AppState>, agent_session_id: String) 
 }
 
 #[tauri::command]
-pub fn agent_codex_close(
+pub async fn agent_codex_close(
     state: State<'_, AppState>,
     agent_session_id: String,
     runtime_session_id: String,
 ) -> AppResult<()> {
     let agent_session_id = required_agent_session_id(&agent_session_id)?;
     let runtime_session_id = required_text("Codex CLI runtime ID", &runtime_session_id)?;
+    let mut shared_session = state.agent_codex_registry.find(&agent_session_id).await?;
+    if let Some(slot) = shared_session.as_ref() {
+        if slot
+            .as_ref()
+            .is_some_and(|session| session.runtime.runtime_session_id != runtime_session_id)
+        {
+            return Err(AppError::validation(
+                "Agent 会话与 Codex runtime 绑定不一致",
+            ));
+        }
+    } else if state
+        .terminal_manager()
+        .runtime_info(&runtime_session_id)
+        .is_ok()
+    {
+        return Err(AppError::validation("未找到对应的 Agent 会话绑定"));
+    }
     if let Ok(runtime) = state.terminal_manager().runtime_info(&runtime_session_id) {
         if !runtime.pane_id.starts_with("agent:") {
             return Err(AppError::validation("目标 runtime 不是 Codex CLI 会话"));
@@ -211,7 +260,11 @@ pub fn agent_codex_close(
     state
         .mcp_service()
         .unregister_agent_binding(&agent_session_id)?;
-    remove_agent_session_directory(&agent_session_root(&agent_session_id)?)
+    remove_agent_session_directory(&agent_session_root(&agent_session_id)?)?;
+    if let Some(slot) = shared_session.as_mut() {
+        **slot = None;
+    }
+    Ok(())
 }
 
 fn codex_launch_command(endpoint: &str, inherited_mcp_servers: &[String]) -> (String, Vec<String>) {

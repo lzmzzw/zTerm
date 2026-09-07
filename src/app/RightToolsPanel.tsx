@@ -44,6 +44,8 @@ interface RightToolsPanelProps {
   activeConnectionKind: ActiveConnectionKind;
   agent: {
     session: AgentCodexSession | null;
+    sessionsByConnectionKey: Record<string, AgentCodexSession>;
+    activeConnectionKey: string | null;
     approvalMode: McpApprovalMode;
     error: string | null;
     loading: boolean;
@@ -164,25 +166,8 @@ export function RightToolsPanel({
       }
       aria-label="右侧工具栏"
     >
-      {activeTool ? (
+      {activeTool && activeTool !== "agent" ? (
         <section className="zt-tool-panel" aria-label={t(language, rightToolLabelKey(activeTool))}>
-          {activeTool === "agent" ? (
-            <>
-              <PanelHeader title={t(language, "agent")} />
-              <AgentCodexPanel
-                session={agent.session}
-                approvalMode={agent.approvalMode}
-                pendingInvocations={agent.pendingInvocations}
-                loading={agent.loading}
-                error={agent.error}
-                onApprovalModeChange={agent.onApprovalModeChange}
-                onClose={agent.onClose}
-                onConfirmTool={agent.onConfirmTool}
-                onRestart={agent.onRestart}
-              />
-            </>
-          ) : null}
-
           {activeTool === "files" ? (
             <>
               <PanelHeader title="SFTP" />
@@ -318,6 +303,54 @@ export function RightToolsPanel({
                 onReconnect={tunnels.onReconnect}
               />
             </>
+          ) : null}
+        </section>
+      ) : null}
+
+      {activeTool === "agent" || Object.keys(agent.sessionsByConnectionKey).length > 0 ? (
+        <section
+          className="zt-tool-panel"
+          aria-label={t(language, "agent")}
+          hidden={activeTool !== "agent"}
+          style={activeTool === "agent" ? undefined : { display: "none" }}
+        >
+          <PanelHeader title={t(language, "agent")} />
+          {Object.entries(agent.sessionsByConnectionKey).map(([connectionKey, session]) => {
+            const active = connectionKey === agent.activeConnectionKey;
+            return (
+              <div
+                key={connectionKey}
+                hidden={!active}
+                style={active ? { display: "flex", minHeight: 0, height: "100%", flexDirection: "column" } : { display: "none" }}
+              >
+                <AgentCodexPanel
+                  session={session}
+                  active={active && activeTool === "agent"}
+                  approvalMode={agent.approvalMode}
+                  pendingInvocations={active ? agent.pendingInvocations : []}
+                  loading={active && agent.loading}
+                  error={active ? agent.error : null}
+                  onApprovalModeChange={agent.onApprovalModeChange}
+                  onClose={agent.onClose}
+                  onConfirmTool={agent.onConfirmTool}
+                  onRestart={agent.onRestart}
+                />
+              </div>
+            );
+          })}
+          {!agent.session ? (
+            <AgentCodexPanel
+              session={null}
+              active={activeTool === "agent"}
+              approvalMode={agent.approvalMode}
+              pendingInvocations={agent.pendingInvocations}
+              loading={agent.loading}
+              error={agent.error}
+              onApprovalModeChange={agent.onApprovalModeChange}
+              onClose={agent.onClose}
+              onConfirmTool={agent.onConfirmTool}
+              onRestart={agent.onRestart}
+            />
           ) : null}
         </section>
       ) : null}

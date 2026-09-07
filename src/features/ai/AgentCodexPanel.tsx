@@ -11,6 +11,7 @@ import type { AgentCodexSession, AgentPendingInvocation } from "./agentCodexApi"
 
 export function AgentCodexPanel({
   session,
+  active = true,
   loading,
   error,
   approvalMode,
@@ -21,6 +22,7 @@ export function AgentCodexPanel({
   onRestart,
 }: {
   session: AgentCodexSession | null;
+  active?: boolean;
   loading: boolean;
   error: string | null;
   approvalMode: McpApprovalMode;
@@ -114,16 +116,19 @@ export function AgentCodexPanel({
         </div>
       ) : null}
 
+      {session && runtimeSessionId && loading ? (
+        <div className="zt-agent-codex-state"><LoaderCircle className="zt-spin" size={18} />正在启动本机 Codex CLI...</div>
+      ) : null}
+      {session && runtimeSessionId && error ? (
+        <div className="zt-agent-codex-state is-error">
+          <ZtInlineError>{error}</ZtInlineError>
+        </div>
+      ) : null}
+
       <div className="zt-agent-codex-terminal">
-        {loading ? (
-          <div className="zt-agent-codex-state"><LoaderCircle className="zt-spin" size={18} />正在启动本机 Codex CLI...</div>
-        ) : error ? (
-          <div className="zt-agent-codex-state is-error">
-            <ZtInlineError>{error}</ZtInlineError>
-          </div>
-        ) : session && runtimeSessionId ? (
+        {session && runtimeSessionId ? (
           <XtermPane
-            autoFocus
+            autoFocus={active}
             contextMenuEnabled
             contextMenuClearEnabled={false}
             contextMenuSearchEnabled={false}
@@ -138,6 +143,12 @@ export function AgentCodexPanel({
             onResize={(cols, rows) => void resizeTerminal(runtimeSessionId, cols, rows)}
             onRestart={() => void onRestart()}
           />
+        ) : loading ? (
+          <div className="zt-agent-codex-state"><LoaderCircle className="zt-spin" size={18} />正在启动本机 Codex CLI...</div>
+        ) : error ? (
+          <div className="zt-agent-codex-state is-error">
+            <ZtInlineError>{error}</ZtInlineError>
+          </div>
         ) : (
           <div className="zt-agent-codex-state">请先打开一个可操作的终端标签页。</div>
         )}

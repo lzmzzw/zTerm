@@ -341,22 +341,73 @@ impl AiToolService {
     pub fn ensure_visible_ssh_runtime(&self, runtime_session_id: &str) -> AppResult<()> {
         let runtime_session_id = required_text("运行时会话 ID", runtime_session_id)?;
         let runtime = self
-            .writer
-            .list_terminals()?
-            .into_iter()
-            .find(|runtime| runtime.runtime_session_id == runtime_session_id)
+            .visible_ssh_runtime(&runtime_session_id)?
             .ok_or_else(|| {
                 AppError::not_found(format!("终端运行态不存在: {runtime_session_id}"))
             })?;
-        if !matches!(
-            runtime.kind,
-            RuntimeSessionKind::Ssh | RuntimeSessionKind::SshContainer
-        ) {
-            return Err(AppError::validation(
-                "zTerm 侧栏只允许操作可见的 SSH 服务器终端",
-            ));
+        ensure_visible_ssh_runtime_info(&runtime)
+    }
+
+    /// Resolves the default runtime for a sidebar agent without expanding its connection scope.
+    ///
+    /// A still-visible initial runtime is always retained.  A closed regular SSH runtime may
+    /// fall back to another visible regular SSH runtime for the same saved connection.  Container
+    /// runtimes intentionally never use this fallback: their container identity is not encoded by
+    /// `saved_session_id` and selecting another runtime would cross that boundary.
+    pub fn resolve_sidebar_default_ssh_runtime(
+        &self,
+        initial_runtime_session_id: &str,
+        saved_session_id: Option<&str>,
+        initial_runtime_kind: RuntimeSessionKind,
+    ) -> AppResult<String> {
+        let initial_runtime_session_id =
+            required_text("初始运行时会话 ID", initial_runtime_session_id)?;
+        let runtimes = self.writer.list_terminals()?;
+
+        if let Some(runtime) = runtimes
+            .iter()
+            .find(|runtime| runtime.runtime_session_id == initial_runtime_session_id)
+        {
+            ensure_visible_ssh_runtime_info(runtime)?;
+            return Ok(runtime.runtime_session_id.clone());
         }
-        Ok(())
+
+        if initial_runtime_kind != RuntimeSessionKind::Ssh {
+            return Err(AppError::not_found(format!(
+                "初始 SSH 终端已关闭，且该终端不允许按连接回退: {initial_runtime_session_id}"
+            )));
+        }
+        let Some(saved_session_id) = saved_session_id
+            .map(str::trim)
+            .filter(|saved_session_id| !saved_session_id.is_empty())
+        else {
+            return Err(AppError::not_found(format!(
+                "初始 SSH 终端已关闭，且没有可回退的已保存连接: {initial_runtime_session_id}"
+            )));
+        };
+
+        let fallback = runtimes
+            .iter()
+            .filter(|runtime| runtime.kind == RuntimeSessionKind::Ssh)
+            .filter(|runtime| runtime.saved_session_id.as_deref() == Some(saved_session_id))
+            .min_by(|left, right| left.runtime_session_id.cmp(&right.runtime_session_id))
+            .ok_or_else(|| {
+                AppError::not_found(format!(
+                    "初始 SSH 终端已关闭，当前没有同一连接的可见 SSH 终端: {saved_session_id}"
+                ))
+            })?;
+        Ok(fallback.runtime_session_id.clone())
+    }
+
+    fn visible_ssh_runtime(
+        &self,
+        runtime_session_id: &str,
+    ) -> AppResult<Option<RuntimeSessionInfo>> {
+        Ok(self
+            .writer
+            .list_terminals()?
+            .into_iter()
+            .find(|runtime| runtime.runtime_session_id == runtime_session_id))
     }
 
     pub fn prepare(
@@ -1531,6 +1582,18 @@ impl AiToolService {
             ["sessions", "workspace"],
         ))
     }
+}
+
+fn ensure_visible_ssh_runtime_info(runtime: &RuntimeSessionInfo) -> AppResult<()> {
+    if !matches!(
+        runtime.kind,
+        RuntimeSessionKind::Ssh | RuntimeSessionKind::SshContainer
+    ) {
+        return Err(AppError::validation(
+            "zTerm 侧栏只允许操作可见的 SSH 服务器终端",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_arguments(tool_id: &str, arguments: &Value) -> AppResult<()> {

@@ -25,6 +25,7 @@ use crate::{
     models::{
         ai::{AiApprovalMode, AiToolAuditRecord, AiToolPrepareRequest, RiskLevel},
         session::SessionType,
+        terminal::RuntimeSessionKind,
     },
     services::{
         ai_tool_service::AiToolService,
@@ -90,6 +91,7 @@ pub struct AgentMcpBinding {
     pub agent_session_id: String,
     pub runtime_session_id: String,
     pub saved_session_id: Option<String>,
+    pub target_runtime_kind: RuntimeSessionKind,
     pub target_label: String,
 }
 
@@ -1223,7 +1225,7 @@ async fn handle_agent_json_rpc(
                 {
                     "name": "terminal.read",
                     "title": "读取可见终端",
-                    "description": format!("读取 zTerm 可见 SSH 终端的滚动屏；不提供 runtime_session_id 时使用初始绑定终端：{}", binding.target_label),
+                    "description": format!("读取 zTerm 可见 SSH 终端的滚动屏；不提供 runtime_session_id 时保持初始绑定终端，若其已关闭则仅回退到同一 SSH 连接的可见终端：{}", binding.target_label),
                     "inputSchema": object_schema(json!({
                         "runtime_session_id": { "type": "string", "description": "可选；来自 terminal.list。" },
                         "cursor": { "type": "integer", "minimum": 0 },
@@ -1233,7 +1235,7 @@ async fn handle_agent_json_rpc(
                 {
                     "name": "terminal.write",
                     "title": "操作可见终端",
-                    "description": "将数据写入指定可见 SSH 终端并回读新增输出；指令和输出保留在该终端滚动屏。",
+                    "description": "将数据写入指定可见 SSH 终端并回读新增输出；未指定 runtime_session_id 时使用绑定目标或同一 SSH 连接的回退目标；指令和输出保留在该终端滚动屏。",
                     "inputSchema": object_schema(json!({
                         "runtime_session_id": { "type": "string", "description": "可选；不提供时使用初始绑定终端。" },
                         "data": { "type": "string", "minLength": 1, "maxLength": 16384 }
@@ -1242,7 +1244,7 @@ async fn handle_agent_json_rpc(
                 {
                     "name": "terminal.close",
                     "title": "关闭可见终端",
-                    "description": "关闭指定可见 SSH 终端；不提供 runtime_session_id 时关闭初始绑定终端。",
+                    "description": "关闭指定可见 SSH 终端；不提供 runtime_session_id 时关闭绑定目标或同一 SSH 连接的回退目标。",
                     "inputSchema": object_schema(json!({
                         "runtime_session_id": { "type": "string", "description": "可选；来自 terminal.list。" }
                     }), &[])
@@ -1355,13 +1357,28 @@ async fn handle_agent_json_rpc(
                             "error": { "code": -32602, "message": "terminal.write requires data" }
                         }));
                     }
-                    let runtime_session_id = object
+                    let explicit_runtime_session_id = object
                         .get("runtime_session_id")
                         .and_then(Value::as_str)
                         .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .unwrap_or(binding.runtime_session_id.as_str())
-                        .to_string();
+                        .filter(|value| !value.is_empty());
+                    let runtime_session_id = match explicit_runtime_session_id {
+                        Some(runtime_session_id) => {
+                            if let Err(error) = tools.ensure_visible_ssh_runtime(runtime_session_id)
+                            {
+                                return Ok(mcp_json_rpc_error(id, -32602, error));
+                            }
+                            runtime_session_id.to_string()
+                        }
+                        None => match tools.resolve_sidebar_default_ssh_runtime(
+                            &binding.runtime_session_id,
+                            binding.saved_session_id.as_deref(),
+                            binding.target_runtime_kind,
+                        ) {
+                            Ok(runtime_session_id) => runtime_session_id,
+                            Err(error) => return Ok(mcp_json_rpc_error(id, -32602, error)),
+                        },
+                    };
                     if let Err(error) = tools.ensure_visible_ssh_runtime(&runtime_session_id) {
                         return Ok(mcp_json_rpc_error(id, -32602, error));
                     }

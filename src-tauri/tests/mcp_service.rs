@@ -3,7 +3,7 @@ use std::{
     fs,
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -21,7 +21,7 @@ use zterm_lib::{
     commands::mcp::start_mcp_if_enabled,
     error::AppResult,
     models::{
-        ai::AiToolConfirmRequest,
+        ai::{AiToolConfirmRequest, AiToolFrontendActionEvent},
         session::{AuthMode, SavedSessionDraft, SessionType},
         settings::McpSettings,
         terminal::{RuntimeSessionInfo, RuntimeSessionKind},
@@ -134,6 +134,123 @@ impl AiToolCommandWriter for CountingToolWriter {
     ) -> AppResult<Option<String>> {
         Ok(None)
     }
+}
+
+#[derive(Default)]
+struct MutableToolWriter {
+    terminals: Mutex<Vec<RuntimeSessionInfo>>,
+    reads: Mutex<Vec<String>>,
+    actions: Mutex<Vec<AiToolFrontendActionEvent>>,
+}
+
+impl MutableToolWriter {
+    fn set_terminals(&self, terminals: Vec<RuntimeSessionInfo>) {
+        *self.terminals.lock().expect("test terminals lock") = terminals;
+    }
+
+    fn read_runtime_ids(&self) -> Vec<String> {
+        self.reads.lock().expect("test reads lock").clone()
+    }
+
+    fn action_runtime_ids(&self) -> Vec<String> {
+        self.actions
+            .lock()
+            .expect("test actions lock")
+            .iter()
+            .filter_map(|event| event.arguments["runtime_session_id"].as_str())
+            .map(ToOwned::to_owned)
+            .collect()
+    }
+}
+
+impl AiToolCommandWriter for MutableToolWriter {
+    fn write_terminal(&self, _runtime_session_id: &str, _data: &str) -> AppResult<()> {
+        Ok(())
+    }
+
+    fn emit_tool_action(&self, event: AiToolFrontendActionEvent) -> AppResult<()> {
+        self.actions.lock().expect("test actions lock").push(event);
+        Ok(())
+    }
+
+    fn list_terminals(&self) -> AppResult<Vec<RuntimeSessionInfo>> {
+        Ok(self.terminals.lock().expect("test terminals lock").clone())
+    }
+
+    fn terminal_output_cursor(&self, _runtime_session_id: &str) -> AppResult<Option<usize>> {
+        Ok(Some(1))
+    }
+
+    fn read_terminal_output_after(
+        &self,
+        runtime_session_id: &str,
+        _cursor: usize,
+    ) -> AppResult<Option<String>> {
+        self.reads
+            .lock()
+            .expect("test reads lock")
+            .push(runtime_session_id.to_string());
+        Ok(Some(format!("output:{runtime_session_id}")))
+    }
+
+    fn read_terminal_output_tail(
+        &self,
+        runtime_session_id: &str,
+        _max_chars: usize,
+    ) -> AppResult<Option<String>> {
+        self.reads
+            .lock()
+            .expect("test reads lock")
+            .push(runtime_session_id.to_string());
+        Ok(Some(format!("output:{runtime_session_id}")))
+    }
+}
+
+fn ssh_runtime(runtime_session_id: &str, saved_session_id: &str) -> RuntimeSessionInfo {
+    RuntimeSessionInfo {
+        runtime_session_id: runtime_session_id.to_string(),
+        saved_session_id: Some(saved_session_id.to_string()),
+        history_scope_kind: None,
+        history_scope_id: None,
+        pane_id: format!("pane-{runtime_session_id}"),
+        title: runtime_session_id.to_string(),
+        kind: RuntimeSessionKind::Ssh,
+        initial_cwd: None,
+        cols: 120,
+        rows: 32,
+    }
+}
+
+fn ssh_container_runtime(runtime_session_id: &str, saved_session_id: &str) -> RuntimeSessionInfo {
+    RuntimeSessionInfo {
+        kind: RuntimeSessionKind::SshContainer,
+        ..ssh_runtime(runtime_session_id, saved_session_id)
+    }
+}
+
+async fn call_sidebar_tool(
+    client: &reqwest::Client,
+    endpoint: &str,
+    token: &str,
+    id: u64,
+    name: &str,
+    arguments: Value,
+) -> Value {
+    client
+        .post(endpoint)
+        .bearer_auth(token)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        }))
+        .send()
+        .await
+        .expect("sidebar MCP request should send")
+        .json::<Value>()
+        .await
+        .expect("sidebar MCP response should be JSON")
 }
 
 #[tokio::test]
@@ -473,6 +590,7 @@ async fn sidebar_agent_token_is_scoped_to_visible_ssh_terminals() {
             agent_session_id: "agent-1".to_string(),
             runtime_session_id: "runtime-1".to_string(),
             saved_session_id: Some("session-1".to_string()),
+            target_runtime_kind: RuntimeSessionKind::Ssh,
             target_label: "Production".to_string(),
         })
         .expect("agent binding should register");
@@ -658,6 +776,250 @@ async fn sidebar_agent_token_is_scoped_to_visible_ssh_terminals() {
     service.stop_and_wait().await.expect("service should stop");
 }
 
+#[tokio::test]
+async fn sidebar_agent_default_runtime_falls_back_only_within_its_ssh_connection() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    save_session(
+        store.as_ref(),
+        SavedSessionDraft {
+            id: Some("session-1".to_string()),
+            name: "Shared SSH".to_string(),
+            session_type: SessionType::Ssh,
+            group_id: None,
+            host: "ssh.example.test".to_string(),
+            port: 22,
+            username: "ops".to_string(),
+            auth_mode: AuthMode::None,
+            credential_ref: None,
+            description: None,
+            tags: Vec::new(),
+            sort_order: 0,
+            ssh_options: None,
+            rdp_options: None,
+            local_options: None,
+            ftp_options: None,
+        },
+    )
+    .expect("SSH session should save");
+    let writer = Arc::new(MutableToolWriter::default());
+    writer.set_terminals(vec![
+        ssh_runtime("runtime-original", "session-1"),
+        ssh_runtime("runtime-fallback", "session-1"),
+        ssh_runtime("runtime-other", "session-2"),
+    ]);
+    let tools = AiToolService::with_writer(writer.clone());
+    let service = McpService::with_secret_store(Arc::new(MemorySecretStore::default()));
+    service
+        .start(Arc::clone(&store), tools.clone(), Some(0))
+        .await
+        .expect("MCP service should start");
+    let access = service
+        .register_agent_binding(AgentMcpBinding {
+            agent_session_id: "agent-shared-ssh".to_string(),
+            runtime_session_id: "runtime-original".to_string(),
+            saved_session_id: Some("session-1".to_string()),
+            target_runtime_kind: RuntimeSessionKind::Ssh,
+            target_label: "Shared SSH".to_string(),
+        })
+        .expect("agent binding should register");
+    let client = reqwest::Client::new();
+
+    let original = call_sidebar_tool(
+        &client,
+        &access.endpoint,
+        &access.token,
+        40,
+        "terminal.read",
+        json!({}),
+    )
+    .await;
+    assert_eq!(
+        original["result"]["structuredContent"]["result"]["runtime_session_id"],
+        "runtime-original"
+    );
+
+    writer.set_terminals(vec![
+        ssh_runtime("runtime-fallback", "session-1"),
+        ssh_runtime("runtime-other", "session-2"),
+    ]);
+    let fallback = call_sidebar_tool(
+        &client,
+        &access.endpoint,
+        &access.token,
+        41,
+        "terminal.read",
+        json!({}),
+    )
+    .await;
+    assert_eq!(
+        fallback["result"]["structuredContent"]["result"]["runtime_session_id"],
+        "runtime-fallback"
+    );
+    let write = call_sidebar_tool(
+        &client,
+        &access.endpoint,
+        &access.token,
+        42,
+        "terminal.write",
+        json!({ "data": "pwd\r" }),
+    )
+    .await;
+    assert_eq!(
+        write["result"]["structuredContent"]["result"]["runtime_session_id"],
+        "runtime-fallback"
+    );
+    let close = call_sidebar_tool(
+        &client,
+        &access.endpoint,
+        &access.token,
+        43,
+        "terminal.close",
+        json!({}),
+    )
+    .await;
+    assert_eq!(close["result"]["structuredContent"]["status"], "succeeded");
+    assert_eq!(writer.action_runtime_ids(), vec!["runtime-fallback"]);
+
+    let explicit_other = call_sidebar_tool(
+        &client,
+        &access.endpoint,
+        &access.token,
+        44,
+        "terminal.read",
+        json!({ "runtime_session_id": "runtime-other" }),
+    )
+    .await;
+    assert_eq!(
+        explicit_other["result"]["structuredContent"]["result"]["runtime_session_id"],
+        "runtime-other"
+    );
+    let explicit_missing = call_sidebar_tool(
+        &client,
+        &access.endpoint,
+        &access.token,
+        45,
+        "terminal.read",
+        json!({ "runtime_session_id": "runtime-missing" }),
+    )
+    .await;
+    assert_eq!(explicit_missing["error"]["code"], -32602);
+
+    writer.set_terminals(vec![ssh_runtime("runtime-other", "session-2")]);
+    let no_default_target = call_sidebar_tool(
+        &client,
+        &access.endpoint,
+        &access.token,
+        46,
+        "terminal.read",
+        json!({}),
+    )
+    .await;
+    assert_eq!(no_default_target["error"]["code"], -32602);
+
+    writer.set_terminals(vec![
+        ssh_container_runtime("container-original", "session-1"),
+        ssh_runtime("runtime-fallback", "session-1"),
+    ]);
+    let container_access = service
+        .register_agent_binding(AgentMcpBinding {
+            agent_session_id: "agent-container".to_string(),
+            runtime_session_id: "container-original".to_string(),
+            saved_session_id: Some("session-1".to_string()),
+            target_runtime_kind: RuntimeSessionKind::SshContainer,
+            target_label: "Container SSH".to_string(),
+        })
+        .expect("container binding should register");
+    let container_original = call_sidebar_tool(
+        &client,
+        &container_access.endpoint,
+        &container_access.token,
+        47,
+        "terminal.read",
+        json!({}),
+    )
+    .await;
+    assert_eq!(
+        container_original["result"]["structuredContent"]["result"]["runtime_session_id"],
+        "container-original"
+    );
+    writer.set_terminals(vec![ssh_runtime("runtime-fallback", "session-1")]);
+    let container_default = call_sidebar_tool(
+        &client,
+        &container_access.endpoint,
+        &container_access.token,
+        48,
+        "terminal.read",
+        json!({}),
+    )
+    .await;
+    assert_eq!(container_default["error"]["code"], -32602);
+
+    upsert_ai_connection_approval_policy(
+        store.as_ref(),
+        "session-1",
+        zterm_lib::models::ai::AiApprovalMode::RequestApproval,
+    )
+    .expect("connection policy should save");
+    let pending_client = reqwest::Client::new();
+    let pending_endpoint = access.endpoint.clone();
+    let pending_token = access.token.clone();
+    let pending_request = tokio::spawn(async move {
+        call_sidebar_tool(
+            &pending_client,
+            &pending_endpoint,
+            &pending_token,
+            49,
+            "terminal.read",
+            json!({}),
+        )
+        .await
+    });
+    let pending_id = timeout(Duration::from_secs(1), async {
+        loop {
+            if let Some(pending) = tools
+                .list_pending(store.as_ref())
+                .expect("pending tools should list")
+                .into_iter()
+                .find(|pending| pending.tool_id == "terminal.read")
+            {
+                break pending.id;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("fallback read should become pending");
+    let (_, pending_arguments) = get_ai_tool_pending_state(store.as_ref(), &pending_id)
+        .expect("pending arguments should persist");
+    assert_eq!(pending_arguments["runtime_session_id"], "runtime-fallback");
+
+    writer.set_terminals(vec![ssh_runtime("runtime-other", "session-2")]);
+    tools
+        .confirm(
+            store.as_ref(),
+            AiToolConfirmRequest {
+                invocation_id: pending_id,
+                approved: true,
+                audit_context_json: None,
+                secret_inputs: None,
+            },
+        )
+        .expect("approval should execute the resolved original target");
+    let completed = pending_request
+        .await
+        .expect("pending request should finish");
+    assert_eq!(
+        completed["result"]["structuredContent"]["result"]["runtime_session_id"],
+        "runtime-fallback"
+    );
+    assert_eq!(
+        writer.read_runtime_ids().last().map(String::as_str),
+        Some("runtime-fallback")
+    );
+
+    service.stop_and_wait().await.expect("service should stop");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires a locally logged-in Codex CLI and performs one model request"]
 async fn codex_cli_discovers_sidebar_tools_with_native_model_configuration() {
@@ -673,6 +1035,7 @@ async fn codex_cli_discovers_sidebar_tools_with_native_model_configuration() {
             agent_session_id: "agent-codex-smoke".to_string(),
             runtime_session_id: "runtime-1".to_string(),
             saved_session_id: Some("session-1".to_string()),
+            target_runtime_kind: RuntimeSessionKind::Ssh,
             target_label: "Codex smoke terminal".to_string(),
         })
         .expect("agent binding should register");
@@ -1027,6 +1390,7 @@ async fn mcp_uses_the_target_ssh_connection_approval_policy() {
             agent_session_id: "agent-policy".to_string(),
             runtime_session_id: "runtime-1".to_string(),
             saved_session_id: Some("session-1".to_string()),
+            target_runtime_kind: RuntimeSessionKind::Ssh,
             target_label: "Policy SSH".to_string(),
         })
         .expect("agent binding should register");

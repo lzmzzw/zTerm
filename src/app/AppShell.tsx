@@ -31,7 +31,6 @@ import {
   EMPTY_MCP_PANEL_STATE,
   EMPTY_TRANSFER_PANEL_STATE,
   EMPTY_WORKSPACE_SIDEBAR_STATE,
-  collectTerminalTabIds,
   readString,
   rightToolFromValue,
   savedSessionDraftWithSshOptions,
@@ -101,13 +100,43 @@ import {
   type WorkspaceSidebarItem,
 } from "../features/workspace/workspaceShellModel";
 import { useWorkspaceStore } from "../features/workspace/workspaceStore";
-import type { WorkspaceDefinition, WorkspaceDefinitionDraft, WorkspaceSummary } from "../features/workspace/types";
+import type { PaneNode, WorkspaceDefinition, WorkspaceDefinitionDraft, WorkspaceSummary, WorkspaceTab } from "../features/workspace/types";
 import { scheduleIdleTask } from "../lib/renderScheduling";
 import { listenTauri } from "../lib/tauriClient";
 import { fallbackOnlyErrorMessage, unknownErrorMessage } from "../lib/unknownErrorMessage";
 
 async function stopAgentCodexSession(session: AgentCodexSession) {
   await closeAgentCodex(session);
+}
+
+function agentConnectionKey(
+  savedSessionId: string | null,
+  runtimeSessionId: string | null,
+  isContainerConnection = false,
+) {
+  if (savedSessionId && !isContainerConnection) return `connection:${savedSessionId}`;
+  return runtimeSessionId ? `runtime:${runtimeSessionId}` : null;
+}
+
+function collectLiveAgentConnectionKeys(tabs: WorkspaceTab[]) {
+  const keys = new Set<string>();
+  const visit = (node: PaneNode) => {
+    if (node.kind === "split") {
+      visit(node.first);
+      visit(node.second);
+      return;
+    }
+    for (const terminalTab of getLeafTerminalTabs(node)) {
+      const key = agentConnectionKey(
+        terminalTab.saved_session_id,
+        terminalTab.runtime_session_id,
+        terminalTab.connection_source === "ssh_container",
+      );
+      if (key) keys.add(key);
+    }
+  };
+  tabs.forEach((tab) => visit(tab.root));
+  return keys;
 }
 
 function useLatestRef<T>(value: T) {
@@ -186,10 +215,13 @@ export function AppShell() {
   const [viewMode, setViewMode] = useState<"workbench" | "settings">("workbench");
   const [activeLeftTool, setActiveLeftTool] = useState<LeftTool | null>(null);
   const [activeTool, setActiveTool] = useState<RightTool | null>(null);
-  const [agentSessionsByTabId, setAgentSessionsByTabId] = useState<Record<string, AgentCodexSession>>({});
-  const [agentOpeningTabId, setAgentOpeningTabId] = useState<string | null>(null);
+  const [agentSessionsByConnectionKey, setAgentSessionsByConnectionKey] = useState<Record<string, AgentCodexSession>>({});
+  const agentSessionsRef = useRef<Record<string, AgentCodexSession>>({});
+  const agentOpenPromisesRef = useRef<Map<string, Promise<AgentCodexSession | null>>>(new Map());
+  const agentStoppingSessionIdsRef = useRef<Set<string>>(new Set());
+  const [agentOpeningConnectionKeys, setAgentOpeningConnectionKeys] = useState<Record<string, true>>({});
   const [agentOpenError, setAgentOpenError] = useState<string | null>(null);
-  const previousAgentTabIdRef = useRef<string | null>(null);
+  const previousAgentConnectionKeyRef = useRef<string | null>(null);
   const [containerPanelState, setContainerPanelState] = useState(EMPTY_CONTAINER_PANEL_STATE);
   const [workspaceSummaries, setWorkspaceSummaries] = useState<WorkspaceSummary[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
@@ -440,8 +472,15 @@ export function AppShell() {
       ? activeSavedSession.ssh_options?.container?.enabled === true
       : activeExternalSshOptions?.container?.enabled === true && activeExternalSshMultiChannel;
   const activeRuntimeSessionId = activePaneTab?.runtime_session_id ?? null;
-  const activeAgentTabId = activeRuntimeSessionId ? (activePaneTab?.id ?? null) : null;
-  const activeAgentSession = activeAgentTabId ? (agentSessionsByTabId[activeAgentTabId] ?? null) : null;
+  const activeAgentConnectionKey = agentConnectionKey(
+    activeSavedSessionId,
+    activeRuntimeSessionId,
+    activePaneTab?.connection_source === "ssh_container",
+  );
+  const activeAgentSession = activeAgentConnectionKey
+    ? (agentSessionsByConnectionKey[activeAgentConnectionKey] ?? null)
+    : null;
+  const activeAgentConnectionKeyRef = useLatestRef(activeAgentConnectionKey);
   const syncChannelCandidates = collectSyncChannelCandidates(
     tabs,
     useTerminalStore.getState().runtimes,
@@ -472,7 +511,9 @@ export function AppShell() {
   const enterSshContainerRuntime = useTerminalStore((state) => state.enterSshContainerRuntime);
   const openDefaultLocalTerminal = useTerminalStore((state) => state.openDefaultLocalTerminal);
   const closeTerminal = useTerminalStore((state) => state.closeTerminal);
+  const forgetTerminalRuntime = useTerminalStore((state) => state.forgetTerminalRuntime);
   const writeTerminal = useTerminalStore((state) => state.writeTerminal);
+  const terminalRuntimes = useTerminalStore((state) => state.runtimes);
   const activeRuntimeInfo = useTerminalStore((state) =>
     activeRuntimeSessionId ? (state.runtimes[activeRuntimeSessionId] ?? null) : null,
   );
@@ -538,26 +579,38 @@ export function AppShell() {
   }, [mcpApprovalSessionId, bindApprovalModeToSession]);
 
   useEffect(() => {
-    if (previousAgentTabIdRef.current === activeAgentTabId) return;
-    previousAgentTabIdRef.current = activeAgentTabId;
+    if (previousAgentConnectionKeyRef.current === activeAgentConnectionKey) return;
+    previousAgentConnectionKeyRef.current = activeAgentConnectionKey;
     setAgentOpenError(null);
     setActiveTool((current) => {
-      if (activeAgentTabId && agentSessionsByTabId[activeAgentTabId]) return "agent";
+      if (activeAgentConnectionKey && agentSessionsByConnectionKey[activeAgentConnectionKey]) return "agent";
       return current === "agent" ? null : current;
     });
-  }, [activeAgentTabId, agentSessionsByTabId]);
+  }, [activeAgentConnectionKey, agentSessionsByConnectionKey]);
 
   useEffect(() => {
-    const liveTabIds = new Set(tabs.flatMap((tab) => collectTerminalTabIds(tab.root)));
-    const removed = Object.entries(agentSessionsByTabId).filter(([tabId]) => !liveTabIds.has(tabId));
+    const liveConnectionKeys = collectLiveAgentConnectionKeys(tabs);
+    const removed = Object.entries(agentSessionsByConnectionKey).filter(([connectionKey]) => !liveConnectionKeys.has(connectionKey));
     if (removed.length === 0) return;
     for (const [, session] of removed) {
-      void stopAgentCodexSession(session).catch(() => undefined);
+      void stopAgentCodexSessionAndForgetRuntime(session).catch(() => undefined);
     }
-    setAgentSessionsByTabId((current) =>
-      Object.fromEntries(Object.entries(current).filter(([tabId]) => liveTabIds.has(tabId))),
+    const next = Object.fromEntries(Object.entries(agentSessionsRef.current).filter(([connectionKey]) => liveConnectionKeys.has(connectionKey)));
+    agentSessionsRef.current = next;
+    setAgentSessionsByConnectionKey(next);
+  }, [agentSessionsByConnectionKey, tabs]);
+
+  useEffect(() => {
+    const exited = Object.entries(agentSessionsByConnectionKey).filter(([, session]) =>
+      !terminalRuntimes[session.runtime.runtime_session_id] &&
+      !agentStoppingSessionIdsRef.current.has(session.agent_session_id),
     );
-  }, [agentSessionsByTabId, tabs]);
+    if (exited.length === 0) return;
+    for (const [connectionKey, session] of exited) {
+      removeAgentCodexSession(connectionKey, session);
+      void stopAgentCodexSessionAndForgetRuntime(session).catch(() => undefined);
+    }
+  }, [agentSessionsByConnectionKey, terminalRuntimes]);
 
   const syncChannelCandidateKey = syncChannelCandidates
     .map((candidate) => `${candidate.id}:${candidate.runtimeSessionId}:${candidate.host}`)
@@ -757,7 +810,7 @@ export function AppShell() {
       onOpenSettings: () => setViewMode("settings"),
       onOpenSyncChannel: () => setSyncChannelDialogOpen(true),
       onAddTerminalTab: addPaneTab,
-      onCloseTerminalTab: (paneId, paneTabId) => void closePaneTab(paneId, paneTabId),
+      onCloseTerminalTab: (paneId, paneTabId) => void handleClosePaneTab(paneId, paneTabId),
       onSplitPane: splitActivePane,
       onToggleRightTool: toggleRightTool,
     },
@@ -1346,83 +1399,139 @@ export function AppShell() {
     void ensureActiveAgentCodex();
   }
 
+  function removeAgentCodexSession(connectionKey: string, expectedSession?: AgentCodexSession) {
+    if (expectedSession && agentSessionsRef.current[connectionKey] !== expectedSession) return;
+    const next = Object.fromEntries(
+      Object.entries(agentSessionsRef.current).filter(([currentConnectionKey]) => currentConnectionKey !== connectionKey),
+    );
+    agentSessionsRef.current = next;
+    setAgentSessionsByConnectionKey(next);
+  }
+
+  async function stopAgentCodexSessionAndForgetRuntime(session: AgentCodexSession) {
+    agentStoppingSessionIdsRef.current.add(session.agent_session_id);
+    let stopped = false;
+    try {
+      await stopAgentCodexSession(session);
+      stopped = true;
+    } finally {
+      if (stopped) forgetTerminalRuntime(session.runtime.runtime_session_id);
+      agentStoppingSessionIdsRef.current.delete(session.agent_session_id);
+    }
+  }
+
+  function setAgentConnectionOpening(connectionKey: string, opening: boolean) {
+    setAgentOpeningConnectionKeys((current) => {
+      if (opening) return current[connectionKey] ? current : { ...current, [connectionKey]: true };
+      if (!current[connectionKey]) return current;
+      const { [connectionKey]: _removed, ...next } = current;
+      return next;
+    });
+  }
+
+  function setAgentOpenErrorForConnection(connectionKey: string, error: string | null) {
+    if (activeAgentConnectionKeyRef.current === connectionKey) setAgentOpenError(error);
+  }
+
+  function isAgentConnectionLive(connectionKey: string) {
+    return collectLiveAgentConnectionKeys(useWorkspaceStore.getState().tabs).has(connectionKey);
+  }
+
+  function openAgentCodexForConnection(
+    connectionKey: string,
+    request: {
+      tabId: string;
+      targetRuntimeSessionId: string;
+      targetSavedSessionId: string | null;
+      targetLabel: string;
+    },
+  ) {
+    const existing = agentSessionsRef.current[connectionKey];
+    if (existing) return Promise.resolve(existing);
+    const opening = agentOpenPromisesRef.current.get(connectionKey);
+    if (opening) return opening;
+
+    setAgentConnectionOpening(connectionKey, true);
+    let operation: Promise<AgentCodexSession | null>;
+    operation = openAgentCodex(request)
+      .then(async (session) => {
+        if (!isAgentConnectionLive(connectionKey)) {
+          await stopAgentCodexSessionAndForgetRuntime(session).catch(() => undefined);
+          return null;
+        }
+        useTerminalStore.setState((state) => ({
+          runtimes: {
+            ...state.runtimes,
+            [session.runtime.runtime_session_id]: session.runtime,
+          },
+        }));
+        const next = { ...agentSessionsRef.current, [connectionKey]: session };
+        agentSessionsRef.current = next;
+        setAgentSessionsByConnectionKey(next);
+        return session;
+      })
+      .finally(() => {
+        if (agentOpenPromisesRef.current.get(connectionKey) === operation) {
+          agentOpenPromisesRef.current.delete(connectionKey);
+        }
+        setAgentConnectionOpening(connectionKey, false);
+      });
+    agentOpenPromisesRef.current.set(connectionKey, operation);
+    return operation;
+  }
+
   async function ensureActiveAgentCodex() {
-    if (!activeAgentTabId || !activeRuntimeSessionId || !activePaneTab) {
+    if (!activeAgentConnectionKey || !activeRuntimeSessionId || !activePaneTab) {
       setAgentOpenError("请先打开一个可操作的终端标签页。");
       return;
     }
-    if (agentSessionsByTabId[activeAgentTabId] || agentOpeningTabId === activeAgentTabId) return;
-    const tabId = activeAgentTabId;
-    setAgentOpeningTabId(tabId);
-    setAgentOpenError(null);
+    if (agentSessionsRef.current[activeAgentConnectionKey]) return;
+    const connectionKey = activeAgentConnectionKey;
+    const request = {
+      tabId: activePaneTab.id,
+      targetRuntimeSessionId: activeRuntimeSessionId,
+      targetSavedSessionId: activeSavedSessionId,
+      targetLabel: activePaneTab.title || activeSavedSession?.name || "当前终端",
+    };
+    setAgentOpenErrorForConnection(connectionKey, null);
     try {
-      const session = await openAgentCodex({
-        tabId,
-        targetRuntimeSessionId: activeRuntimeSessionId,
-        targetSavedSessionId: activeSavedSessionId,
-        targetLabel: activePaneTab.title || activeSavedSession?.name || "当前终端",
-      });
-      useTerminalStore.setState((state) => ({
-        runtimes: {
-          ...state.runtimes,
-          [session.runtime.runtime_session_id]: session.runtime,
-        },
-      }));
-      setAgentSessionsByTabId((current) => ({ ...current, [tabId]: session }));
+      await openAgentCodexForConnection(connectionKey, request);
     } catch (error) {
-      setAgentOpenError(unknownErrorMessage(error, "Codex CLI 启动失败"));
-    } finally {
-      setAgentOpeningTabId((current) => (current === tabId ? null : current));
+      setAgentOpenErrorForConnection(connectionKey, unknownErrorMessage(error, "Codex CLI 启动失败"));
     }
   }
 
   async function restartActiveAgentCodex() {
-    if (!activeAgentTabId || !activeAgentSession || agentOpeningTabId === activeAgentTabId) return;
-    const tabId = activeAgentTabId;
+    if (!activeAgentConnectionKey || !activeAgentSession || agentOpenPromisesRef.current.has(activeAgentConnectionKey)) return;
+    const connectionKey = activeAgentConnectionKey;
     const previousSession = activeAgentSession;
-    setAgentOpeningTabId(tabId);
-    setAgentOpenError(null);
+    setAgentOpenErrorForConnection(connectionKey, null);
     try {
-      await stopAgentCodexSession(previousSession);
-      setAgentSessionsByTabId((current) =>
-        Object.fromEntries(Object.entries(current).filter(([currentTabId]) => currentTabId !== tabId)),
-      );
-      const session = await openAgentCodex({
-        tabId,
-        targetRuntimeSessionId: previousSession.target_runtime_session_id,
-        targetSavedSessionId: previousSession.target_saved_session_id,
-        targetLabel: previousSession.target_label,
+      await stopAgentCodexSessionAndForgetRuntime(previousSession);
+      removeAgentCodexSession(connectionKey, previousSession);
+      if (!activePaneTab || !activeRuntimeSessionId) return;
+      await openAgentCodexForConnection(connectionKey, {
+        tabId: activePaneTab.id,
+        targetRuntimeSessionId: activeRuntimeSessionId,
+        targetSavedSessionId: activeSavedSessionId,
+        targetLabel: activePaneTab.title || activeSavedSession?.name || previousSession.target_label,
       });
-      useTerminalStore.setState((state) => ({
-        runtimes: {
-          ...state.runtimes,
-          [session.runtime.runtime_session_id]: session.runtime,
-        },
-      }));
-      setAgentSessionsByTabId((current) => ({ ...current, [tabId]: session }));
     } catch (error) {
-      setAgentOpenError(unknownErrorMessage(error, "Codex CLI 重启失败"));
-    } finally {
-      setAgentOpeningTabId((current) => (current === tabId ? null : current));
+      setAgentOpenErrorForConnection(connectionKey, unknownErrorMessage(error, "Codex CLI 重启失败"));
     }
   }
 
   async function closeActiveAgentCodex() {
-    if (!activeAgentTabId || !activeAgentSession || agentOpeningTabId === activeAgentTabId) return;
-    const tabId = activeAgentTabId;
+    if (!activeAgentConnectionKey || !activeAgentSession || agentOpenPromisesRef.current.has(activeAgentConnectionKey)) return;
+    const connectionKey = activeAgentConnectionKey;
     const session = activeAgentSession;
-    setAgentOpeningTabId(tabId);
-    setAgentOpenError(null);
+    setAgentOpenErrorForConnection(connectionKey, null);
     try {
-      await stopAgentCodexSession(session);
-      setAgentSessionsByTabId((current) =>
-        Object.fromEntries(Object.entries(current).filter(([currentTabId]) => currentTabId !== tabId)),
-      );
-      setActiveTool(null);
+      await stopAgentCodexSessionAndForgetRuntime(session);
+      removeAgentCodexSession(connectionKey, session);
+      if (activeAgentConnectionKeyRef.current === connectionKey) setActiveTool(null);
     } catch (error) {
-      setAgentOpenError(unknownErrorMessage(error, "Codex CLI 关闭失败"));
-    } finally {
-      setAgentOpeningTabId((current) => (current === tabId ? null : current));
+      setAgentOpenErrorForConnection(connectionKey, unknownErrorMessage(error, "Codex CLI 关闭失败"));
     }
   }
 
@@ -2096,9 +2205,11 @@ export function AppShell() {
         activeConnectionKind={activeConnectionKind}
         agent={{
           session: activeAgentSession,
+          sessionsByConnectionKey: agentSessionsByConnectionKey,
+          activeConnectionKey: activeAgentConnectionKey,
           approvalMode: mcpApprovalMode,
           error: agentOpenError ?? agentError,
-          loading: agentLoading || agentOpeningTabId === activeAgentTabId,
+          loading: agentLoading || Boolean(activeAgentConnectionKey && agentOpeningConnectionKeys[activeAgentConnectionKey]),
           pendingInvocations: mcpPendingInvocations,
           onApprovalModeChange: setApprovalMode,
           onClose: closeActiveAgentCodex,

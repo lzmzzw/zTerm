@@ -1,4 +1,5 @@
 // Author: Liz
+pub mod agent_codex_registry;
 pub mod ai_risk;
 mod ai_tool_catalog;
 pub mod ai_tool_service;
