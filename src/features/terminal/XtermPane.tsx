@@ -410,6 +410,7 @@ export function XtermPane({
     const terminal = new Terminal({
       allowProposedApi: true,
       cursorBlink: true,
+      minimumContrastRatio: 4.5,
       cursorInactiveStyle: "outline",
       cursorStyle: "block",
       fontFamily:

@@ -124,7 +124,11 @@ export function createTerminalSemanticHighlighter(
       if (!bufferLine) continue;
       const line = readTerminalLine(bufferLine, terminal.cols);
       const highlights = findTerminalSemanticHighlights(line.text);
-      const backgroundColor = lineIndex === cursorLine
+      // Readline marks bracketed paste with inverse video. Replacing only its background
+      // leaves the inverted dark foreground unreadable; preserve native styled cells.
+      const backgroundColor = line.cells.some((cell) => !cell.defaultBackground)
+        ? undefined
+        : lineIndex === cursorLine
         ? linePalette.cursorLineBackground
         : highlights.some((highlight) => highlight.role === "prompt")
           ? linePalette.commandLineBackground
@@ -198,6 +202,7 @@ interface HighlightedTerminalLine {
 interface TerminalLineCell {
   column: number;
   defaultForeground: boolean;
+  defaultBackground: boolean;
   textEnd: number;
   textStart: number;
   width: number;
@@ -215,17 +220,17 @@ function readTerminalLine(bufferLine: IBufferLine, columns: number) {
     text += characters;
     cells.push({
       column,
-      defaultForeground: cell.isFgDefault(),
+      defaultForeground: cell.isFgDefault() && cell.isBgDefault() && !cell.isInverse(),
+      defaultBackground: cell.isBgDefault() && !cell.isInverse(),
       textEnd: text.length,
       textStart,
       width: cell.getWidth(),
     });
   }
   const trimmedText = text.trimEnd();
-  const visibleCells = cells.filter((cell) => cell.textStart < trimmedText.length);
   return {
-    cells: visibleCells,
-    signature: `${trimmedText}\u0000${visibleCells.map((cell) => (cell.defaultForeground ? "1" : "0")).join("")}`,
+    cells,
+    signature: `${trimmedText}\u0000${cells.map((cell) => `${Number(cell.defaultForeground)}${Number(cell.defaultBackground)}`).join("")}`,
     text: trimmedText,
   };
 }

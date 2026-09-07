@@ -25,7 +25,7 @@ const terminalMock = vi.hoisted(() => {
         getLine: (line: number) =>
           | {
               getCell: (column: number) =>
-                | { getChars: () => string; getWidth: () => number; isFgDefault: () => boolean }
+                | { getChars: () => string; getWidth: () => number; isFgDefault: () => boolean; isBgDefault: () => boolean; isInverse: () => number }
                 | undefined;
               isWrapped: boolean;
               length: number;
@@ -96,6 +96,8 @@ const terminalMock = vi.hoisted(() => {
                   getChars: () => character,
                   getWidth: () => 1,
                   isFgDefault: () => true,
+                  isBgDefault: () => true,
+                  isInverse: () => 0,
                 };
               },
               isWrapped: false,
@@ -225,6 +227,7 @@ import { XtermPane } from "./XtermPane";
 
 interface TerminalOptions {
   allowProposedApi?: boolean;
+  minimumContrastRatio?: number;
   cursorInactiveStyle?: "outline";
   cursorStyle?: "block";
   fontFamily?: string;
@@ -314,6 +317,7 @@ describe("XtermPane", () => {
     const options = terminalMock.instances[0]?.options as TerminalOptions;
 
     expect(options.allowProposedApi).toBe(true);
+    expect(options.minimumContrastRatio).toBe(4.5);
     expect(options.fontSize).toBe(13);
     expect(options.fontWeight).toBe(350);
     expect(options.fontFamily).toContain("Cascadia Mono");
@@ -406,6 +410,45 @@ describe("XtermPane", () => {
       expect.objectContaining({ x: 12, width: 1, foregroundColor: "#AE81FF", layer: "bottom" }),
     );
 
+    view.unmount();
+  });
+
+  it.each(["inverse", "background"])("preserves pasted terminal %s styling and refreshes when styling resets", (style) => {
+    const view = render(<XtermPane data="" />);
+    const terminal = terminalMock.instances[0];
+    const text = "export HF_ENDPOINT=https://hf-mirror.com";
+    terminal.bufferLines.set(0, text);
+    terminal.buffer.active.cursorY = 0;
+    terminal.buffer.active.length = 1;
+    const originalGetLine = terminal.buffer.active.getLine;
+    let protectedStyle = true;
+    terminal.buffer.active.getLine = (index) => {
+      const line = originalGetLine(index);
+      if (!line) return line;
+      return {
+        ...line,
+        getCell: (column) => {
+          const cell = line.getCell(column);
+          return cell ? {
+            ...cell,
+            isInverse: () => protectedStyle && style === "inverse" ? 1 : 0,
+            isBgDefault: () => !(protectedStyle && style === "background"),
+          } : undefined;
+        },
+      };
+    };
+    terminal.registerDecoration.mockClear();
+    act(() => terminal.writeParsedListener?.());
+    expect(terminal.registerDecoration).not.toHaveBeenCalled();
+
+    protectedStyle = false;
+    act(() => terminal.writeParsedListener?.());
+    expect(terminal.registerDecoration).toHaveBeenCalledWith(
+      expect.objectContaining({ backgroundColor: "#30303a" }),
+    );
+    expect(terminal.registerDecoration).toHaveBeenCalledWith(
+      expect.objectContaining({ foregroundColor: "#66D9EF" }),
+    );
     view.unmount();
   });
 
