@@ -264,7 +264,15 @@ fn codex_launch_command(endpoint: &str, inherited_mcp_servers: &[String]) -> (St
 }
 
 async fn list_inherited_codex_mcp_servers(session_root: &Path) -> AppResult<Vec<String>> {
-    let output = run_codex_probe(session_root, &["mcp", "list"], "读取本机 Codex MCP 配置").await?;
+    // Discover from the same feature-isolated config used by the sidebar launch. Plugin-provided
+    // servers such as cua_repl disappear when plugins are disabled; overriding a now-absent server
+    // with only `enabled=false` would create an incomplete MCP table and fail transport parsing.
+    let output = run_codex_probe(
+        session_root,
+        &["--disable", "apps", "--disable", "plugins", "mcp", "list"],
+        "读取本机 Codex MCP 配置",
+    )
+    .await?;
     if !output.status.success() {
         return Err(AppError::ai(format!(
             "本机 Codex MCP 配置读取失败，退出状态: {}",
@@ -533,8 +541,9 @@ stitch https://example.test/mcp enabled Unknown\n";
     }
 
     #[test]
-    fn background_codex_command_keeps_discovery_arguments_noninteractive() {
-        let command = background_codex_command(&["mcp", "list"]);
+    fn background_codex_command_keeps_discovery_feature_isolated_and_noninteractive() {
+        let command =
+            background_codex_command(&["--disable", "apps", "--disable", "plugins", "mcp", "list"]);
         let command = command.as_std();
         #[cfg(windows)]
         assert_eq!(command.get_program(), OsStr::new("cmd.exe"));
@@ -545,9 +554,26 @@ stitch https://example.test/mcp enabled Unknown\n";
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         #[cfg(windows)]
-        assert_eq!(arguments, ["/D", "/S", "/C", "codex", "mcp", "list"]);
+        assert_eq!(
+            arguments,
+            [
+                "/D",
+                "/S",
+                "/C",
+                "codex",
+                "--disable",
+                "apps",
+                "--disable",
+                "plugins",
+                "mcp",
+                "list"
+            ]
+        );
         #[cfg(not(windows))]
-        assert_eq!(arguments, ["mcp", "list"]);
+        assert_eq!(
+            arguments,
+            ["--disable", "apps", "--disable", "plugins", "mcp", "list"]
+        );
     }
 
     #[test]

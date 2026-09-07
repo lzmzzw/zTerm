@@ -220,11 +220,23 @@ describe("split pane css direction mapping", () => {
     const sessionButtonStyles = ruleBodiesForSelector(".zt-session-node-main");
 
     expect(treeStyles).toContain("gap: 2px");
-    expect(treeStyles).toContain("padding: 4px 6px");
+    expect(treeStyles).toContain("padding: 0 6px 4px");
     expect(nodeListStyles).toContain("gap: 0");
     expect(groupRowStyles).toContain("min-height: 26px");
     expect(sessionNodeStyles).toContain("min-height: 28px");
     expect(sessionButtonStyles).toContain("min-height: 28px");
+  });
+
+  it("keeps the session search visible while scrolling and aligns its icon with group folders", () => {
+    const toolbarStyles = ruleBodiesForSelector(".zt-session-toolbar");
+    const searchStyles = ruleBodiesForSelector(".zt-session-search");
+
+    expect(toolbarStyles).toContain("position: sticky");
+    expect(toolbarStyles).toContain("top: 0");
+    expect(toolbarStyles).toContain("z-index: 1");
+    expect(toolbarStyles).toContain("padding-top: 4px");
+    expect(toolbarStyles).toContain("background: var(--zt-bg-sidebar)");
+    expect(searchStyles).toContain("padding: 0 8px 0 5px");
   });
 
   it("uses the compact session tree rhythm in connection pickers", () => {
