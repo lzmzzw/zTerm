@@ -34,6 +34,8 @@ type TerminalSemanticPalette = Record<TerminalSemanticRole, string>;
 interface TerminalLineHighlightPalette {
   commandLineBackground: string;
   cursorLineBackground: string;
+  selectionBackground: string;
+  selectionForeground: string;
 }
 
 export const DIGE_BLACK_SEMANTIC_PALETTE: TerminalSemanticPalette = {
@@ -85,11 +87,15 @@ export const DIGE_WHITE_SEMANTIC_PALETTE: TerminalSemanticPalette = {
 export const DIGE_BLACK_LINE_HIGHLIGHT_PALETTE: TerminalLineHighlightPalette = {
   commandLineBackground: "#27272b",
   cursorLineBackground: "#30303a",
+  selectionBackground: "#606060",
+  selectionForeground: "#F8F8F2",
 };
 
 export const DIGE_WHITE_LINE_HIGHLIGHT_PALETTE: TerminalLineHighlightPalette = {
   commandLineBackground: "#ebecf2",
   cursorLineBackground: "#dde1ec",
+  selectionBackground: "#c5c5c7",
+  selectionForeground: "#333333",
 };
 
 export interface TerminalSemanticHighlighter {
@@ -124,8 +130,8 @@ export function createTerminalSemanticHighlighter(
       if (!bufferLine) continue;
       const line = readTerminalLine(bufferLine, terminal.cols);
       const highlights = findTerminalSemanticHighlights(line.text);
-      // Readline marks bracketed paste with inverse video. Replacing only its background
-      // leaves the inverted dark foreground unreadable; preserve native styled cells.
+      // Readline uses default-color inverse video for pasted regions. Render both colors
+      // with the selection palette; retain explicitly colored shell output unchanged.
       const backgroundColor = line.cells.some((cell) => !cell.defaultBackground)
         ? undefined
         : lineIndex === cursorLine
@@ -138,7 +144,8 @@ export function createTerminalSemanticHighlighter(
       if (existing?.signature === signature) continue;
       if (existing) disposeHighlightedLine(highlightedLines, lineIndex, existing);
 
-      if (!backgroundColor && highlights.length === 0) continue;
+      const selectionCells = line.cells.filter((cell) => cell.selectionStyled);
+      if (!backgroundColor && highlights.length === 0 && selectionCells.length === 0) continue;
       const marker = terminal.registerMarker(lineIndex - cursorLine);
       if (!marker) continue;
       const decorations: IDecoration[] = [];
@@ -164,6 +171,17 @@ export function createTerminalSemanticHighlighter(
           x: range.x,
           width: range.width,
           foregroundColor: range.color,
+          layer: "bottom",
+        });
+        if (decoration) decorations.push(decoration);
+      }
+      for (const range of mergeDecorationRanges(selectionCells.map((cell) => ({
+        x: cell.column, width: cell.width, color: linePalette.selectionForeground,
+      })))) {
+        const decoration = terminal.registerDecoration({
+          marker, x: range.x, width: range.width,
+          foregroundColor: range.color,
+          backgroundColor: linePalette.selectionBackground,
           layer: "bottom",
         });
         if (decoration) decorations.push(decoration);
@@ -203,6 +221,7 @@ interface TerminalLineCell {
   column: number;
   defaultForeground: boolean;
   defaultBackground: boolean;
+  selectionStyled: boolean;
   textEnd: number;
   textStart: number;
   width: number;
@@ -222,6 +241,7 @@ function readTerminalLine(bufferLine: IBufferLine, columns: number) {
       column,
       defaultForeground: cell.isFgDefault() && cell.isBgDefault() && !cell.isInverse(),
       defaultBackground: cell.isBgDefault() && !cell.isInverse(),
+      selectionStyled: cell.isFgDefault() && cell.isBgDefault() && Boolean(cell.isInverse()),
       textEnd: text.length,
       textStart,
       width: cell.getWidth(),
@@ -230,7 +250,7 @@ function readTerminalLine(bufferLine: IBufferLine, columns: number) {
   const trimmedText = text.trimEnd();
   return {
     cells,
-    signature: `${trimmedText}\u0000${cells.map((cell) => `${Number(cell.defaultForeground)}${Number(cell.defaultBackground)}`).join("")}`,
+    signature: `${trimmedText}\u0000${cells.map((cell) => `${Number(cell.defaultForeground)}${Number(cell.defaultBackground)}${Number(cell.selectionStyled)}`).join("")}`,
     text: trimmedText,
   };
 }

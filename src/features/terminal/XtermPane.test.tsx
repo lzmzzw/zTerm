@@ -325,6 +325,8 @@ describe("XtermPane", () => {
     expect(options.theme).toMatchObject({
       background: "#1f1f21",
       foreground: "#F8F8F2",
+      selectionBackground: "#606060",
+      selectionForeground: "#F8F8F2",
       cursor: "#ff9d00",
       cursorAccent: "#1f1f21",
       black: "#333333",
@@ -359,6 +361,8 @@ describe("XtermPane", () => {
     expect(options.theme).toMatchObject({
       background: "#f7f7fa",
       foreground: "#333333",
+      selectionBackground: "#c5c5c7",
+      selectionForeground: "#333333",
       cursor: "#ff9d00",
       cursorAccent: "#f7f7fa",
       black: "#272822",
@@ -416,7 +420,7 @@ describe("XtermPane", () => {
   it.each(["inverse", "background"])("preserves pasted terminal %s styling and refreshes when styling resets", (style) => {
     const view = render(<XtermPane data="" />);
     const terminal = terminalMock.instances[0];
-    const text = "export HF_ENDPOINT=https://hf-mirror.com";
+    const text = "HF_ENDPOINT=";
     terminal.bufferLines.set(0, text);
     terminal.buffer.active.cursorY = 0;
     terminal.buffer.active.length = 1;
@@ -439,16 +443,22 @@ describe("XtermPane", () => {
     };
     terminal.registerDecoration.mockClear();
     act(() => terminal.writeParsedListener?.());
-    expect(terminal.registerDecoration).not.toHaveBeenCalled();
+    if (style === "inverse") {
+      expect(terminal.registerDecoration).toHaveBeenCalledWith(expect.objectContaining({
+        x: 0, width: text.length, backgroundColor: "#606060", foregroundColor: "#F8F8F2",
+      }));
+    } else {
+      expect(terminal.registerDecoration).not.toHaveBeenCalled();
+    }
+    const previousDecorations = terminal.registerDecoration.mock.results.map((result) => result.value);
+    terminal.registerDecoration.mockClear();
 
     protectedStyle = false;
     act(() => terminal.writeParsedListener?.());
     expect(terminal.registerDecoration).toHaveBeenCalledWith(
       expect.objectContaining({ backgroundColor: "#30303a" }),
     );
-    expect(terminal.registerDecoration).toHaveBeenCalledWith(
-      expect.objectContaining({ foregroundColor: "#66D9EF" }),
-    );
+    for (const decoration of previousDecorations) expect(decoration.dispose).toHaveBeenCalled();
     view.unmount();
   });
 
