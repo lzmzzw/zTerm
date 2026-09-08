@@ -1411,7 +1411,7 @@
   align-items: center;
   gap: 4px;
   height: 30px;
-  padding: 0 8px 0 5px;
+  padding: 0 6px 0 5px;
   border: 1px solid var(--zt-border);
   border-radius: var(--zt-radius-control);
   background: var(--zt-bg-input);
@@ -1448,6 +1448,22 @@
   height: 24px;
   border: 0;
   background: transparent;
+}
+
+.zt-session-search:focus-within {
+  border-color: var(--zt-accent);
+  box-shadow: 0 0 0 2px var(--zt-focus-soft);
+}
+
+.zt-session-search input:focus {
+  outline: none;
+}
+
+.zt-session-search input::-webkit-search-cancel-button,
+.zt-session-search input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
 }
 
 .zt-session-toolbar .zt-session-search-clear {
