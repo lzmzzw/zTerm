@@ -99,3 +99,5 @@ Windows 下可将 `ZTERM_RDP_SIGNING_CERT_THUMBPRINT` 设置为当前用户可�
 zTerm 使用 GNU General Public License version 3.0 only。详见 [LICENSE](LICENSE)。
 
 第三方说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+工程检查、打包与维护边界见 [工程说明](docs/engineering.md)。

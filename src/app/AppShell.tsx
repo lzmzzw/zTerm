@@ -48,9 +48,9 @@ import { ZtCenteredPageLayout, ZtConfirmDialog, ZtInlineError } from "../compone
 import {
   closeAgentCodex,
   openAgentCodex,
-  setActiveAgentTerminal,
   type AgentCodexSession,
 } from "../features/ai/agentCodexApi";
+import { useActiveAgentTerminalSync } from "../features/ai/useActiveAgentTerminalSync";
 import { setMcpAffectedDomainsHandler, useMcpStore } from "../features/ai/mcpStore";
 import { FileTransferDialog } from "../features/files/FileTransferDialog";
 import { useFileTransferStore } from "../features/files/fileTransferStore";
@@ -224,8 +224,6 @@ export function AppShell() {
   const agentSessionsRef = useRef<Record<string, AgentCodexSession>>({});
   const agentOpenPromisesRef = useRef<Map<string, Promise<AgentCodexSession | null>>>(new Map());
   const agentStoppingSessionIdsRef = useRef<Set<string>>(new Set());
-  const activeAgentTerminalSyncEpochRef = useRef(0);
-  const activeAgentTerminalSyncChainRef = useRef(Promise.resolve());
   const [agentOpeningConnectionKeys, setAgentOpeningConnectionKeys] = useState<Record<string, true>>({});
   const [agentOpenError, setAgentOpenError] = useState<string | null>(null);
   const previousAgentConnectionKeyRef = useRef<string | null>(null);
@@ -594,21 +592,7 @@ export function AppShell() {
     void bindApprovalModeToSession(mcpApprovalSessionId);
   }, [mcpApprovalSessionId, bindApprovalModeToSession]);
 
-  useEffect(() => {
-    const epoch = ++activeAgentTerminalSyncEpochRef.current;
-    const runtimeSessionId = activeAgentRuntimeSessionId;
-    activeAgentTerminalSyncChainRef.current = activeAgentTerminalSyncChainRef.current
-      .then(async () => {
-        try {
-          await setActiveAgentTerminal(runtimeSessionId);
-        } catch {
-          if (epoch === activeAgentTerminalSyncEpochRef.current) {
-            await setActiveAgentTerminal(null).catch(() => undefined);
-          }
-        }
-      })
-      .catch(() => undefined);
-  }, [activeAgentRuntimeSessionId]);
+  useActiveAgentTerminalSync(activeAgentRuntimeSessionId);
 
   useEffect(() => {
     if (previousAgentConnectionKeyRef.current === activeAgentConnectionKey) return;

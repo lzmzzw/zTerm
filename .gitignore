@@ -31,7 +31,9 @@ pnpm-debug.log*
 .codex-run/
 .superpowers/
 AGENTS.md
-docs/
+docs/*
+!docs/api-contract.md
+!docs/engineering.md
 runs/
 planning/
 output/

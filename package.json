@@ -20,6 +20,8 @@
     "tauri": "tauri",
     "tauri:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tauri-msvc.ps1 dev",
     "tauri:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tauri-msvc.ps1 build",
+    "tauri:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tauri-msvc.ps1 release",
+    "test:rust": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-cargo-msvc.ps1 test",
     "check": "npm run quality:check && npm run typecheck && npm run test:frontend && npm run build"
   },
   "dependencies": {

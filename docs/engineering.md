@@ -1,0 +1,35 @@
+# 工程验证与维护
+
+## 本地检查
+
+使用 Node.js 22.13 或以上版本。Windows Rust 使用 stable MSVC 与 Visual Studio C++ Build Tools；脚本通过 rustup 的 cargo.exe 调用，不依赖同名第三方包装器。
+
+```powershell
+npm ci
+npm run version:check
+npm run check
+npm run test:rust
+powershell -NoProfile -File scripts/run-cargo-msvc.ps1 fmt --check
+powershell -NoProfile -File scripts/run-cargo-msvc.ps1 clippy --lib -- -D warnings
+```
+
+Windows 测试 runner 为测试可执行文件写入 Common Controls v6 manifest，避免 GUI 依赖的 `TaskDialogIndirect` 入口缺失；正式应用沿用 Tauri 的 manifest。
+
+真实服务器和模型 smoke 保持显式启用，不作为默认测试副作用。前端 jsdom 测试不代表 WebView2、剪贴板、真实 SSH 或安装包已验收。
+
+## 本地打包与正式发布
+
+- `npm run tauri:build`：使用 `tauri.local.conf.json` 关闭 updater 签名产物生成，供本地验证。主配置的 updater 校验与权限不变。
+- `npm run tauri:release`：使用主配置，必须提供 `TAURI_SIGNING_PRIVATE_KEY`；不在配置、日志或文档记录密钥。
+- GitHub Release 依赖 Check 工作流通过，再执行现有签名构建与发布。普通 PR、main/master 提交也执行前端检查、Rust 测试及 Clippy。
+- 本地未签名安装包不能冒充正式自动更新产物；发布行为仍需明确授权。
+
+## 维护边界
+
+终端输出 cursor 是单调递增的 UTF-8 字节位置，缓存裁剪不重置。`truncated` 表示请求范围已有淘汰或返回长度受限，详见 [API 契约](api-contract.md)。输出调度按固定期限刷新，避免持续繁忙连接拖延其他连接。
+
+活动 Agent 目标同步由 `useActiveAgentTerminalSync` 顺序执行；运行时缓存与清理由 `terminalRuntimeResources` 统一管理。核心终端写入、调整大小、关闭及 Agent 活动目标 IPC 使用 `invokeTypedTauri` 限定参数，其他命令渐进迁移，禁止绕过统一 IPC 入口。
+
+交互失败在操作位置反馈。快捷键尊重输入控件、弹窗和输入法组合；历史批量发送遇首个失败停止；传输动作按任务去重并将错误归属到连接。
+
+终端数据先经 ZMODEM 处理、后台 replay 解析，再由可见 Xterm 按序写入并确认。前端使用保序 chunk 队列，避免 React 合并更新丢失片段；缓存清理不截断尚未消费的原始协议数据。`rz/sz` 故障事件不直接回显原始二进制，传输失败后清理协议状态和残留发送，详见 API 契约。

@@ -94,7 +94,7 @@ function inspectNodes(sourceFile, relativeFile) {
       !isTestFile(relativeFile) &&
       ts.isCallExpression(node) &&
       ts.isIdentifier(node.expression) &&
-      node.expression.text === "invokeTauri" &&
+      ["invokeTauri", "invokeTypedTauri"].includes(node.expression.text) &&
       node.arguments.length > 0 &&
       ts.isStringLiteral(node.arguments[0])
     ) {

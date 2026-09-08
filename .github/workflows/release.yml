@@ -10,7 +10,13 @@ permissions:
   contents: write
 
 jobs:
+  verify:
+    uses: ./.github/workflows/check.yml
+    permissions:
+      contents: read
+
   build-release:
+    needs: verify
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
 

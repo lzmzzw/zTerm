@@ -1,5 +1,5 @@
 // Author: Liz
-import { invokeTauri } from "../../lib/tauriClient";
+import { invokeTauri, invokeTypedTauri } from "../../lib/tauriClient";
 
 import type { McpApprovalMode, McpToolPendingInvocation } from "./mcpStore";
 import type { RuntimeSessionInfo } from "../terminal/terminalStore";
@@ -23,14 +23,14 @@ export async function openAgentCodex(request: {
 }
 
 export async function closeAgentCodex(session: AgentCodexSession) {
-  await invokeTauri("agent_codex_close", {
+  await invokeTypedTauri("agent_codex_close", {
     agentSessionId: session.agent_session_id,
     runtimeSessionId: session.runtime.runtime_session_id,
   });
 }
 
 export async function setActiveAgentTerminal(runtimeSessionId: string | null) {
-  await invokeTauri("agent_set_active_terminal", { runtimeSessionId });
+  await invokeTypedTauri("agent_set_active_terminal", { runtimeSessionId });
 }
 
 export type AgentPendingInvocation = McpToolPendingInvocation;
