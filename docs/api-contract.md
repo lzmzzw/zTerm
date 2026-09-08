@@ -230,3 +230,8 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 - MCP 工具参数摘要、pending 和审计记录必须脱敏；`request_approval`/`safe` 下未审批的写入不得执行；`full_access` 的免审批是用户对该连接的显式策略，仍不能绕过工具 allowlist、目标校验、secret 输入隔离和审计。
 - MCP Bearer token 不写入 SQLite 或审计摘要；Origin 非本机时拒绝。MCP 工具参数不得携带 SSH 密码、私钥正文、API Key 或其他明文 secret。
 - ZMODEM 下载文件名只取安全 basename 后写入用户选择目录；上传只读取用户通过本次文件选择器选择的路径。ZMODEM 原始字节不写入命令历史或 SQLite。
+
+
+### 终端输出游标与截断
+
+`terminal.read/write` 返回的 `cursor` 是当前 runtime 内单调递增的 UTF-8 字节偏移，不随 24,000 字符滚动缓冲裁剪重置。`output`、`cursor` 和 `truncated` 来自同一次读取快照；`truncated=true` 表示请求起点已被保留窗口淘汰或返回长度限制省略了部分输出。调用方应展示截断提示，并使用本次 cursor 继续读取；runtime 关闭后不可将旧 cursor 用于新 runtime。首读返回最近内容，历史已裁剪时也如实标记截断。

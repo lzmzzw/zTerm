@@ -32,6 +32,8 @@ use crate::{
     time::now_ms,
 };
 
+const PTY_KILL_REAP_TIMEOUT: Duration = Duration::from_secs(1);
+
 #[derive(Default)]
 pub struct TerminalManager {
     sessions: Mutex<HashMap<String, Arc<RuntimeSession>>>,
@@ -85,7 +87,16 @@ struct NativeSshRuntimeState {
 #[derive(Default)]
 struct OutputBuffer {
     data: String,
+    start_cursor: usize,
+    end_cursor: usize,
     updated_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputRead {
+    pub output: String,
+    pub cursor: usize,
+    pub truncated: bool,
 }
 
 struct OutputSuppression {
@@ -565,11 +576,18 @@ impl TerminalManager {
 
         match runtime.as_ref() {
             RuntimeSession::Pty(pty) => {
-                let _ = pty
+                let mut child = pty
                     .child
                     .lock()
-                    .map_err(|_| AppError::terminal("terminal child lock was poisoned"))?
-                    .kill();
+                    .map_err(|_| AppError::terminal("terminal child lock was poisoned"))?;
+                let _ = child.kill();
+                let deadline = Instant::now() + PTY_KILL_REAP_TIMEOUT;
+                while Instant::now() < deadline {
+                    match child.try_wait() {
+                        Ok(Some(_)) | Err(_) => break,
+                        Ok(None) => thread::sleep(Duration::from_millis(20)),
+                    }
+                }
             }
             RuntimeSession::NativeSsh(native) => {
                 native.control.close();
@@ -661,7 +679,9 @@ impl TerminalManager {
             .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?;
         let buffer = buffers.entry(runtime_session_id.to_string()).or_default();
         buffer.data.push_str(data);
+        buffer.end_cursor = buffer.end_cursor.saturating_add(data.len());
         buffer.data = tail_chars(&buffer.data, 24_000);
+        buffer.start_cursor = buffer.end_cursor.saturating_sub(buffer.data.len());
         buffer.updated_at_ms = now_ms();
         Ok(())
     }
@@ -722,8 +742,25 @@ impl TerminalManager {
             .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?;
         Ok(buffers
             .get(runtime_session_id)
-            .map(|buffer| buffer.data.len())
+            .map(|buffer| buffer.end_cursor)
             .unwrap_or_default())
+    }
+
+    pub fn output_read_after_cursor(
+        &self,
+        runtime_session_id: &str,
+        cursor: usize,
+        max_chars: usize,
+    ) -> AppResult<OutputRead> {
+        let buffers = self
+            .output_buffers
+            .lock()
+            .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?;
+        Ok(output_read_after_cursor(
+            buffers.get(runtime_session_id),
+            cursor,
+            max_chars,
+        ))
     }
 
     pub fn output_after_cursor(
@@ -732,15 +769,9 @@ impl TerminalManager {
         cursor: usize,
         max_chars: usize,
     ) -> AppResult<String> {
-        let buffers = self
-            .output_buffers
-            .lock()
-            .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?;
-        let current = buffers
-            .get(runtime_session_id)
-            .map(|buffer| buffer.data.clone())
-            .unwrap_or_default();
-        Ok(tail_chars(byte_suffix(&current, cursor), max_chars))
+        Ok(self
+            .output_read_after_cursor(runtime_session_id, cursor, max_chars)?
+            .output)
     }
 
     pub fn output_tail(
@@ -765,42 +796,52 @@ impl TerminalManager {
         quiet_ms: u64,
         max_chars: usize,
     ) -> AppResult<Option<String>> {
+        Ok(self
+            .wait_for_output_read_after(
+                runtime_session_id,
+                cursor,
+                timeout_ms,
+                quiet_ms,
+                max_chars,
+            )?
+            .map(|read| read.output))
+    }
+
+    pub fn wait_for_output_read_after(
+        &self,
+        runtime_session_id: &str,
+        cursor: usize,
+        timeout_ms: u64,
+        quiet_ms: u64,
+        max_chars: usize,
+    ) -> AppResult<Option<OutputRead>> {
         let deadline = Instant::now() + Duration::from_millis(timeout_ms);
         let quiet = Duration::from_millis(quiet_ms);
         let mut observed_at: Option<Instant> = None;
-        let mut last_len = cursor;
+        let mut last_cursor = cursor;
 
         loop {
-            let current = {
-                let buffers = self
-                    .output_buffers
-                    .lock()
-                    .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?;
-                buffers
-                    .get(runtime_session_id)
-                    .map(|buffer| buffer.data.clone())
-                    .unwrap_or_default()
-            };
-            let current_len = current.len();
-            if current_len > cursor {
-                if current_len != last_len {
-                    last_len = current_len;
+            let cursor_expired = self.output_cursor_is_expired(runtime_session_id, cursor)?;
+            let read = self.output_read_after_cursor(runtime_session_id, cursor, max_chars)?;
+            if cursor_expired {
+                return Ok(Some(read));
+            }
+            if read.cursor > cursor {
+                if read.cursor != last_cursor {
+                    last_cursor = read.cursor;
                     observed_at = Some(Instant::now());
                 } else if observed_at
                     .map(|instant| instant.elapsed() >= quiet)
                     .unwrap_or(false)
                 {
-                    return Ok(Some(tail_chars(byte_suffix(&current, cursor), max_chars)));
+                    return Ok(Some(read));
                 } else if observed_at.is_none() {
                     observed_at = Some(Instant::now());
                 }
             }
 
             if Instant::now() >= deadline {
-                if current_len > cursor {
-                    return Ok(Some(tail_chars(byte_suffix(&current, cursor), max_chars)));
-                }
-                return Ok(None);
+                return Ok((read.cursor > cursor).then_some(read));
             }
             thread::sleep(Duration::from_millis(50));
         }
@@ -813,6 +854,16 @@ impl TerminalManager {
             .entry(runtime_session_id.to_string())
             .or_default();
         Ok(())
+    }
+
+    fn output_cursor_is_expired(&self, runtime_session_id: &str, cursor: usize) -> AppResult<bool> {
+        let buffers = self
+            .output_buffers
+            .lock()
+            .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?;
+        Ok(buffers
+            .get(runtime_session_id)
+            .is_some_and(|buffer| cursor < buffer.start_cursor))
     }
 
     fn runtime_session(&self, runtime_session_id: &str) -> AppResult<Arc<RuntimeSession>> {
@@ -893,6 +944,34 @@ fn byte_suffix(value: &str, cursor: usize) -> &str {
     }
 }
 
+fn output_read_after_cursor(
+    buffer: Option<&OutputBuffer>,
+    cursor: usize,
+    max_chars: usize,
+) -> OutputRead {
+    let Some(buffer) = buffer else {
+        return OutputRead {
+            output: String::new(),
+            cursor: 0,
+            truncated: false,
+        };
+    };
+    let expired_cursor = cursor < buffer.start_cursor;
+    let suffix = if expired_cursor {
+        buffer.data.as_str()
+    } else if cursor >= buffer.end_cursor {
+        ""
+    } else {
+        byte_suffix(&buffer.data, cursor.saturating_sub(buffer.start_cursor))
+    };
+    let truncated = expired_cursor || suffix.chars().count() > max_chars;
+    OutputRead {
+        output: tail_chars(suffix, max_chars),
+        cursor: buffer.end_cursor,
+        truncated,
+    }
+}
+
 fn tail_chars(value: &str, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();
@@ -952,6 +1031,8 @@ fn powershell_history_integration_script() -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use crate::models::{session::LocalOptions, terminal_profile::TerminalProfile};
 
     use super::{
@@ -998,6 +1079,107 @@ mod tests {
         assert_eq!(tail_chars("abc", 0), "");
         assert_eq!(tail_chars("abc", 5), "abc");
         assert_eq!(tail_chars("a中🚀b", 3), "中🚀b");
+    }
+
+    #[test]
+    fn output_cursor_stays_monotonic_after_the_retained_buffer_is_trimmed() {
+        let manager = TerminalManager::default();
+        let runtime_id = "output-cursor-trim";
+        let first = "a".repeat(24_000);
+
+        manager
+            .record_output(runtime_id, &first)
+            .expect("first output should be retained");
+        let cursor_before_trim = manager
+            .output_cursor(runtime_id)
+            .expect("first cursor should be available");
+        manager
+            .record_output(runtime_id, "新")
+            .expect("new output should be retained");
+
+        let read = manager
+            .output_read_after_cursor(runtime_id, cursor_before_trim, 24_000)
+            .expect("incremental output should be readable");
+        assert_eq!(read.output, "新");
+        assert_eq!(read.cursor, cursor_before_trim + "新".len());
+        assert!(!read.truncated);
+    }
+
+    #[test]
+    fn expired_output_cursor_reports_truncation_and_keeps_unicode_boundaries() {
+        let manager = TerminalManager::default();
+        let runtime_id = "expired-output-cursor";
+        manager
+            .record_output(runtime_id, &"中".repeat(24_001))
+            .expect("output should be retained");
+
+        let read = manager
+            .output_read_after_cursor(runtime_id, 0, 3)
+            .expect("expired cursor should be readable");
+        assert!(read.truncated);
+        assert_eq!(read.output, "中中中");
+        assert_eq!(read.cursor, "中".len() * 24_001);
+    }
+
+    #[test]
+    fn waiting_with_an_expired_cursor_returns_the_available_tail_without_waiting_for_new_data() {
+        let manager = TerminalManager::default();
+        let runtime_id = "expired-output-wait";
+        manager
+            .record_output(runtime_id, &"x".repeat(24_001))
+            .expect("output should be retained");
+
+        let started = Instant::now();
+        let read = manager
+            .wait_for_output_read_after(runtime_id, 0, 1_000, 500, 10)
+            .expect("expired cursor should be readable")
+            .expect("expired cursor should return available output");
+
+        assert!(read.truncated);
+        assert_eq!(read.output, "xxxxxxxxxx");
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "an expired cursor should not wait for the quiet timeout"
+        );
+    }
+
+    #[test]
+    fn output_read_marks_a_result_truncated_when_max_chars_omits_available_output() {
+        let manager = TerminalManager::default();
+        let runtime_id = "max-chars-output-read";
+        manager
+            .record_output(runtime_id, "abcdef")
+            .expect("output should be retained");
+
+        let read = manager
+            .output_read_after_cursor(runtime_id, 0, 3)
+            .expect("output should be readable");
+
+        assert_eq!(read.output, "def");
+        assert_eq!(read.cursor, 6);
+        assert!(read.truncated);
+    }
+
+    #[test]
+    fn waiting_for_output_keeps_the_quiet_window_when_only_max_chars_truncates() {
+        let manager = TerminalManager::default();
+        let runtime_id = "max-chars-output-wait";
+        manager
+            .record_output(runtime_id, "abcdef")
+            .expect("output should be retained");
+
+        let started = Instant::now();
+        let read = manager
+            .wait_for_output_read_after(runtime_id, 0, 1_000, 100, 3)
+            .expect("output should be readable")
+            .expect("available output should be returned after quiet period");
+
+        assert!(read.truncated);
+        assert_eq!(read.output, "def");
+        assert!(
+            started.elapsed() >= Duration::from_millis(80),
+            "max_chars truncation must not bypass the quiet window"
+        );
     }
 
     #[test]

@@ -70,6 +70,12 @@ use crate::{
     validation::required_text,
 };
 
+pub struct AiTerminalOutputSnapshot {
+    pub output: Option<String>,
+    pub cursor: Option<usize>,
+    pub truncated: bool,
+}
+
 pub trait AiToolCommandWriter: Send + Sync {
     fn write_terminal(&self, runtime_session_id: &str, data: &str) -> AppResult<()>;
 
@@ -95,6 +101,23 @@ pub trait AiToolCommandWriter: Send + Sync {
         _cursor: usize,
     ) -> AppResult<Option<String>> {
         Ok(None)
+    }
+
+    fn read_terminal_output_snapshot(
+        &self,
+        runtime_session_id: &str,
+        cursor: Option<usize>,
+        max_chars: usize,
+    ) -> AppResult<AiTerminalOutputSnapshot> {
+        let output = match cursor {
+            Some(cursor) => self.read_terminal_output_after(runtime_session_id, cursor)?,
+            None => self.read_terminal_output_tail(runtime_session_id, max_chars)?,
+        };
+        Ok(AiTerminalOutputSnapshot {
+            output,
+            cursor: self.terminal_output_cursor(runtime_session_id)?,
+            truncated: false,
+        })
     }
 
     fn read_terminal_output_tail(
@@ -264,6 +287,40 @@ impl AiToolCommandWriter for RuntimeAiToolWriter {
     ) -> AppResult<Option<String>> {
         self.manager
             .wait_for_output_after(runtime_session_id, cursor, 2500, 250, 4000)
+    }
+
+    fn read_terminal_output_snapshot(
+        &self,
+        runtime_session_id: &str,
+        cursor: Option<usize>,
+        max_chars: usize,
+    ) -> AppResult<AiTerminalOutputSnapshot> {
+        let read = match cursor {
+            Some(cursor) => self.manager.wait_for_output_read_after(
+                runtime_session_id,
+                cursor,
+                2500,
+                250,
+                max_chars,
+            )?,
+            None => Some(self.manager.output_read_after_cursor(
+                runtime_session_id,
+                0,
+                max_chars,
+            )?),
+        };
+        match read {
+            Some(read) => Ok(AiTerminalOutputSnapshot {
+                output: Some(read.output),
+                cursor: Some(read.cursor),
+                truncated: read.truncated,
+            }),
+            None => Ok(AiTerminalOutputSnapshot {
+                output: None,
+                cursor,
+                truncated: false,
+            }),
+        }
     }
 
     fn read_terminal_output_tail(
@@ -700,14 +757,11 @@ impl AiToolService {
                 let data = string_arg_preserve(arguments, "data")?;
                 let cursor = self.writer.terminal_output_cursor(&runtime_session_id)?;
                 self.writer.write_terminal(&runtime_session_id, &data)?;
-                let output = cursor
-                    .map(|cursor| {
-                        self.writer
-                            .read_terminal_output_after(&runtime_session_id, cursor)
-                    })
-                    .transpose()?
-                    .flatten();
-                let next_cursor = self.writer.terminal_output_cursor(&runtime_session_id)?;
+                let snapshot =
+                    self.writer
+                        .read_terminal_output_snapshot(&runtime_session_id, cursor, 4000)?;
+                let output = snapshot.output;
+                let next_cursor = snapshot.cursor;
                 let readable_output = terminal_output_for_response(&data, output.as_deref(), 4000);
                 Ok(structured_execution_result(
                     terminal_write_result_summary(&data, output.as_deref()),
@@ -715,7 +769,8 @@ impl AiToolService {
                     json!({
                         "runtime_session_id": runtime_session_id,
                         "output": readable_output,
-                        "cursor": next_cursor
+                        "cursor": next_cursor,
+                        "truncated": snapshot.truncated
                     }),
                 ))
             }
@@ -763,15 +818,13 @@ impl AiToolService {
                     .unwrap_or(4000)
                     .clamp(1, 4000);
                 let cursor = optional_usize_arg(arguments, "cursor");
-                let output = match cursor {
-                    Some(cursor) => self
-                        .writer
-                        .read_terminal_output_after(&runtime_session_id, cursor)?,
-                    None => self
-                        .writer
-                        .read_terminal_output_tail(&runtime_session_id, max_chars)?,
-                };
-                let next_cursor = self.writer.terminal_output_cursor(&runtime_session_id)?;
+                let snapshot = self.writer.read_terminal_output_snapshot(
+                    &runtime_session_id,
+                    cursor,
+                    max_chars,
+                )?;
+                let output = snapshot.output;
+                let next_cursor = snapshot.cursor;
                 let output = output
                     .map(|value| terminal_read_output_for_response(&value, max_chars))
                     .unwrap_or_default();
@@ -786,7 +839,8 @@ impl AiToolService {
                     json!({
                         "runtime_session_id": runtime_session_id,
                         "output": output,
-                        "cursor": next_cursor
+                        "cursor": next_cursor,
+                        "truncated": snapshot.truncated
                     }),
                 ))
             }
@@ -2840,4 +2894,31 @@ fn spawn_ai_file_transfer(
         let _ = queue.unregister_control(&task.id);
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod output_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_writer_preserves_cursor_and_reports_lost_history() {
+        let manager = Arc::new(TerminalManager::default());
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let writer =
+            RuntimeAiToolWriter::new(manager.clone(), Arc::new(CommandHistoryService::new(store)));
+        manager.record_output("test", &"x".repeat(30_000)).unwrap();
+        let snapshot = writer
+            .read_terminal_output_snapshot("test", Some(0), 4000)
+            .unwrap();
+        assert_eq!(snapshot.cursor, Some(30_000));
+        assert!(snapshot.truncated);
+        assert_eq!(snapshot.output.unwrap().len(), 4000);
+        manager.record_output("test", "新输出").unwrap();
+        let next = writer
+            .read_terminal_output_snapshot("test", snapshot.cursor, 4000)
+            .unwrap();
+        assert_eq!(next.cursor, Some(30_009));
+        assert_eq!(next.output.as_deref(), Some("新输出"));
+        assert!(!next.truncated);
+    }
 }

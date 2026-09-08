@@ -1,5 +1,10 @@
 // Author: Liz
-use std::{collections::HashMap, sync::mpsc, thread, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
 
 use base64::{engine::general_purpose, Engine as _};
 use tauri::{AppHandle, Emitter};
@@ -66,16 +71,33 @@ enum TerminalOutputMessage {
 }
 
 fn run_dispatcher(app: AppHandle, receiver: mpsc::Receiver<TerminalOutputMessage>) {
+    run_dispatcher_events(receiver, |event| {
+        let _ = app.emit("terminal:data", event);
+    });
+}
+
+fn run_dispatcher_events(
+    receiver: mpsc::Receiver<TerminalOutputMessage>,
+    mut emit: impl FnMut(TerminalDataEvent),
+) {
     let mut batcher = TerminalOutputBatcher::default();
+    let mut flush_at = Instant::now() + FLUSH_INTERVAL;
     loop {
-        match receiver.recv_timeout(FLUSH_INTERVAL) {
+        let now = Instant::now();
+        if now >= flush_at {
+            for event in batcher.flush_all() {
+                emit(event);
+            }
+            flush_at = now + FLUSH_INTERVAL;
+        }
+        match receiver.recv_timeout(flush_at.saturating_duration_since(Instant::now())) {
             Ok(TerminalOutputMessage::Output {
                 runtime_session_id,
                 data,
                 raw_bytes,
             }) => {
                 for event in batcher.push(runtime_session_id, data, raw_bytes) {
-                    let _ = app.emit("terminal:data", event);
+                    emit(event);
                 }
             }
             Ok(TerminalOutputMessage::FlushRuntime {
@@ -83,18 +105,18 @@ fn run_dispatcher(app: AppHandle, receiver: mpsc::Receiver<TerminalOutputMessage
                 ack,
             }) => {
                 if let Some(event) = batcher.flush_runtime(&runtime_session_id) {
-                    let _ = app.emit("terminal:data", event);
+                    emit(event);
                 }
                 let _ = ack.send(());
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 for event in batcher.flush_all() {
-                    let _ = app.emit("terminal:data", event);
+                    emit(event);
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 for event in batcher.flush_all() {
-                    let _ = app.emit("terminal:data", event);
+                    emit(event);
                 }
                 return;
             }
@@ -156,6 +178,52 @@ impl TerminalOutputBatcher {
 #[cfg(test)]
 mod tests {
     use super::TerminalOutputBatcher;
+
+    #[test]
+    fn continuous_other_runtime_does_not_delay_small_output() {
+        use std::{sync::mpsc, thread, time::Duration};
+        let (sender, receiver) = mpsc::channel();
+        let (emitted, events) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            super::run_dispatcher_events(receiver, |event| {
+                emitted.send(event).unwrap();
+            })
+        });
+        sender
+            .send(super::TerminalOutputMessage::Output {
+                runtime_session_id: "quiet".into(),
+                data: "prompt".into(),
+                raw_bytes: b"prompt".to_vec(),
+            })
+            .unwrap();
+        let producer = thread::spawn(move || {
+            for _ in 0..100 {
+                sender
+                    .send(super::TerminalOutputMessage::Output {
+                        runtime_session_id: "busy".into(),
+                        data: "x".into(),
+                        raw_bytes: vec![b'x'],
+                    })
+                    .unwrap();
+                thread::sleep(Duration::from_millis(2));
+            }
+        });
+        let event = events.recv_timeout(Duration::from_millis(100));
+        let mut saw_quiet = event
+            .as_ref()
+            .is_ok_and(|event| event.runtime_session_id == "quiet");
+        if !saw_quiet {
+            saw_quiet = events
+                .recv_timeout(Duration::from_millis(30))
+                .is_ok_and(|event| event.runtime_session_id == "quiet");
+        }
+        producer.join().unwrap();
+        worker.join().unwrap();
+        assert!(
+            saw_quiet,
+            "quiet runtime must flush on a deadline under continuous traffic"
+        );
+    }
 
     #[test]
     fn terminal_output_batcher_combines_chunks_with_raw_base64_continuity() {

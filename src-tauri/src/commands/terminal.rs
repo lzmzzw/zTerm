@@ -3,7 +3,10 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
     time::{Duration, UNIX_EPOCH},
 };
@@ -37,6 +40,8 @@ const ZMODEM_MAX_SINGLE_FILE_BYTES: u64 = 32 * 1024 * 1024;
 const ZMODEM_MAX_UPLOAD_BATCH_BYTES: u64 = 64 * 1024 * 1024;
 const ZMODEM_MAX_SINGLE_FILE_LABEL: &str = "32 MiB";
 const ZMODEM_MAX_UPLOAD_BATCH_LABEL: &str = "64 MiB";
+const TERMINAL_READER_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
+const TERMINAL_EXIT_CODE_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AuthPromptSecret {
@@ -565,14 +570,16 @@ pub(crate) fn spawn_terminal_reader(
     auth_secrets: Vec<AuthPromptSecret>,
     exit_cleanup: Option<Arc<dyn Fn() + Send + Sync>>,
 ) {
-    spawn_terminal_exit_watcher(
+    let finalizer = Arc::new(TerminalExitFinalizer::new(
         app.clone(),
         Arc::clone(&manager),
+        output_dispatcher.clone(),
         Arc::clone(&history),
-        completion.clone(),
+        completion,
         runtime_session_id.clone(),
-        exit_cleanup.clone(),
-    );
+        exit_cleanup,
+    ));
+    spawn_terminal_exit_watcher(Arc::clone(&finalizer));
 
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
@@ -581,6 +588,12 @@ pub(crate) fn spawn_terminal_reader(
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(read) => {
+                    let Ok(_reader_gate) = finalizer.reader_gate.lock() else {
+                        break;
+                    };
+                    if finalizer.is_finalized() {
+                        break;
+                    }
                     let raw_data = String::from_utf8_lossy(&buffer[..read]).to_string();
                     if let Some(secret) = select_auth_secret_for_prompt(
                         &raw_data,
@@ -614,67 +627,38 @@ pub(crate) fn spawn_terminal_reader(
                     }
                 }
                 Err(error) => {
-                    output_dispatcher.flush_runtime(&runtime_session_id);
-                    if manager.close(&runtime_session_id).is_ok() {
-                        run_terminal_exit_cleanup(exit_cleanup.as_ref());
-                        history.unregister_runtime(&runtime_session_id);
-                        completion.unregister_runtime(&runtime_session_id);
-                        let _ = app.emit(
-                            "terminal:exit",
-                            TerminalExitEvent {
-                                runtime_session_id: runtime_session_id.clone(),
-                                exit_code: None,
-                                message: Some(error.to_string()),
-                            },
-                        );
-                    }
+                    finalizer.reader_finished.store(true, Ordering::Release);
+                    finalizer.finalize(finalizer.wait_for_exit_code(), Some(error.to_string()));
                     return;
                 }
             }
         }
 
-        output_dispatcher.flush_runtime(&runtime_session_id);
-        if manager.close(&runtime_session_id).is_ok() {
-            run_terminal_exit_cleanup(exit_cleanup.as_ref());
-            history.unregister_runtime(&runtime_session_id);
-            completion.unregister_runtime(&runtime_session_id);
-            let _ = app.emit(
-                "terminal:exit",
-                TerminalExitEvent {
-                    runtime_session_id,
-                    exit_code: None,
-                    message: None,
-                },
-            );
-        }
+        finalizer.reader_finished.store(true, Ordering::Release);
+        finalizer.finalize(finalizer.wait_for_exit_code(), None);
     });
 }
 
-fn spawn_terminal_exit_watcher(
-    app: AppHandle,
-    manager: Arc<TerminalManager>,
-    history: Arc<CommandHistoryService>,
-    completion: CommandCompletionService,
-    runtime_session_id: String,
-    exit_cleanup: Option<Arc<dyn Fn() + Send + Sync>>,
-) {
+fn spawn_terminal_exit_watcher(finalizer: Arc<TerminalExitFinalizer>) {
     thread::spawn(move || loop {
         thread::sleep(Duration::from_millis(200));
-        match manager.try_wait_exit_code(&runtime_session_id) {
+        if finalizer.is_finalized() {
+            return;
+        }
+        match finalizer
+            .manager
+            .try_wait_exit_code(&finalizer.runtime_session_id)
+        {
             Ok(Some(exit_code)) => {
-                if manager.close(&runtime_session_id).is_ok() {
-                    run_terminal_exit_cleanup(exit_cleanup.as_ref());
-                    history.unregister_runtime(&runtime_session_id);
-                    completion.unregister_runtime(&runtime_session_id);
-                    let _ = app.emit(
-                        "terminal:exit",
-                        TerminalExitEvent {
-                            runtime_session_id,
-                            exit_code: Some(exit_code),
-                            message: None,
-                        },
-                    );
+                finalizer.record_exit_code(exit_code);
+                let deadline = std::time::Instant::now() + TERMINAL_READER_DRAIN_TIMEOUT;
+                while !finalizer.reader_finished.load(Ordering::Acquire)
+                    && !finalizer.is_finalized()
+                    && std::time::Instant::now() < deadline
+                {
+                    thread::sleep(Duration::from_millis(20));
                 }
+                finalizer.finalize(finalizer.observed_exit_code(), None);
                 return;
             }
             Ok(None) => {}
@@ -683,9 +667,102 @@ fn spawn_terminal_exit_watcher(
     });
 }
 
-fn run_terminal_exit_cleanup(exit_cleanup: Option<&Arc<dyn Fn() + Send + Sync>>) {
-    if let Some(cleanup) = exit_cleanup {
-        cleanup();
+struct TerminalExitFinalizer {
+    app: AppHandle,
+    manager: Arc<TerminalManager>,
+    output_dispatcher: TerminalOutputDispatcher,
+    history: Arc<CommandHistoryService>,
+    completion: CommandCompletionService,
+    runtime_session_id: String,
+    exit_cleanup: Option<Arc<dyn Fn() + Send + Sync>>,
+    finalized: AtomicBool,
+    reader_finished: AtomicBool,
+    reader_gate: Mutex<()>,
+    observed_exit_code: Mutex<Option<i32>>,
+}
+
+impl TerminalExitFinalizer {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        app: AppHandle,
+        manager: Arc<TerminalManager>,
+        output_dispatcher: TerminalOutputDispatcher,
+        history: Arc<CommandHistoryService>,
+        completion: CommandCompletionService,
+        runtime_session_id: String,
+        exit_cleanup: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Self {
+        Self {
+            app,
+            manager,
+            output_dispatcher,
+            history,
+            completion,
+            runtime_session_id,
+            exit_cleanup,
+            finalized: AtomicBool::new(false),
+            reader_finished: AtomicBool::new(false),
+            reader_gate: Mutex::new(()),
+            observed_exit_code: Mutex::new(None),
+        }
+    }
+
+    fn is_finalized(&self) -> bool {
+        self.finalized.load(Ordering::Acquire)
+    }
+
+    fn record_exit_code(&self, exit_code: i32) {
+        if let Ok(mut observed_exit_code) = self.observed_exit_code.lock() {
+            *observed_exit_code = Some(exit_code);
+        }
+    }
+
+    fn observed_exit_code(&self) -> Option<i32> {
+        self.observed_exit_code.lock().ok().and_then(|value| *value)
+    }
+
+    fn wait_for_exit_code(&self) -> Option<i32> {
+        if let Some(exit_code) = self.observed_exit_code() {
+            return Some(exit_code);
+        }
+        let deadline = std::time::Instant::now() + TERMINAL_EXIT_CODE_TIMEOUT;
+        while std::time::Instant::now() < deadline {
+            match self.manager.try_wait_exit_code(&self.runtime_session_id) {
+                Ok(Some(exit_code)) => {
+                    self.record_exit_code(exit_code);
+                    return Some(exit_code);
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(20)),
+                Err(_) => return self.observed_exit_code(),
+            }
+        }
+        self.observed_exit_code()
+    }
+
+    fn finalize(&self, exit_code: Option<i32>, message: Option<String>) {
+        if self.finalized.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let _reader_gate = self.reader_gate.lock().ok();
+        let exit_code = exit_code.or_else(|| self.observed_exit_code());
+        self.output_dispatcher
+            .flush_runtime(&self.runtime_session_id);
+        if self.manager.close(&self.runtime_session_id).is_err() {
+            return;
+        }
+        if let Some(cleanup) = &self.exit_cleanup {
+            cleanup();
+        }
+        self.history.unregister_runtime(&self.runtime_session_id);
+        self.completion.unregister_runtime(&self.runtime_session_id);
+        let _ = self.app.emit(
+            "terminal:exit",
+            TerminalExitEvent {
+                runtime_session_id: self.runtime_session_id.clone(),
+                exit_code,
+                message,
+            },
+        );
     }
 }
 
