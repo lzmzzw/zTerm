@@ -15,6 +15,12 @@ powershell -NoProfile -File scripts/run-cargo-msvc.ps1 clippy --lib -- -D warnin
 
 Windows 测试 runner 为测试可执行文件写入 Common Controls v6 manifest，避免 GUI 依赖的 `TaskDialogIndirect` 入口缺失；正式应用沿用 Tauri 的 manifest。
 
+### WebView2 152 指针兼容
+
+Windows 上检测到 WebView2 主版本为 152 时，zTerm 主窗口禁用 `HideCursorWhileTyping`，避免键入 rz/sz 后打开原生文件框时指针持续不可见。兼容参数只作用于本应用，保留已有浏览器参数，不写系统鼠标设置、不固定或降级 WebView2。文件选择仍沿用 dialog 插件。
+
+依据为同一 zTerm 程序与原数据目录的实际对照：152 默认参数异常，152 仅禁用此功能后正常；另以 151 验证可见。上游记录见 [WebView2 #5687](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5687)，功能定义见 [Chromium ui_base_features.cc](https://chromium.googlesource.com/chromium/src/+/main/ui/base/ui_base_features.cc)。此 feature flag 属于临时兼容措施；非 152 版本不自动启用。上游修复后复测键入、文件框确认/取消及终端恢复，再移除兼容代码；升级 Wry 时同步核对默认浏览器参数。
+
 真实服务器和模型 smoke 保持显式启用，不作为默认测试副作用。前端 jsdom 测试不代表 WebView2、剪贴板、真实 SSH 或安装包已验收。
 
 ## 本地打包与正式发布

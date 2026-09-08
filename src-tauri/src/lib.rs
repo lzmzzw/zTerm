@@ -7,6 +7,8 @@ const EXTERNAL_SSH_LAUNCH_EVENT: &str = "zterm:external-ssh-launch";
 static EARLY_SECOND_INSTANCE_ARGS: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
 
 pub mod commands;
+#[cfg(windows)]
+mod desktop_compatibility;
 pub mod error;
 pub mod models;
 pub mod paths;
@@ -19,6 +21,15 @@ pub(crate) mod validation;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    let context = {
+        let mut context = tauri::generate_context!();
+        desktop_compatibility::apply_webview2_compatibility(&mut context);
+        context
+    };
+    #[cfg(not(windows))]
+    let context = tauri::generate_context!();
+
     let mut builder = tauri::Builder::default();
     if should_enable_single_instance(cfg!(debug_assertions)) {
         builder = builder.plugin(tauri_plugin_single_instance::init(handle_second_instance));
@@ -120,7 +131,7 @@ pub fn run() {
             commands::terminal_output_flow::terminal_output_flow_ack,
             commands::terminal_output_flow::terminal_output_flow_close,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("failed to build zTerm");
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
@@ -301,7 +312,7 @@ mod tests {
     #[test]
     fn crate_metadata_matches_project() {
         assert_eq!(env!("CARGO_PKG_NAME"), "zterm");
-        assert_eq!(env!("CARGO_PKG_VERSION"), "0.3.6");
+        assert_eq!(env!("CARGO_PKG_VERSION"), "0.3.7");
     }
 
     #[test]
