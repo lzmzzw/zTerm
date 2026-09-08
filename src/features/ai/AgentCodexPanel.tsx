@@ -9,6 +9,8 @@ import { useTerminalStore } from "../terminal/terminalStore";
 import type { McpApprovalMode, McpToolSecretInputs } from "./mcpStore";
 import type { AgentCodexSession, AgentPendingInvocation } from "./agentCodexApi";
 
+const EMPTY_LIVE_OUTPUT_CHUNKS: never[] = [];
+
 export function AgentCodexPanel({
   session,
   active = true,
@@ -36,9 +38,10 @@ export function AgentCodexPanel({
 }) {
   const [secretInputs, setSecretInputs] = useState<Record<string, string>>({});
   const runtimeSessionId = session?.runtime.runtime_session_id ?? null;
-  const outputChunk = useTerminalStore((state) =>
-    runtimeSessionId ? (state.outputChunks[runtimeSessionId] ?? null) : null,
+  const outputChunks = useTerminalStore((state) =>
+    runtimeSessionId ? (state.outputChunks[runtimeSessionId] ?? EMPTY_LIVE_OUTPUT_CHUNKS) : EMPTY_LIVE_OUTPUT_CHUNKS,
   );
+  const discardLiveOutputChunks = useTerminalStore((state) => state.discardLiveOutputChunks);
   const writeTerminal = useTerminalStore((state) => state.writeTerminal);
   const resizeTerminal = useTerminalStore((state) => state.resizeTerminal);
   const initialOutput = useMemo(
@@ -139,8 +142,8 @@ export function AgentCodexPanel({
             replayKind="raw"
             replayKey={runtimeSessionId}
             streamId={runtimeSessionId}
-            liveData={outputChunk?.data ?? null}
-            liveSerial={outputChunk?.serial ?? null}
+            liveChunks={outputChunks}
+            onLiveChunksQueued={(throughSerial) => discardLiveOutputChunks(runtimeSessionId, throughSerial)}
             onInput={(data) => void writeTerminal(runtimeSessionId, data)}
             onCloseTerminal={() => void onClose()}
             onResize={(cols, rows) => void resizeTerminal(runtimeSessionId, cols, rows)}

@@ -23,7 +23,10 @@ export class TerminalReplayBuffer {
   private readonly terminal: Terminal;
   private hasParsedOutput = false;
   private idleWaiters: Array<() => void> = [];
-  private pendingWrites = 0;
+  private pendingWrites: Array<{ data: string; resolve: () => void }> = [];
+  private writeInProgress = false;
+  private inFlight: { data: string; resolve: () => void } | null = null;
+  private generation = 0;
   private requiresScreenSnapshot = false;
   private screenSnapshot = "";
 
@@ -36,17 +39,12 @@ export class TerminalReplayBuffer {
     });
   }
 
-  append(data: string) {
-    if (!data) return;
+  append(data: string): Promise<void> {
+    if (!data) return Promise.resolve();
     this.requiresScreenSnapshot ||= SCREEN_STATE_CONTROL_PATTERN.test(data);
-    this.pendingWrites += 1;
-    this.terminal.write(data, () => {
-      this.pendingWrites -= 1;
-      this.hasParsedOutput = true;
-      if (this.requiresScreenSnapshot) {
-        this.screenSnapshot = serializeTerminalScreen(this.terminal);
-      }
-      this.resolveIdleWaiters();
+    return new Promise<void>((resolve) => {
+      this.pendingWrites.push({ data, resolve });
+      this.drainWrites();
     });
   }
 
@@ -61,7 +59,7 @@ export class TerminalReplayBuffer {
   }
 
   replay(rawOutput: string): TerminalReplayResult {
-    if (this.requiresScreenSnapshot && this.pendingWrites > 0) {
+    if (this.requiresScreenSnapshot && (this.writeInProgress || this.pendingWrites.length > 0)) {
       return new Promise<void>((resolve) => this.idleWaiters.push(resolve)).then(() => this.replay(rawOutput));
     }
     if (this.requiresScreenSnapshot && this.hasParsedOutput && this.screenSnapshot) {
@@ -71,16 +69,43 @@ export class TerminalReplayBuffer {
   }
 
   dispose() {
-    this.pendingWrites = 0;
+    this.generation += 1;
+    this.pendingWrites.splice(0).forEach((pending) => pending.resolve());
+    this.inFlight?.resolve();
+    this.inFlight = null;
+    this.writeInProgress = false;
     this.resolveIdleWaiters();
     this.terminal.dispose();
   }
 
   private resolveIdleWaiters() {
-    if (this.pendingWrites > 0) return;
+    if (this.writeInProgress || this.pendingWrites.length > 0) return;
     const waiters = this.idleWaiters;
     this.idleWaiters = [];
     waiters.forEach((resolve) => resolve());
+  }
+
+  private drainWrites() {
+    if (this.writeInProgress) return;
+    const pending = this.pendingWrites.shift();
+    if (!pending) {
+      this.resolveIdleWaiters();
+      return;
+    }
+    this.writeInProgress = true;
+    this.inFlight = pending;
+    const generation = this.generation;
+    this.terminal.write(pending.data, () => {
+      if (generation !== this.generation || this.inFlight !== pending) return;
+      this.inFlight = null;
+      this.writeInProgress = false;
+      this.hasParsedOutput = true;
+      if (this.requiresScreenSnapshot) {
+        this.screenSnapshot = serializeTerminalScreen(this.terminal);
+      }
+      pending.resolve();
+      this.drainWrites();
+    });
   }
 }
 

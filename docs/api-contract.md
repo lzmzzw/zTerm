@@ -95,6 +95,9 @@ SSH 终端保活：未配置 `keepalive_interval_ms` 时使用 30 秒，正值�
 | `terminal_open_ssh_container` | `{ savedSessionId, paneId, containerId, containerName? }` | `RuntimeSessionInfo` | 基于已保存 SSH 会话和所选容器新建 PTY runtime，执行 `docker` / `podman` / `nerdctl exec -it` 进入容器；标题为 `容器: <name>` 或短 ID；外部一次性 SSH 进入容器不走该命令 |
 | `terminal_open_default_local` | `{ paneId, workingDirectory? }` | `RuntimeSessionInfo` | 使用默认终端 profile 打开本机 PTY，可用 `workingDirectory` 覆盖工作目录 |
 | `terminal_write` | `{ runtimeSessionId, data }` | `{ accepted: true }` | 写入终端；普通 shell 同步捕获输入历史，启用 shell integration 的 PowerShell 由后续 PTY 事件捕获最终命令行 |
+| `terminal_output_flow_open` | `{ runtimeSessionId }` | `{ generation }` | 为存在的 runtime 建立输出消费者；活动消费者重复打开保持同一代次 |
+| `terminal_output_flow_ack` | `{ runtimeSessionId, generation, sequence }` | `{ accepted }` | 完成解析及可见渲染后累计确认；拒绝旧代次与超出已发送范围的序列 |
+| `terminal_output_flow_close` | `{ runtimeSessionId, generation? }` | 无 | 释放输出等待；旧代次关闭不影响当前消费者 |
 | `terminal_write_bytes` | `{ runtimeSessionId, data }` | `{ accepted: true }` | 写入原始终端字节；仅用于 ZMODEM，不捕获命令历史 |
 | `terminal_zmodem_read_files` | `{ paths }` | `{ name, size, mtime_ms, data }[]` | 读取用户选择的本机文件，供远端 `rz` 上传；单文件超过 32 MiB 或本次批次总量超过 64 MiB 时拒绝，并引导改用 SFTP |
 | `terminal_zmodem_save_file` | `{ directory, fileName, data }` | `{ path, bytes }` | 净化远端文件名并保存 `sz` 下载内容；单文件超过 32 MiB 或本次批次总量超过 64 MiB 时拒绝/跳过并引导改用 SFTP；同名文件自动追加序号 |
@@ -216,7 +219,7 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 
 | Event | Payload | 触发时机 |
 | --- | --- | --- |
-| `terminal:data` | `{ runtime_session_id, data, data_base64 }` | 后端收到终端输出；`data_base64` 保留 PTY 原始字节供 ZMODEM |
+| `terminal:data` | `{ runtime_session_id, generation, sequence, data, data_base64 }` | 后端收到终端输出；`data_base64` 保留 PTY 原始字节供 ZMODEM |
 | `terminal:exit` | `{ runtime_session_id, exit_code, message }` | runtime 退出或连接中断 |
 | `terminal:history-changed` | `{ runtime_session_id }` | shell integration 提交并持久化最终命令行后，通知前端刷新对应历史作用域 |
 | `transfer:progress` | `TransferTask` | 传输状态或进度更新 |
@@ -235,3 +238,11 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 ### 终端输出游标与截断
 
 `terminal.read/write` 返回的 `cursor` 是当前 runtime 内单调递增的 UTF-8 字节偏移，不随 24,000 字符滚动缓冲裁剪重置。`output`、`cursor` 和 `truncated` 来自同一次读取快照；`truncated=true` 表示请求起点已被保留窗口淘汰或返回长度限制省略了部分输出。调用方应展示截断提示，并使用本次 cursor 继续读取；runtime 关闭后不可将旧 cursor 用于新 runtime。首读返回最近内容，历史已裁剪时也如实标记截断。
+
+### 输出消费与背压
+
+每个有界输出事件携带 `generation` 与递增 `sequence`。前端须在原始 ZMODEM 字节被处理、后台 replay 解析完成且可见终端写入完成后按序 ACK；纯协议数据无需可见渲染。隐藏终端由后台解析消费，关闭终端会唤醒等待中的 reader。每 runtime 未确认原始输出窗口为 256 KiB；Native SSH 队列最多 128 个 8 KiB 分块，保留字节顺序。无窗口的 headless dispatcher 不等待前端。桌面 runtime 首次输出最多等待消费者握手 10 秒，超时以明确原因终止，避免无限积压。
+
+### rz/sz 失败恢复
+
+ZMODEM 协议发送串行执行。解析、原始字节解码或发送失败时中止活动会话、丢弃尚未发送的旧传输数据并清理控制器；故障事件的原始协议文本不回显到 Xterm，避免二进制/ANSI 污染终端。取消或关闭 runtime 后，过期文件选择与传输回调不能继续发送。后续正常事件重新建立 sentry。该机制不注入 shell 命令；真实远端 lrzsz 的取消响应仍需桌面互操作验证。

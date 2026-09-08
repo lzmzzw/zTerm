@@ -1,7 +1,7 @@
 // Author: Liz
 import { create } from "zustand";
 
-import { invokeTauri, listenTauri, type UnlistenFn } from "../../lib/tauriClient";
+import { invokeTauri, invokeTypedTauri, listenTauri, type UnlistenFn } from "../../lib/tauriClient";
 import { useWorkspaceStore } from "../workspace/workspaceStore";
 import { listSshContainers as listSshContainersApi, type SshContainerInfo } from "./sshContainerApi";
 import { parseSimpleCdTarget, trackTerminalInput } from "./terminalCwd";
@@ -9,7 +9,17 @@ import {
   consumeTerminalZmodemData,
   releaseTerminalZmodemRuntime,
 } from "./zmodemTransfer";
+import {
+  acknowledgeTerminalOutputFlow,
+  openTerminalOutputFlow,
+  waitForTerminalOutputRender,
+  type TerminalOutputFlowEvent,
+} from "./terminalOutputFlow";
 import { TerminalReplayBuffer, type TerminalReplayResult } from "./terminalReplay";
+import {
+  TerminalRuntimeResourceRegistry,
+  type TerminalRuntimeResources,
+} from "./terminalRuntimeResources";
 
 type RuntimeSessionKind = "local" | "ssh" | "ssh_container" | "rdp_placeholder";
 type HistoryScopeKind = "saved_session" | "local_profile";
@@ -43,9 +53,12 @@ interface TerminalDataEvent {
   runtime_session_id: string;
   data: string;
   data_base64?: string;
+  generation?: number | null;
+  sequence?: number | null;
 }
 
 interface TerminalOutputChunk {
+  flow?: TerminalOutputFlowEvent;
   serial: number;
   data: string;
 }
@@ -74,7 +87,7 @@ const DOCKER_COMPOSE_PATH_LOOKUP =
 
 interface TerminalState {
   runtimes: Record<string, RuntimeSessionInfo>;
-  outputChunks: Record<string, TerminalOutputChunk>;
+  outputChunks: Record<string, TerminalOutputChunk[]>;
   inputSerialByRuntime: Record<string, number>;
   bindTerminalEvents: () => Promise<UnlistenFn>;
   openTerminal: (savedSessionId: string, paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>;
@@ -107,34 +120,21 @@ interface TerminalState {
   resizeTerminal: (runtimeSessionId: string, cols: number, rows: number) => Promise<void>;
   closeTerminal: (runtimeSessionId: string, options?: { releaseExternalSession?: boolean }) => Promise<void>;
   forgetTerminalRuntime: (runtimeSessionId: string) => void;
-  appendOutput: (runtimeSessionId: string, data: string) => void;
+  appendOutput: (runtimeSessionId: string, data: string) => Promise<void>;
   getOutputTail: (runtimeSessionId: string) => string;
   getReplayOutput: (runtimeSessionId: string) => TerminalReplayResult;
   getVisualOutputTail: (runtimeSessionId: string) => string;
   getVisualOutputTailSnapshot: () => Record<string, string>;
   beginLiveOutput: (runtimeSessionId: string) => () => void;
+  discardLiveOutputChunks: (runtimeSessionId: string, throughSerial: number) => void;
 }
 
 let terminalEventBinding: Promise<UnlistenFn> | null = null;
 let terminalEventSubscribers = 0;
-const outputTailByRuntime: Record<string, string> = {};
-const visualOutputTailByRuntime: Record<string, string> = {};
-const liveOutputSubscriptions: Record<string, number> = {};
-const replayBuffersByRuntime: Record<string, TerminalReplayBuffer> = {};
-const completionRequestGenerationByRuntime: Record<string, number> = {};
-const commandInputByRuntime: Record<string, string> = {};
-const knownCwdByRuntime: Record<string, string> = {};
-const cwdResolutionByRuntime: Record<string, Promise<void>> = {};
+const terminalRuntimeResources = new TerminalRuntimeResourceRegistry();
 
 export function resetTerminalOutputCachesForTest() {
-  clearRecord(outputTailByRuntime);
-  clearRecord(visualOutputTailByRuntime);
-  clearRecord(liveOutputSubscriptions);
-  clearReplayBuffers();
-  clearRecord(completionRequestGenerationByRuntime);
-  clearRecord(commandInputByRuntime);
-  clearRecord(knownCwdByRuntime);
-  clearRecord(cwdResolutionByRuntime);
+  terminalRuntimeResources.clear();
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -146,16 +146,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (!terminalEventBinding) {
       terminalEventBinding = Promise.all([
         listenTauri<TerminalDataEvent>("terminal:data", (event) => {
-          consumeTerminalZmodemData(
-            {
-              runtimeSessionId: event.payload.runtime_session_id,
-              data: event.payload.data,
-              dataBase64: event.payload.data_base64,
-            },
-            {
-              appendOutput: get().appendOutput,
-            },
-          );
+          consumeTerminalDataEvent(event.payload, get);
         }),
         listenTauri<TerminalExitEvent>("terminal:exit", (event) => {
           const message = terminalExitMessage(event.payload);
@@ -176,10 +167,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             },
           }));
         }),
-      ]).then(([unlistenData, unlistenExit, unlistenHistory]) => () => {
-        unlistenData();
-        unlistenExit();
-        unlistenHistory();
+      ]).then(async ([unlistenData, unlistenExit, unlistenHistory]) => {
+        await Promise.all(
+          Object.keys(get().runtimes).map((runtimeSessionId) => ensureTerminalOutputFlow(runtimeSessionId)),
+        );
+        return () => {
+          unlistenData();
+          unlistenExit();
+          unlistenHistory();
+        };
       });
     }
     let released = false;
@@ -206,6 +202,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set((state) => ({
       runtimes: { ...state.runtimes, [runtime.runtime_session_id]: runtime },
     }));
+    void ensureTerminalOutputFlow(runtime.runtime_session_id);
     return runtime;
   },
   async openSshContainerTerminal(savedSessionId, paneId, containerId, containerName) {
@@ -218,6 +215,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set((state) => ({
       runtimes: { ...state.runtimes, [runtime.runtime_session_id]: runtime },
     }));
+    void ensureTerminalOutputFlow(runtime.runtime_session_id);
     return runtime;
   },
   async enterSshContainerRuntime(savedSessionId, runtimeSessionId, containerId) {
@@ -244,15 +242,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set((state) => ({
       runtimes: { ...state.runtimes, [runtime.runtime_session_id]: runtime },
     }));
+    void ensureTerminalOutputFlow(runtime.runtime_session_id);
     return runtime;
   },
   async writeTerminal(runtimeSessionId, data) {
-    await invokeTauri("terminal_write", { runtimeSessionId, data });
-    const tracked = trackTerminalInput(commandInputByRuntime[runtimeSessionId] ?? "", data);
-    commandInputByRuntime[runtimeSessionId] = tracked.buffer;
+    const resources = terminalRuntimeResources.acquire(runtimeSessionId);
+    await invokeTypedTauri("terminal_write", { runtimeSessionId, data });
+    if (!terminalRuntimeResources.isCurrent(runtimeSessionId, resources)) return;
+    const tracked = trackTerminalInput(resources.commandInput, data);
+    resources.commandInput = tracked.buffer;
     for (const command of tracked.submittedCommands) {
       const parsedCd = parseSimpleCdTarget(command);
-      if (parsedCd) queueRuntimeCwdResolution(runtimeSessionId, parsedCd.target, get);
+      if (parsedCd) queueRuntimeCwdResolution(runtimeSessionId, parsedCd.target, resources, get);
     }
     if (isSubmittedTerminalInput(data)) {
       set((state) => ({
@@ -264,18 +265,20 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
   async suggestCompletion(runtimeSessionId, input, cursor, cwd) {
-    const generation = (completionRequestGenerationByRuntime[runtimeSessionId] ?? 0) + 1;
-    completionRequestGenerationByRuntime[runtimeSessionId] = generation;
-    if (cwd && !knownCwdByRuntime[runtimeSessionId] && !cwdResolutionByRuntime[runtimeSessionId]) {
-      knownCwdByRuntime[runtimeSessionId] = cwd;
+    const resources = terminalRuntimeResources.acquire(runtimeSessionId);
+    const generation = resources.completionRequestGeneration + 1;
+    resources.completionRequestGeneration = generation;
+    if (cwd && !resources.knownCwd && !resources.cwdResolution) {
+      resources.knownCwd = cwd;
     }
-    await cwdResolutionByRuntime[runtimeSessionId]?.catch(() => undefined);
+    await resources.cwdResolution?.catch(() => undefined);
+    if (!terminalRuntimeResources.isCurrent(runtimeSessionId, resources)) return [];
     const request = {
       runtime_session_id: runtimeSessionId,
       input,
       cursor,
       limit: 8,
-      cwd: knownCwdByRuntime[runtimeSessionId] ?? cwd,
+      cwd: resources.knownCwd ?? cwd,
     };
     let candidates = await invokeTauri<CommandCompletionCandidate[]>("command_completion_suggest", { request });
     const pathCompletion = isPathCompletionInput(input);
@@ -291,7 +294,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
     for (const retryDelay of [300, 500]) {
       await delay(retryDelay);
-      if (completionRequestGenerationByRuntime[runtimeSessionId] !== generation) {
+      if (
+        !terminalRuntimeResources.isCurrent(runtimeSessionId, resources) ||
+        resources.completionRequestGeneration !== generation
+      ) {
         return candidates;
       }
       candidates = await invokeTauri<CommandCompletionCandidate[]>("command_completion_suggest", { request });
@@ -301,6 +307,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return candidates;
   },
   async resolveCwd(runtimeSessionId, currentCwd, target) {
+    const resources = terminalRuntimeResources.acquire(runtimeSessionId);
     const resolved = await invokeTauri<string | null>("command_completion_resolve_cwd", {
       request: {
         runtime_session_id: runtimeSessionId,
@@ -308,17 +315,19 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         target,
       },
     });
-    if (resolved && get().runtimes[runtimeSessionId]) knownCwdByRuntime[runtimeSessionId] = resolved;
+    if (resolved && terminalRuntimeResources.isCurrent(runtimeSessionId, resources) && get().runtimes[runtimeSessionId]) {
+      resources.knownCwd = resolved;
+    }
     return resolved;
   },
   recordCwd(runtimeSessionId, cwd) {
     if (get().runtimes[runtimeSessionId] && cwd.trim()) {
-      knownCwdByRuntime[runtimeSessionId] = cwd;
+      terminalRuntimeResources.acquire(runtimeSessionId).knownCwd = cwd;
     }
   },
   async resizeTerminal(runtimeSessionId, cols, rows) {
-    await invokeTauri("terminal_resize", { runtimeSessionId, cols, rows });
-    replayBuffersByRuntime[runtimeSessionId]?.resize(cols, rows);
+    await invokeTypedTauri("terminal_resize", { runtimeSessionId, cols, rows });
+    terminalRuntimeResources.get(runtimeSessionId)?.replayBuffer?.resize(cols, rows);
     set((state) => {
       const runtime = state.runtimes[runtimeSessionId];
       if (!runtime) return state;
@@ -331,7 +340,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     });
   },
   async closeTerminal(runtimeSessionId, options) {
-    await invokeTauri("terminal_close", {
+    await invokeTypedTauri("terminal_close", {
       runtimeSessionId,
       releaseExternalSession: options?.releaseExternalSession,
     });
@@ -343,74 +352,174 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const { [runtimeSessionId]: _runtime, ...runtimes } = state.runtimes;
       const { [runtimeSessionId]: _outputChunk, ...outputChunks } = state.outputChunks;
       const { [runtimeSessionId]: _inputSerial, ...inputSerialByRuntime } = state.inputSerialByRuntime;
-      delete outputTailByRuntime[runtimeSessionId];
-      delete visualOutputTailByRuntime[runtimeSessionId];
-      delete liveOutputSubscriptions[runtimeSessionId];
-      delete completionRequestGenerationByRuntime[runtimeSessionId];
-      delete commandInputByRuntime[runtimeSessionId];
-      delete knownCwdByRuntime[runtimeSessionId];
-      delete cwdResolutionByRuntime[runtimeSessionId];
-      disposeReplayBuffer(runtimeSessionId);
+      terminalRuntimeResources.release(runtimeSessionId);
       return { runtimes, outputChunks, inputSerialByRuntime };
     });
   },
   appendOutput(runtimeSessionId, data) {
-    outputTailByRuntime[runtimeSessionId] = trimTerminalOutput(`${outputTailByRuntime[runtimeSessionId] ?? ""}${data}`);
-    visualOutputTailByRuntime[runtimeSessionId] = trimTerminalVisualTail(
-      `${visualOutputTailByRuntime[runtimeSessionId] ?? ""}${data}`,
-    );
-    replayBufferFor(runtimeSessionId, get().runtimes[runtimeSessionId])?.append(data);
-    if ((liveOutputSubscriptions[runtimeSessionId] ?? 0) <= 0) {
-      return;
+    const resources = terminalRuntimeResources.acquire(runtimeSessionId);
+    resources.outputTail = trimTerminalOutput(`${resources.outputTail}${data}`);
+    resources.visualOutputTail = trimTerminalVisualTail(`${resources.visualOutputTail}${data}`);
+    const replayed = replayBufferFor(resources, get().runtimes[runtimeSessionId]).append(data);
+    resources.replayAppendCapture?.push(replayed);
+    if (resources.liveOutputSubscriptions <= 0) {
+      return replayed;
     }
     set((state) => ({
       outputChunks: {
         ...state.outputChunks,
-        [runtimeSessionId]: {
-          serial: (state.outputChunks[runtimeSessionId]?.serial ?? 0) + 1,
-          data,
-        },
+        [runtimeSessionId]: [
+          ...(state.outputChunks[runtimeSessionId] ?? []),
+          { serial: (resources.outputSerial += 1), data },
+        ],
       },
     }));
+    resources.liveOutputChunkCapture?.push(resources.outputSerial);
+    return replayed;
   },
   getOutputTail(runtimeSessionId) {
-    return outputTailByRuntime[runtimeSessionId] ?? "";
+    return terminalRuntimeResources.get(runtimeSessionId)?.outputTail ?? "";
   },
   getReplayOutput(runtimeSessionId) {
-    const rawOutput = outputTailByRuntime[runtimeSessionId] ?? "";
-    return replayBuffersByRuntime[runtimeSessionId]?.replay(rawOutput) ?? { data: rawOutput, kind: "raw" };
+    const resources = terminalRuntimeResources.get(runtimeSessionId);
+    const rawOutput = resources?.outputTail ?? "";
+    return resources?.replayBuffer?.replay(rawOutput) ?? { data: rawOutput, kind: "raw" };
   },
   getVisualOutputTail(runtimeSessionId) {
-    return visualOutputTailByRuntime[runtimeSessionId] ?? "";
+    return terminalRuntimeResources.get(runtimeSessionId)?.visualOutputTail ?? "";
   },
   getVisualOutputTailSnapshot() {
-    return { ...visualOutputTailByRuntime };
+    return terminalRuntimeResources.visualOutputTailSnapshot();
   },
   beginLiveOutput(runtimeSessionId) {
-    liveOutputSubscriptions[runtimeSessionId] = (liveOutputSubscriptions[runtimeSessionId] ?? 0) + 1;
+    const resources = terminalRuntimeResources.acquire(runtimeSessionId);
+    resources.liveOutputSubscriptions += 1;
     return () => {
-      const nextCount = Math.max(0, (liveOutputSubscriptions[runtimeSessionId] ?? 0) - 1);
+      if (!terminalRuntimeResources.isCurrent(runtimeSessionId, resources)) return;
+      const nextCount = Math.max(0, resources.liveOutputSubscriptions - 1);
       if (nextCount === 0) {
-        delete liveOutputSubscriptions[runtimeSessionId];
+        resources.liveOutputSubscriptions = 0;
         set((state) => {
           const { [runtimeSessionId]: _outputChunk, ...outputChunks } = state.outputChunks;
           return { outputChunks };
         });
       } else {
-        liveOutputSubscriptions[runtimeSessionId] = nextCount;
+        resources.liveOutputSubscriptions = nextCount;
       }
     };
   },
+  discardLiveOutputChunks(runtimeSessionId, throughSerial) {
+    set((state) => {
+      const chunks = state.outputChunks[runtimeSessionId];
+      if (!chunks?.length) return state;
+      const remaining = chunks.filter((chunk) => chunk.serial > throughSerial);
+      if (remaining.length === chunks.length) return state;
+      if (remaining.length === 0) {
+        const { [runtimeSessionId]: _outputChunks, ...outputChunks } = state.outputChunks;
+        return { outputChunks };
+      }
+      return {
+        outputChunks: {
+          ...state.outputChunks,
+          [runtimeSessionId]: remaining,
+        },
+      };
+    });
+  },
 }));
+
+function consumeTerminalDataEvent(event: TerminalDataEvent, getState: () => TerminalState) {
+  const runtimeSessionId = event.runtime_session_id;
+  const resources = terminalRuntimeResources.acquire(runtimeSessionId);
+  const replayAppends: Promise<void>[] = [];
+  const liveOutputSerials: number[] = [];
+  resources.replayAppendCapture = replayAppends;
+  resources.liveOutputChunkCapture = liveOutputSerials;
+  try {
+    consumeTerminalZmodemData(
+      {
+        runtimeSessionId,
+        data: event.data,
+        dataBase64: event.data_base64,
+      },
+      { appendOutput: getState().appendOutput },
+    );
+  } finally {
+    resources.replayAppendCapture = null;
+    resources.liveOutputChunkCapture = null;
+  }
+  const waitsForRenderedOutput = replayAppends.length > 0;
+
+  const flowEvent: TerminalOutputFlowEvent = {
+    runtimeSessionId,
+    generation: event.generation,
+    sequence: event.sequence,
+  };
+  const lastLiveOutputSerial = liveOutputSerials.at(-1);
+  if (lastLiveOutputSerial !== undefined) useTerminalStore.setState((state) => {
+    const chunks = state.outputChunks[runtimeSessionId];
+    const chunkIndex = chunks?.findIndex((chunk) => chunk.serial === lastLiveOutputSerial) ?? -1;
+    if (chunkIndex < 0 || !chunks) return state;
+    return {
+      outputChunks: {
+        ...state.outputChunks,
+        [runtimeSessionId]: chunks.map((chunk, index) =>
+          index === chunkIndex ? { ...chunk, flow: flowEvent } : chunk,
+        ),
+      },
+    };
+  });
+  const acknowledge = resources.outputAckChain
+    .catch(() => undefined)
+    .then(async () => {
+      await Promise.all(replayAppends);
+      if (!terminalRuntimeResources.isCurrent(runtimeSessionId, resources)) return;
+      await ensureTerminalOutputFlow(runtimeSessionId, resources);
+      if (!terminalRuntimeResources.isCurrent(runtimeSessionId, resources)) return;
+      if (waitsForRenderedOutput) {
+        await waitForTerminalOutputRender(flowEvent);
+      }
+      if (!terminalRuntimeResources.isCurrent(runtimeSessionId, resources)) return;
+      await acknowledgeTerminalOutputFlow(flowEvent);
+    })
+    .catch(() => undefined);
+  resources.outputAckChain = acknowledge;
+}
+
+function ensureTerminalOutputFlow(
+  runtimeSessionId: string,
+  resources = terminalRuntimeResources.acquire(runtimeSessionId),
+) {
+  if (resources.outputFlowRelease) return Promise.resolve();
+  if (resources.outputFlowOpen) return resources.outputFlowOpen;
+  const opening = openTerminalOutputFlow(runtimeSessionId)
+    .then((release) => {
+      if (!terminalRuntimeResources.isCurrent(runtimeSessionId, resources)) {
+        release();
+        return;
+      }
+      resources.outputFlowRelease = release;
+    })
+    .catch(() => undefined);
+  resources.outputFlowOpen = opening;
+  void opening.then(() => {
+    if (terminalRuntimeResources.isCurrent(runtimeSessionId, resources) && resources.outputFlowOpen === opening) {
+      resources.outputFlowOpen = null;
+    }
+  });
+  return opening;
+}
 
 function queueRuntimeCwdResolution(
   runtimeSessionId: string,
   target: string | null,
+  resources: TerminalRuntimeResources,
   getState: () => TerminalState,
 ) {
-  const previous = cwdResolutionByRuntime[runtimeSessionId] ?? Promise.resolve();
+  const previous = resources.cwdResolution ?? Promise.resolve();
   const current = previous.catch(() => undefined).then(async () => {
-    const currentCwd = knownCwdByRuntime[runtimeSessionId]
+    if (!terminalRuntimeResources.isCurrent(runtimeSessionId, resources)) return;
+    const currentCwd = resources.knownCwd
       ?? getState().runtimes[runtimeSessionId]?.initial_cwd
       ?? null;
     const resolved = await invokeTauri<string | null>("command_completion_resolve_cwd", {
@@ -420,14 +529,14 @@ function queueRuntimeCwdResolution(
         target,
       },
     });
-    if (resolved && getState().runtimes[runtimeSessionId]) {
-      knownCwdByRuntime[runtimeSessionId] = resolved;
+    if (resolved && terminalRuntimeResources.isCurrent(runtimeSessionId, resources) && getState().runtimes[runtimeSessionId]) {
+      resources.knownCwd = resolved;
     }
   });
-  cwdResolutionByRuntime[runtimeSessionId] = current;
+  resources.cwdResolution = current;
   const release = () => {
-    if (cwdResolutionByRuntime[runtimeSessionId] === current) {
-      delete cwdResolutionByRuntime[runtimeSessionId];
+    if (terminalRuntimeResources.isCurrent(runtimeSessionId, resources) && resources.cwdResolution === current) {
+      resources.cwdResolution = null;
     }
   };
   void current.then(release, release);
@@ -475,28 +584,11 @@ function trimTerminalVisualTail(output: string) {
   return output.slice(-MAX_TERMINAL_VISUAL_TAIL_CHARS);
 }
 
-function clearRecord(record: Record<string, unknown>) {
-  for (const key of Object.keys(record)) {
-    delete record[key];
-  }
-}
-
-function replayBufferFor(runtimeSessionId: string, runtime: RuntimeSessionInfo | undefined) {
-  if (replayBuffersByRuntime[runtimeSessionId]) {
-    return replayBuffersByRuntime[runtimeSessionId];
+function replayBufferFor(resources: TerminalRuntimeResources, runtime: RuntimeSessionInfo | undefined) {
+  if (resources.replayBuffer) {
+    return resources.replayBuffer;
   }
   const buffer = new TerminalReplayBuffer(runtime?.cols, runtime?.rows);
-  replayBuffersByRuntime[runtimeSessionId] = buffer;
+  resources.replayBuffer = buffer;
   return buffer;
-}
-
-function disposeReplayBuffer(runtimeSessionId: string) {
-  replayBuffersByRuntime[runtimeSessionId]?.dispose();
-  delete replayBuffersByRuntime[runtimeSessionId];
-}
-
-function clearReplayBuffers() {
-  for (const runtimeSessionId of Object.keys(replayBuffersByRuntime)) {
-    disposeReplayBuffer(runtimeSessionId);
-  }
 }

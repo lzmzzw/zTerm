@@ -53,8 +53,15 @@ pub struct TerminalClosed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalDataEvent {
     pub runtime_session_id: String,
+    pub generation: u64,
+    pub sequence: u64,
     pub data: String,
     pub data_base64: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalOutputFlowLease {
+    pub generation: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

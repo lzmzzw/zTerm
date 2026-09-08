@@ -44,6 +44,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 import {
   clearTerminalZmodemControllersForTest,
   consumeTerminalZmodemData,
+  releaseTerminalZmodemRuntime,
   ZMODEM_SINGLE_FILE_LIMIT_BYTES,
 } from "./zmodemTransfer";
 
@@ -75,6 +76,19 @@ describe("zmodemTransfer", () => {
     expect(appendOutput).toHaveBeenCalledWith("runtime-1", "plain");
   });
 
+  it("discards undecodable raw terminal bytes and reports a controlled error", () => {
+    const appendOutput = vi.fn();
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "plain fallback", dataBase64: "not-base64" },
+      { appendOutput },
+    );
+
+    expect(sentryMock.Sentry).not.toHaveBeenCalled();
+    expect(appendOutput).not.toHaveBeenCalledWith("runtime-1", "plain fallback");
+    expect(appendOutput).toHaveBeenCalledWith("runtime-1", expect.stringContaining("ZMODEM 原始输出解码失败"));
+  });
+
   it("feeds coalesced lrzsz startup headers to the sentry one complete header at a time", () => {
     const appendOutput = vi.fn();
     const bytes = binaryBytes("rz waiting to receive.**\x18B0100000023be50\r\n**\x18B0100000023be50\r\n");
@@ -93,25 +107,29 @@ describe("zmodemTransfer", () => {
     );
   });
 
-  it("logs parser failures without changing non-Error message text", () => {
+  it("does not replay raw control bytes when protocol parsing fails", () => {
     const appendOutput = vi.fn();
     sentryMock.consumeImpl = () => {
       throw "raw parser failure";
     };
 
     consumeTerminalZmodemData(
-      { runtimeSessionId: "runtime-1", data: "fallback text", dataBase64: base64([42, 42, 66]) },
+      {
+        runtimeSessionId: "runtime-1",
+        data: "\x1b[?2004h\x00ZMODEM binary tail",
+        dataBase64: base64([42, 42, 66]),
+      },
       { appendOutput },
     );
 
-    expect(appendOutput).toHaveBeenCalledWith("runtime-1", "fallback text");
+    expect(appendOutput).not.toHaveBeenCalledWith("runtime-1", "\x1b[?2004h\x00ZMODEM binary tail");
     expect(appendOutput).toHaveBeenCalledWith(
       "runtime-1",
       expect.stringContaining("传输解析失败：raw parser failure"),
     );
   });
 
-  it("stops feeding duplicate startup headers once the sentry confirms a transfer", async () => {
+  it("filters duplicate startup headers but preserves trailing bytes after a confirmed transfer", async () => {
     const appendOutput = vi.fn();
     const session = {
       type: "send",
@@ -125,15 +143,19 @@ describe("zmodemTransfer", () => {
       confirm: vi.fn(() => session),
       deny: vi.fn(),
     };
+    let consumeCount = 0;
     sentryMock.consumeImpl = (options) => {
-      options.on_detect(detection);
+      if (consumeCount === 0) {
+        options.on_detect(detection);
+      }
+      consumeCount += 1;
     };
 
     consumeTerminalZmodemData(
       {
         runtimeSessionId: "runtime-1",
         data: "",
-        dataBase64: base64(binaryBytes("rz waiting to receive.**\x18B0100000023be50\r\n**\x18B0100000023be50\r\n")),
+        dataBase64: base64(binaryBytes("rz waiting to receive.**\x18B0100000023be50\r\n**\x18B0100000023be50\r\n").concat([1, 2, 3])),
       },
       {
         appendOutput,
@@ -142,10 +164,216 @@ describe("zmodemTransfer", () => {
     );
     await flushPromises();
 
-    expect(sentryMock.instances[0].consume).toHaveBeenCalledTimes(1);
+    expect(sentryMock.instances[0].consume).toHaveBeenCalledTimes(2);
+    expect(Array.from(sentryMock.instances[0].consume.mock.calls[1][0])).toEqual(
+      [1, 2, 3],
+    );
     expect(detection.confirm).toHaveBeenCalled();
+    expect(detection.deny).not.toHaveBeenCalled();
     expect(session.close).toHaveBeenCalled();
     expect(appendOutput).toHaveBeenCalledWith("runtime-1", expect.stringContaining("未选择文件"));
+  });
+
+  it("confirms that a real zmodem session rejects a repeated startup header", async () => {
+    const { default: RealZmodem } = await vi.importActual<typeof import("zmodem.js/src/zmodem_browser")>(
+      "zmodem.js/src/zmodem_browser",
+    );
+    const detections: unknown[] = [];
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const sentry = new RealZmodem.Sentry({
+        to_terminal: vi.fn(),
+        sender: vi.fn(),
+        on_detect: (detection) => {
+          detections.push(detection);
+          detection.confirm();
+        },
+        on_retract: vi.fn(),
+      });
+      const header = binaryBytes("**\x18B0100000023be50\r\n");
+
+      sentry.consume(binaryBytes("rz waiting to receive.").concat(header));
+      expect(() => sentry.consume(header)).toThrow(/Unhandled header: ZRINIT/);
+      expect(detections).toHaveLength(1);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("abandons a failed parser session and recreates a clean sentry for later terminal output", () => {
+    const appendOutput = vi.fn();
+    const session = {
+      type: "send",
+      send_offer: vi.fn(),
+      close: vi.fn(),
+      abort: vi.fn(),
+      on: vi.fn(),
+      start: vi.fn(),
+    };
+    const detection = {
+      confirm: vi.fn(() => session),
+      deny: vi.fn(),
+    };
+    sentryMock.consumeImpl = (options) => {
+      options.on_detect(detection);
+      throw new Error("bad frame");
+    };
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "broken", dataBase64: base64([42, 42, 66]) },
+      { appendOutput, selectUploadFiles: vi.fn().mockResolvedValue([]) },
+    );
+
+    expect(session.abort).toHaveBeenCalledOnce();
+    expect(appendOutput).toHaveBeenCalledWith("runtime-1", expect.stringContaining("传输解析失败：bad frame"));
+
+    sentryMock.consumeImpl = undefined;
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "shell prompt", dataBase64: base64(binaryBytes("shell prompt")) },
+      { appendOutput },
+    );
+
+    expect(sentryMock.Sentry).toHaveBeenCalledTimes(2);
+    expect(appendOutput).toHaveBeenCalledWith("runtime-1", "shell prompt");
+  });
+
+  it("disposes an active protocol session after invalid base64 and recovers with a clean sentry", async () => {
+    const appendOutput = vi.fn();
+    const session = {
+      type: "send",
+      send_offer: vi.fn(),
+      close: vi.fn(),
+      abort: vi.fn(),
+      on: vi.fn(),
+      start: vi.fn(),
+    };
+    const detection = {
+      confirm: vi.fn(() => session),
+      deny: vi.fn(),
+    };
+    sentryMock.consumeImpl = (options) => options.on_detect(detection);
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64([42]) },
+      { appendOutput, selectUploadFiles: vi.fn(() => new Promise<string[]>(() => undefined)) },
+    );
+    await Promise.resolve();
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "\x1b[?2004h\x00corrupt", dataBase64: "not-base64" },
+      { appendOutput },
+    );
+
+    expect(session.abort).toHaveBeenCalledOnce();
+    expect(appendOutput).not.toHaveBeenCalledWith("runtime-1", "\x1b[?2004h\x00corrupt");
+    expect(appendOutput).toHaveBeenCalledWith("runtime-1", expect.stringContaining("ZMODEM 原始输出解码失败"));
+
+    sentryMock.consumeImpl = undefined;
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "shell prompt", dataBase64: base64(binaryBytes("shell prompt")) },
+      { appendOutput },
+    );
+
+    expect(sentryMock.Sentry).toHaveBeenCalledTimes(2);
+    expect(appendOutput).toHaveBeenCalledWith("runtime-1", "shell prompt");
+  });
+
+  it("serializes sentry outbound frames before writing them to the terminal", async () => {
+    const appendOutput = vi.fn();
+    const firstWrite = deferred<void>();
+    const sendBytes = vi
+      .fn()
+      .mockImplementationOnce(() => firstWrite.promise)
+      .mockResolvedValue(undefined);
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64([42]) },
+      { appendOutput, sendBytes },
+    );
+    const sender = sentryMock.instances[0].options.sender;
+    sender([1, 2]);
+    sender([3, 4]);
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sendBytes).toHaveBeenCalledTimes(1);
+    expect(sendBytes).toHaveBeenLastCalledWith("runtime-1", [1, 2]);
+
+    firstWrite.resolve();
+    await flushPromises();
+    expect(sendBytes).toHaveBeenCalledTimes(2);
+    expect(sendBytes).toHaveBeenLastCalledWith("runtime-1", [3, 4]);
+  });
+
+  it("aborts on an outbound write failure and resumes ordinary terminal output with a new sentry", async () => {
+    const appendOutput = vi.fn();
+    const session = {
+      type: "send",
+      send_offer: vi.fn(),
+      close: vi.fn(),
+      abort: vi.fn(),
+      on: vi.fn(),
+      start: vi.fn(),
+    };
+    const detection = {
+      confirm: vi.fn(() => session),
+      deny: vi.fn(),
+    };
+    const sendBytes = vi.fn().mockRejectedValue(new Error("write failed"));
+    sentryMock.consumeImpl = (options) => options.on_detect(detection);
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64([42]) },
+      {
+        appendOutput,
+        sendBytes,
+        selectUploadFiles: vi.fn(() => new Promise<string[]>(() => undefined)),
+      },
+    );
+    sentryMock.instances[0].options.sender([1]);
+    await flushPromises();
+
+    expect(session.abort).toHaveBeenCalledOnce();
+    expect(appendOutput).toHaveBeenCalledWith("runtime-1", expect.stringContaining("ZMODEM 向远端发送失败：write failed"));
+
+    sentryMock.consumeImpl = undefined;
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "ready", dataBase64: base64(binaryBytes("ready")) },
+      { appendOutput },
+    );
+
+    expect(sentryMock.Sentry).toHaveBeenCalledTimes(2);
+    expect(appendOutput).toHaveBeenCalledWith("runtime-1", "ready");
+  });
+
+  it("aborts an active transfer when its runtime is released and ignores delayed transfer callbacks", async () => {
+    const appendOutput = vi.fn();
+    const directory = deferred<string | null>();
+    const session = {
+      type: "receive",
+      send_offer: vi.fn(),
+      close: vi.fn(),
+      abort: vi.fn(),
+      on: vi.fn(),
+      start: vi.fn(),
+    };
+    const detection = {
+      confirm: vi.fn(() => session),
+      deny: vi.fn(),
+    };
+    sentryMock.consumeImpl = (options) => options.on_detect(detection);
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64([42]) },
+      { appendOutput, selectDownloadDirectory: vi.fn(() => directory.promise) },
+    );
+    releaseTerminalZmodemRuntime("runtime-1");
+    directory.resolve("D:\\Downloads");
+    await flushPromises();
+
+    expect(session.abort).toHaveBeenCalledOnce();
+    expect(session.start).not.toHaveBeenCalled();
+    expect(appendOutput).not.toHaveBeenCalledWith("runtime-1", expect.stringContaining("下载已取消"));
   });
 
   it("uploads selected local files through a send session", async () => {
@@ -459,6 +687,16 @@ function base64(bytes: number[]) {
 
 function binaryBytes(value: string) {
   return Array.from(value, (character) => character.charCodeAt(0));
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 async function flushPromises() {

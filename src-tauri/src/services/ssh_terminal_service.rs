@@ -31,6 +31,8 @@ use crate::{
 
 const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const DEFAULT_KEEPALIVE_MAX: usize = 3;
+const NATIVE_SSH_OUTPUT_CHUNK_BYTES: usize = 8 * 1024;
+const NATIVE_SSH_OUTPUT_QUEUE_CAPACITY: usize = 128;
 
 pub struct SshTerminalSpawn {
     pub runtime: SshTerminalRuntime,
@@ -201,7 +203,8 @@ fn spawn_native_ssh_runtime(
 ) -> AppResult<SshTerminalSpawn> {
     let target = NativeSshTarget::from_session(session, secrets)?;
     let (command_sender, command_receiver) = tokio_mpsc::unbounded_channel();
-    let (output_sender, output_receiver) = std_mpsc::channel();
+    let (output_sender, output_receiver) = tokio_mpsc::channel(NATIVE_SSH_OUTPUT_QUEUE_CAPACITY);
+    let (output_receiver, _output_bridge) = spawn_native_ssh_output_bridge(output_receiver);
     let exit_status = Arc::new(Mutex::new(None));
     let worker_status = Arc::clone(&exit_status);
     let error_sender = output_sender.clone();
@@ -226,7 +229,9 @@ fn spawn_native_ssh_runtime(
             if let Ok(mut status) = worker_status.lock() {
                 *status = Some(-1);
             }
-            let _ = error_sender.send(format!("\r\n[SSH] {error}\r\n").into_bytes());
+            // The terminal may already be closed while an error is being reported.
+            // Do not block this worker thread behind a slow or detached reader.
+            let _ = error_sender.try_send(format!("\r\n[SSH] {error}\r\n").into_bytes());
         }
     });
 
@@ -394,7 +399,7 @@ async fn run_native_ssh_terminal(
     cols: u16,
     rows: u16,
     mut command_receiver: tokio_mpsc::UnboundedReceiver<NativeSshCommand>,
-    output_sender: std_mpsc::Sender<Vec<u8>>,
+    output_sender: tokio_mpsc::Sender<Vec<u8>>,
     exit_status: Arc<Mutex<Option<i32>>>,
 ) -> AppResult<()> {
     let mut handle = connect_native_ssh(&target).await?;
@@ -422,24 +427,43 @@ async fn run_native_ssh_terminal(
         }
     }
     let (mut reader, writer) = channel.split();
+    let mut pending_output: Option<NativeSshPendingOutput> = None;
 
     loop {
-        tokio::select! {
-            command = command_receiver.recv() => {
-                match command {
-                    Some(NativeSshCommand::Input(data)) => {
-                        writer.data_bytes(data).await.map_err(russh_error)?;
-                    }
-                    Some(NativeSshCommand::Resize { cols, rows }) => {
-                        writer
-                            .window_change(u32::from(cols), u32::from(rows), 0, 0)
-                            .await
-                            .map_err(russh_error)?;
-                    }
-                    Some(NativeSshCommand::Close) | None => {
-                        let _ = writer.close().await;
+        if let Some(pending) = pending_output.as_mut() {
+            if pending.is_complete() {
+                pending_output = None;
+                continue;
+            }
+            match wait_for_native_ssh_output_slot_or_command(
+                output_sender.clone(),
+                &mut command_receiver,
+            )
+            .await
+            {
+                NativeSshOutputWait::Command(command) => {
+                    if !apply_native_ssh_command(command, &writer).await? {
                         break;
                     }
+                }
+                NativeSshOutputWait::Ready(permit) => {
+                    // Chunks cap the total queued output by bytes, while retaining every
+                    // byte and its original order across slow reader periods.
+                    permit.send(pending.next_chunk().to_vec());
+                    pending.advance();
+                }
+                NativeSshOutputWait::OutputClosed => {
+                    let _ = writer.close().await;
+                    break;
+                }
+            }
+            continue;
+        }
+
+        tokio::select! {
+            command = command_receiver.recv() => {
+                if !apply_native_ssh_command(command, &writer).await? {
+                    break;
                 }
             }
             message = reader.wait() => {
@@ -448,10 +472,7 @@ async fn run_native_ssh_terminal(
                 };
                 match message {
                     ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
-                        if output_sender.send(data.to_vec()).is_err() {
-                            let _ = writer.close().await;
-                            break;
-                        }
+                        pending_output = Some(NativeSshPendingOutput::new(data.to_vec()));
                     }
                     ChannelMsg::ExitStatus { exit_status: code } => {
                         if let Ok(mut status) = exit_status.lock() {
@@ -467,7 +488,7 @@ async fn run_native_ssh_terminal(
                             message.push_str(&format!(" {error_message}"));
                         }
                         message.push_str("\r\n");
-                        let _ = output_sender.send(message.into_bytes());
+                        pending_output = Some(NativeSshPendingOutput::new(message.into_bytes()));
                     }
                     ChannelMsg::Close => break,
                     _ => {}
@@ -480,6 +501,89 @@ async fn run_native_ssh_terminal(
         .disconnect(russh::Disconnect::ByApplication, "terminal closed", "")
         .await;
     Ok(())
+}
+
+async fn apply_native_ssh_command(
+    command: Option<NativeSshCommand>,
+    writer: &russh::ChannelWriteHalf<client::Msg>,
+) -> AppResult<bool> {
+    match command {
+        Some(NativeSshCommand::Input(data)) => {
+            writer.data_bytes(data).await.map_err(russh_error)?;
+            Ok(true)
+        }
+        Some(NativeSshCommand::Resize { cols, rows }) => {
+            writer
+                .window_change(u32::from(cols), u32::from(rows), 0, 0)
+                .await
+                .map_err(russh_error)?;
+            Ok(true)
+        }
+        Some(NativeSshCommand::Close) | None => {
+            let _ = writer.close().await;
+            Ok(false)
+        }
+    }
+}
+
+enum NativeSshOutputWait {
+    Command(Option<NativeSshCommand>),
+    Ready(tokio_mpsc::OwnedPermit<Vec<u8>>),
+    OutputClosed,
+}
+
+async fn wait_for_native_ssh_output_slot_or_command(
+    output_sender: tokio_mpsc::Sender<Vec<u8>>,
+    command_receiver: &mut tokio_mpsc::UnboundedReceiver<NativeSshCommand>,
+) -> NativeSshOutputWait {
+    tokio::select! {
+        biased;
+        command = command_receiver.recv() => NativeSshOutputWait::Command(command),
+        permit = output_sender.reserve_owned() => match permit {
+            Ok(permit) => NativeSshOutputWait::Ready(permit),
+            Err(_) => NativeSshOutputWait::OutputClosed,
+        },
+    }
+}
+
+struct NativeSshPendingOutput {
+    data: Vec<u8>,
+    offset: usize,
+}
+
+impl NativeSshPendingOutput {
+    fn new(data: Vec<u8>) -> Self {
+        Self { data, offset: 0 }
+    }
+
+    fn is_complete(&self) -> bool {
+        self.offset >= self.data.len()
+    }
+
+    fn next_chunk(&self) -> &[u8] {
+        let end = (self.offset + NATIVE_SSH_OUTPUT_CHUNK_BYTES).min(self.data.len());
+        &self.data[self.offset..end]
+    }
+
+    fn advance(&mut self) {
+        self.offset += self.next_chunk().len();
+    }
+}
+
+fn spawn_native_ssh_output_bridge(
+    mut output_receiver: tokio_mpsc::Receiver<Vec<u8>>,
+) -> (std_mpsc::Receiver<Vec<u8>>, thread::JoinHandle<()>) {
+    // A single-slot bridge prevents the legacy blocking Read consumer from
+    // accumulating an unbounded second queue behind the bounded async queue.
+    let (reader_sender, reader_receiver) = std_mpsc::sync_channel(1);
+    let bridge = thread::spawn(move || {
+        while let Some(data) = output_receiver.blocking_recv() {
+            if reader_sender.send(data).is_err() {
+                break;
+            }
+        }
+    });
+    (reader_receiver, bridge)
 }
 
 #[derive(Clone)]
@@ -906,11 +1010,16 @@ fn native_pty_modes() -> Vec<(Pty, u32)> {
 
 #[cfg(test)]
 mod tests {
+    use std::{io::Read, sync::mpsc};
+
     use std::time::Duration;
 
     use super::{
-        build_ssh_arguments, effective_keepalive_interval, ssh_container_terminal_transport,
-        SshContainerTerminalTransport,
+        build_ssh_arguments, effective_keepalive_interval, spawn_native_ssh_output_bridge,
+        ssh_container_terminal_transport, wait_for_native_ssh_output_slot_or_command,
+        NativeSshCommand, NativeSshOutputWait, NativeSshPendingOutput, NativeSshReader,
+        SshContainerTerminalTransport, NATIVE_SSH_OUTPUT_CHUNK_BYTES,
+        NATIVE_SSH_OUTPUT_QUEUE_CAPACITY,
     };
     use crate::models::session::{
         AuthMode, SavedSession, SessionType, SshContainerOptions, SshOptions, SshTunnel,
@@ -1016,6 +1125,97 @@ mod tests {
         let configured_args = build_ssh_arguments(&configured).expect("configured keepalive");
         assert!(ssh_option_is_set(&configured_args, "ServerAliveInterval=2"));
         assert!(ssh_option_is_set(&configured_args, "ServerAliveCountMax=3"));
+    }
+
+    #[test]
+    fn native_ssh_output_is_chunked_without_losing_or_reordering_bytes() {
+        let source = (0..NATIVE_SSH_OUTPUT_CHUNK_BYTES * 2 + 37)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let mut pending = NativeSshPendingOutput::new(source.clone());
+        let mut actual = Vec::new();
+
+        while !pending.is_complete() {
+            let chunk = pending.next_chunk();
+            assert!(chunk.len() <= NATIVE_SSH_OUTPUT_CHUNK_BYTES);
+            actual.extend_from_slice(chunk);
+            pending.advance();
+        }
+
+        assert_eq!(actual, source);
+    }
+
+    #[tokio::test]
+    async fn native_ssh_output_backpressure_keeps_resize_and_close_available() {
+        let (output_sender, _output_receiver) =
+            tokio::sync::mpsc::channel(NATIVE_SSH_OUTPUT_QUEUE_CAPACITY);
+        for _ in 0..NATIVE_SSH_OUTPUT_QUEUE_CAPACITY {
+            output_sender
+                .send(vec![0_u8])
+                .await
+                .expect("bounded queue should accept its configured capacity");
+        }
+        assert!(output_sender.try_send(vec![1_u8]).is_err());
+
+        let (command_sender, mut command_receiver) = tokio::sync::mpsc::unbounded_channel();
+        command_sender
+            .send(NativeSshCommand::Resize {
+                cols: 120,
+                rows: 40,
+            })
+            .expect("resize command should queue independently of output pressure");
+        match wait_for_native_ssh_output_slot_or_command(
+            output_sender.clone(),
+            &mut command_receiver,
+        )
+        .await
+        {
+            NativeSshOutputWait::Command(Some(NativeSshCommand::Resize { cols, rows })) => {
+                assert_eq!((cols, rows), (120, 40));
+            }
+            _ => panic!("resize must win while the output queue is full"),
+        }
+
+        command_sender
+            .send(NativeSshCommand::Close)
+            .expect("close command should queue independently of output pressure");
+        assert!(matches!(
+            wait_for_native_ssh_output_slot_or_command(output_sender, &mut command_receiver).await,
+            NativeSshOutputWait::Command(Some(NativeSshCommand::Close))
+        ));
+    }
+
+    #[test]
+    fn native_ssh_output_bridge_stops_after_reader_is_closed() {
+        let (output_sender, output_receiver) = tokio::sync::mpsc::channel(1);
+        let (reader, bridge) = spawn_native_ssh_output_bridge(output_receiver);
+        drop(reader);
+
+        output_sender
+            .blocking_send(vec![1, 2, 3])
+            .expect("bridge should receive the queued output before it observes closure");
+        bridge
+            .join()
+            .expect("bridge should exit after reader closure");
+        assert!(output_sender.is_closed());
+    }
+
+    #[test]
+    fn native_ssh_reader_preserves_partial_reads_and_releases_closed_senders() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let mut reader = NativeSshReader::new(receiver);
+        sender
+            .send(vec![1, 2, 3])
+            .expect("initial output should queue");
+        let mut first = [0_u8; 2];
+        assert_eq!(reader.read(&mut first).expect("first read"), 2);
+        assert_eq!(first, [1, 2]);
+        let mut last = [0_u8; 2];
+        assert_eq!(reader.read(&mut last).expect("second read"), 1);
+        assert_eq!(last[0], 3);
+
+        drop(reader);
+        assert!(sender.send(vec![4]).is_err());
     }
 
     fn ssh_option_is_set(args: &[String], expected: &str) -> bool {

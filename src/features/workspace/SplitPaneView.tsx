@@ -25,6 +25,7 @@ import type { PaneNode, PaneSplitDirection } from "./types";
 const ACTIVE_XTERM_MOUNT_DELAY_MS = 48;
 const INACTIVE_XTERM_MOUNT_DELAY_MS = 96;
 const PANE_TAB_DRAG_THRESHOLD = 6;
+const EMPTY_LIVE_OUTPUT_CHUNKS: never[] = [];
 type TerminalRuntimeKind = "local" | "ssh" | "ssh_container" | "rdp_placeholder";
 
 function isInteractiveTerminalRuntime(kind: TerminalRuntimeKind) {
@@ -335,9 +336,12 @@ function LeafPane({
   );
   const xtermLive = Boolean(workspaceActive && xtermMounted);
   const beginLiveOutput = useTerminalStore((state) => state.beginLiveOutput);
-  const outputChunk = useTerminalStore((state) =>
-    xtermLive && activeRuntimeSessionId ? (state.outputChunks[activeRuntimeSessionId] ?? null) : null,
+  const outputChunks = useTerminalStore((state) =>
+    xtermLive && activeRuntimeSessionId
+      ? (state.outputChunks[activeRuntimeSessionId] ?? EMPTY_LIVE_OUTPUT_CHUNKS)
+      : EMPTY_LIVE_OUTPUT_CHUNKS,
   );
+  const discardLiveOutputChunks = useTerminalStore((state) => state.discardLiveOutputChunks);
   const visualOutputTail =
     workspaceActive && !xtermMounted && activeRuntimeSessionId
       ? useTerminalStore.getState().getVisualOutputTail(activeRuntimeSessionId)
@@ -785,8 +789,10 @@ function LeafPane({
           contextMenuEnabled={workspaceActive && isInteractiveTerminalRuntime(runtime.kind)}
           data={xtermReplay.data}
           initialCwd={runtime.kind === "local" ? runtime.initial_cwd : null}
-          liveData={outputChunk?.data ?? null}
-          liveSerial={outputChunk?.serial ?? null}
+          liveChunks={outputChunks}
+          onLiveChunksQueued={(throughSerial) =>
+            discardLiveOutputChunks(runtime.runtime_session_id, throughSerial)
+          }
           replayKey={xtermReplay.key}
           replayKind={xtermReplay.kind}
           streamId={runtime.runtime_session_id}

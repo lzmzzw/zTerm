@@ -67,20 +67,35 @@ export function consumeTerminalZmodemData(
     return;
   }
 
-  const bytes = decodeBase64Bytes(event.dataBase64);
+  let bytes: Uint8Array;
+  try {
+    bytes = decodeBase64Bytes(event.dataBase64);
+  } catch (error) {
+    discardTerminalZmodemController(event.runtimeSessionId);
+    dependencies.appendOutput(
+      event.runtimeSessionId,
+      `\r\nZMODEM 原始输出解码失败：${stringifiedErrorMessage(error)}\r\n`,
+    );
+    return;
+  }
   if (!bytes.length) {
     return;
   }
 
   const controller = getController(event.runtimeSessionId, dependencies);
-  controller.consume(bytes, event.data);
+  if (!controller.consume(bytes)) {
+    controllers.delete(event.runtimeSessionId);
+  }
 }
 
 export function releaseTerminalZmodemRuntime(runtimeSessionId: string) {
-  controllers.delete(runtimeSessionId);
+  discardTerminalZmodemController(runtimeSessionId);
 }
 
 export function clearTerminalZmodemControllersForTest() {
+  for (const controller of controllers.values()) {
+    controller.dispose();
+  }
   controllers.clear();
 }
 
@@ -95,65 +110,87 @@ function getController(runtimeSessionId: string, dependencies: ZmodemTransferDep
   return controller;
 }
 
+function discardTerminalZmodemController(runtimeSessionId: string) {
+  const controller = controllers.get(runtimeSessionId);
+  controller?.dispose();
+  controllers.delete(runtimeSessionId);
+}
+
 class ZmodemRuntimeController {
   private dependencies: ZmodemTransferDependencies;
-  private readonly sentry: ZmodemSentry;
-  private readonly textDecoder = new TextDecoder("utf-8", { fatal: false });
+  private sentry: ZmodemSentry;
+  private textDecoder = new TextDecoder("utf-8", { fatal: false });
   private activeSession: ZmodemSession | null = null;
   private pendingReceiveOverAndOut: number[] | null = null;
+  private disposed = false;
+  private aborting = false;
+  private outboundGeneration = 0;
+  private outboundWrites = Promise.resolve();
 
   constructor(private readonly runtimeSessionId: string, dependencies: ZmodemTransferDependencies) {
     this.dependencies = withDefaultDependencies(dependencies);
-    this.sentry = this.dependencies.createSentry?.({
+    this.sentry = this.createSentry();
+  }
+
+  private createSentry(): ZmodemSentry {
+    const options: ZmodemSentryOptions = {
       to_terminal: (octets) => this.appendOutput(this.octetsToText(octets)),
-      sender: (octets) => {
-        void this.dependencies.sendBytes?.(this.runtimeSessionId, Array.from(octets));
-      },
+      sender: (octets) => this.queueOutboundBytes(octets),
       on_detect: (detection) => {
         void this.handleDetection(detection);
       },
       on_retract: () => {
         this.appendOutput("\r\n已取消检测到的传输。\r\n");
       },
-    }) ?? new Zmodem.Sentry({
-      to_terminal: (octets) => this.appendOutput(this.octetsToText(octets)),
-      sender: (octets) => {
-        void this.dependencies.sendBytes?.(this.runtimeSessionId, Array.from(octets));
-      },
-      on_detect: (detection) => {
-        void this.handleDetection(detection);
-      },
-      on_retract: () => {
-        this.appendOutput("\r\n已取消检测到的传输。\r\n");
-      },
-    });
+    };
+    return this.dependencies.createSentry?.(options) ?? new Zmodem.Sentry(options);
   }
 
   updateDependencies(dependencies: ZmodemTransferDependencies) {
     this.dependencies = withDefaultDependencies(dependencies);
   }
 
-  consume(bytes: Uint8Array, fallbackText: string) {
+  consume(bytes: Uint8Array): boolean {
+    if (this.disposed) return false;
     try {
       const completedBytes = this.completeMissingReceiveOverAndOut(bytes);
-      if (!completedBytes) return;
+      if (!completedBytes) return true;
       const chunks = this.activeSession ? [completedBytes] : splitCoalescedZmodemStartupBytes(completedBytes);
       for (const chunk of chunks) {
-        this.sentry.consume(Array.from(chunk));
-        if (this.activeSession) {
-          break;
+        if (this.activeSession && isStandaloneZmodemStartupHeader(chunk)) {
+          continue;
         }
+        this.sentry.consume(Array.from(chunk));
       }
+      return true;
     } catch (error) {
-      this.appendOutput(fallbackText);
       this.appendOutput(`\r\n传输解析失败：${stringifiedErrorMessage(error)}\r\n`);
-      this.activeSession = null;
-      this.pendingReceiveOverAndOut = null;
+      this.abortAndDiscard();
+      return false;
     }
   }
 
+  dispose() {
+    if (this.disposed) return;
+    this.pendingReceiveOverAndOut = null;
+    if (this.activeSession?.abort) {
+      this.aborting = true;
+      try {
+        this.activeSession.abort();
+      } catch {
+        // A terminated session may reject a second abort; cleanup still continues.
+      } finally {
+        this.aborting = false;
+      }
+    }
+    this.activeSession = null;
+    this.disposed = true;
+    this.outboundGeneration += 1;
+    this.textDecoder = new TextDecoder("utf-8", { fatal: false });
+  }
+
   private async handleDetection(detection: ZmodemDetection) {
-    if (this.activeSession) {
+    if (this.disposed || this.activeSession) {
       detection.deny();
       return;
     }
@@ -167,15 +204,16 @@ class ZmodemRuntimeController {
         await this.runDownload(session);
       }
     } catch (error) {
-      session.abort?.();
+      if (this.disposed) return;
       this.appendOutput(`\r\n传输失败：${stringifiedErrorMessage(error)}\r\n`);
-      this.activeSession = null;
+      this.abortAndDiscard();
     }
   }
 
   private async runUpload(session: ZmodemSession) {
     this.appendOutput("\r\nrz 请求上传文件，正在选择本机文件...\r\n");
     const paths = await this.dependencies.selectUploadFiles?.();
+    this.ensureActiveSession(session);
     if (!paths?.length) {
       await session.close();
       this.appendOutput("未选择文件，上传已取消。\r\n");
@@ -184,6 +222,7 @@ class ZmodemRuntimeController {
     }
 
     const files = await this.dependencies.readLocalFiles?.(paths);
+    this.ensureActiveSession(session);
     if (!files?.length) {
       await session.close();
       this.appendOutput("未读取到可上传文件。\r\n");
@@ -194,6 +233,7 @@ class ZmodemRuntimeController {
     const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
     let remainingBytes = totalBytes;
     for (let index = 0; index < files.length; index += 1) {
+      this.ensureActiveSession(session);
       const file = files[index];
       const transfer = await session.send_offer({
         name: file.name,
@@ -202,6 +242,7 @@ class ZmodemRuntimeController {
         files_remaining: files.length - index,
         bytes_remaining: remainingBytes,
       });
+      this.ensureActiveSession(session);
       remainingBytes -= file.size;
       if (!transfer) {
         this.appendOutput(`远端跳过 ${file.name}。\r\n`);
@@ -210,10 +251,14 @@ class ZmodemRuntimeController {
       const progress = createTransferProgress("上传", file.name, file.size, (output) => this.appendOutput(output));
       progress.update(transfer.get_offset());
       await sendFileBytes(transfer, Uint8Array.from(file.data), progress.update);
+      await this.outboundWrites;
+      this.ensureActiveSession(session);
       progress.finish(file.data.length);
     }
 
     await session.close();
+    await this.outboundWrites;
+    this.ensureActiveSession(session);
     this.appendOutput("上传完成。\r\n");
     this.activeSession = null;
   }
@@ -221,10 +266,10 @@ class ZmodemRuntimeController {
   private async runDownload(session: ZmodemSession) {
     this.appendOutput("\r\nsz 请求下载文件，正在选择保存目录...\r\n");
     const directory = await this.dependencies.selectDownloadDirectory?.();
+    this.ensureActiveSession(session);
     if (!directory) {
-      session.abort?.();
       this.appendOutput("未选择保存目录，下载已取消。\r\n");
-      this.activeSession = null;
+      this.abortAndDiscard();
       return;
     }
 
@@ -236,6 +281,7 @@ class ZmodemRuntimeController {
       }
     });
     session.on("offer", (offer: ZmodemOffer) => {
+      if (!this.isActiveSession(session)) return;
       const details = offer.get_details();
       if (isKnownOversizedZmodemFile(details.size)) {
         try {
@@ -279,16 +325,18 @@ class ZmodemRuntimeController {
       const saveTask = offer
         .accept({ on_input: "spool_uint8array" })
         .then((payloads) => {
-          if (limitExceeded) return undefined;
+          if (limitExceeded || !this.isActiveSession(session)) return undefined;
           finishProgress();
           return this.dependencies.saveFile?.(directory, details.name, flattenPayloads(payloads));
         })
         .then((saved) => {
+          if (!this.isActiveSession(session)) return;
           if (!saved) return;
           savedCount += 1;
           this.appendOutput(`已保存 ${details.name} -> ${saved.path}\r\n`);
         })
         .catch((error) => {
+          if (!this.isActiveSession(session)) return;
           if (limitExceeded) return;
           finishProgress();
           this.appendOutput(`保存 ${details.name} 失败：${stringifiedErrorMessage(error)}\r\n`);
@@ -296,8 +344,10 @@ class ZmodemRuntimeController {
       saveTasks.push(saveTask);
     });
     session.on("session_end", () => {
+      if (!this.isActiveSession(session)) return;
       this.pendingReceiveOverAndOut = null;
       void Promise.allSettled(saveTasks).then(() => {
+        if (!this.isActiveSession(session)) return;
         this.appendOutput(`下载完成，共 ${savedCount} 个文件。\r\n`);
         this.activeSession = null;
       });
@@ -325,12 +375,48 @@ class ZmodemRuntimeController {
   }
 
   private appendOutput(data: string) {
-    if (!data) return;
+    if (!data || this.disposed) return;
     this.dependencies.appendOutput(this.runtimeSessionId, data);
   }
 
   private octetsToText(octets: number[] | Uint8Array) {
     return this.textDecoder.decode(octets instanceof Uint8Array ? octets : Uint8Array.from(octets), { stream: true });
+  }
+
+  private queueOutboundBytes(octets: number[] | Uint8Array) {
+    const bytes = Array.from(octets);
+    const generation = this.outboundGeneration;
+    const isAbortSequence = this.aborting;
+    this.outboundWrites = this.outboundWrites
+      .catch(() => undefined)
+      .then(async () => {
+        if (!isAbortSequence && (this.disposed || generation !== this.outboundGeneration)) return;
+        await this.dependencies.sendBytes?.(this.runtimeSessionId, bytes);
+      })
+      .catch((error) => {
+        if (!isAbortSequence && (this.disposed || generation !== this.outboundGeneration)) return;
+        this.appendOutput(`\r\nZMODEM 向远端发送失败：${stringifiedErrorMessage(error)}\r\n`);
+        if (!this.disposed) {
+          this.abortAndDiscard();
+        }
+      });
+  }
+
+  private isActiveSession(session: ZmodemSession) {
+    return !this.disposed && this.activeSession === session;
+  }
+
+  private ensureActiveSession(session: ZmodemSession) {
+    if (!this.isActiveSession(session)) {
+      throw new Error("ZMODEM 传输已取消");
+    }
+  }
+
+  private abortAndDiscard() {
+    this.dispose();
+    if (controllers.get(this.runtimeSessionId) === this) {
+      controllers.delete(this.runtimeSessionId);
+    }
   }
 }
 
@@ -457,6 +543,10 @@ function splitCoalescedZmodemStartupBytes(bytes: Uint8Array) {
     offset = headerEnd;
   }
   return chunks;
+}
+
+function isStandaloneZmodemStartupHeader(bytes: Uint8Array) {
+  return findZmodemHexHeaderStart(bytes, 0) === 0 && findZmodemHexHeaderEnd(bytes, 0) === bytes.length;
 }
 
 function findZmodemHexHeaderStart(bytes: Uint8Array, from: number) {

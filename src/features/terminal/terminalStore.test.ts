@@ -18,6 +18,11 @@ const zmodemTransferMock = vi.hoisted(() => ({
   consumeTerminalZmodemData: vi.fn(),
   releaseTerminalZmodemRuntime: vi.fn(),
 }));
+const outputFlowMock = vi.hoisted(() => ({
+  acknowledgeTerminalOutputFlow: vi.fn().mockResolvedValue(undefined),
+  openTerminalOutputFlow: vi.fn().mockResolvedValue(vi.fn()),
+  waitForTerminalOutputRender: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
@@ -31,6 +36,8 @@ vi.mock("./zmodemTransfer", () => ({
   consumeTerminalZmodemData: zmodemTransferMock.consumeTerminalZmodemData,
   releaseTerminalZmodemRuntime: zmodemTransferMock.releaseTerminalZmodemRuntime,
 }));
+
+vi.mock("./terminalOutputFlow", () => outputFlowMock);
 
 describe("terminalStore", () => {
   beforeEach(() => {
@@ -503,6 +510,148 @@ describe("terminalStore", () => {
     unlisten();
   });
 
+  it("acknowledges sequenced output only after its replay append and render gate complete", async () => {
+    useTerminalStore.setState({
+      runtimes: { "runtime-1": runtime("runtime-1", "session-1") },
+    });
+    zmodemTransferMock.consumeTerminalZmodemData.mockImplementationOnce(
+      (
+        event: { runtimeSessionId: string; data: string },
+        dependencies: { appendOutput: (runtimeSessionId: string, data: string) => Promise<void> },
+      ) => dependencies.appendOutput(event.runtimeSessionId, event.data),
+    );
+    const stopLiveOutput = useTerminalStore.getState().beginLiveOutput("runtime-1");
+    const unlisten = await useTerminalStore.getState().bindTerminalEvents();
+
+    eventMock.listeners["terminal:data"]?.({
+      payload: { runtime_session_id: "runtime-1", data: "ready", generation: 3, sequence: 7 },
+    });
+    await vi.waitFor(() => {
+      expect(outputFlowMock.waitForTerminalOutputRender).toHaveBeenCalledWith({
+        runtimeSessionId: "runtime-1",
+        generation: 3,
+        sequence: 7,
+      });
+    });
+
+    expect(useTerminalStore.getState().outputChunks["runtime-1"]).toMatchObject([{
+      data: "ready",
+      flow: { runtimeSessionId: "runtime-1", generation: 3, sequence: 7 },
+    }]);
+    expect(outputFlowMock.acknowledgeTerminalOutputFlow).toHaveBeenCalledWith({
+      runtimeSessionId: "runtime-1",
+      generation: 3,
+      sequence: 7,
+    });
+
+    unlisten();
+    stopLiveOutput();
+  });
+
+  it("acknowledges a pure ZMODEM event without waiting for an xterm write that it did not produce", async () => {
+    useTerminalStore.setState({
+      runtimes: { "runtime-1": runtime("runtime-1", "session-1") },
+    });
+    const unlisten = await useTerminalStore.getState().bindTerminalEvents();
+
+    eventMock.listeners["terminal:data"]?.({
+      payload: { runtime_session_id: "runtime-1", data: "", data_base64: "AA==", generation: 3, sequence: 8 },
+    });
+    await vi.waitFor(() => {
+      expect(outputFlowMock.acknowledgeTerminalOutputFlow).toHaveBeenCalledWith({
+        runtimeSessionId: "runtime-1",
+        generation: 3,
+        sequence: 8,
+      });
+    });
+
+    expect(outputFlowMock.waitForTerminalOutputRender).not.toHaveBeenCalled();
+    unlisten();
+  });
+
+  it("waits once on the final visible chunk when one sequence emits multiple output appends", async () => {
+    useTerminalStore.setState({
+      runtimes: { "runtime-1": runtime("runtime-1", "session-1") },
+    });
+    zmodemTransferMock.consumeTerminalZmodemData.mockImplementationOnce(
+      (
+        event: { runtimeSessionId: string },
+        dependencies: { appendOutput: (runtimeSessionId: string, data: string) => Promise<void> },
+      ) => {
+        void dependencies.appendOutput(event.runtimeSessionId, "first");
+        void dependencies.appendOutput(event.runtimeSessionId, "second");
+      },
+    );
+    const stopLiveOutput = useTerminalStore.getState().beginLiveOutput("runtime-1");
+    const unlisten = await useTerminalStore.getState().bindTerminalEvents();
+
+    eventMock.listeners["terminal:data"]?.({
+      payload: { runtime_session_id: "runtime-1", data: "", generation: 3, sequence: 9 },
+    });
+    await vi.waitFor(() => {
+      expect(outputFlowMock.acknowledgeTerminalOutputFlow).toHaveBeenCalledWith({
+        runtimeSessionId: "runtime-1",
+        generation: 3,
+        sequence: 9,
+      });
+    });
+
+    expect(useTerminalStore.getState().outputChunks["runtime-1"]).toMatchObject([
+      { data: "first" },
+      { data: "second", flow: { runtimeSessionId: "runtime-1", generation: 3, sequence: 9 } },
+    ]);
+    expect(outputFlowMock.waitForTerminalOutputRender).toHaveBeenCalledTimes(1);
+    unlisten();
+    stopLiveOutput();
+  });
+
+  it("does not let a later pure ZMODEM acknowledgement release an earlier visible sequence", async () => {
+    let releaseRender: (() => void) | undefined;
+    outputFlowMock.waitForTerminalOutputRender.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseRender = resolve;
+        }),
+    );
+    useTerminalStore.setState({
+      runtimes: { "runtime-1": runtime("runtime-1", "session-1") },
+    });
+    zmodemTransferMock.consumeTerminalZmodemData.mockImplementationOnce(
+      (
+        event: { runtimeSessionId: string; data: string },
+        dependencies: { appendOutput: (runtimeSessionId: string, data: string) => Promise<void> },
+      ) => dependencies.appendOutput(event.runtimeSessionId, event.data),
+    );
+    const stopLiveOutput = useTerminalStore.getState().beginLiveOutput("runtime-1");
+    const unlisten = await useTerminalStore.getState().bindTerminalEvents();
+
+    eventMock.listeners["terminal:data"]?.({
+      payload: { runtime_session_id: "runtime-1", data: "visible", generation: 3, sequence: 10 },
+    });
+    await vi.waitFor(() => expect(outputFlowMock.waitForTerminalOutputRender).toHaveBeenCalledTimes(1));
+    eventMock.listeners["terminal:data"]?.({
+      payload: { runtime_session_id: "runtime-1", data: "", data_base64: "AA==", generation: 3, sequence: 11 },
+    });
+    await Promise.resolve();
+
+    expect(outputFlowMock.acknowledgeTerminalOutputFlow).not.toHaveBeenCalled();
+    expect(useTerminalStore.getState().outputChunks["runtime-1"]?.[0]?.flow).toEqual({
+      runtimeSessionId: "runtime-1",
+      generation: 3,
+      sequence: 10,
+    });
+    releaseRender?.();
+    await vi.waitFor(() => {
+      expect(outputFlowMock.acknowledgeTerminalOutputFlow.mock.calls).toEqual([
+        [{ runtimeSessionId: "runtime-1", generation: 3, sequence: 10 }],
+        [{ runtimeSessionId: "runtime-1", generation: 3, sequence: 11 }],
+      ]);
+    });
+
+    unlisten();
+    stopLiveOutput();
+  });
+
   it("refreshes command history when the shell reports a submitted command", async () => {
     const unlisten = await useTerminalStore.getState().bindTerminalEvents();
 
@@ -603,6 +752,63 @@ describe("terminalStore", () => {
     expect(output).toBe("a".repeat(50_000));
   });
 
+  it("does not apply a closed runtime's cwd resolution after its ID is reused", async () => {
+    let resolveOldCwd: ((value: string | null) => void) | undefined;
+    useTerminalStore.setState({
+      runtimes: { "runtime-1": runtime("runtime-1", "session-old") },
+    });
+    invokeMock.mockImplementation((command: string) => {
+      if (command === "terminal_write") return Promise.resolve();
+      if (command === "command_completion_resolve_cwd") {
+        return new Promise<string | null>((resolve) => {
+          resolveOldCwd = resolve;
+        });
+      }
+      if (command === "command_completion_suggest") return Promise.resolve([]);
+      return Promise.resolve();
+    });
+
+    await useTerminalStore.getState().writeTerminal("runtime-1", "cd stale\r");
+    await Promise.resolve();
+    useTerminalStore.getState().forgetTerminalRuntime("runtime-1");
+    useTerminalStore.setState({
+      runtimes: { "runtime-1": runtime("runtime-1", "session-new") },
+    });
+    resolveOldCwd?.("/old-runtime");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await useTerminalStore.getState().suggestCompletion("runtime-1", "ls", 2, "/new-runtime");
+
+    expect(invokeMock).toHaveBeenLastCalledWith("command_completion_suggest", {
+      request: {
+        runtime_session_id: "runtime-1",
+        input: "ls",
+        cursor: 2,
+        limit: 8,
+        cwd: "/new-runtime",
+      },
+    });
+  });
+
+  it("does not let an old live-output cleanup remove a reused runtime subscription", () => {
+    useTerminalStore.setState({
+      runtimes: { "runtime-1": runtime("runtime-1", "session-old") },
+    });
+    const stopOldOutput = useTerminalStore.getState().beginLiveOutput("runtime-1");
+
+    useTerminalStore.getState().forgetTerminalRuntime("runtime-1");
+    useTerminalStore.setState({
+      runtimes: { "runtime-1": runtime("runtime-1", "session-new") },
+    });
+    const stopNewOutput = useTerminalStore.getState().beginLiveOutput("runtime-1");
+    stopOldOutput();
+    useTerminalStore.getState().appendOutput("runtime-1", "new runtime output");
+
+    expect(useTerminalStore.getState().outputChunks["runtime-1"]?.[0]?.data).toBe("new runtime output");
+    stopNewOutput();
+  });
+
   it("keeps a shorter visual output tail for workspace switch snapshots", () => {
     const chunk = "b".repeat(12_000);
 
@@ -626,10 +832,9 @@ describe("terminalStore", () => {
     const stopLiveOutput = useTerminalStore.getState().beginLiveOutput("runtime-1");
 
     useTerminalStore.getState().appendOutput("runtime-1", "hello");
-    expect(useTerminalStore.getState().outputChunks["runtime-1"]).toEqual({
-      serial: 1,
-      data: "hello",
-    });
+    expect(useTerminalStore.getState().outputChunks["runtime-1"]).toEqual([
+      { serial: 1, data: "hello" },
+    ]);
 
     stopLiveOutput();
     useTerminalStore.getState().appendOutput("runtime-1", " background");
@@ -669,7 +874,7 @@ describe("terminalStore", () => {
           rows: 32,
         },
       },
-      outputChunks: { "runtime-1": { serial: 1, data: "hello" } },
+      outputChunks: { "runtime-1": [{ serial: 1, data: "hello" }] },
       inputSerialByRuntime: { "runtime-1": 3 },
     });
     useTerminalStore.getState().appendOutput("runtime-1", "hello");
@@ -691,3 +896,18 @@ describe("terminalStore", () => {
     expect("probeTerminalCwd" in useTerminalStore.getState()).toBe(false);
   });
 });
+
+function runtime(runtimeSessionId: string, savedSessionId: string) {
+  return {
+    runtime_session_id: runtimeSessionId,
+    saved_session_id: savedSessionId,
+    history_scope_kind: "saved_session" as const,
+    history_scope_id: savedSessionId,
+    pane_id: "pane-1",
+    title: "SSH",
+    kind: "ssh" as const,
+    initial_cwd: null,
+    cols: 120,
+    rows: 32,
+  };
+}

@@ -1,5 +1,6 @@
 // Author: Liz
 use std::{
+    fs,
     io::Read,
     path::PathBuf,
     process::Command,
@@ -69,6 +70,95 @@ fn agent_codex_pty_overrides_inherited_dumb_terminal_environment() {
         terminal_tail(&output)
     );
     assert!(!output.contains("TERM=dumb"));
+}
+
+#[cfg(windows)]
+#[test]
+fn closing_pty_runtime_reaps_its_child_within_the_bounded_close_path() {
+    let manager = TerminalManager::default();
+    let pid_path = std::env::temp_dir().join(format!(
+        "zterm-pty-reap-{}-{}.txt",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should be after Unix epoch")
+            .as_nanos()
+    ));
+    let quoted_pid_path = pid_path.to_string_lossy().replace('\'', "''");
+    let command = format!(
+        "$PID | Set-Content -NoNewline -LiteralPath '{quoted_pid_path}'; Start-Sleep -Seconds 30"
+    );
+    let opened = manager
+        .open_agent_codex_session(AgentCodexPtyOptions {
+            command_path: "powershell.exe".to_string(),
+            args: vec![
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-Command".to_string(),
+                command,
+            ],
+            cwd: std::env::temp_dir(),
+            environment: Vec::new(),
+            pane_id: "pty-reap-test".to_string(),
+            title: "PTY reap test".to_string(),
+            cols: 80,
+            rows: 24,
+        })
+        .expect("PTY child should start");
+    let runtime_id = opened.info.runtime_session_id.clone();
+    let (sender, receiver) = mpsc::channel::<Option<String>>();
+    thread::spawn(move || read_terminal(opened.reader, sender));
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut output = String::new();
+    while !pid_path.is_file() && Instant::now() < deadline {
+        if let Ok(Some(chunk)) = receiver.recv_timeout(Duration::from_millis(20)) {
+            if chunk.contains("\u{1b}[6n") {
+                manager
+                    .write(&runtime_id, "\u{1b}[1;1R")
+                    .expect("PTY child should accept CPR response");
+            }
+            output.push_str(&chunk);
+        }
+    }
+    if !pid_path.is_file() {
+        let _ = manager.close(&runtime_id);
+        panic!(
+            "PTY child should write its process ID; terminal output: {}",
+            terminal_tail(&output)
+        );
+    }
+    let process_id = fs::read_to_string(&pid_path)
+        .expect("PTY child should write its process ID")
+        .trim()
+        .parse::<u32>()
+        .expect("PTY child process ID should be a positive integer");
+
+    manager
+        .close(&runtime_id)
+        .expect("PTY runtime should close");
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let status = Command::new("tasklist.exe")
+            .args(["/FI", &format!("PID eq {process_id}"), "/NH"])
+            .output()
+            .expect("tasklist should run");
+        assert!(
+            status.status.success(),
+            "tasklist should complete successfully"
+        );
+        let output = String::from_utf8_lossy(&status.stdout);
+        if !output.contains(&process_id.to_string()) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "PTY child process still exists after close: {output}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    let _ = fs::remove_file(pid_path);
 }
 
 #[test]

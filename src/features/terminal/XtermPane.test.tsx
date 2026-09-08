@@ -811,6 +811,73 @@ describe("XtermPane", () => {
     view.unmount();
   });
 
+  it("queues every live chunk received in one React update in serial order", () => {
+    const onLiveChunksQueued = vi.fn();
+    const view = render(
+      <XtermPane
+        data=""
+        liveChunks={[
+          { serial: 1, data: "first" },
+          { serial: 2, data: "second" },
+        ]}
+        onLiveChunksQueued={onLiveChunksQueued}
+        streamId="runtime-1"
+      />,
+    );
+    const terminal = terminalMock.instances[0];
+
+    expect(terminal.write.mock.calls.map(([data]) => data)).toEqual(["first", "second"]);
+    expect(onLiveChunksQueued).toHaveBeenCalledWith(2);
+    view.unmount();
+  });
+
+  it("uses replay once when it already includes every queued live chunk", () => {
+    const onLiveChunksQueued = vi.fn();
+    const view = render(
+      <XtermPane
+        data="before-firstsecond"
+        liveChunks={[
+          { serial: 1, data: "first" },
+          { serial: 2, data: "second" },
+        ]}
+        onLiveChunksQueued={onLiveChunksQueued}
+        streamId="runtime-1"
+      />,
+    );
+    const terminal = terminalMock.instances[0];
+
+    expect(terminal.write.mock.calls.map(([data]) => data)).toEqual(["before-firstsecond"]);
+    expect(onLiveChunksQueued).toHaveBeenCalledWith(2);
+    view.unmount();
+  });
+
+  it("resets the queued live serial when switching terminal streams", () => {
+    const onLiveChunksQueued = vi.fn();
+    const view = render(
+      <XtermPane
+        data=""
+        liveChunks={[{ serial: 8, data: "old" }]}
+        onLiveChunksQueued={onLiveChunksQueued}
+        streamId="runtime-old"
+      />,
+    );
+    const terminal = terminalMock.instances[0];
+    terminal.write.mockClear();
+
+    view.rerender(
+      <XtermPane
+        data=""
+        liveChunks={[{ serial: 1, data: "new" }]}
+        onLiveChunksQueued={onLiveChunksQueued}
+        streamId="runtime-new"
+      />,
+    );
+
+    expect(terminal.write.mock.calls.map(([data]) => data)).toEqual(["new"]);
+    expect(onLiveChunksQueued).toHaveBeenLastCalledWith(1);
+    view.unmount();
+  });
+
   it("does not mark a live chunk as processed before delayed replay data writes", () => {
     const view = render(
       <XtermPane data="" liveData={"PS C:\\workspace> "} liveSerial={1} replayKey={0} streamId="runtime-1" />,

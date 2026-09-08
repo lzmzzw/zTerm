@@ -383,6 +383,9 @@ pub fn terminal_close(
         .terminal_manager()
         .runtime_info(&runtime_session_id)
         .ok();
+    state
+        .terminal_output_dispatcher()
+        .close_runtime(&runtime_session_id, None);
     let result = match state.terminal_manager().close(&runtime_session_id) {
         Ok(result) => result,
         Err(AppError::NotFound(_)) => TerminalClosed { closed: false },
@@ -584,6 +587,7 @@ pub(crate) fn spawn_terminal_reader(
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
         let mut used_auth_secrets = vec![false; auth_secrets.len()];
+        let mut output_stop_message = None;
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
@@ -623,7 +627,11 @@ pub(crate) fn spawn_terminal_reader(
                         } else {
                             visible_data.as_bytes().to_vec()
                         };
-                        output_dispatcher.push(&runtime_session_id, visible_data, raw_bytes);
+                        if !output_dispatcher.push(&runtime_session_id, visible_data, raw_bytes) {
+                            output_stop_message =
+                                output_dispatcher.stop_reason(&runtime_session_id);
+                            break;
+                        }
                     }
                 }
                 Err(error) => {
@@ -635,7 +643,7 @@ pub(crate) fn spawn_terminal_reader(
         }
 
         finalizer.reader_finished.store(true, Ordering::Release);
-        finalizer.finalize(finalizer.wait_for_exit_code(), None);
+        finalizer.finalize(finalizer.wait_for_exit_code(), output_stop_message);
     });
 }
 
@@ -743,6 +751,8 @@ impl TerminalExitFinalizer {
         if self.finalized.swap(true, Ordering::AcqRel) {
             return;
         }
+        self.output_dispatcher
+            .close_runtime(&self.runtime_session_id, None);
         let _reader_gate = self.reader_gate.lock().ok();
         let exit_code = exit_code.or_else(|| self.observed_exit_code());
         self.output_dispatcher
@@ -750,6 +760,8 @@ impl TerminalExitFinalizer {
         if self.manager.close(&self.runtime_session_id).is_err() {
             return;
         }
+        self.output_dispatcher
+            .remove_runtime(&self.runtime_session_id);
         if let Some(cleanup) = &self.exit_cleanup {
             cleanup();
         }

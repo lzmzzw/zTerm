@@ -9,7 +9,12 @@ use std::{
 use base64::{engine::general_purpose, Engine as _};
 use tauri::{AppHandle, Emitter};
 
-use crate::models::terminal::TerminalDataEvent;
+use crate::{
+    models::terminal::TerminalDataEvent,
+    services::terminal_output_flow::{
+        TerminalOutputFlow, TerminalOutputFlowLease, TerminalOutputReservation,
+    },
+};
 
 const FLUSH_INTERVAL: Duration = Duration::from_millis(16);
 const FLUSH_DATA_THRESHOLD_BYTES: usize = 32 * 1024;
@@ -18,31 +23,69 @@ const OUTPUT_QUEUE_CAPACITY: usize = 256;
 #[derive(Clone)]
 pub struct TerminalOutputDispatcher {
     sender: Option<mpsc::SyncSender<TerminalOutputMessage>>,
+    flow: std::sync::Arc<TerminalOutputFlow>,
 }
 
 impl TerminalOutputDispatcher {
     pub fn new(app: Option<AppHandle>) -> Self {
+        let flow = std::sync::Arc::new(TerminalOutputFlow::default());
         let Some(app) = app else {
-            return Self { sender: None };
+            return Self { sender: None, flow };
         };
         let (sender, receiver) = mpsc::sync_channel(OUTPUT_QUEUE_CAPACITY);
         thread::spawn(move || run_dispatcher(app, receiver));
         Self {
             sender: Some(sender),
+            flow,
         }
     }
 
-    pub fn push(&self, runtime_session_id: &str, data: String, raw_bytes: Vec<u8>) {
+    pub fn push(&self, runtime_session_id: &str, data: String, raw_bytes: Vec<u8>) -> bool {
         if data.is_empty() {
-            return;
+            return true;
         }
-        if let Some(sender) = &self.sender {
-            let _ = sender.send(TerminalOutputMessage::Output {
+        // Headless services and unit tests do not have an event consumer. They
+        // deliberately keep the existing direct reader behavior.
+        let Some(sender) = &self.sender else {
+            return true;
+        };
+        let Some(flow) = self.flow.reserve(runtime_session_id, raw_bytes.len()) else {
+            return false;
+        };
+        sender
+            .send(TerminalOutputMessage::Output {
                 runtime_session_id: runtime_session_id.to_string(),
                 data,
                 raw_bytes,
-            });
-        }
+                flow,
+            })
+            .is_ok()
+    }
+
+    pub fn open_runtime(&self, runtime_session_id: &str) -> TerminalOutputFlowLease {
+        self.flow.open(runtime_session_id)
+    }
+
+    pub fn acknowledge_runtime(
+        &self,
+        runtime_session_id: &str,
+        generation: u64,
+        sequence: u64,
+    ) -> bool {
+        self.flow
+            .acknowledge(runtime_session_id, generation, sequence)
+    }
+
+    pub fn close_runtime(&self, runtime_session_id: &str, generation: Option<u64>) {
+        self.flow.close(runtime_session_id, generation);
+    }
+
+    pub fn remove_runtime(&self, runtime_session_id: &str) {
+        self.flow.remove(runtime_session_id);
+    }
+
+    pub fn stop_reason(&self, runtime_session_id: &str) -> Option<String> {
+        self.flow.stop_reason(runtime_session_id)
     }
 
     pub fn flush_runtime(&self, runtime_session_id: &str) {
@@ -63,6 +106,7 @@ enum TerminalOutputMessage {
         runtime_session_id: String,
         data: String,
         raw_bytes: Vec<u8>,
+        flow: TerminalOutputReservation,
     },
     FlushRuntime {
         runtime_session_id: String,
@@ -95,8 +139,9 @@ fn run_dispatcher_events(
                 runtime_session_id,
                 data,
                 raw_bytes,
+                flow,
             }) => {
-                for event in batcher.push(runtime_session_id, data, raw_bytes) {
+                for event in batcher.push(runtime_session_id, data, raw_bytes, flow) {
                     emit(event);
                 }
             }
@@ -133,6 +178,8 @@ struct TerminalOutputBatcher {
 struct PendingTerminalOutput {
     data: String,
     raw_bytes: Vec<u8>,
+    generation: u64,
+    sequence: u64,
 }
 
 impl TerminalOutputBatcher {
@@ -141,10 +188,13 @@ impl TerminalOutputBatcher {
         runtime_session_id: String,
         data: String,
         raw_bytes: Vec<u8>,
+        flow: TerminalOutputReservation,
     ) -> Vec<TerminalDataEvent> {
         let pending = self.pending.entry(runtime_session_id.clone()).or_default();
         pending.data.push_str(&data);
         pending.raw_bytes.extend(raw_bytes);
+        pending.generation = flow.generation;
+        pending.sequence = flow.sequence;
         if pending.raw_bytes.len() >= FLUSH_DATA_THRESHOLD_BYTES {
             self.flush_runtime(&runtime_session_id)
                 .into_iter()
@@ -161,6 +211,8 @@ impl TerminalOutputBatcher {
         }
         Some(TerminalDataEvent {
             runtime_session_id: runtime_session_id.to_string(),
+            generation: pending.generation,
+            sequence: pending.sequence,
             data: pending.data,
             data_base64: general_purpose::STANDARD.encode(pending.raw_bytes),
         })
@@ -178,6 +230,14 @@ impl TerminalOutputBatcher {
 #[cfg(test)]
 mod tests {
     use super::TerminalOutputBatcher;
+    use crate::services::terminal_output_flow::TerminalOutputReservation;
+
+    fn flow(sequence: u64) -> TerminalOutputReservation {
+        TerminalOutputReservation {
+            generation: 1,
+            sequence,
+        }
+    }
 
     #[test]
     fn continuous_other_runtime_does_not_delay_small_output() {
@@ -194,6 +254,7 @@ mod tests {
                 runtime_session_id: "quiet".into(),
                 data: "prompt".into(),
                 raw_bytes: b"prompt".to_vec(),
+                flow: flow(1),
             })
             .unwrap();
         let producer = thread::spawn(move || {
@@ -203,6 +264,7 @@ mod tests {
                         runtime_session_id: "busy".into(),
                         data: "x".into(),
                         raw_bytes: vec![b'x'],
+                        flow: flow(1),
                     })
                     .unwrap();
                 thread::sleep(Duration::from_millis(2));
@@ -230,16 +292,27 @@ mod tests {
         let mut batcher = TerminalOutputBatcher::default();
 
         assert!(batcher
-            .push("runtime-1".to_string(), "a".to_string(), vec![0x61])
+            .push(
+                "runtime-1".to_string(),
+                "a".to_string(),
+                vec![0x61],
+                flow(1)
+            )
             .is_empty());
         assert!(batcher
-            .push("runtime-1".to_string(), "b".to_string(), vec![0x62, 0xff])
+            .push(
+                "runtime-1".to_string(),
+                "b".to_string(),
+                vec![0x62, 0xff],
+                flow(2)
+            )
             .is_empty());
 
         let event = batcher
             .flush_runtime("runtime-1")
             .expect("runtime output should flush");
         assert_eq!(event.runtime_session_id, "runtime-1");
+        assert_eq!((event.generation, event.sequence), (1, 2));
         assert_eq!(event.data, "ab");
         assert_eq!(event.data_base64, "YWL/");
     }
@@ -247,8 +320,18 @@ mod tests {
     #[test]
     fn terminal_output_batcher_flushes_only_requested_runtime_before_exit() {
         let mut batcher = TerminalOutputBatcher::default();
-        batcher.push("runtime-1".to_string(), "one".to_string(), b"one".to_vec());
-        batcher.push("runtime-2".to_string(), "two".to_string(), b"two".to_vec());
+        batcher.push(
+            "runtime-1".to_string(),
+            "one".to_string(),
+            b"one".to_vec(),
+            flow(1),
+        );
+        batcher.push(
+            "runtime-2".to_string(),
+            "two".to_string(),
+            b"two".to_vec(),
+            flow(1),
+        );
 
         let event = batcher
             .flush_runtime("runtime-1")

@@ -7,10 +7,10 @@ import { TerminalReplayBuffer } from "./terminalReplay";
 describe("TerminalReplayBuffer", () => {
   it("serializes a Docker-style multi-line redraw as a complete screen", async () => {
     const replay = new TerminalReplayBuffer(60, 6);
-    replay.append("layer-a: Downloading [====>                    ] 17MB/105MB\r\nlayer-b: Waiting\r\nlayer-c: Waiting\r\n");
-    replay.append("\x1b[3A\x1b[2K\rlayer-a: Downloading [=======>                 ] 28MB/105MB\r\n\x1b[2K\rlayer-b: Downloading [==>                     ] 5MB/68MB\r\n\x1b[2K\rlayer-c: Waiting\r\n");
-
-    await waitForTerminalParse();
+    await Promise.all([
+      replay.append("layer-a: Downloading [====>                    ] 17MB/105MB\r\nlayer-b: Waiting\r\nlayer-c: Waiting\r\n"),
+      replay.append("\x1b[3A\x1b[2K\rlayer-a: Downloading [=======>                 ] 28MB/105MB\r\n\x1b[2K\rlayer-b: Downloading [==>                     ] 5MB/68MB\r\n\x1b[2K\rlayer-c: Waiting\r\n"),
+    ]);
 
     const output = await replay.replay("truncated raw output");
     expect(output.kind).toBe("screen");
@@ -28,9 +28,7 @@ describe("TerminalReplayBuffer", () => {
 
   it("keeps wget-style carriage-return progress on the raw replay path", async () => {
     const replay = new TerminalReplayBuffer(60, 6);
-    replay.append("download 20%\rdownload 40%\r");
-
-    await waitForTerminalParse();
+    await replay.append("download 20%\rdownload 40%\r");
 
     expect(await replay.replay("download 20%\rdownload 40%\r")).toEqual({
       data: "download 20%\rdownload 40%\r",
@@ -41,9 +39,7 @@ describe("TerminalReplayBuffer", () => {
 
   it("keeps plain download logs on the raw replay path", async () => {
     const replay = new TerminalReplayBuffer(60, 6);
-    replay.append("Fetching model shard 1\r\nFetching model shard 2\r\n");
-
-    await waitForTerminalParse();
+    await replay.append("Fetching model shard 1\r\nFetching model shard 2\r\n");
 
     expect((await replay.replay("Fetching model shard 1\r\nFetching model shard 2\r\n")).kind).toBe("raw");
     replay.dispose();
@@ -51,20 +47,23 @@ describe("TerminalReplayBuffer", () => {
 
   it("uses the same screen snapshot path for hf-style multi-progress updates", async () => {
     const replay = new TerminalReplayBuffer(60, 6);
-    replay.append("model-00001: 20%\r\nmodel-00002: 10%\r\n");
-    replay.append("\x1b[2A\rmodel-00001: 40%\r\nmodel-00002: 30%\r\n");
-
-    await waitForTerminalParse();
+    await Promise.all([
+      replay.append("model-00001: 20%\r\nmodel-00002: 10%\r\n"),
+      replay.append("\x1b[2A\rmodel-00001: 40%\r\nmodel-00002: 30%\r\n"),
+    ]);
 
     expect((await replay.replay("truncated raw output")).kind).toBe("screen");
     replay.dispose();
   });
-});
 
-async function waitForTerminalParse() {
-  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-  await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-}
+  it("settles queued replay work when its runtime is disposed", async () => {
+    const replay = new TerminalReplayBuffer(60, 6);
+    const pending = replay.append("output that may still be parsing");
+
+    replay.dispose();
+    await expect(pending).resolves.toBeUndefined();
+  });
+});
 
 function writeTerminal(terminal: Terminal, data: string) {
   return new Promise<void>((resolve) => terminal.write(data, resolve));

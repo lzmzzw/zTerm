@@ -116,6 +116,9 @@ pub fn run() {
             commands::terminal::terminal_zmodem_save_file,
             commands::terminal::terminal_resize,
             commands::terminal::terminal_close,
+            commands::terminal_output_flow::terminal_output_flow_open,
+            commands::terminal_output_flow::terminal_output_flow_ack,
+            commands::terminal_output_flow::terminal_output_flow_close,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build zTerm");

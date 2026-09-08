@@ -26,6 +26,11 @@ import {
   type TerminalSemanticHighlighter,
 } from "./terminalSemanticHighlight";
 import type { CommandCompletionCandidate } from "./terminalStore";
+import {
+  beginTerminalOutputRender,
+  markTerminalOutputRendered,
+  type TerminalOutputFlowEvent,
+} from "./terminalOutputFlow";
 import type { TerminalReplayKind } from "./terminalReplay";
 import type { TerminalInputSource } from "./syncInputStore";
 
@@ -35,6 +40,9 @@ interface XtermPaneProps {
   initialCwd?: string | null;
   liveData?: string | null;
   liveSerial?: number | null;
+  liveOutputFlow?: TerminalOutputFlowEvent | null;
+  liveChunks?: readonly TerminalLiveOutputChunk[] | null;
+  onLiveChunksQueued?: (throughSerial: number) => void;
   replayKey?: number | string | null;
   replayKind?: TerminalReplayKind;
   streamId?: string | null;
@@ -54,6 +62,12 @@ interface XtermPaneProps {
   onReconnect?: () => void;
   onRestart?: () => void;
   onResize?: (cols: number, rows: number) => void;
+}
+
+interface TerminalLiveOutputChunk {
+  data: string;
+  flow?: TerminalOutputFlowEvent;
+  serial: number;
 }
 
 // Keep xterm's palette aligned with the shell surface; CSS controls the surrounding chrome.
@@ -117,6 +131,7 @@ const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*?(?:\x07
 interface QueuedTerminalWrite {
   data: string;
   suppressGeneratedInput: boolean;
+  onComplete?: () => void;
 }
 
 export function XtermPane({
@@ -125,6 +140,9 @@ export function XtermPane({
   initialCwd = null,
   liveData = null,
   liveSerial,
+  liveOutputFlow = null,
+  liveChunks = null,
+  onLiveChunksQueued,
   replayKey = null,
   replayKind = "raw",
   streamId = null,
@@ -151,6 +169,7 @@ export function XtermPane({
   const streamIdRef = useRef<string | null>(streamId);
   const replayKeyRef = useRef<number | string | null>(null);
   const liveSerialRef = useRef<number | null>(null);
+  const liveChunkSerialRef = useRef<number | null>(null);
   const completionRequestIdRef = useRef(0);
   const ghostCandidateRef = useRef<CommandCompletionCandidate | null>(null);
   const lastResizeRef = useRef<{ cols: number; rows: number } | null>(null);
@@ -216,6 +235,7 @@ export function XtermPane({
       if (item.suppressGeneratedInput) {
         replayingOutputRef.current = false;
       }
+      item.onComplete?.();
       outputWriteInProgressRef.current = false;
       drainQueuedOutputWrites();
     };
@@ -249,7 +269,7 @@ export function XtermPane({
   }, []);
 
   const enqueueTerminalOutput = useCallback(
-    (data: string, suppressGeneratedInput: boolean) => {
+    (data: string, suppressGeneratedInput: boolean, onComplete?: () => void) => {
       const output = suppressGeneratedInput ? prepareReplayOutput(data, replayKind) : data;
       if (!output) {
         replayingOutputRef.current = false;
@@ -258,6 +278,7 @@ export function XtermPane({
       outputWriteQueueRef.current.push({
         data: output,
         suppressGeneratedInput,
+        onComplete,
       });
       drainQueuedOutputWrites();
     },
@@ -521,6 +542,7 @@ export function XtermPane({
       streamIdRef.current = null;
       replayKeyRef.current = null;
       liveSerialRef.current = null;
+      liveChunkSerialRef.current = null;
       replayingOutputRef.current = false;
       lastResizeRef.current = null;
       scheduleNextTask(() => terminal.dispose());
@@ -532,8 +554,17 @@ export function XtermPane({
   }, [autoFocus]);
 
   useEffect(() => {
+    if (!streamId) return undefined;
+    return beginTerminalOutputRender(streamId);
+  }, [streamId]);
+
+  useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal) return;
+
+    const replayFlow = liveChunksCoveredByReplay(data, liveChunks)
+      ? liveChunks?.at(-1)?.flow
+      : undefined;
 
     if (liveSerial !== undefined) {
       const streamChanged = streamIdRef.current !== streamId;
@@ -557,7 +588,13 @@ export function XtermPane({
       semanticHighlighterRef.current?.clear();
       terminal.clear();
       if (data) {
-        enqueueTerminalOutput(data, !isOnlyTerminalStatusQuery(data));
+        enqueueTerminalOutput(
+          data,
+          !isOnlyTerminalStatusQuery(data),
+          replayCoversLiveData && liveOutputFlow
+            ? () => markTerminalOutputRendered(liveOutputFlow)
+            : undefined,
+        );
       }
       return;
     }
@@ -566,11 +603,16 @@ export function XtermPane({
     if (streamChanged) {
       streamIdRef.current = streamId;
       writtenLengthRef.current = 0;
+      liveChunkSerialRef.current = null;
       cancelQueuedOutputWrites();
       semanticHighlighterRef.current?.clear();
       terminal.clear();
       if (data) {
-        enqueueTerminalOutput(data, !isOnlyTerminalStatusQuery(data));
+        enqueueTerminalOutput(
+          data,
+          !isOnlyTerminalStatusQuery(data),
+          replayFlow ? () => markTerminalOutputRendered(replayFlow) : undefined,
+        );
       }
       writtenLengthRef.current = data.length;
       return;
@@ -582,25 +624,69 @@ export function XtermPane({
       const nextChunk = data.slice(previousLength);
       if (nextChunk) {
         const suppressGeneratedInput = previousLength === 0 && !isOnlyTerminalStatusQuery(nextChunk);
-        enqueueTerminalOutput(nextChunk, suppressGeneratedInput);
+        enqueueTerminalOutput(
+          nextChunk,
+          suppressGeneratedInput,
+          replayFlow ? () => markTerminalOutputRendered(replayFlow) : undefined,
+        );
       }
     } else {
       cancelQueuedOutputWrites();
       semanticHighlighterRef.current?.clear();
       terminal.clear();
-      enqueueTerminalOutput(data, !isOnlyTerminalStatusQuery(data));
+      enqueueTerminalOutput(
+        data,
+        !isOnlyTerminalStatusQuery(data),
+        replayFlow ? () => markTerminalOutputRendered(replayFlow) : undefined,
+      );
     }
     writtenLengthRef.current = data.length;
-  }, [cancelQueuedOutputWrites, data, enqueueTerminalOutput, liveData, liveSerial, replayKey, streamId]);
+  }, [
+    cancelQueuedOutputWrites,
+    data,
+    enqueueTerminalOutput,
+    liveData,
+    liveOutputFlow,
+    liveChunks,
+    liveSerial,
+    replayKey,
+    streamId,
+  ]);
 
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal || liveSerial === undefined || liveSerial === null || !liveData) return;
     if (liveSerialRef.current === liveSerial) return;
-    enqueueTerminalOutput(liveData, false);
+    enqueueTerminalOutput(
+      liveData,
+      false,
+      liveOutputFlow ? () => markTerminalOutputRendered(liveOutputFlow) : undefined,
+    );
     liveSerialRef.current = liveSerial;
     writtenLengthRef.current += liveData.length;
-  }, [enqueueTerminalOutput, liveData, liveSerial]);
+  }, [enqueueTerminalOutput, liveData, liveOutputFlow, liveSerial]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal || !liveChunks?.length) return;
+    const replayCoversLiveChunks = liveChunksCoveredByReplay(data, liveChunks);
+    let throughSerial = liveChunkSerialRef.current ?? 0;
+    for (const chunk of liveChunks) {
+      if (chunk.serial <= throughSerial) continue;
+      if (!replayCoversLiveChunks) {
+        const flow = chunk.flow;
+        enqueueTerminalOutput(
+          chunk.data,
+          false,
+          flow ? () => markTerminalOutputRendered(flow) : undefined,
+        );
+      }
+      throughSerial = chunk.serial;
+    }
+    if (throughSerial === (liveChunkSerialRef.current ?? 0)) return;
+    liveChunkSerialRef.current = throughSerial;
+    onLiveChunksQueued?.(throughSerial);
+  }, [data, enqueueTerminalOutput, liveChunks, onLiveChunksQueued]);
 
   return (
     <div
@@ -811,6 +897,11 @@ function isLiveDataCoveredByReplay(data: string, liveData: string | null, liveSe
     return true;
   }
   return data.endsWith(liveData);
+}
+
+function liveChunksCoveredByReplay(data: string, liveChunks: readonly TerminalLiveOutputChunk[] | null) {
+  if (!liveChunks?.length) return false;
+  return data.endsWith(liveChunks.map((chunk) => chunk.data).join(""));
 }
 
 function isControlCharacter(character: string) {
