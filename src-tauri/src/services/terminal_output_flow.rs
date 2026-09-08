@@ -193,10 +193,12 @@ impl TerminalOutputFlow {
                 }
                 runtime
             }
-            None => state
-                .runtimes
-                .entry(runtime_session_id.to_string())
-                .or_default(),
+            None => {
+                let Some(runtime) = state.runtimes.get_mut(runtime_session_id) else {
+                    return;
+                };
+                runtime
+            }
         };
         runtime.consumer_open = false;
         runtime.closed = true;
@@ -272,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn close_releases_a_reader_waiting_for_credit() {
+    fn close_releases_a_reader_waiting_for_credit_before_the_runtime_is_removed() {
         let flow = std::sync::Arc::new(TerminalOutputFlow::default());
         flow.open("runtime");
         flow.reserve("runtime", MAX_UNACKNOWLEDGED_OUTPUT_BYTES)
@@ -294,6 +296,12 @@ mod tests {
             None
         );
         worker.join().expect("waiting worker");
+        flow.remove("runtime");
+        let state = flow.state.lock().expect("flow state");
+        assert!(
+            !state.runtimes.contains_key("runtime"),
+            "the caller must remove only after the waiting reader exits"
+        );
     }
 
     #[test]
@@ -335,11 +343,16 @@ mod tests {
     }
 
     #[test]
-    fn stale_frontend_close_does_not_recreate_a_removed_runtime() {
+    fn close_of_an_unknown_or_already_removed_runtime_does_not_create_a_tombstone() {
         let flow = TerminalOutputFlow::default();
         flow.close("unknown", Some(1));
+        flow.close("unknown", None);
+        flow.open("removed");
+        flow.remove("removed");
+        flow.close("removed", None);
 
         let state = flow.state.lock().expect("flow state");
         assert!(!state.runtimes.contains_key("unknown"));
+        assert!(!state.runtimes.contains_key("removed"));
     }
 }

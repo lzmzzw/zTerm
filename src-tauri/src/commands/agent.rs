@@ -259,6 +259,9 @@ pub async fn agent_codex_close(
             return Err(AppError::validation("目标 runtime 不是 Codex CLI 会话"));
         }
     }
+    state
+        .terminal_output_dispatcher()
+        .close_runtime(&runtime_session_id, None);
     match state.terminal_manager().close(&runtime_session_id) {
         Ok(_) | Err(AppError::NotFound(_)) => {}
         Err(error) => return Err(error),

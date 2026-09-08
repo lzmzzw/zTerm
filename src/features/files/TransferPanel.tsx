@@ -58,6 +58,8 @@ export function TransferPanel({
   } | null>(null);
   const [busyTaskIds, setBusyTaskIds] = useState<Set<string>>(() => new Set());
   const busyTaskIdsRef = useRef<Set<string>>(new Set());
+  const bulkActionRef = useRef<string | null>(null);
+  const [bulkAction, setBulkAction] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   async function runTaskAction(label: string, taskId: string, action: (taskId: string) => Promise<void> | void) {
@@ -72,6 +74,29 @@ export function TransferPanel({
     } finally {
       busyTaskIdsRef.current.delete(taskId);
       setBusyTaskIds(new Set(busyTaskIdsRef.current));
+    }
+  }
+
+  async function runBulkAction(
+    label: string,
+    taskIds: string[],
+    action: (taskIds: string[]) => Promise<void> | void,
+  ) {
+    if (!taskIds.length || bulkActionRef.current || taskIds.some((taskId) => busyTaskIdsRef.current.has(taskId))) return;
+    setActionError(null);
+    bulkActionRef.current = label;
+    setBulkAction(label);
+    taskIds.forEach((taskId) => busyTaskIdsRef.current.add(taskId));
+    setBusyTaskIds(new Set(busyTaskIdsRef.current));
+    try {
+      await action(taskIds);
+    } catch (error) {
+      setActionError(`${label}失败：${unknownErrorMessage(error, "传输任务批量操作失败")}`);
+    } finally {
+      taskIds.forEach((taskId) => busyTaskIdsRef.current.delete(taskId));
+      setBusyTaskIds(new Set(busyTaskIdsRef.current));
+      bulkActionRef.current = null;
+      setBulkAction(null);
     }
   }
 
@@ -190,8 +215,8 @@ export function TransferPanel({
                   type="button"
                   aria-label="暂停全部传输任务"
                   title="暂停全部"
-                  disabled={pausableTaskIds.length === 0}
-                  onClick={() => void onPauseAll(pausableTaskIds)}
+                  disabled={bulkAction !== null || pausableTaskIds.length === 0 || pausableTaskIds.some((taskId) => busyTaskIds.has(taskId))}
+                  onClick={() => void runBulkAction("批量暂停", pausableTaskIds, onPauseAll)}
                 >
                   <Pause size={14} aria-hidden="true" />
                 </button>
@@ -201,8 +226,8 @@ export function TransferPanel({
                   type="button"
                   aria-label="恢复全部传输任务"
                   title="恢复全部"
-                  disabled={resumableTaskIds.length === 0}
-                  onClick={() => void onResumeAll(resumableTaskIds)}
+                  disabled={bulkAction !== null || resumableTaskIds.length === 0 || resumableTaskIds.some((taskId) => busyTaskIds.has(taskId))}
+                  onClick={() => void runBulkAction("批量恢复", resumableTaskIds, onResumeAll)}
                 >
                   <Play size={14} aria-hidden="true" />
                 </button>
@@ -212,13 +237,13 @@ export function TransferPanel({
                   type="button"
                   aria-label="清理全部传输任务"
                   title="清理全部"
-                  disabled={allTaskIds.length === 0}
+                  disabled={bulkAction !== null || allTaskIds.length === 0 || allTaskIds.some((taskId) => busyTaskIds.has(taskId))}
                   onClick={() =>
                     setPendingConfirm({
                       title: "清理传输任务",
                       message: "清理全部任务会取消进行中的传输并删除任务记录，确认清理？",
                       confirmLabel: "确认清理",
-                      onConfirm: () => void onClearAll(allTaskIds),
+                      onConfirm: () => void runBulkAction("批量清理", allTaskIds, onClearAll),
                     })
                   }
                 >

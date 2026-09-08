@@ -757,9 +757,11 @@ impl TerminalExitFinalizer {
         let exit_code = exit_code.or_else(|| self.observed_exit_code());
         self.output_dispatcher
             .flush_runtime(&self.runtime_session_id);
-        if self.manager.close(&self.runtime_session_id).is_err() {
-            return;
-        }
+        let close_error = self
+            .manager
+            .close(&self.runtime_session_id)
+            .err()
+            .filter(|error| !matches!(error, AppError::NotFound(_)));
         self.output_dispatcher
             .remove_runtime(&self.runtime_session_id);
         if let Some(cleanup) = &self.exit_cleanup {
@@ -772,7 +774,7 @@ impl TerminalExitFinalizer {
             TerminalExitEvent {
                 runtime_session_id: self.runtime_session_id.clone(),
                 exit_code,
-                message,
+                message: close_error.map(|error| error.to_string()).or(message),
             },
         );
     }

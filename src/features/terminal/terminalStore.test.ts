@@ -843,6 +843,15 @@ describe("terminalStore", () => {
     expect(useTerminalStore.getState().outputChunks["runtime-1"]).toBeUndefined();
   });
 
+  it("opens output flow when a live terminal consumer starts", async () => {
+    const stopLiveOutput = useTerminalStore.getState().beginLiveOutput("runtime-1");
+
+    await vi.waitFor(() => {
+      expect(outputFlowMock.openTerminalOutputFlow).toHaveBeenCalledWith("runtime-1");
+    });
+    stopLiveOutput();
+  });
+
   it("increments the input serial only after submitted terminal input is written", async () => {
     invokeMock.mockResolvedValue(undefined);
 

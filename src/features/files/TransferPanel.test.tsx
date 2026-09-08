@@ -44,6 +44,16 @@ async function mouseEvent(target: EventTarget, type: string, clientY: number) {
   });
 }
 
+function deferred<T>() {
+  let reject!: (reason?: unknown) => void;
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
 const tasks: TransferTask[] = [
   {
     id: "task-1",
@@ -341,6 +351,41 @@ describe("TransferPanel", () => {
     expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeTruthy();
     expect(button(view.container, "折叠传输任务")).toBeTruthy();
 
+    view.unmount();
+  });
+
+  it("keeps bulk task actions mutually exclusive, reports failures, and allows retry", async () => {
+    const first = deferred<void>();
+    const onPauseAll = vi.fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockResolvedValueOnce(undefined);
+    const view = render(
+      <TransferPanel
+        collapsible
+        tasks={[tasks[0]]}
+        onRetry={vi.fn()}
+        onPause={vi.fn()}
+        onResume={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+        onPauseAll={onPauseAll}
+      />,
+    );
+
+    await click(button(view.container, "暂停全部传输任务"));
+    await click(button(view.container, "暂停全部传输任务"));
+
+    expect(onPauseAll).toHaveBeenCalledTimes(1);
+    expect(button(view.container, "暂停全部传输任务").disabled).toBe(true);
+    expect(button(view.container, "暂停 task-1").disabled).toBe(true);
+
+    await act(async () => first.reject(new Error("网络中断")));
+
+    expect(view.container.textContent).toContain("批量暂停失败：网络中断");
+    expect(button(view.container, "暂停全部传输任务").disabled).toBe(false);
+
+    await click(button(view.container, "暂停全部传输任务"));
+    expect(onPauseAll).toHaveBeenCalledTimes(2);
     view.unmount();
   });
 

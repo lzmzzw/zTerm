@@ -122,6 +122,7 @@ class ZmodemRuntimeController {
   private textDecoder = new TextDecoder("utf-8", { fatal: false });
   private activeSession: ZmodemSession | null = null;
   private pendingReceiveOverAndOut: number[] | null = null;
+  private awaitingUploadOffer = false;
   private disposed = false;
   private aborting = false;
   private outboundGeneration = 0;
@@ -157,7 +158,7 @@ class ZmodemRuntimeController {
       if (!completedBytes) return true;
       const chunks = this.activeSession ? [completedBytes] : splitCoalescedZmodemStartupBytes(completedBytes);
       for (const chunk of chunks) {
-        if (this.activeSession && isStandaloneZmodemStartupHeader(chunk)) {
+        if (this.awaitingUploadOffer && isStandaloneZmodemStartupHeader(chunk)) {
           continue;
         }
         this.sentry.consume(Array.from(chunk));
@@ -173,6 +174,7 @@ class ZmodemRuntimeController {
   dispose() {
     if (this.disposed) return;
     this.pendingReceiveOverAndOut = null;
+    this.awaitingUploadOffer = false;
     if (this.activeSession?.abort) {
       this.aborting = true;
       try {
@@ -212,21 +214,20 @@ class ZmodemRuntimeController {
 
   private async runUpload(session: ZmodemSession) {
     this.appendOutput("\r\nrz 请求上传文件，正在选择本机文件...\r\n");
+    this.awaitingUploadOffer = true;
     const paths = await this.dependencies.selectUploadFiles?.();
     this.ensureActiveSession(session);
     if (!paths?.length) {
-      await session.close();
       this.appendOutput("未选择文件，上传已取消。\r\n");
-      this.activeSession = null;
+      this.abortAndDiscard();
       return;
     }
 
     const files = await this.dependencies.readLocalFiles?.(paths);
     this.ensureActiveSession(session);
     if (!files?.length) {
-      await session.close();
       this.appendOutput("未读取到可上传文件。\r\n");
-      this.activeSession = null;
+      this.abortAndDiscard();
       return;
     }
 
@@ -235,6 +236,7 @@ class ZmodemRuntimeController {
     for (let index = 0; index < files.length; index += 1) {
       this.ensureActiveSession(session);
       const file = files[index];
+      this.awaitingUploadOffer = false;
       const transfer = await session.send_offer({
         name: file.name,
         size: file.size,

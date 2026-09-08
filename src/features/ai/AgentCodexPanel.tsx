@@ -61,8 +61,7 @@ export function AgentCodexPanel({
           <Bot size={16} aria-hidden="true" />
           <div>
             <strong>Codex CLI</strong>
-            <span>所属连接：{session?.target_label ?? "未连接"}</span>
-            {activeTargetLabel ? <span>当前终端：{activeTargetLabel}</span> : null}
+            <span>关联连接：{activeTargetLabel ?? session?.target_label ?? "尚未选择终端"}</span>
           </div>
         </div>
         <label className={`zt-ai-approval-mode mode-${approvalMode}`}>
@@ -156,7 +155,7 @@ export function AgentCodexPanel({
             <ZtInlineError>{error}</ZtInlineError>
           </div>
         ) : (
-          <div className="zt-agent-codex-state">请先打开一个可操作的终端标签页。</div>
+          <div className="zt-agent-codex-state">请先选择一个可操作的终端标签页。</div>
         )}
       </div>
     </div>

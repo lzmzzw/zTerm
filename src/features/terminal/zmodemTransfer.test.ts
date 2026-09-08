@@ -170,8 +170,40 @@ describe("zmodemTransfer", () => {
     );
     expect(detection.confirm).toHaveBeenCalled();
     expect(detection.deny).not.toHaveBeenCalled();
-    expect(session.close).toHaveBeenCalled();
+    expect(session.abort).toHaveBeenCalledOnce();
     expect(appendOutput).toHaveBeenCalledWith("runtime-1", expect.stringContaining("未选择文件"));
+  });
+
+  it("filters repeated startup headers across events while the upload picker is open", async () => {
+    const appendOutput = vi.fn();
+    const selectedPaths = deferred<string[]>();
+    const session = {
+      type: "send",
+      send_offer: vi.fn(),
+      close: vi.fn(),
+      abort: vi.fn(),
+      on: vi.fn(),
+      start: vi.fn(),
+    };
+    const detection = {
+      confirm: vi.fn(() => session),
+      deny: vi.fn(),
+    };
+    sentryMock.consumeImpl = (options) => options.on_detect(detection);
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64(binaryBytes("rz.**\x18B0100000023be50\r\n")) },
+      { appendOutput, selectUploadFiles: vi.fn(() => selectedPaths.promise) },
+    );
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64(binaryBytes("**\x18B0100000023be50\r\n")) },
+      { appendOutput },
+    );
+
+    expect(sentryMock.instances[0].consume).toHaveBeenCalledTimes(1);
+    selectedPaths.resolve([]);
+    await flushPromises();
+    expect(session.abort).toHaveBeenCalledOnce();
   });
 
   it("confirms that a real zmodem session rejects a repeated startup header", async () => {
@@ -198,6 +230,93 @@ describe("zmodemTransfer", () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it.each([3, 573, 65_537])("completes a real sender-receiver upload including the ZRINIT and ZFIN close handshakes (%i bytes)", async (size) => {
+    const { default: importedZmodem } = await vi.importActual<typeof import("zmodem.js/src/zmodem_browser")>(
+      "zmodem.js/src/zmodem_browser",
+    );
+    const RealZmodem: any = importedZmodem;
+    const appendOutput = vi.fn();
+    const receivedPayloads: number[][] = [];
+    const payload = Array.from({ length: size }, (_, index) => index % 256);
+    const receiver = new RealZmodem.Session.Receive();
+    receiver.on("offer", (offer: any) => {
+      void offer.accept({ on_input: "spool_uint8array" }).then((payloads: Uint8Array[]) => {
+        receivedPayloads.push(...payloads.map((payload: Uint8Array) => Array.from(payload)));
+      });
+    });
+    const dependencies = {
+      appendOutput,
+      createSentry: (options: any) => new RealZmodem.Sentry(options),
+      selectUploadFiles: vi.fn().mockResolvedValue(["C:\\temp\\handshake.txt"]),
+      readLocalFiles: vi.fn().mockResolvedValue([
+        { name: "handshake.txt", size, mtime_ms: 0, data: payload },
+      ]),
+      sendBytes: vi.fn(async (_runtimeSessionId: string, data: number[]) => {
+        receiver.consume(data);
+      }),
+    };
+    receiver.set_sender((bytes: number[]) => {
+      consumeTerminalZmodemData(
+        { runtimeSessionId: "runtime-1", data: "", dataBase64: base64(Array.from(bytes)) },
+        dependencies,
+      );
+    });
+
+    receiver.start();
+    await waitFor(() => appendOutput.mock.calls.some(([, output]) => output === "上传完成。\r\n"));
+
+    expect(receivedPayloads.flat()).toEqual(payload);
+    expect(appendOutput).toHaveBeenCalledWith("runtime-1", "上传完成。\r\n");
+    releaseTerminalZmodemRuntime("runtime-1");
+  });
+
+  it("aborts a real upload session after a ZSINIT ZACK keepalive when file selection is cancelled", async () => {
+    const { default: importedZmodem } = await vi.importActual<typeof import("zmodem.js/src/zmodem_browser")>(
+      "zmodem.js/src/zmodem_browser",
+    );
+    const RealZmodem: any = importedZmodem;
+    const appendOutput = vi.fn();
+    const selectedPaths = deferred<string[]>();
+    let sentry: any;
+    const receiver = new RealZmodem.Session.Receive();
+    const dependencies = {
+      appendOutput,
+      createSentry: (options: any) => {
+        sentry = new RealZmodem.Sentry(options);
+        return sentry;
+      },
+      selectUploadFiles: vi.fn(() => selectedPaths.promise),
+      sendBytes: vi.fn(async (_runtimeSessionId: string, data: number[]) => {
+        receiver.consume(data);
+      }),
+    };
+    receiver.set_sender((bytes: number[]) => {
+      consumeTerminalZmodemData(
+        { runtimeSessionId: "runtime-1", data: "", dataBase64: base64(Array.from(bytes)) },
+        dependencies,
+      );
+    });
+
+    receiver.start();
+    await waitFor(() => Boolean(sentry?.get_confirmed_session()));
+    const sendSession = sentry.get_confirmed_session();
+    sendSession._next_header_handler = {
+      ZACK: () => {
+        sendSession._got_ZSINIT_ZACK = true;
+      },
+    };
+    sendSession._send_ZSINIT();
+    await waitFor(() => sendSession._last_header_name === "ZACK");
+
+    selectedPaths.resolve([]);
+    await waitFor(() => appendOutput.mock.calls.some(([, output]) => output === "未选择文件，上传已取消。\r\n"));
+    await waitFor(() => dependencies.sendBytes.mock.calls.some(([, data]) => data.slice(0, 5).every((byte) => byte === 24)));
+
+    expect(appendOutput).not.toHaveBeenCalledWith("runtime-1", expect.stringContaining("Can’t close"));
+    expect(appendOutput).toHaveBeenCalledWith("runtime-1", "未选择文件，上传已取消。\r\n");
+    releaseTerminalZmodemRuntime("runtime-1");
   });
 
   it("abandons a failed parser session and recreates a clean sentry for later terminal output", () => {
@@ -703,6 +822,14 @@ async function flushPromises() {
   await Promise.resolve();
   await Promise.resolve();
   await new Promise((resolve) => window.setTimeout(resolve, 0));
+}
+
+async function waitFor(condition: () => boolean) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (condition()) return;
+    await flushPromises();
+  }
+  throw new Error("Timed out waiting for ZMODEM local peer handshake");
 }
 
 async function startMockReceiveSession(appendOutput: (runtimeSessionId: string, data: string) => void) {

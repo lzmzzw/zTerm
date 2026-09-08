@@ -3410,6 +3410,35 @@ describe("AppShell", () => {
     view.unmount();
   });
 
+  it("uses the saved SSH connection name while the Agent session is still opening", async () => {
+    const opening = deferred<Awaited<ReturnType<typeof openAgentCodex>>>();
+    vi.mocked(openAgentCodex).mockImplementationOnce(() => opening.promise);
+    storeMocks.sessionState.sessions = [{ id: "session-1", name: "生产 SSH", type: "ssh", host: "10.0.0.1" }];
+    const tab = activeTerminalWorkspaceTab();
+    tab.root.title = "临时巡检标签";
+    tab.root.terminal_tabs[0].title = "临时巡检标签";
+    storeMocks.workspaceState.tabs = [tab];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalState.runtimes = {
+      "runtime-1": { runtime_session_id: "runtime-1", kind: "ssh", title: "临时巡检标签" },
+    };
+    const view = render(<AppShell />);
+
+    await act(async () => {
+      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    expect(vi.mocked(openAgentCodex)).toHaveBeenCalledWith(expect.objectContaining({
+      targetLabel: "生产 SSH",
+    }));
+    expect(storeMocks.aiPanelProps).toEqual(expect.objectContaining({
+      activeTargetLabel: "生产 SSH",
+      session: null,
+    }));
+    view.unmount();
+  });
+
   it("syncs the active SSH runtime and clears it when switching to local", async () => {
     storeMocks.sessionState.sessions = [{ id: "session-1", name: "开发机 A", type: "ssh", host: "10.0.0.1" }];
     storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];

@@ -337,11 +337,29 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   },
   async clearTransfers(taskIds) {
     const ids = taskIds ?? get().transfers.map((task) => task.id);
+    const tasksById = new Map(get().transfers.map((task) => [task.id, task]));
+    let firstError: unknown = null;
+    let firstFailedTask: TransferTask | undefined;
+    let deletedCount = 0;
     for (const taskId of ids) {
-      await deleteTransferTask(taskId);
-      deletedTransferIds.add(taskId);
+      try {
+        await deleteTransferTask(taskId);
+        deletedTransferIds.add(taskId);
+        deletedCount += 1;
+        set((state) => ({ transfers: state.transfers.filter((task) => task.id !== taskId) }));
+      } catch (error) {
+        firstError ??= error;
+        firstFailedTask ??= tasksById.get(taskId);
+      }
     }
-    set((state) => ({ transfers: state.transfers.filter((task) => !ids.includes(task.id)) }));
+    if (firstError) {
+      const message = fileTransferErrorMessage(firstError);
+      set({
+        transferError: deletedCount > 0 ? `已清理 ${deletedCount} 个任务，仍有任务清理失败：${message}` : message,
+        transferErrorSessionId: firstFailedTask?.saved_session_id ?? null,
+      });
+      throw firstError;
+    }
   },
   async bindTransferEvents() {
     try {

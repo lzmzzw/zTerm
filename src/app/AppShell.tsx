@@ -531,6 +531,13 @@ export function AppShell() {
       activeRuntimeInfo?.kind === "ssh_container")
       ? activeRuntimeSessionId
       : null;
+  const activeAgentTargetLabel = activeAgentRuntimeSessionId
+    ? activeSavedSession?.name?.trim()
+      || activeExternalSshSession?.name?.trim()
+      || activeRuntimeInfo?.title?.trim()
+      || activePaneTab?.title?.trim()
+      || null
+    : null;
   const activeConnectionKind: ActiveConnectionKind = (() => {
     if (!activeRuntimeSessionId || activePaneTab?.connection_source === "ssh_container") return "none";
     if (activeExternalSshSession) {
@@ -1507,7 +1514,7 @@ export function AppShell() {
       tabId: activePaneTab.id,
       targetRuntimeSessionId: activeRuntimeSessionId,
       targetSavedSessionId: activeSavedSessionId,
-      targetLabel: activePaneTab.title || activeSavedSession?.name || "当前终端",
+      targetLabel: activeAgentTargetLabel ?? (activePaneTab.title || activeSavedSession?.name || "当前终端"),
     };
     setAgentOpenErrorForConnection(connectionKey, null);
     try {
@@ -1530,7 +1537,7 @@ export function AppShell() {
         tabId: activePaneTab.id,
         targetRuntimeSessionId: activeRuntimeSessionId,
         targetSavedSessionId: activeSavedSessionId,
-        targetLabel: activePaneTab.title || activeSavedSession?.name || previousSession.target_label,
+        targetLabel: activeAgentTargetLabel ?? (activePaneTab.title || activeSavedSession?.name || previousSession.target_label),
       });
     } catch (error) {
       setAgentOpenErrorForConnection(connectionKey, unknownErrorMessage(error, "Codex CLI 重启失败"));
@@ -2221,7 +2228,7 @@ export function AppShell() {
         activeConnectionKind={activeConnectionKind}
         agent={{
           session: activeAgentSession,
-          activeTargetLabel: activeAgentRuntimeSessionId ? activePaneTab?.title ?? null : null,
+          activeTargetLabel: activeAgentTargetLabel,
           sessionsByConnectionKey: agentSessionsByConnectionKey,
           activeConnectionKey: activeAgentConnectionKey,
           approvalMode: mcpApprovalMode,

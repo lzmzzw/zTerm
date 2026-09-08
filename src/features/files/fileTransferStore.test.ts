@@ -241,6 +241,25 @@ describe("fileTransferStore", () => {
     expect(useFileTransferStore.getState().transfers).toEqual([]);
   });
 
+  it("keeps failed bulk clear tasks visible after removing successful tasks", async () => {
+    const first = transferTask({ id: "clear-success-1", saved_session_id: "session-a" });
+    const failed = transferTask({ id: "clear-failed", saved_session_id: "session-b" });
+    const last = transferTask({ id: "clear-success-2", saved_session_id: "session-c" });
+    useFileTransferStore.setState({ transfers: [first, failed, last] });
+    invokeMock
+      .mockResolvedValueOnce({ deleted: true })
+      .mockRejectedValueOnce(new Error("连接已关闭"))
+      .mockResolvedValueOnce({ deleted: true });
+
+    await expect(useFileTransferStore.getState().clearTransfers()).rejects.toThrow("连接已关闭");
+
+    expect(useFileTransferStore.getState().transfers).toEqual([failed]);
+    expect(useFileTransferStore.getState().transferError).toContain("已清理 2 个任务");
+    expect(useFileTransferStore.getState().transferError).toContain("连接已关闭");
+    expect(useFileTransferStore.getState().transferErrorSessionId).toBe("session-b");
+    expect(invokeMock).toHaveBeenCalledTimes(3);
+  });
+
   it("clears a task error when its remote endpoint changes to another connection", async () => {
     useFileTransferStore.setState({
       transferError: "session-old 连接已关闭",

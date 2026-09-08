@@ -394,6 +394,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   beginLiveOutput(runtimeSessionId) {
     const resources = terminalRuntimeResources.acquire(runtimeSessionId);
     resources.liveOutputSubscriptions += 1;
+    void ensureTerminalOutputFlow(runtimeSessionId, resources);
     return () => {
       if (!terminalRuntimeResources.isCurrent(runtimeSessionId, resources)) return;
       const nextCount = Math.max(0, resources.liveOutputSubscriptions - 1);
