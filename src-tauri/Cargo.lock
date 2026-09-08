@@ -7165,7 +7165,6 @@ dependencies = [
  "percent-encoding",
  "portable-pty",
  "reqwest",
- "rfd",
  "rusqlite",
  "russh",
  "serde",

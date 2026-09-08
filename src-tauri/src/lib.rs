@@ -112,8 +112,6 @@ pub fn run() {
             commands::terminal::terminal_open_default_local,
             commands::terminal::terminal_write,
             commands::terminal::terminal_write_bytes,
-            commands::terminal::terminal_zmodem_select_upload_files,
-            commands::terminal::terminal_zmodem_select_download_directory,
             commands::terminal::terminal_zmodem_read_files,
             commands::terminal::terminal_zmodem_save_file,
             commands::terminal::terminal_resize,

@@ -1,5 +1,6 @@
 // Author: Liz
 import { invokeTauri } from "../../lib/tauriClient";
+import { open } from "@tauri-apps/plugin-dialog";
 import Zmodem, {
   type ZmodemDetection,
   type ZmodemOffer,
@@ -681,11 +682,22 @@ function findZmodemHexHeaderEnd(bytes: Uint8Array, headerStart: number) {
 }
 
 async function selectUploadFiles() {
-  return invokeTauri<string[]>("terminal_zmodem_select_upload_files");
+  const selected = await open({
+    title: "选择要通过 rz 上传的文件",
+    multiple: true,
+    directory: false,
+  });
+  if (!selected) return [];
+  return Array.isArray(selected) ? selected : [selected];
 }
 
 async function selectDownloadDirectory() {
-  return invokeTauri<string | null>("terminal_zmodem_select_download_directory");
+  const selected = await open({
+    title: "选择 sz 下载保存目录",
+    multiple: false,
+    directory: true,
+  });
+  return typeof selected === "string" ? selected : null;
 }
 
 function decodeBase64Bytes(value: string) {

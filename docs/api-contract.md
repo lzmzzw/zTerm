@@ -99,8 +99,6 @@ SSH 终端保活：未配置 `keepalive_interval_ms` 时使用 30 秒，正值�
 | `terminal_output_flow_ack` | `{ runtimeSessionId, generation, sequence }` | `{ accepted }` | 完成解析及可见渲染后累计确认；拒绝旧代次与超出已发送范围的序列 |
 | `terminal_output_flow_close` | `{ runtimeSessionId, generation? }` | 无 | 释放输出等待；旧代次关闭不影响当前消费者 |
 | `terminal_write_bytes` | `{ runtimeSessionId, data }` | `{ accepted: true }` | 写入原始终端字节；仅用于 ZMODEM，不捕获命令历史 |
-| `terminal_zmodem_select_upload_files` | 无 | `string[]` | 打开 rz 文件选择窗口；取消返回空数组 |
-| `terminal_zmodem_select_download_directory` | 无 | `string \| null` | 打开 sz 保存目录选择窗口；取消返回 null |
 | `terminal_zmodem_read_files` | `{ paths }` | `{ name, size, mtime_ms, data }[]` | 读取用户选择的本机文件，供远端 `rz` 上传；单文件超过 32 MiB 或本次批次总量超过 64 MiB 时拒绝，并引导改用 SFTP |
 | `terminal_zmodem_save_file` | `{ directory, fileName, data }` | `{ path, bytes }` | 净化远端文件名并保存 `sz` 下载内容；单文件超过 32 MiB 或本次批次总量超过 64 MiB 时拒绝/跳过并引导改用 SFTP；同名文件自动追加序号 |
 | `terminal_resize` | `{ runtimeSessionId, cols, rows }` | `{ resized: true }` | 调整 runtime 尺寸 |
@@ -257,4 +255,4 @@ ZMODEM 上传的字节进度达到 100% 不等于会话关闭完成：文件结�
 
 sz 等待用户选择保存目录时，重传的 `ZRQINIT` 不交给已确认的接收会话；启动头跨事件拆分或与其他字节合并时保持字节顺序，部分头缓存有界。文件传输开始后的数据与结束握手不使用目录等待期的重传过滤。
 
-Windows 的 rz/sz 选择窗口使用 UI 主线程上的同步原生文件对话框，并关联发起请求的窗口；异步 command 等待选取结果，不修改系统光标设置。其他平台保留 dialog 插件选取路径。
+rz/sz 文件选择沿用 `@tauri-apps/plugin-dialog.open`，上传支持多选文件，下载选择单个保存目录；不修改系统光标设置。

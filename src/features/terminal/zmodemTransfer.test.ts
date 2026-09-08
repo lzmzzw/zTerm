@@ -30,6 +30,10 @@ const tauriClientMock = vi.hoisted(() => ({
   invokeTauri: vi.fn(),
 }));
 
+const dialogMock = vi.hoisted(() => ({
+  open: vi.fn(),
+}));
+
 vi.mock("zmodem.js/src/zmodem_browser", () => ({
   default: {
     DEBUG: false,
@@ -39,6 +43,10 @@ vi.mock("zmodem.js/src/zmodem_browser", () => ({
 
 vi.mock("../../lib/tauriClient", () => ({
   invokeTauri: tauriClientMock.invokeTauri,
+}));
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: dialogMock.open,
 }));
 
 import {
@@ -54,6 +62,7 @@ describe("zmodemTransfer", () => {
     sentryMock.consumeImpl = undefined;
     sentryMock.Sentry.mockClear();
     tauriClientMock.invokeTauri.mockReset();
+    dialogMock.open.mockReset();
     clearTerminalZmodemControllersForTest();
   });
 
@@ -207,7 +216,7 @@ describe("zmodemTransfer", () => {
     expect(session.abort).toHaveBeenCalledOnce();
   });
 
-  it("uses the native upload file selector when no dependency override is supplied", async () => {
+  it("uses the dialog plugin upload selector when no dependency override is supplied", async () => {
     const appendOutput = vi.fn();
     const session = {
       type: "send",
@@ -219,7 +228,7 @@ describe("zmodemTransfer", () => {
     };
     const detection = { confirm: vi.fn(() => session), deny: vi.fn() };
     sentryMock.consumeImpl = (options) => options.on_detect(detection);
-    tauriClientMock.invokeTauri.mockResolvedValue([]);
+    dialogMock.open.mockResolvedValue(null);
 
     consumeTerminalZmodemData(
       { runtimeSessionId: "runtime-1", data: "", dataBase64: base64([42]) },
@@ -227,11 +236,15 @@ describe("zmodemTransfer", () => {
     );
     await flushPromises();
 
-    expect(tauriClientMock.invokeTauri).toHaveBeenCalledWith("terminal_zmodem_select_upload_files");
+    expect(dialogMock.open).toHaveBeenCalledWith({
+      title: "选择要通过 rz 上传的文件",
+      multiple: true,
+      directory: false,
+    });
     expect(session.abort).toHaveBeenCalledOnce();
   });
 
-  it("uses the native download directory selector when no dependency override is supplied", async () => {
+  it("uses the dialog plugin download directory selector when no dependency override is supplied", async () => {
     const appendOutput = vi.fn();
     const session = {
       type: "receive",
@@ -243,7 +256,7 @@ describe("zmodemTransfer", () => {
     };
     const detection = { confirm: vi.fn(() => session), deny: vi.fn() };
     sentryMock.consumeImpl = (options) => options.on_detect(detection);
-    tauriClientMock.invokeTauri.mockResolvedValue(null);
+    dialogMock.open.mockResolvedValue(null);
 
     consumeTerminalZmodemData(
       { runtimeSessionId: "runtime-1", data: "", dataBase64: base64([42]) },
@@ -251,7 +264,11 @@ describe("zmodemTransfer", () => {
     );
     await flushPromises();
 
-    expect(tauriClientMock.invokeTauri).toHaveBeenCalledWith("terminal_zmodem_select_download_directory");
+    expect(dialogMock.open).toHaveBeenCalledWith({
+      title: "选择 sz 下载保存目录",
+      multiple: false,
+      directory: true,
+    });
     expect(session.abort).toHaveBeenCalledOnce();
   });
 
