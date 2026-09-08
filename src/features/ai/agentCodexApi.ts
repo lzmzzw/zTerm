@@ -29,4 +29,8 @@ export async function closeAgentCodex(session: AgentCodexSession) {
   });
 }
 
+export async function setActiveAgentTerminal(runtimeSessionId: string | null) {
+  await invokeTauri("agent_set_active_terminal", { runtimeSessionId });
+}
+
 export type AgentPendingInvocation = McpToolPendingInvocation;

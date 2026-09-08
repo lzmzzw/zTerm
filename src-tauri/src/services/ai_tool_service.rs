@@ -129,6 +129,7 @@ pub struct AiToolService {
     server_info_service: Option<ServerInfoService>,
     ssh_command_service: Option<SshCommandService>,
     completion_broker: Arc<AiToolCompletionBroker>,
+    active_terminal: Arc<Mutex<Option<String>>>,
 }
 
 const COMPLETION_TTL: Duration = Duration::from_secs(15 * 60);
@@ -284,6 +285,7 @@ impl AiToolService {
             server_info_service: None,
             ssh_command_service: None,
             completion_broker: Arc::new(AiToolCompletionBroker::default()),
+            active_terminal: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -299,6 +301,7 @@ impl AiToolService {
             server_info_service: None,
             ssh_command_service: None,
             completion_broker: Arc::new(AiToolCompletionBroker::default()),
+            active_terminal: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -318,7 +321,22 @@ impl AiToolService {
             server_info_service: Some(server_info_service),
             ssh_command_service: Some(ssh_command_service),
             completion_broker: Arc::new(AiToolCompletionBroker::default()),
+            active_terminal: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// UI observation only; never changes a bound or pending command target.
+    pub fn set_active_terminal(&self, runtime_session_id: Option<String>) -> AppResult<()> {
+        let mut active = self
+            .active_terminal
+            .lock()
+            .map_err(|_| AppError::ai("活动终端上下文锁已损坏"))?;
+        *active = None;
+        if let Some(id) = runtime_session_id {
+            self.ensure_visible_ssh_runtime(&id)?;
+            *active = Some(id);
+        }
+        Ok(())
     }
 
     pub fn definitions(&self) -> Vec<AiToolDefinition> {
@@ -727,7 +745,16 @@ impl AiToolService {
                 Ok(structured_execution_result(
                     format!("终端运行态已读取：{} 个。", terminals.len()),
                     ["terminal"],
-                    json!({ "terminals": terminals }),
+                    json!({
+                        "active_runtime_session_id": self.active_terminal.lock()
+                            .map_err(|_| AppError::ai("活动终端上下文锁已损坏"))?
+                            .as_ref()
+                            .filter(|id| terminals.iter().any(|terminal| {
+                                terminal.runtime_session_id == **id
+                                    && matches!(terminal.kind, RuntimeSessionKind::Ssh | RuntimeSessionKind::SshContainer)
+                            })).cloned(),
+                        "terminals": terminals
+                    }),
                 ))
             }
             "terminal.read" => {

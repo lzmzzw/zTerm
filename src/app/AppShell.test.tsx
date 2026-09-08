@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "./AppShell";
-import { closeAgentCodex, openAgentCodex } from "../features/ai/agentCodexApi";
+import { closeAgentCodex, openAgentCodex, setActiveAgentTerminal } from "../features/ai/agentCodexApi";
 import { useFileTransferStore } from "../features/files/fileTransferStore";
 import { useSyncInputStore } from "../features/terminal/syncInputStore";
 
@@ -13,6 +13,7 @@ const originalPrepareForSession = useFileTransferStore.getState().prepareForSess
 const storeMocks = vi.hoisted(() => ({
   noop: vi.fn(),
   asyncNoop: vi.fn().mockResolvedValue(undefined),
+  setActiveAgentTerminal: vi.fn().mockResolvedValue(undefined),
   bindApprovalModeToSession: vi.fn().mockResolvedValue(undefined),
   loadPendingInvocations: vi.fn().mockResolvedValue([]),
   saveSession: vi.fn().mockResolvedValue(undefined),
@@ -275,6 +276,7 @@ vi.mock("../features/ai/agentCodexApi", () => ({
     },
   })),
   closeAgentCodex: vi.fn(async () => undefined),
+  setActiveAgentTerminal: storeMocks.setActiveAgentTerminal,
 }));
 
 vi.mock("../features/files/FileExplorerPanel", () => ({
@@ -3405,6 +3407,98 @@ describe("AppShell", () => {
       }),
     );
 
+    view.unmount();
+  });
+
+  it("syncs the active SSH runtime and clears it when switching to local", async () => {
+    storeMocks.sessionState.sessions = [{ id: "session-1", name: "开发机 A", type: "ssh", host: "10.0.0.1" }];
+    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalState.runtimes = {
+      "runtime-1": { runtime_session_id: "runtime-1", kind: "ssh", title: "开发机 A" },
+      "runtime-local": { runtime_session_id: "runtime-local", kind: "local", title: "PowerShell" },
+    };
+    const view = render(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(vi.mocked(setActiveAgentTerminal)).toHaveBeenLastCalledWith("runtime-1");
+
+    storeMocks.workspaceState.tabs = [{
+      ...activeTerminalWorkspaceTab(),
+      root: {
+        ...activeTerminalWorkspaceTab().root,
+        title: "PowerShell",
+        runtime_session_id: "runtime-local",
+        saved_session_id: null,
+        terminal_tabs: [{
+          id: "pane-1-tab-1",
+          title: "PowerShell",
+          runtime_session_id: "runtime-local",
+          saved_session_id: null,
+          connection_source: "default_local",
+        }],
+      },
+    }];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    view.rerender(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(vi.mocked(setActiveAgentTerminal)).toHaveBeenLastCalledWith(null);
+    view.unmount();
+  });
+
+  it("serializes active runtime sync when switching tabs quickly", async () => {
+    storeMocks.sessionState.sessions = [{ id: "session-1", name: "开发机 A", type: "ssh", host: "10.0.0.1" }];
+    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalState.runtimes = {
+      "runtime-1": { runtime_session_id: "runtime-1", kind: "ssh", title: "开发机 A" },
+      "runtime-2": { runtime_session_id: "runtime-2", kind: "ssh", title: "开发机 A" },
+    };
+    const first = deferred<void>();
+    const second = deferred<void>();
+    vi.mocked(setActiveAgentTerminal)
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const view = render(<AppShell />);
+
+    storeMocks.workspaceState.tabs = [{
+      ...activeTerminalWorkspaceTab(),
+      root: {
+        ...activeTerminalWorkspaceTab().root,
+        runtime_session_id: "runtime-2",
+        terminal_tabs: [{
+          id: "pane-1-tab-1",
+          title: "开发机 A",
+          runtime_session_id: "runtime-2",
+          saved_session_id: "session-1",
+        }],
+      },
+    }];
+    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    view.rerender(<AppShell />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(vi.mocked(setActiveAgentTerminal)).toHaveBeenCalledTimes(1);
+
+    second.resolve();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(vi.mocked(setActiveAgentTerminal)).toHaveBeenCalledTimes(1);
+
+    first.resolve();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(vi.mocked(setActiveAgentTerminal).mock.calls.map(([runtime]) => runtime)).toEqual([
+      "runtime-1",
+      "runtime-2",
+    ]);
     view.unmount();
   });
 

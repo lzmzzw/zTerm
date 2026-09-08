@@ -32,6 +32,7 @@ pub fn run() {
         .setup(setup_app_state)
         .invoke_handler(tauri::generate_handler![
             commands::agent::agent_codex_open,
+            commands::agent::agent_set_active_terminal,
             commands::agent::agent_codex_close,
             commands::agent::agent_codex_unbind,
             commands::sessions::sessions_list,

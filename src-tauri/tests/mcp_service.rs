@@ -698,6 +698,14 @@ async fn sidebar_agent_token_is_scoped_to_visible_ssh_terminals() {
         1
     );
 
+    assert!(terminals["result"]["structuredContent"]["result"]
+        .as_object()
+        .unwrap()
+        .contains_key("active_runtime_session_id"));
+    assert!(
+        terminals["result"]["structuredContent"]["result"]["active_runtime_session_id"].is_null()
+    );
+
     let opened = client
         .post(&access.endpoint)
         .bearer_auth(&access.token)
@@ -774,6 +782,106 @@ async fn sidebar_agent_token_is_scoped_to_visible_ssh_terminals() {
     assert_eq!(rejected["error"]["code"], -32601);
 
     service.stop_and_wait().await.expect("service should stop");
+}
+
+#[tokio::test]
+async fn sidebar_current_terminal_tracks_focus_without_retargeting_bound_commands() {
+    let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+    let writer = Arc::new(MutableToolWriter::default());
+    let first = ssh_runtime("first", "shared");
+    let second = ssh_runtime("second", "shared");
+    let container = ssh_container_runtime("container", "shared");
+    let local = RuntimeSessionInfo {
+        kind: RuntimeSessionKind::Local,
+        ..ssh_runtime("local", "local")
+    };
+    writer.set_terminals(vec![first.clone(), second.clone(), container, local]);
+    let tools = AiToolService::with_writer(writer.clone());
+    let service = McpService::with_secret_store(Arc::new(MemorySecretStore::default()));
+    service.start(store, tools.clone(), Some(0)).await.unwrap();
+    let access = service
+        .register_agent_binding(AgentMcpBinding {
+            agent_session_id: "focus-test".into(),
+            runtime_session_id: "first".into(),
+            saved_session_id: Some("shared".into()),
+            target_runtime_kind: RuntimeSessionKind::Ssh,
+            target_label: "shared".into(),
+        })
+        .unwrap();
+    let client = reqwest::Client::new();
+    for target in ["first", "second", "container"] {
+        tools.set_active_terminal(Some(target.into())).unwrap();
+        let listed = call_sidebar_tool(
+            &client,
+            &access.endpoint,
+            &access.token,
+            1,
+            "terminal.list",
+            json!({}),
+        )
+        .await;
+        assert_eq!(
+            listed["result"]["structuredContent"]["result"]["active_runtime_session_id"],
+            target
+        );
+    }
+    // Explicitly captured target stays fixed even when UI focus changes.
+    let read = call_sidebar_tool(
+        &client,
+        &access.endpoint,
+        &access.token,
+        2,
+        "terminal.read",
+        json!({"runtime_session_id": "second"}),
+    )
+    .await;
+    assert_eq!(
+        read["result"]["structuredContent"]["result"]["runtime_session_id"],
+        "second"
+    );
+    let bound = call_sidebar_tool(
+        &client,
+        &access.endpoint,
+        &access.token,
+        3,
+        "terminal.read",
+        json!({}),
+    )
+    .await;
+    assert_eq!(
+        bound["result"]["structuredContent"]["result"]["runtime_session_id"],
+        "first"
+    );
+    for invalid in ["local", "missing"] {
+        tools.set_active_terminal(Some("first".into())).unwrap();
+        assert!(tools.set_active_terminal(Some(invalid.into())).is_err());
+        let listed = call_sidebar_tool(
+            &client,
+            &access.endpoint,
+            &access.token,
+            4,
+            "terminal.list",
+            json!({}),
+        )
+        .await;
+        assert!(
+            listed["result"]["structuredContent"]["result"]["active_runtime_session_id"].is_null()
+        );
+    }
+    tools.set_active_terminal(Some("second".into())).unwrap();
+    writer.set_terminals(vec![first]);
+    let closed = call_sidebar_tool(
+        &client,
+        &access.endpoint,
+        &access.token,
+        5,
+        "terminal.list",
+        json!({}),
+    )
+    .await;
+    assert!(closed["result"]["structuredContent"]["result"]["active_runtime_session_id"].is_null());
+    tools.set_active_terminal(None).unwrap();
+    service.stop_and_wait().await.unwrap();
 }
 
 #[tokio::test]

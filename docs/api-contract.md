@@ -38,6 +38,7 @@
 | `mcp_server_rotate_token` | 无 | `McpServerStatus` | 轮换当前运行期 Bearer token；token 不写入 `AppSettings` |
 | `mcp_tool_catalog_list` | 无 | `McpToolDefinition[]` | 返回 MCP 专用 allowlist、风险信息和输入 schema，供设置页展示 |
 | `agent_codex_open` | `{ tabId, targetRuntimeSessionId, targetSavedSessionId?, targetLabel }` | `AgentCodexSession` | 按目标普通 SSH 的 `saved_session_id` 复用或启动唯一的本机 Codex CLI PTY（无标识或容器终端按 runtime 隔离）；`tabId` 仅保留参数兼容，不作为会话身份，注入 Visible Terminal Profile 的会话级 MCP 身份，并显式设置 `TERM=xterm-256color`、`COLORTERM=truecolor` 与 `TERM_PROGRAM=zTerm`，避免继承宿主的 `TERM=dumb` 导致交互式 TUI 降级；初始绑定目标可省略 runtime 参数；初始普通 SSH runtime 关闭后仅回退到相同连接的普通 SSH runtime，无可用目标时返回错误，容器目标不回退；显式指定 runtime 时按该目标校验，不自动替换。不会覆盖 Codex CLI 模型配置；会话启动时禁用用户配置中除 scoped `zterm` 外的 MCP，并将 scoped zTerm 工具设为客户端直接批准，由 zTerm 连接策略承担唯一最终审批 |
+| `agent_set_active_terminal` | `{ runtimeSessionId: string \| null }` | `null` | 主窗口同步活动 SSH/SSH Container runtime 的内存观测值；无活动 SSH 时清空；无效 ID 先清空再报错。不改变 Agent 绑定、待审批参数或执行目标 |
 | `agent_codex_unbind` | `{ agentSessionId }` | `null` | 兼容清理接口；活动共享会话拒绝单独解绑，须调用 `agent_codex_close` 一并关闭 PTY 与撤销绑定 |
 | `agent_codex_close` | `{ agentSessionId, runtimeSessionId }` | `null` | 校验 Agent 与 PTY 配对后关闭共享会话并撤销绑定；前端仅在最后一个关联标签关闭或用户关闭/重启 Agent 时调用 |
 
@@ -199,7 +200,7 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 | `mcp_connection_approval_mode_get` | `{ savedSessionId }` | `AiConnectionApprovalPolicy` | 读取已保存 SSH 连接的审批模式；未配置时返回 `safe` |
 | `mcp_connection_approval_mode_set` | `{ request: { saved_session_id, approval_mode } }` | `AiConnectionApprovalPolicy` | 保存 SSH 连接级审批模式；拒绝不存在或非 SSH 的连接 |
 
-侧栏 Codex 的 Visible Terminal Profile 中，`sessions.list` 仅返回已保存 SSH 连接；`terminal.list` 仅返回可见 SSH/SSH Container runtime；`terminal.open(saved_session_id, placement?)` 只允许打开已保存 SSH 连接，`placement` 为 `tab`、`split_horizontal` 或 `split_vertical`。`terminal.read` 使用运行期 ring buffer，可读取最近输出或指定 cursor 后最多 4000 字符增量；`terminal.write` 写入后等待输出短暂稳定并返回新 cursor。侧栏不暴露 `ssh.execute`，因此所有服务器命令与输出都进入目标滚动屏。
+侧栏 Codex 的 Visible Terminal Profile 中，`sessions.list` 仅返回已保存 SSH 连接；`terminal.list` 返回可见 SSH/SSH Container runtime 及 `active_runtime_session_id`；后者来自主窗口活动分栏标签的内存观测，并在读取时核验仍存在于返回列表，无有效目标为 `null`。侧栏解析“当前连接／当前标签／激活标签”时先读取该字段，再显式指定 runtime；不使用初始绑定或本机 cwd 替代。读取后同一操作固定目标，省略 runtime 的旧绑定行为不变；`terminal.open(saved_session_id, placement?)` 只允许打开已保存 SSH 连接，`placement` 为 `tab`、`split_horizontal` 或 `split_vertical`。`terminal.read` 使用运行期 ring buffer，可读取最近输出或指定 cursor 后最多 4000 字符增量；`terminal.write` 写入后等待输出短暂稳定并返回新 cursor。侧栏不暴露 `ssh.execute`，因此所有服务器命令与输出都进入目标滚动屏。
 
 审批策略按目标已保存 SSH 连接生效：`request_approval`（每次批准）对每次工具调用创建 pending；默认 `safe`（高效审批）自动执行 low/medium 的巡检、传输和常规运维，high/critical 与显式不可逆工具创建 pending；`full_access`（完全自动）免除所有非 secret 输入审批，包括 critical、删除和其他写操作。需要本地 secret 的调用在任何模式下都保持 pending，因为 secret 只能由 zTerm 本地输入。命令型 `terminal.write`/`ssh.execute` 使用脚本内容动态风险分类；`service`、`firewall-cmd`、`iptables` 仅在真实变更子命令出现时提升为 high，只读状态查询不因命令名或输出标题误判。zTerm 仍是最终审批和审计拥有者；侧栏启动参数把 scoped zTerm MCP 设为客户端直接批准，外部 Codex App 也应信任本机 zTerm MCP，避免客户端自身再审批一次。
 
