@@ -38,6 +38,7 @@ export function useAppShortcutKeys(
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented) return;
+      if (shouldLeaveShortcutToFocusedControl(event)) return;
       if (isSelectAllShortcut(event)) {
         if (!isEditableTarget(event.target)) event.preventDefault();
         return;
@@ -65,6 +66,20 @@ export function useAppShortcutKeys(
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
+}
+
+function shouldLeaveShortcutToFocusedControl(event: KeyboardEvent) {
+  if (event.isComposing || event.key === "Process") return true;
+  if (isDialogTarget(event.target)) return true;
+  return isEditableTarget(event.target) && !isXtermHelperTextarea(event.target);
+}
+
+function isDialogTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement && Boolean(target.closest('[role="dialog"], [aria-modal="true"]'));
+}
+
+function isXtermHelperTextarea(target: EventTarget | null) {
+  return target instanceof HTMLTextAreaElement && target.classList.contains("xterm-helper-textarea");
 }
 
 function isSelectAllShortcut(event: KeyboardEvent) {

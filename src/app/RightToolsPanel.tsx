@@ -46,6 +46,7 @@ interface RightToolsPanelProps {
     session: AgentCodexSession | null;
     sessionsByConnectionKey: Record<string, AgentCodexSession>;
     activeConnectionKey: string | null;
+    activeTargetLabel?: string | null;
     approvalMode: McpApprovalMode;
     error: string | null;
     loading: boolean;
@@ -325,6 +326,7 @@ export function RightToolsPanel({
               >
                 <AgentCodexPanel
                   session={session}
+                  activeTargetLabel={active ? agent.activeTargetLabel : null}
                   active={active && activeTool === "agent"}
                   approvalMode={agent.approvalMode}
                   pendingInvocations={active ? agent.pendingInvocations : []}
@@ -341,6 +343,7 @@ export function RightToolsPanel({
           {!agent.session ? (
             <AgentCodexPanel
               session={null}
+              activeTargetLabel={agent.activeTargetLabel}
               active={activeTool === "agent"}
               approvalMode={agent.approvalMode}
               pendingInvocations={agent.pendingInvocations}

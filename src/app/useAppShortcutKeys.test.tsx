@@ -104,6 +104,41 @@ describe("useAppShortcutKeys", () => {
     input.remove();
   });
 
+  it("leaves configured shortcuts to editable controls, dialogs, and IME composition", () => {
+    const handlers = shortcutHandlers();
+    renderShortcutHarness({ bindings: [binding("settings.open", "Ctrl+,")], handlers });
+    const input = document.createElement("input");
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    const dialogButton = document.createElement("button");
+    dialog.appendChild(dialogButton);
+    document.body.append(input, dialog);
+
+    expect(dispatchKey({ key: ",", ctrlKey: true, target: input }).defaultPrevented).toBe(false);
+    expect(dispatchKey({ key: ",", ctrlKey: true, target: dialogButton }).defaultPrevented).toBe(false);
+    expect(dispatchKey({ key: ",", ctrlKey: true, isComposing: true }).defaultPrevented).toBe(false);
+    expect(handlers.onOpenSettings).not.toHaveBeenCalled();
+
+    input.remove();
+    dialog.remove();
+  });
+
+  it("keeps app shortcuts available from the xterm helper textarea", () => {
+    const handlers = shortcutHandlers();
+    renderShortcutHarness({ bindings: [binding("settings.open", "Ctrl+,")], handlers });
+    const textarea = document.createElement("textarea");
+    textarea.className = "xterm-helper-textarea";
+    document.body.appendChild(textarea);
+
+    const event = dispatchKey({ key: ",", ctrlKey: true, target: textarea });
+    const selectAll = dispatchKey({ key: "a", ctrlKey: true, target: textarea });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(selectAll.defaultPrevented).toBe(false);
+    expect(handlers.onOpenSettings).toHaveBeenCalledTimes(1);
+    textarea.remove();
+  });
+
   it("keeps one keydown listener while reading latest handlers after rerender", () => {
     const addSpy = vi.spyOn(window, "addEventListener");
     const removeSpy = vi.spyOn(window, "removeEventListener");
@@ -214,6 +249,7 @@ function dispatchKey({
   shiftKey = false,
   altKey = false,
   metaKey = false,
+  isComposing = false,
   target = window,
 }: {
   key: string;
@@ -221,6 +257,7 @@ function dispatchKey({
   shiftKey?: boolean;
   altKey?: boolean;
   metaKey?: boolean;
+  isComposing?: boolean;
   target?: Window | HTMLElement;
 }) {
   const event = new KeyboardEvent("keydown", {
@@ -232,6 +269,7 @@ function dispatchKey({
     bubbles: true,
     cancelable: true,
   });
+  Object.defineProperty(event, "isComposing", { value: isComposing });
   target.dispatchEvent(event);
   return event;
 }

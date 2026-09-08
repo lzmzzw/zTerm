@@ -52,6 +52,7 @@ interface FileTransferState {
   transfers: TransferTask[];
   transferLoading: boolean;
   transferError: string | null;
+  transferErrorSessionId: string | null;
   conflictPolicy: TransferConflictPolicy;
   defaultLocalPath: string;
   localRoots: string[];
@@ -122,6 +123,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   transfers: [],
   transferLoading: false,
   transferError: null,
+  transferErrorSessionId: null,
   conflictPolicy: "overwrite",
   defaultLocalPath: "",
   localRoots: [],
@@ -136,7 +138,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       return path;
     } catch (error) {
       localPathRequest = null;
-      set({ transferError: fileTransferErrorMessage(error) });
+      set({ transferError: fileTransferErrorMessage(error), transferErrorSessionId: null });
       return "";
     }
   },
@@ -146,7 +148,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       set({ localRoots: roots });
       return roots;
     } catch (error) {
-      set({ transferError: fileTransferErrorMessage(error) });
+      set({ transferError: fileTransferErrorMessage(error), transferErrorSessionId: null });
       return [];
     }
   },
@@ -164,7 +166,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       }
       return viewState;
     } catch (error) {
-      set({ viewStateInitialized: true, transferError: fileTransferErrorMessage(error) });
+      set({ viewStateInitialized: true, transferError: fileTransferErrorMessage(error), transferErrorSessionId: null });
       return null;
     }
   },
@@ -174,12 +176,14 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     try {
       return await invokeTauri<FileTransferViewState>("file_transfer_view_state_save", { viewState });
     } catch (error) {
-      set({ transferError: fileTransferErrorMessage(error) });
+      set({ transferError: fileTransferErrorMessage(error), transferErrorSessionId: null });
       return null;
     }
   },
   setConflictPolicy: (policy) => set({ conflictPolicy: policy }),
   setEndpoint(side, endpoint) {
+    const previousEndpoint = get()[side].endpoint;
+    const errorSessionId = get().transferErrorSessionId;
     updatePane(set, side, {
       endpoint,
       entries: [],
@@ -187,6 +191,14 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       selectionAnchorPath: null,
       error: null,
     });
+    if (
+      errorSessionId &&
+      previousEndpoint.kind === "saved_session" &&
+      previousEndpoint.saved_session_id === errorSessionId &&
+      (endpoint.kind !== "saved_session" || endpoint.saved_session_id !== errorSessionId)
+    ) {
+      set({ transferError: null, transferErrorSessionId: null });
+    }
   },
   setPath(side, path) {
     updatePane(set, side, (pane) => ({ endpoint: { ...pane.endpoint, path } }));
@@ -284,7 +296,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   async loadTransfers() {
     const requestId = transferListRequestId + 1;
     transferListRequestId = requestId;
-    set({ transferLoading: true, transferError: null });
+    set({ transferLoading: true, transferError: null, transferErrorSessionId: null });
     try {
       const transfers = await invokeTauri<TransferTask[]>("file_transfer_list", { limit: 1000 });
       if (transferListRequestId === requestId) {
@@ -292,28 +304,24 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       }
     } catch (error) {
       if (transferListRequestId === requestId) {
-        set({ transferLoading: false, transferError: fileTransferErrorMessage(error) });
+        set({ transferLoading: false, transferError: fileTransferErrorMessage(error), transferErrorSessionId: null });
       }
     }
   },
   async retryTransfer(taskId) {
-    const task = await retryTransferTask(taskId);
-    upsertTransfer(set, task);
+    await runTransferTaskAction(set, get, taskId, retryTransferTask);
   },
   async pauseTransfer(taskId) {
-    const task = await pauseTransferTask(taskId);
-    upsertTransfer(set, task);
+    await runTransferTaskAction(set, get, taskId, pauseTransferTask);
   },
   async resumeTransfer(taskId) {
-    const task = await resumeTransferTask(taskId);
-    upsertTransfer(set, task);
+    await runTransferTaskAction(set, get, taskId, resumeTransferTask);
   },
   async cancelTransfer(taskId) {
-    const task = await cancelTransferTask(taskId);
-    upsertTransfer(set, task);
+    await runTransferTaskAction(set, get, taskId, cancelTransferTask);
   },
   async deleteTransfer(taskId) {
-    await deleteTransferTask(taskId);
+    await runTransferTaskVoidAction(set, get, taskId, deleteTransferTask);
     deletedTransferIds.add(taskId);
     set((state) => ({ transfers: state.transfers.filter((task) => task.id !== taskId) }));
   },
@@ -342,14 +350,19 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       });
       const done = await listenTauri<TransferDoneEvent>("transfer:done", (event) => {
         if (event.payload.task) upsertTransfer(set, event.payload.task);
-        if (event.payload.error) set({ transferError: event.payload.error });
+        if (event.payload.error) {
+          set({
+            transferError: event.payload.error,
+            transferErrorSessionId: event.payload.task?.saved_session_id ?? null,
+          });
+        }
       });
       return () => {
         progress();
         done();
       };
     } catch (error) {
-      set({ transferError: fileTransferErrorMessage(error) });
+      set({ transferError: fileTransferErrorMessage(error), transferErrorSessionId: null });
       return () => {};
     }
   },
@@ -410,6 +423,43 @@ function upsertTransfer(set: FileTransferSet, task: TransferTask) {
         : [task, ...state.transfers],
     };
   });
+}
+
+async function runTransferTaskAction(
+  set: FileTransferSet,
+  get: () => FileTransferState,
+  taskId: string,
+  action: (taskId: string) => Promise<TransferTask>,
+) {
+  try {
+    const task = await action(taskId);
+    upsertTransfer(set, task);
+  } catch (error) {
+    const failedTask = get().transfers.find((task) => task.id === taskId);
+    set({
+      transferError: fileTransferErrorMessage(error),
+      transferErrorSessionId: failedTask?.saved_session_id ?? null,
+    });
+    throw error;
+  }
+}
+
+async function runTransferTaskVoidAction(
+  set: FileTransferSet,
+  get: () => FileTransferState,
+  taskId: string,
+  action: (taskId: string) => Promise<void>,
+) {
+  try {
+    await action(taskId);
+  } catch (error) {
+    const failedTask = get().transfers.find((task) => task.id === taskId);
+    set({
+      transferError: fileTransferErrorMessage(error),
+      transferErrorSessionId: failedTask?.saved_session_id ?? null,
+    });
+    throw error;
+  }
 }
 
 function fileTransferErrorMessage(error: unknown) {

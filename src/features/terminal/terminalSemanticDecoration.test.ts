@@ -29,6 +29,8 @@ function fakeTerminal(
         getChars: () => character,
         getWidth: () => 1,
         isFgDefault: () => !ansiColumns.includes(column),
+        isBgDefault: () => true,
+        isInverse: () => false,
       }));
       return {
         getCell: (column: number) => cells[column],
@@ -37,7 +39,13 @@ function fakeTerminal(
         translateToString: () => text,
       };
     },
-    getNullCell: () => ({ getChars: () => "", getWidth: () => 1, isFgDefault: () => true }),
+    getNullCell: () => ({
+      getChars: () => "",
+      getWidth: () => 1,
+      isFgDefault: () => true,
+      isBgDefault: () => true,
+      isInverse: () => false,
+    }),
     length: lines.length,
     type: bufferType,
     viewportY: 0,

@@ -2237,6 +2237,7 @@ export function AppShell() {
         activeConnectionKind={activeConnectionKind}
         agent={{
           session: activeAgentSession,
+          activeTargetLabel: activeAgentRuntimeSessionId ? activePaneTab?.title ?? null : null,
           sessionsByConnectionKey: agentSessionsByConnectionKey,
           activeConnectionKey: activeAgentConnectionKey,
           approvalMode: mcpApprovalMode,

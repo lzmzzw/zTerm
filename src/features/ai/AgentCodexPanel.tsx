@@ -12,6 +12,7 @@ import type { AgentCodexSession, AgentPendingInvocation } from "./agentCodexApi"
 export function AgentCodexPanel({
   session,
   active = true,
+  activeTargetLabel,
   loading,
   error,
   approvalMode,
@@ -23,6 +24,7 @@ export function AgentCodexPanel({
 }: {
   session: AgentCodexSession | null;
   active?: boolean;
+  activeTargetLabel?: string | null;
   loading: boolean;
   error: string | null;
   approvalMode: McpApprovalMode;
@@ -56,7 +58,8 @@ export function AgentCodexPanel({
           <Bot size={16} aria-hidden="true" />
           <div>
             <strong>Codex CLI</strong>
-            <span>{session?.target_label ?? "当前终端"}</span>
+            <span>所属连接：{session?.target_label ?? "未连接"}</span>
+            {activeTargetLabel ? <span>当前终端：{activeTargetLabel}</span> : null}
           </div>
         </div>
         <label className={`zt-ai-approval-mode mode-${approvalMode}`}>

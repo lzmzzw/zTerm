@@ -2,7 +2,8 @@
 import { ChevronDown, ChevronRight, ChevronUp, Pause, Play, RotateCcw, Trash2, XCircle } from "lucide-react";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 
-import { ZtConfirmDialog } from "../../components/ZtUi";
+import { ZtConfirmDialog, ZtInlineError } from "../../components/ZtUi";
+import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 import type { TransferStatus, TransferTask } from "./fileTypes";
 import { legacyTransferDestinationPath, legacyTransferSourcePath } from "./fileTransferPaths";
 import { groupTransferTasks } from "./transferTaskGroups";
@@ -55,17 +56,35 @@ export function TransferPanel({
     confirmLabel: string;
     onConfirm: () => void;
   } | null>(null);
+  const [busyTaskIds, setBusyTaskIds] = useState<Set<string>>(() => new Set());
+  const busyTaskIdsRef = useRef<Set<string>>(new Set());
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  async function runTaskAction(label: string, taskId: string, action: (taskId: string) => Promise<void> | void) {
+    if (busyTaskIdsRef.current.has(taskId)) return;
+    setActionError(null);
+    busyTaskIdsRef.current.add(taskId);
+    setBusyTaskIds(new Set(busyTaskIdsRef.current));
+    try {
+      await action(taskId);
+    } catch (error) {
+      setActionError(`${label}失败：${unknownErrorMessage(error, "传输任务操作失败")}`);
+    } finally {
+      busyTaskIdsRef.current.delete(taskId);
+      setBusyTaskIds(new Set(busyTaskIdsRef.current));
+    }
+  }
 
   const requestDelete = (task: TransferTask) => {
     if (!activeTransferStatuses.has(task.status)) {
-      void onDelete(task.id);
+      void runTaskAction("删除", task.id, onDelete);
       return;
     }
     setPendingConfirm({
       title: "删除传输任务",
       message: "删除运行中传输会先取消该任务，确认删除？",
       confirmLabel: "确认删除",
-      onConfirm: () => void onDelete(task.id),
+      onConfirm: () => void runTaskAction("删除", task.id, onDelete),
     });
   };
 
@@ -84,6 +103,8 @@ export function TransferPanel({
     onResume,
     onCancel,
     requestDelete,
+    busyTaskIds,
+    runTaskAction,
   );
 
   useEffect(() => {
@@ -207,6 +228,7 @@ export function TransferPanel({
             </div>
           ) : null}
         </div>
+        {actionError ? <ZtInlineError>{actionError}</ZtInlineError> : null}
         {collapsed ? null : list}
         {confirmDialog}
       </section>
@@ -215,6 +237,7 @@ export function TransferPanel({
 
   return (
     <>
+      {actionError ? <ZtInlineError>{actionError}</ZtInlineError> : null}
       {list}
       {confirmDialog}
     </>
@@ -230,6 +253,8 @@ function renderTransferList(
   onResume: TransferPanelProps["onResume"],
   onCancel: TransferPanelProps["onCancel"],
   onDelete: (task: TransferTask) => void,
+  busyTaskIds: ReadonlySet<string>,
+  onTaskAction: (label: string, taskId: string, action: (taskId: string) => Promise<void> | void) => Promise<void>,
 ) {
   if (tasks.length === 0) {
     return <div className="zt-empty-line">暂无传输任务</div>;
@@ -238,7 +263,7 @@ function renderTransferList(
   return (
     <div className="zt-transfer-list" aria-label="传输任务列表">
       {groupTransferTasks(tasks).map((group) => {
-        if (!group.id) return renderTransferRow(group.tasks[0], false, onRetry, onPause, onResume, onCancel, onDelete);
+        if (!group.id) return renderTransferRow(group.tasks[0], false, onRetry, onPause, onResume, onCancel, onDelete, busyTaskIds, onTaskAction);
         const collapsed = collapsedGroupIds.has(group.id);
         const totalBytes = group.tasks.reduce((total, task) => total + task.total_bytes, 0);
         const transferredBytes = group.tasks.reduce((total, task) => total + task.transferred_bytes, 0);
@@ -264,7 +289,7 @@ function renderTransferList(
             </button>
             {collapsed ? null : (
               <div className="zt-transfer-group-children">
-                {group.tasks.map((task) => renderTransferRow(task, true, onRetry, onPause, onResume, onCancel, onDelete))}
+                {group.tasks.map((task) => renderTransferRow(task, true, onRetry, onPause, onResume, onCancel, onDelete, busyTaskIds, onTaskAction))}
               </div>
             )}
           </section>
@@ -282,10 +307,13 @@ function renderTransferRow(
   onResume: TransferPanelProps["onResume"],
   onCancel: TransferPanelProps["onCancel"],
   onDelete: (task: TransferTask) => void,
+  busyTaskIds: ReadonlySet<string>,
+  onTaskAction: (label: string, taskId: string, action: (taskId: string) => Promise<void> | void) => Promise<void>,
 ) {
   const percent = task.total_bytes > 0 ? Math.min(100, Math.round((task.transferred_bytes / task.total_bytes) * 100)) : null;
   const sourcePath = task.source_endpoint?.path ?? legacyTransferSourcePath(task);
   const destinationPath = task.destination_endpoint?.path ?? legacyTransferDestinationPath(task);
+  const busy = busyTaskIds.has(task.id);
   return (
     <div className={child ? "zt-transfer-row zt-transfer-child-row" : "zt-transfer-row"} key={task.id}>
       <div className="zt-transfer-main">
@@ -299,22 +327,22 @@ function renderTransferRow(
       <span className={`zt-transfer-status ${task.status}`}>{task.status}</span>
       <div className="zt-transfer-actions">
         {task.status === "queued" || task.status === "running" ? (
-          <button type="button" aria-label={`暂停 ${task.id}`} title="暂停" onClick={() => void onPause(task.id)}>
+          <button type="button" aria-label={`暂停 ${task.id}`} title="暂停" disabled={busy} onClick={() => void onTaskAction("暂停", task.id, onPause)}>
             <Pause size={14} aria-hidden="true" />
           </button>
         ) : null}
         {task.status === "paused" ? (
-          <button type="button" aria-label={`恢复 ${task.id}`} title="恢复" onClick={() => void onResume(task.id)}>
+          <button type="button" aria-label={`恢复 ${task.id}`} title="恢复" disabled={busy} onClick={() => void onTaskAction("恢复", task.id, onResume)}>
             <Play size={14} aria-hidden="true" />
           </button>
         ) : null}
         {activeTransferStatuses.has(task.status) ? (
-          <button type="button" aria-label={`取消 ${task.id}`} title="取消" onClick={() => void onCancel(task.id)}>
+          <button type="button" aria-label={`取消 ${task.id}`} title="取消" disabled={busy} onClick={() => void onTaskAction("取消", task.id, onCancel)}>
             <XCircle size={14} aria-hidden="true" />
           </button>
         ) : null}
         {task.status === "failed" ? (
-          <button type="button" aria-label={`重试 ${task.id}`} title="重试" onClick={() => void onRetry(task.id)}>
+          <button type="button" aria-label={`重试 ${task.id}`} title="重试" disabled={busy} onClick={() => void onTaskAction("重试", task.id, onRetry)}>
             <RotateCcw size={14} aria-hidden="true" />
           </button>
         ) : null}
@@ -323,6 +351,7 @@ function renderTransferRow(
           className="zt-delete-button"
           aria-label={`删除 ${task.id}`}
           title="删除"
+          disabled={busy}
           onClick={() => onDelete(task)}
         >
           <Trash2 size={14} aria-hidden="true" />

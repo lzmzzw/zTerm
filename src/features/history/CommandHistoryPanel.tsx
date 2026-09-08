@@ -73,6 +73,8 @@ export function CommandHistoryPanel({
   const [formCommands, setFormCommands] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [formSaving, setFormSaving] = useState(false);
+  const [sendingProgress, setSendingProgress] = useState<{ sent: number; total: number } | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
   const historyListRef = useRef<HTMLDivElement | null>(null);
   const orderedEntries = useMemo(
     () => [...entries].sort((left, right) => historyEntryTime(left) - historyEntryTime(right)),
@@ -218,12 +220,27 @@ export function CommandHistoryPanel({
     setContextMenu(null);
   }
 
-  async function sendSelectedEntries() {
-    if (selectedCommands.length === 0) return;
+  async function sendCommands(commands: string[]) {
+    if (commands.length === 0 || sendingProgress) return;
     setContextMenu(null);
-    for (const command of selectedCommands) {
-      await onSend(command);
+    setSendError(null);
+    setSendingProgress({ sent: 0, total: commands.length });
+    let sent = 0;
+    try {
+      for (let index = 0; index < commands.length; index += 1) {
+        await onSend(commands[index]);
+        sent = index + 1;
+        setSendingProgress({ sent, total: commands.length });
+      }
+    } catch (error) {
+      setSendError(`第 ${sent + 1} 条命令发送失败，已停止：${unknownErrorMessage(error, "发送命令失败")}`);
+    } finally {
+      setSendingProgress(null);
     }
+  }
+
+  function sendSelectedEntries() {
+    return sendCommands(selectedCommands);
   }
 
   async function deleteSelectedEntries() {
@@ -320,6 +337,13 @@ export function CommandHistoryPanel({
         </button>
       </div>
 
+      {sendError ? <ZtInlineError className="zt-history-error">{sendError}</ZtInlineError> : null}
+      {sendingProgress ? (
+        <div className="zt-empty-line" aria-live="polite">
+          正在发送 {sendingProgress.sent}/{sendingProgress.total} 条命令
+        </div>
+      ) : null}
+
       {activeView === "groups" ? (
         <div className="zt-history-groups-view">
           <CommandGroupView
@@ -332,7 +356,8 @@ export function CommandHistoryPanel({
             onDeleteCommandGroup={onDeleteCommandGroup}
             onEditGroup={openEditGroupForm}
             onNewGroup={openNewGroupForm}
-            onSend={onSend}
+            onSend={sendCommands}
+            sending={Boolean(sendingProgress)}
           />
         </div>
       ) : (
@@ -379,8 +404,9 @@ export function CommandHistoryPanel({
                   aria-label={`${t(language, "sendPrefix")} ${entry.command}`}
                   onClick={(event) => {
                     event.stopPropagation();
-                    onSend(entry.command);
+                    void sendCommands([entry.command]);
                   }}
+                  disabled={Boolean(sendingProgress)}
                 >
                   <Play size={14} aria-hidden="true" />
                 </button>
@@ -396,7 +422,7 @@ export function CommandHistoryPanel({
               <button type="button" role="menuitem" onClick={copySelectedEntries}>
                 复制
               </button>
-              <button type="button" role="menuitem" onClick={() => void sendSelectedEntries()}>
+              <button type="button" role="menuitem" disabled={Boolean(sendingProgress)} onClick={() => void sendSelectedEntries()}>
                 发送
               </button>
               <button type="button" className="zt-delete-button" role="menuitem" onClick={() => void deleteSelectedEntries()}>
@@ -436,6 +462,7 @@ function CommandGroupView({
   onEditGroup,
   onNewGroup,
   onSend,
+  sending,
 }: {
   commandGroups: SessionCommandGroup[];
   groupError: string | null;
@@ -446,7 +473,8 @@ function CommandGroupView({
   onDeleteCommandGroup: (groupId: string) => Promise<unknown> | unknown;
   onEditGroup: (group: SessionCommandGroup) => void;
   onNewGroup: () => void;
-  onSend: (command: string) => void;
+  onSend: (commands: string[]) => Promise<void>;
+  sending: boolean;
 }) {
   const [actionMenu, setActionMenu] = useState<
     | { kind: "group"; group: SessionCommandGroup; x: number; y: number }
@@ -480,7 +508,7 @@ function CommandGroupView({
   }
 
   function sendGroup(group: SessionCommandGroup) {
-    group.items.forEach((item) => onSend(item.command));
+    return onSend(group.items.map((item) => item.command));
   }
 
   return (
@@ -515,7 +543,8 @@ function CommandGroupView({
                     type="button"
                     aria-label={`${t(language, "sendAllPrefix")} ${group.name}`}
                     title={`${t(language, "sendAllPrefix")} ${group.name}`}
-                    onClick={() => sendGroup(group)}
+                    onClick={() => void sendGroup(group)}
+                    disabled={sending}
                   >
                     <Play size={14} aria-hidden="true" />
                   </button>
@@ -580,8 +609,9 @@ function CommandGroupView({
             <button
               type="button"
               role="menuitem"
-              onClick={() => {
-                onSend(actionMenu.command);
+                disabled={sending}
+                onClick={() => {
+                  void onSend([actionMenu.command]);
                 setActionMenu(null);
               }}
             >

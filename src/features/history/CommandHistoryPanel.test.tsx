@@ -397,6 +397,34 @@ describe("CommandHistoryPanel", () => {
     view.unmount();
   });
 
+  it("sends selected entries in sequence, reports progress, and stops on the first failure", async () => {
+    let rejectSecond: ((reason?: unknown) => void) | undefined;
+    const onSend = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectSecond = reject;
+          }),
+      );
+    const view = renderPanel({ onSend });
+
+    await click(historyEntry(view.container, "pwd"));
+    await clickWithModifiers(historyEntry(view.container, "whoami"), { ctrlKey: true });
+    await contextMenu(historyEntry(view.container, "pwd"));
+    await click(button(view.container, "发送"));
+
+    expect(view.container.textContent).toContain("正在发送 1/2 条命令");
+    expect(button(view.container, "发送 pwd").disabled).toBe(true);
+    await act(async () => rejectSecond?.(new Error("连接已关闭")));
+
+    expect(onSend).toHaveBeenCalledTimes(2);
+    expect(view.container.textContent).toContain("第 2 条命令发送失败，已停止：连接已关闭");
+    expect(button(view.container, "发送 pwd").disabled).toBe(false);
+    view.unmount();
+  });
+
   it("does not open history actions without an active history scope", async () => {
     const view = renderPanel({ historyScopeKind: null, historyScopeId: null });
 

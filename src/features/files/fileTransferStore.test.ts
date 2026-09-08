@@ -75,6 +75,7 @@ describe("fileTransferStore", () => {
       transfers: [],
       transferLoading: false,
       transferError: null,
+      transferErrorSessionId: null,
       conflictPolicy: "overwrite",
       defaultLocalPath: "",
       localRoots: [],
@@ -238,5 +239,39 @@ describe("fileTransferStore", () => {
     expect(invokeMock).toHaveBeenNthCalledWith(4, "transfer_delete", { taskId: "paused-task" });
     expect(invokeMock).toHaveBeenNthCalledWith(5, "transfer_delete", { taskId: "running-task" });
     expect(useFileTransferStore.getState().transfers).toEqual([]);
+  });
+
+  it("clears a task error when its remote endpoint changes to another connection", async () => {
+    useFileTransferStore.setState({
+      transferError: "session-old 连接已关闭",
+      transferErrorSessionId: "session-old",
+      right: {
+        endpoint: { kind: "saved_session", saved_session_id: "session-old", path: "/tmp" },
+        entries: [],
+        selectedPaths: [],
+        selectionAnchorPath: null,
+        loading: false,
+        error: null,
+      },
+    });
+
+    useFileTransferStore.getState().setEndpoint("right", {
+      kind: "saved_session",
+      saved_session_id: "session-new",
+      path: "/srv",
+    });
+
+    expect(useFileTransferStore.getState().transferError).toBeNull();
+    expect(useFileTransferStore.getState().transferErrorSessionId).toBeNull();
+  });
+
+  it("records the affected session when a task action fails", async () => {
+    useFileTransferStore.setState({ transfers: [transferTask({ id: "paused-task", saved_session_id: "session-ops" })] });
+    invokeMock.mockRejectedValueOnce(new Error("连接已关闭"));
+
+    await expect(useFileTransferStore.getState().pauseTransfer("paused-task")).rejects.toThrow("连接已关闭");
+
+    expect(useFileTransferStore.getState().transferError).toContain("连接已关闭");
+    expect(useFileTransferStore.getState().transferErrorSessionId).toBe("session-ops");
   });
 });

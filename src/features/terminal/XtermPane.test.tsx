@@ -1253,6 +1253,21 @@ describe("XtermPane", () => {
     view.unmount();
   });
 
+  it("reports clipboard failure without sending terminal input", async () => {
+    const onInput = vi.fn();
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+    const view = render(<XtermPane data="" onInput={onInput} />);
+    await act(async () => {
+      terminalMock.instances[0].attachCustomKeyEventHandler.mock.calls[0][0]({
+        key: "v", type: "keydown", ctrlKey: true, preventDefault: vi.fn(), stopPropagation: vi.fn(),
+      });
+      await Promise.resolve();
+    });
+    expect(view.container.textContent).toContain("无法读取剪贴板");
+    expect(onInput).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it("captures a standalone DOM paste before xterm and sends sanitized text once", async () => {
     const onInput = vi.fn();
     const rawText = "echo \x1b[32mgreen\x1b[0m\x00\r\n";

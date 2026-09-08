@@ -146,6 +146,38 @@ describe("TransferPanel", () => {
     view.unmount();
   });
 
+  it("keeps a task action busy until it settles and shows failures", async () => {
+    let rejectPause: ((reason?: unknown) => void) | undefined;
+    const onPause = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectPause = reject;
+        }),
+    );
+    const view = render(
+      <TransferPanel
+        tasks={[tasks[0]]}
+        onRetry={vi.fn()}
+        onPause={onPause}
+        onResume={vi.fn()}
+        onCancel={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    await click(button(view.container, "暂停 task-1"));
+    await click(button(view.container, "暂停 task-1"));
+
+    expect(onPause).toHaveBeenCalledTimes(1);
+    expect(button(view.container, "暂停 task-1").disabled).toBe(true);
+    expect(button(view.container, "取消 task-1").disabled).toBe(true);
+    await act(async () => rejectPause?.(new Error("网络中断")));
+
+    expect(view.container.textContent).toContain("暂停失败：网络中断");
+    expect(button(view.container, "暂停 task-1").disabled).toBe(false);
+    view.unmount();
+  });
+
   it("confirms before deleting an active transfer", async () => {
     const onDelete = vi.fn();
     const view = render(

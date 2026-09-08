@@ -13,7 +13,7 @@ import {
   useState,
 } from "react";
 
-import { ZtContextMenu } from "../../components/ZtUi";
+import { ZtContextMenu, ZtInlineError } from "../../components/ZtUi";
 import { scheduleNextTask } from "../../lib/renderScheduling";
 import { readClipboardTextWithRetry, sanitizeTerminalPaste } from "./terminalClipboard";
 import { parseOsc7Cwd, parseSimpleCdTarget } from "./terminalCwd";
@@ -164,6 +164,7 @@ export function XtermPane({
   const cwdRef = useRef<string | null>(initialCwd);
   const cwdResolveGenerationRef = useRef(0);
   const pasteInFlightRef = useRef<Promise<void> | null>(null);
+  const [clipboardError, setClipboardError] = useState<string | null>(null);
   const onInputRef = useRef(onInput);
   const onCwdResolveRef = useRef(onCwdResolve);
   const onCwdChangeRef = useRef(onCwdChange);
@@ -369,6 +370,7 @@ export function XtermPane({
   );
 
   const pastePlainText = useCallback((text: string) => {
+    setClipboardError(null);
     const plainText = sanitizeTerminalPaste(text);
     if (plainText) {
       terminalRef.current?.paste(plainText);
@@ -380,9 +382,20 @@ export function XtermPane({
       return pasteInFlightRef.current;
     }
 
-    const pasteTask = readClipboardTextWithRetry(navigator.clipboard)
-      .then(pastePlainText)
-      .catch(() => undefined)
+    const sourceTerminal = terminalRef.current;
+    const sourceStream = streamIdRef.current;
+    const read = typeof navigator.clipboard?.readText === "function"
+      ? readClipboardTextWithRetry(navigator.clipboard)
+      : Promise.reject(new Error("Clipboard unavailable"));
+    const pasteTask = read
+      .then((text) => {
+        if (sourceTerminal !== terminalRef.current || sourceStream !== streamIdRef.current) {
+          setClipboardError("终端已切换，未粘贴；请在目标终端重试。");
+          return;
+        }
+        pastePlainText(text);
+      })
+      .catch(() => setClipboardError("无法读取剪贴板，请重新复制后重试。"))
       .finally(() => {
         if (pasteInFlightRef.current === pasteTask) {
           pasteInFlightRef.current = null;
@@ -608,7 +621,13 @@ export function XtermPane({
         }}
         onCopy={() => {
           const selection = terminalRef.current?.getSelection();
-          if (selection) void navigator.clipboard?.writeText(selection);
+          if (selection) {
+            setClipboardError(null);
+            const copy = typeof navigator.clipboard?.writeText === "function"
+              ? navigator.clipboard.writeText(selection)
+              : Promise.reject(new Error("Clipboard unavailable"));
+            void copy.catch(() => setClipboardError("复制失败，请重试。"));
+          }
         }}
         onDisconnect={onDisconnect}
         onCloseTerminal={onCloseTerminal}
@@ -623,6 +642,7 @@ export function XtermPane({
         showSearch={contextMenuSearchEnabled}
         onClose={() => setContextMenu(null)}
       />
+      {clipboardError ? <ZtInlineError>{clipboardError}</ZtInlineError> : null}
       <div className="zt-xterm-host" ref={containerRef} />
       {ghostCandidate ? (
         <div className="zt-command-ghost" aria-hidden="true" ref={ghostElementRef}>
