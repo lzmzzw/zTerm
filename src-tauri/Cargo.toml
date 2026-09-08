@@ -1,6 +1,6 @@
 [package]
 name = "zterm"
-version = "0.3.5"
+version = "0.3.6"
 description = "Windows-first Tauri terminal workspace for SSH, SFTP, command history, and AI-assisted operations."
 authors = ["zTerm contributors"]
 edition = "2021"
@@ -38,3 +38,6 @@ tauri-plugin-updater = "2.10.1"
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-single-instance = "2.4.2"
+
+[target.'cfg(windows)'.dependencies]
+rfd = { version = "=0.16.0", default-features = false, features = ["common-controls-v6"] }

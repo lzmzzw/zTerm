@@ -26,6 +26,10 @@ const sentryMock = vi.hoisted(() => {
   return state;
 });
 
+const tauriClientMock = vi.hoisted(() => ({
+  invokeTauri: vi.fn(),
+}));
+
 vi.mock("zmodem.js/src/zmodem_browser", () => ({
   default: {
     DEBUG: false,
@@ -33,12 +37,8 @@ vi.mock("zmodem.js/src/zmodem_browser", () => ({
   },
 }));
 
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(),
-}));
-
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  open: vi.fn(),
+vi.mock("../../lib/tauriClient", () => ({
+  invokeTauri: tauriClientMock.invokeTauri,
 }));
 
 import {
@@ -53,6 +53,7 @@ describe("zmodemTransfer", () => {
     sentryMock.instances.length = 0;
     sentryMock.consumeImpl = undefined;
     sentryMock.Sentry.mockClear();
+    tauriClientMock.invokeTauri.mockReset();
     clearTerminalZmodemControllersForTest();
   });
 
@@ -206,30 +207,270 @@ describe("zmodemTransfer", () => {
     expect(session.abort).toHaveBeenCalledOnce();
   });
 
+  it("uses the native upload file selector when no dependency override is supplied", async () => {
+    const appendOutput = vi.fn();
+    const session = {
+      type: "send",
+      send_offer: vi.fn(),
+      close: vi.fn(),
+      abort: vi.fn(),
+      on: vi.fn(),
+      start: vi.fn(),
+    };
+    const detection = { confirm: vi.fn(() => session), deny: vi.fn() };
+    sentryMock.consumeImpl = (options) => options.on_detect(detection);
+    tauriClientMock.invokeTauri.mockResolvedValue([]);
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64([42]) },
+      { appendOutput },
+    );
+    await flushPromises();
+
+    expect(tauriClientMock.invokeTauri).toHaveBeenCalledWith("terminal_zmodem_select_upload_files");
+    expect(session.abort).toHaveBeenCalledOnce();
+  });
+
+  it("uses the native download directory selector when no dependency override is supplied", async () => {
+    const appendOutput = vi.fn();
+    const session = {
+      type: "receive",
+      send_offer: vi.fn(),
+      close: vi.fn(),
+      abort: vi.fn(),
+      on: vi.fn(),
+      start: vi.fn(),
+    };
+    const detection = { confirm: vi.fn(() => session), deny: vi.fn() };
+    sentryMock.consumeImpl = (options) => options.on_detect(detection);
+    tauriClientMock.invokeTauri.mockResolvedValue(null);
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64([42]) },
+      { appendOutput },
+    );
+    await flushPromises();
+
+    expect(tauriClientMock.invokeTauri).toHaveBeenCalledWith("terminal_zmodem_select_download_directory");
+    expect(session.abort).toHaveBeenCalledOnce();
+  });
+
   it("confirms that a real zmodem session rejects a repeated startup header", async () => {
-    const { default: RealZmodem } = await vi.importActual<typeof import("zmodem.js/src/zmodem_browser")>(
+    const { default: importedZmodem } = await vi.importActual<typeof import("zmodem.js/src/zmodem_browser")>(
       "zmodem.js/src/zmodem_browser",
     );
+    const RealZmodem: any = importedZmodem;
     const detections: unknown[] = [];
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
       const sentry = new RealZmodem.Sentry({
         to_terminal: vi.fn(),
         sender: vi.fn(),
-        on_detect: (detection) => {
+        on_detect: (detection: any) => {
           detections.push(detection);
           detection.confirm();
         },
         on_retract: vi.fn(),
       });
-      const header = binaryBytes("**\x18B0100000023be50\r\n");
+      const header: number[] = Array.from(RealZmodem.Header.build("ZRQINIT").to_hex() as number[]);
 
-      sentry.consume(binaryBytes("rz waiting to receive.").concat(header));
-      expect(() => sentry.consume(header)).toThrow(/Unhandled header: ZRINIT/);
+      sentry.consume(binaryBytes("sz waiting to send.").concat(header));
+      expect(() => sentry.consume(header)).toThrow(/Unhandled header: ZRQINIT/);
       expect(detections).toHaveLength(1);
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it("filters a coalesced repeated ZRQINIT after the first frame opens the download selector", async () => {
+    const { default: importedZmodem } = await vi.importActual<typeof import("zmodem.js/src/zmodem_browser")>(
+      "zmodem.js/src/zmodem_browser",
+    );
+    const directory = deferred<string | null>();
+    const appendOutput = vi.fn();
+    const session = {
+      type: "receive",
+      send_offer: vi.fn(),
+      close: vi.fn(),
+      abort: vi.fn(),
+      on: vi.fn(),
+      start: vi.fn(),
+    };
+    const detection = { confirm: vi.fn(() => session), deny: vi.fn() };
+    sentryMock.consumeImpl = (options) => options.on_detect(detection);
+    const zrqinit: number[] = Array.from((importedZmodem as any).Header.build("ZRQINIT").to_hex() as number[]);
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64(zrqinit.concat(zrqinit)) },
+      { appendOutput, selectDownloadDirectory: vi.fn(() => directory.promise) },
+    );
+
+    expect(sentryMock.instances[0].consume).toHaveBeenCalledTimes(1);
+    expect(appendOutput).not.toHaveBeenCalledWith("runtime-1", expect.stringContaining("传输解析失败"));
+    directory.resolve(null);
+    await flushPromises();
+    expect(session.abort).toHaveBeenCalledOnce();
+  });
+
+  it("only completes a pending ZRQINIT after directory selection and preserves following binary bytes", async () => {
+    const { default: importedZmodem } = await vi.importActual<typeof import("zmodem.js/src/zmodem_browser")>(
+      "zmodem.js/src/zmodem_browser",
+    );
+    const directory = deferred<string | null>();
+    const appendOutput = vi.fn();
+    const session = {
+      type: "receive",
+      send_offer: vi.fn(),
+      close: vi.fn(),
+      abort: vi.fn(),
+      on: vi.fn(),
+      start: vi.fn(),
+    };
+    const detection = { confirm: vi.fn(() => session), deny: vi.fn() };
+    sentryMock.consumeImpl = (options) => options.on_detect(detection);
+    const zrqinit: number[] = Array.from((importedZmodem as any).Header.build("ZRQINIT").to_hex() as number[]);
+    const binaryTail = [4, 0, ...zrqinit, 255, 7];
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64(zrqinit) },
+      { appendOutput, selectDownloadDirectory: vi.fn(() => directory.promise) },
+    );
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64(zrqinit.slice(0, 6)) },
+      { appendOutput },
+    );
+    expect(sentryMock.instances[0].consume).toHaveBeenCalledTimes(1);
+
+    directory.resolve("D:\\Downloads");
+    await flushPromises();
+    consumeTerminalZmodemData(
+      {
+        runtimeSessionId: "runtime-1",
+        data: "",
+        dataBase64: base64(zrqinit.slice(6).concat(binaryTail)),
+      },
+      { appendOutput },
+    );
+
+    expect(session.start).toHaveBeenCalledOnce();
+    expect(sentryMock.instances[0].consume).toHaveBeenCalledTimes(2);
+    expect(Array.from(sentryMock.instances[0].consume.mock.calls[1][0])).toEqual(binaryTail);
+  });
+
+  it("downloads a 64 KiB-plus sz transfer after fragmented and coalesced repeated ZRQINIT frames", async () => {
+    const { default: importedZmodem } = await vi.importActual<typeof import("zmodem.js/src/zmodem_browser")>(
+      "zmodem.js/src/zmodem_browser",
+    );
+    const RealZmodem: any = importedZmodem;
+    const directory = deferred<string | null>();
+    const appendOutput = vi.fn();
+    const payload = Array.from({ length: 65_537 }, (_, index) => index % 256);
+    const saveFile = vi.fn().mockResolvedValue({ path: "D:\\Downloads\\remote.bin", bytes: payload.length });
+    let remoteSentry: any;
+    let remoteSession: any;
+    const dependencies = {
+      appendOutput,
+      createSentry: (options: any) => new RealZmodem.Sentry(options),
+      selectDownloadDirectory: vi.fn(() => directory.promise),
+      saveFile,
+      sendBytes: vi.fn(async (_runtimeSessionId: string, data: number[]) => {
+        remoteSentry.consume(data);
+      }),
+    };
+    remoteSentry = new RealZmodem.Sentry({
+      to_terminal: vi.fn(),
+      sender: (bytes: number[] | Uint8Array) => {
+        consumeTerminalZmodemData(
+          { runtimeSessionId: "runtime-1", data: "", dataBase64: base64(Array.from(bytes)) },
+          dependencies,
+        );
+      },
+      on_detect: (detection: any) => {
+        remoteSession = detection.confirm();
+        void remoteSession
+          .send_offer({
+            name: "remote.bin",
+            size: payload.length,
+            mtime: new Date(0),
+            files_remaining: 1,
+            bytes_remaining: payload.length,
+          })
+          .then(async (transfer: any) => {
+            transfer.send(Uint8Array.from(payload));
+            await transfer.end(new Uint8Array());
+            await remoteSession.close();
+          });
+      },
+      on_retract: vi.fn(),
+    });
+    const zrqinit: number[] = Array.from(RealZmodem.Header.build("ZRQINIT").to_hex() as number[]);
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64(zrqinit) },
+      dependencies,
+    );
+    await waitFor(() => appendOutput.mock.calls.some(([, output]) => output.includes("正在选择保存目录")));
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64(zrqinit.slice(0, 7)) },
+      dependencies,
+    );
+    consumeTerminalZmodemData(
+      {
+        runtimeSessionId: "runtime-1",
+        data: "",
+        dataBase64: base64(zrqinit.slice(7).concat(zrqinit, zrqinit.slice(0, 5))),
+      },
+      dependencies,
+    );
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64(zrqinit.slice(5)) },
+      dependencies,
+    );
+
+    directory.resolve("D:\\Downloads");
+    await waitFor(() => appendOutput.mock.calls.some(([, output]) => output === "下载完成，共 1 个文件。\r\n"));
+
+    expect(remoteSession).toBeDefined();
+    expect(saveFile).toHaveBeenCalledWith("D:\\Downloads", "remote.bin", payload);
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "prompt# ", dataBase64: base64(binaryBytes("prompt# ")) },
+      dependencies,
+    );
+    expect(appendOutput).toHaveBeenCalledWith("runtime-1", "prompt# ");
+    releaseTerminalZmodemRuntime("runtime-1");
+  });
+
+  it("aborts a cancelled download selection and restores ordinary terminal output", async () => {
+    const directory = deferred<string | null>();
+    const appendOutput = vi.fn();
+    const session = {
+      type: "receive",
+      send_offer: vi.fn(),
+      close: vi.fn(),
+      abort: vi.fn(),
+      on: vi.fn(),
+      start: vi.fn(),
+    };
+    const detection = { confirm: vi.fn(() => session), deny: vi.fn() };
+    sentryMock.consumeImpl = (options) => options.on_detect(detection);
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "", dataBase64: base64([42]) },
+      { appendOutput, selectDownloadDirectory: vi.fn(() => directory.promise) },
+    );
+    directory.resolve(null);
+    await flushPromises();
+    sentryMock.consumeImpl = undefined;
+
+    consumeTerminalZmodemData(
+      { runtimeSessionId: "runtime-1", data: "prompt# ", dataBase64: base64(binaryBytes("prompt# ")) },
+      { appendOutput },
+    );
+
+    expect(session.abort).toHaveBeenCalledOnce();
+    expect(appendOutput).toHaveBeenCalledWith("runtime-1", "未选择保存目录，下载已取消。\r\n");
+    expect(appendOutput).toHaveBeenCalledWith("runtime-1", "prompt# ");
+    expect(sentryMock.Sentry).toHaveBeenCalledTimes(2);
   });
 
   it.each([3, 573, 65_537])("completes a real sender-receiver upload including the ZRINIT and ZFIN close handshakes (%i bytes)", async (size) => {

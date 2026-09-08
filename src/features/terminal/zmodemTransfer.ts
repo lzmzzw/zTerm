@@ -1,6 +1,5 @@
 // Author: Liz
 import { invokeTauri } from "../../lib/tauriClient";
-import { open } from "@tauri-apps/plugin-dialog";
 import Zmodem, {
   type ZmodemDetection,
   type ZmodemOffer,
@@ -57,6 +56,7 @@ const ASCII_XON = 0x11;
 const ZMODEM_OVER_AND_OUT = [79, 79] as const;
 const MIN_ZMODEM_HEX_HEADER_LF_OFFSET = 18;
 const MAX_ZMODEM_HEX_HEADER_LF_OFFSET = 19;
+const ZMODEM_ZRQINIT_TYPE = [ASCII_ZERO, ASCII_ZERO] as const;
 
 export function consumeTerminalZmodemData(
   event: TerminalZmodemDataEvent,
@@ -122,6 +122,8 @@ class ZmodemRuntimeController {
   private textDecoder = new TextDecoder("utf-8", { fatal: false });
   private activeSession: ZmodemSession | null = null;
   private pendingReceiveOverAndOut: number[] | null = null;
+  private pendingDownloadStartupBytes: number[] = [];
+  private awaitingDownloadDirectory = false;
   private awaitingUploadOffer = false;
   private disposed = false;
   private aborting = false;
@@ -156,12 +158,23 @@ class ZmodemRuntimeController {
     try {
       const completedBytes = this.completeMissingReceiveOverAndOut(bytes);
       if (!completedBytes) return true;
-      const chunks = this.activeSession ? [completedBytes] : splitCoalescedZmodemStartupBytes(completedBytes);
-      for (const chunk of chunks) {
-        if (this.awaitingUploadOffer && isStandaloneZmodemStartupHeader(chunk)) {
-          continue;
+      const wasAwaitingDownloadDirectory = this.awaitingDownloadDirectory;
+      const chunks = wasAwaitingDownloadDirectory
+        ? this.filterRepeatedDownloadZrqinit(completedBytes)
+        : this.pendingDownloadStartupBytes.length > 0
+          ? this.completePendingDownloadZrqinit(completedBytes)
+        : this.activeSession ? [completedBytes] : splitCoalescedZmodemStartupBytes(completedBytes);
+      for (let index = 0; index < chunks.length; index += 1) {
+        const chunk = chunks[index];
+        const filteredChunks = !wasAwaitingDownloadDirectory && index > 0 && this.awaitingDownloadDirectory
+          ? this.filterRepeatedDownloadZrqinit(chunk)
+          : [chunk];
+        for (const filteredChunk of filteredChunks) {
+          if (this.awaitingUploadOffer && isStandaloneZmodemStartupHeader(filteredChunk)) {
+            continue;
+          }
+          this.sentry.consume(Array.from(filteredChunk));
         }
-        this.sentry.consume(Array.from(chunk));
       }
       return true;
     } catch (error) {
@@ -174,6 +187,8 @@ class ZmodemRuntimeController {
   dispose() {
     if (this.disposed) return;
     this.pendingReceiveOverAndOut = null;
+    this.pendingDownloadStartupBytes = [];
+    this.awaitingDownloadDirectory = false;
     this.awaitingUploadOffer = false;
     if (this.activeSession?.abort) {
       this.aborting = true;
@@ -267,7 +282,13 @@ class ZmodemRuntimeController {
 
   private async runDownload(session: ZmodemSession) {
     this.appendOutput("\r\nsz 请求下载文件，正在选择保存目录...\r\n");
-    const directory = await this.dependencies.selectDownloadDirectory?.();
+    this.awaitingDownloadDirectory = true;
+    let directory: string | null | undefined;
+    try {
+      directory = await this.dependencies.selectDownloadDirectory?.();
+    } finally {
+      this.awaitingDownloadDirectory = false;
+    }
     this.ensureActiveSession(session);
     if (!directory) {
       this.appendOutput("未选择保存目录，下载已取消。\r\n");
@@ -374,6 +395,68 @@ class ZmodemRuntimeController {
       return Uint8Array.from([ZMODEM_OVER_AND_OUT[0], ...combined]);
     }
     return Uint8Array.from([...ZMODEM_OVER_AND_OUT, ...combined]);
+  }
+
+  private filterRepeatedDownloadZrqinit(bytes: Uint8Array) {
+    const combined = Uint8Array.from([...this.pendingDownloadStartupBytes, ...bytes]);
+    this.pendingDownloadStartupBytes = [];
+    const chunks: Uint8Array[] = [];
+    let offset = 0;
+
+    while (offset < combined.length) {
+      const headerStart = findZmodemHexHeaderStart(combined, offset);
+      if (headerStart < 0) {
+        const pendingStart = findTrailingZrqinitPrefixStart(combined, offset);
+        const end = pendingStart < 0 ? combined.length : pendingStart;
+        if (end > offset) chunks.push(combined.slice(offset, end));
+        if (pendingStart >= 0) this.pendingDownloadStartupBytes = Array.from(combined.slice(pendingStart));
+        break;
+      }
+
+      if (headerStart > offset) chunks.push(combined.slice(offset, headerStart));
+      const headerEnd = findZmodemHexHeaderEnd(combined, headerStart);
+      if (headerEnd < 0) {
+        const candidate = combined.slice(headerStart);
+        if (candidate.length <= MAX_ZMODEM_HEX_HEADER_LF_OFFSET) {
+          this.pendingDownloadStartupBytes = Array.from(candidate);
+        } else {
+          chunks.push(candidate);
+        }
+        break;
+      }
+
+      const header = combined.slice(headerStart, headerEnd);
+      if (!isZrqinitHexHeader(header)) chunks.push(header);
+      offset = headerEnd;
+    }
+
+    return chunks;
+  }
+
+  private completePendingDownloadZrqinit(bytes: Uint8Array) {
+    const combined = Uint8Array.from([...this.pendingDownloadStartupBytes, ...bytes]);
+    this.pendingDownloadStartupBytes = [];
+    if (findZmodemHexHeaderStart(combined, 0) !== 0) {
+      if (findTrailingZrqinitPrefixStart(combined, 0) === 0) {
+        this.pendingDownloadStartupBytes = Array.from(combined);
+        return [];
+      }
+      return [combined];
+    }
+
+    const headerEnd = findZmodemHexHeaderEnd(combined, 0);
+    if (headerEnd < 0) {
+      if (combined.length <= MAX_ZMODEM_HEX_HEADER_LF_OFFSET) {
+        this.pendingDownloadStartupBytes = Array.from(combined);
+        return [];
+      }
+      return [combined];
+    }
+
+    if (!isZrqinitHexHeader(combined.slice(0, headerEnd))) {
+      return [combined];
+    }
+    return headerEnd < combined.length ? [combined.slice(headerEnd)] : [];
   }
 
   private appendOutput(data: string) {
@@ -551,6 +634,20 @@ function isStandaloneZmodemStartupHeader(bytes: Uint8Array) {
   return findZmodemHexHeaderStart(bytes, 0) === 0 && findZmodemHexHeaderEnd(bytes, 0) === bytes.length;
 }
 
+function isZrqinitHexHeader(bytes: Uint8Array) {
+  return bytes[4] === ZMODEM_ZRQINIT_TYPE[0] && bytes[5] === ZMODEM_ZRQINIT_TYPE[1];
+}
+
+function findTrailingZrqinitPrefixStart(bytes: Uint8Array, from: number) {
+  const prefix = [ZMODEM_ASTERISK, ZMODEM_ASTERISK, ZMODEM_ZDLE, ZMODEM_HEADER_B, ASCII_ZERO, ASCII_ZERO];
+  const minimumStart = Math.max(from, bytes.length - prefix.length + 1);
+  for (let start = minimumStart; start < bytes.length; start += 1) {
+    const length = bytes.length - start;
+    if (prefix.slice(0, length).every((value, index) => bytes[start + index] === value)) return start;
+  }
+  return -1;
+}
+
 function findZmodemHexHeaderStart(bytes: Uint8Array, from: number) {
   for (let index = from; index + 5 < bytes.length; index += 1) {
     if (
@@ -584,22 +681,11 @@ function findZmodemHexHeaderEnd(bytes: Uint8Array, headerStart: number) {
 }
 
 async function selectUploadFiles() {
-  const selected = await open({
-    title: "选择要通过 rz 上传的文件",
-    multiple: true,
-    directory: false,
-  });
-  if (!selected) return [];
-  return Array.isArray(selected) ? selected : [selected];
+  return invokeTauri<string[]>("terminal_zmodem_select_upload_files");
 }
 
 async function selectDownloadDirectory() {
-  const selected = await open({
-    title: "选择 sz 下载保存目录",
-    multiple: false,
-    directory: true,
-  });
-  return typeof selected === "string" ? selected : null;
+  return invokeTauri<string | null>("terminal_zmodem_select_download_directory");
 }
 
 function decodeBase64Bytes(value: string) {

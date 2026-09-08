@@ -11,8 +11,12 @@ use std::{
     time::{Duration, UNIX_EPOCH},
 };
 
+#[cfg(windows)]
+use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, State, WebviewWindow};
+#[cfg(not(windows))]
+use tauri_plugin_dialog::DialogExt;
 
 use crate::{
     error::{AppError, AppResult},
@@ -419,6 +423,85 @@ pub struct TerminalZmodemLocalFile {
 pub struct TerminalZmodemSavedFile {
     pub path: String,
     pub bytes: u64,
+}
+
+/// Opens the ZMODEM picker on Tauri's Windows UI thread so the native dialog
+/// and its owner window stay on the same UI boundary when a terminal data event
+/// starts the transfer.
+#[cfg(windows)]
+async fn run_zmodem_dialog_on_ui_thread<T: Send + 'static>(
+    app: &AppHandle,
+    task: impl FnOnce() -> AppResult<T> + Send + 'static,
+) -> AppResult<T> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(task());
+    })
+    .map_err(|error| AppError::terminal(format!("无法打开 ZMODEM 文件选择窗口: {error}")))?;
+
+    receiver
+        .await
+        .map_err(|_| AppError::terminal("ZMODEM 文件选择窗口未返回结果"))?
+}
+
+#[tauri::command]
+pub async fn terminal_zmodem_select_upload_files(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> AppResult<Vec<String>> {
+    #[cfg(windows)]
+    {
+        return run_zmodem_dialog_on_ui_thread(&app, move || {
+            Ok(FileDialog::new()
+                .set_parent(&window)
+                .set_title("选择要通过 rz 上传的文件")
+                .pick_files()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect())
+        })
+        .await;
+    }
+
+    #[cfg(not(windows))]
+    Ok(app
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("选择要通过 rz 上传的文件")
+        .blocking_pick_files()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|path| path.simplified().to_string())
+        .collect())
+}
+
+#[tauri::command]
+pub async fn terminal_zmodem_select_download_directory(
+    app: AppHandle,
+    window: WebviewWindow,
+) -> AppResult<Option<String>> {
+    #[cfg(windows)]
+    {
+        return run_zmodem_dialog_on_ui_thread(&app, move || {
+            Ok(FileDialog::new()
+                .set_parent(&window)
+                .set_title("选择 sz 下载保存目录")
+                .pick_folder()
+                .map(|path| path.to_string_lossy().into_owned()))
+        })
+        .await;
+    }
+
+    #[cfg(not(windows))]
+    Ok(app
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("选择 sz 下载保存目录")
+        .blocking_pick_folder()
+        .map(|path| path.simplified().to_string()))
 }
 
 #[tauri::command]
