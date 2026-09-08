@@ -1,5 +1,7 @@
 # 工程验证与维护
 
+修改 Agent 生命周期、rz/sz 或原生文件框前，先读 [终端回归经验](analysis/terminal-regression-lessons.md)。提交前至少覆盖受影响入口、结束/取消/失败/关闭路径；协议以真实双端验证字节和握手，原生窗口以运行库对照和安装版实测验证。一次优化不扩大为启动方式重写，未经实测支持的兼容尝试应撤销。
+
 ## 本地检查
 
 使用 Node.js 22.13 或以上版本。Windows Rust 使用 stable MSVC 与 Visual Studio C++ Build Tools；脚本通过 rustup 的 cargo.exe 调用，不依赖同名第三方包装器。
