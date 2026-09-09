@@ -49,3 +49,5 @@ Agent Codex CLI 使用 `XtermPane.applicationMode`：保留默认色文本的语
 `followOutput` 仅在 viewport 位于底部时跟随。滚轮或拖动滚动条上翻后保留阅读位置，回到底部恢复；输出解析回调读取当前跟随状态，不能按写入前的状态强拉回底部。初始及后续 fit 必须先检查宿主宽高大于零，隐藏面板不向 PTY 上报极小尺寸。
 
 普通 Shell 保留原有行背景、光标默认闪烁和 4,096 字符分片。回归覆盖文字配色、移动光标不重建行背景、同步控制字节保序、隐藏恢复尺寸、历史阅读及异步写入间上翻。浏览器需实测滚轮、拖动滚动条与恢复跟随；合成输出测试不能替代真实 WebView2/Codex CLI 视觉验收。证据：`AgentCodexPanel.tsx`、`XtermPane.tsx`、`terminalSemanticHighlight.ts` 及对应测试。
+
+Agent 输出期间通过 `terminalCursorPresentation` 暂时屏蔽 DOM 光标装饰，保留字符内容；队列排空且最后一片输出解析后静默 120 ms，再刷新所有行并在下一动画帧恢复。新输出、切换流或卸载必须取消旧恢复回调，同步输出模式未结束时继续等待。CSS 优先级必须高于 xterm 对稳态块光标的 `!important`，验证须在终端聚焦时读取实际样式；不得隐藏整个 cursor span 或注入显隐 ANSI。该静默窗口是呈现策略而非 TUI 帧边界：连续输出期间光标暂不显示，超过窗口的分片间隔仍需实际 CLI 复验。

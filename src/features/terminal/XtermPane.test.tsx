@@ -38,6 +38,7 @@ const terminalMock = vi.hoisted(() => {
       };
     };
     clear: ReturnType<typeof vi.fn>;
+    refresh: ReturnType<typeof vi.fn>;
     cols: number;
     dataListener?: (value: string) => void;
     dispose: ReturnType<typeof vi.fn>;
@@ -113,6 +114,7 @@ const terminalMock = vi.hoisted(() => {
       },
       bufferLines: new Map(),
       clear: vi.fn(),
+      refresh: vi.fn(),
       cols: 80,
       dispose: vi.fn(),
       focus: vi.fn(),
@@ -412,6 +414,19 @@ describe("XtermPane", () => {
     const fragments = ["\x1b[?2026h\x1b[?25l", "\x1b[Hhello", "\x1b[?25h\x1b[?2026l"];
     view.rerender(<XtermPane applicationMode liveChunks={fragments.map((data, i) => ({data, serial:i+1}))} />);
     expect(terminal.write).toHaveBeenCalledExactlyOnceWith(fragments.join(""), expect.any(Function));
+    view.unmount();
+  });
+
+  it("masks the application cursor before parsing intermediate positions without changing output", () => {
+    const view = render(<XtermPane applicationMode />);
+    const terminal = terminalMock.instances[0];
+    const output = "\x1b[4;1HWorking\x1b[20;3H";
+    terminal.write.mockImplementation((data: string, callback?: () => void) => {
+      expect(view.container.querySelector(".zt-xterm-application")?.classList.contains("zt-cursor-updating")).toBe(true);
+      expect(data).toBe(output);
+      callback?.();
+    });
+    view.rerender(<XtermPane applicationMode liveChunks={[{serial:1,data:output}]} />);
     view.unmount();
   });
 

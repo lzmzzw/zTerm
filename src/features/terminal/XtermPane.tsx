@@ -17,6 +17,7 @@ import { ZtContextMenu, ZtInlineError } from "../../components/ZtUi";
 import { scheduleNextTask } from "../../lib/renderScheduling";
 import { readClipboardTextWithRetry, sanitizeTerminalPaste } from "./terminalClipboard";
 import { parseOsc7Cwd, parseSimpleCdTarget } from "./terminalCwd";
+import { createTerminalCursorPresentation } from "./terminalCursorPresentation";
 import {
   createTerminalSemanticHighlighter,
   DIGE_BLACK_SEMANTIC_PALETTE,
@@ -168,6 +169,7 @@ export function XtermPane({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ghostElementRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  const cursorPresentationRef = useRef<ReturnType<typeof createTerminalCursorPresentation> | null>(null);
   const semanticHighlighterRef = useRef<TerminalSemanticHighlighter | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const writtenLengthRef = useRef(0);
@@ -213,6 +215,7 @@ export function XtermPane({
     outputWriteInProgressRef.current = false;
     replayingOutputRef.current = false;
     clearOutputWriteTimer();
+    cursorPresentationRef.current?.reset();
   }, [clearOutputWriteTimer]);
 
   const syncGhostPosition = useCallback(() => {
@@ -232,7 +235,7 @@ export function XtermPane({
     const terminal = terminalRef.current;
     if (!terminal || outputWriteInProgressRef.current) return;
     const item = outputWriteQueueRef.current.shift();
-    if (!item) return;
+    if (!item) { cursorPresentationRef.current?.settle(); return; }
 
     const generation = outputWriteGenerationRef.current;
     outputWriteInProgressRef.current = true;
@@ -259,6 +262,7 @@ export function XtermPane({
       const chunkSize = applicationMode ? MAX_APPLICATION_WRITE_CHUNK_CHARS : MAX_TERMINAL_WRITE_CHUNK_CHARS;
       const chunk = item.data.slice(offset, offset + chunkSize);
       offset += chunk.length;
+      cursorPresentationRef.current?.begin();
       parsingOutputRef.current = true;
       terminal.write(chunk, () => {
         if (generation !== outputWriteGenerationRef.current || terminalRef.current !== terminal) {
@@ -511,6 +515,13 @@ export function XtermPane({
       applicationMode,
     );
     terminalRef.current = terminal;
+    cursorPresentationRef.current = applicationMode && paneRef.current
+      ? createTerminalCursorPresentation(
+        paneRef.current,
+        () => !outputWriteInProgressRef.current && outputWriteQueueRef.current.length === 0 && !terminal.modes?.synchronizedOutputMode,
+        () => terminal.refresh(0, terminal.rows - 1),
+      )
+      : null;
     semanticHighlighterRef.current = semanticHighlighter;
     searchAddonRef.current = searchAddon;
 
@@ -548,6 +559,8 @@ export function XtermPane({
 
     return () => {
       cancelQueuedOutputWrites();
+      cursorPresentationRef.current?.dispose();
+      cursorPresentationRef.current = null;
       resizeObserver?.disconnect();
       window.removeEventListener("resize", fit);
       inputDisposable.dispose();

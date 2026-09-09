@@ -1799,6 +1799,15 @@
   animation: none !important;
 }
 
+/* The cursor span also contains text: suppress only its cursor styling. */
+.zt-xterm-pane.zt-xterm-application.zt-cursor-updating .xterm .xterm-rows .xterm-cursor {
+  background-color: transparent !important;
+  color: inherit !important;
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+
 .zt-agent-codex-header {
   display: flex;
   flex-shrink: 0;
