@@ -637,6 +637,15 @@ async fn sidebar_agent_token_is_scoped_to_visible_ssh_terminals() {
         .json::<Value>()
         .await
         .expect("tools/list JSON");
+    let read_schema = &listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "terminal.read")
+        .unwrap()["inputSchema"]["properties"]["max_chars"];
+    assert_eq!(read_schema["minimum"], 1);
+    assert_eq!(read_schema["default"], 4000);
+    assert!(read_schema.get("maximum").is_none());
     let names = listed["result"]["tools"]
         .as_array()
         .expect("tools")
@@ -747,6 +756,23 @@ async fn sidebar_agent_token_is_scoped_to_visible_ssh_terminals() {
         read["result"]["structuredContent"]["result"]["runtime_session_id"],
         "runtime-1"
     );
+
+    for (requested, effective) in [(5000, 5000), (24000, 24000), (100000, 24000)] {
+        let read = call_sidebar_tool(
+            &client,
+            &access.endpoint,
+            &access.token,
+            20,
+            "terminal.read",
+            json!({"runtime_session_id": "runtime-1", "max_chars": requested}),
+        )
+        .await;
+        assert_eq!(read["result"]["structuredContent"]["status"], "succeeded");
+        assert_eq!(
+            read["result"]["structuredContent"]["result"]["effective_max_chars"],
+            effective
+        );
+    }
 
     let local_rejected = client
         .post(&access.endpoint)

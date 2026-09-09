@@ -203,7 +203,7 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 | `mcp_connection_approval_mode_get` | `{ savedSessionId }` | `AiConnectionApprovalPolicy` | 读取已保存 SSH 连接的审批模式；未配置时返回 `safe` |
 | `mcp_connection_approval_mode_set` | `{ request: { saved_session_id, approval_mode } }` | `AiConnectionApprovalPolicy` | 保存 SSH 连接级审批模式；拒绝不存在或非 SSH 的连接 |
 
-侧栏 Codex 的 Visible Terminal Profile 中，`sessions.list` 仅返回已保存 SSH 连接；`terminal.list` 返回可见 SSH/SSH Container runtime 及 `active_runtime_session_id`；后者来自主窗口活动分栏标签的内存观测，并在读取时核验仍存在于返回列表，无有效目标为 `null`。侧栏解析“当前连接／当前标签／激活标签”时先读取该字段，再显式指定 runtime；不使用初始绑定或本机 cwd 替代。读取后同一操作固定目标，省略 runtime 的旧绑定行为不变；`terminal.open(saved_session_id, placement?)` 只允许打开已保存 SSH 连接，`placement` 为 `tab`、`split_horizontal` 或 `split_vertical`。`terminal.read` 使用运行期 ring buffer，可读取最近输出或指定 cursor 后最多 4000 字符增量；`terminal.write` 写入后等待输出短暂稳定并返回新 cursor。侧栏不暴露 `ssh.execute`，因此所有服务器命令与输出都进入目标滚动屏。
+侧栏 Codex 的 Visible Terminal Profile 中，`sessions.list` 仅返回已保存 SSH 连接；`terminal.list` 返回可见 SSH/SSH Container runtime 及 `active_runtime_session_id`；后者来自主窗口活动分栏标签的内存观测，并在读取时核验仍存在于返回列表，无有效目标为 `null`。侧栏解析“当前连接／当前标签／激活标签”时先读取该字段，再显式指定 runtime；不使用初始绑定或本机 cwd 替代。读取后同一操作固定目标，省略 runtime 的旧绑定行为不变；`terminal.open(saved_session_id, placement?)` 只允许打开已保存 SSH 连接，`placement` 为 `tab`、`split_horizontal` 或 `split_vertical`。`terminal.read` 使用运行期 ring buffer，可读取最近输出或指定 cursor 后的最近增量；`max_chars` 默认 4000，允许正整数预算，实际最多 24000 字符，超出时自动收敛而不报错，响应 `effective_max_chars` 返回实际预算；零、负数及非整数仍拒绝；`terminal.write` 写入后等待输出短暂稳定并返回新 cursor。侧栏不暴露 `ssh.execute`，因此所有服务器命令与输出都进入目标滚动屏。
 
 审批策略按目标已保存 SSH 连接生效：`request_approval`（每次批准）对每次工具调用创建 pending；默认 `safe`（高效审批）自动执行 low/medium 的巡检、传输和常规运维，high/critical 与显式不可逆工具创建 pending；`full_access`（完全自动）免除所有非 secret 输入审批，包括 critical、删除和其他写操作。需要本地 secret 的调用在任何模式下都保持 pending，因为 secret 只能由 zTerm 本地输入。命令型 `terminal.write`/`ssh.execute` 使用脚本内容动态风险分类；`service`、`firewall-cmd`、`iptables` 仅在真实变更子命令出现时提升为 high，只读状态查询不因命令名或输出标题误判。zTerm 仍是最终审批和审计拥有者；侧栏启动参数把 scoped zTerm MCP 设为客户端直接批准，外部 Codex App 也应信任本机 zTerm MCP，避免客户端自身再审批一次。
 
@@ -237,7 +237,9 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 
 ### 终端输出游标与截断
 
-`terminal.read/write` 返回的 `cursor` 是当前 runtime 内单调递增的 UTF-8 字节偏移，不随 24,000 字符滚动缓冲裁剪重置。`output`、`cursor` 和 `truncated` 来自同一次读取快照；`truncated=true` 表示请求起点已被保留窗口淘汰或返回长度限制省略了部分输出。调用方应展示截断提示，并使用本次 cursor 继续读取；runtime 关闭后不可将旧 cursor 用于新 runtime。首读返回最近内容，历史已裁剪时也如实标记截断。
+`terminal.read/write` 返回的 `cursor` 是当前 runtime 内单调递增的 UTF-8 字节偏移，不随 24,000 字符滚动缓冲裁剪重置。`output`、`cursor` 和 `truncated` 来自同一次读取快照；`truncated=true` 表示请求起点已被保留窗口淘汰或返回长度限制省略了部分输出。读取长度不足时保留最新尾部，cursor 仍推进到快照末尾，因此被省略的历史不会由下一次读取自动补齐；需要较大上下文时应提前提高 `max_chars`。调用方应展示截断提示，并原样使用本次 cursor 继续读取，不按字符数自行累加；runtime 关闭后不可将旧 cursor 用于新 runtime。首读返回最近内容，历史已裁剪时也如实标记截断。
+
+实时输出去重以片段序号为准：只有实际入队回放时已覆盖的片段可跳过。新到达的空格、重复字符、退格或光标控制序列，即使与旧快照尾部相同，也必须送入 xterm，避免回显与远端输入行错位。
 
 ### 输出消费与背压
 

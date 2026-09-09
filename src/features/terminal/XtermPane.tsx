@@ -36,6 +36,7 @@ import type { TerminalInputSource } from "./syncInputStore";
 
 interface XtermPaneProps {
   autoFocus?: boolean;
+  followOutput?: boolean;
   data?: string;
   initialCwd?: string | null;
   liveData?: string | null;
@@ -136,6 +137,7 @@ interface QueuedTerminalWrite {
 
 export function XtermPane({
   autoFocus = true,
+  followOutput = false,
   data = "",
   initialCwd = null,
   liveData = null,
@@ -170,6 +172,7 @@ export function XtermPane({
   const replayKeyRef = useRef<number | string | null>(null);
   const liveSerialRef = useRef<number | null>(null);
   const liveChunkSerialRef = useRef<number | null>(null);
+  const replayCoveredLiveSerialRef = useRef(0);
   const completionRequestIdRef = useRef(0);
   const ghostCandidateRef = useRef<CommandCompletionCandidate | null>(null);
   const lastResizeRef = useRef<{ cols: number; rows: number } | null>(null);
@@ -184,6 +187,7 @@ export function XtermPane({
   const cwdResolveGenerationRef = useRef(0);
   const pasteInFlightRef = useRef<Promise<void> | null>(null);
   const [clipboardError, setClipboardError] = useState<string | null>(null);
+  const followOutputRef = useRef(followOutput);
   const onInputRef = useRef(onInput);
   const onCwdResolveRef = useRef(onCwdResolve);
   const onCwdChangeRef = useRef(onCwdChange);
@@ -255,6 +259,7 @@ export function XtermPane({
           replayingOutputRef.current = false;
           return;
         }
+        if (followOutputRef.current) terminal.scrollToBottom();
         if (offset < item.data.length) {
           outputWriteTimerRef.current = window.setTimeout(writeNextChunk, 0);
           return;
@@ -286,11 +291,12 @@ export function XtermPane({
   );
 
   useEffect(() => {
+    followOutputRef.current = followOutput;
     onInputRef.current = onInput;
     onCwdResolveRef.current = onCwdResolve;
     onCwdChangeRef.current = onCwdChange;
     onResizeRef.current = onResize;
-  }, [onCwdChange, onCwdResolve, onInput, onResize]);
+  }, [followOutput, onCwdChange, onCwdResolve, onInput, onResize]);
 
   useEffect(() => {
     ghostCandidateRef.current = ghostCandidate;
@@ -519,6 +525,7 @@ export function XtermPane({
     reportTerminalSize({ cols: terminal.cols, rows: terminal.rows });
     const fit = () => {
       fitAddon.fit();
+      if (followOutputRef.current) terminal.scrollToBottom();
       syncGhostPosition();
     };
     const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fit);
@@ -543,6 +550,7 @@ export function XtermPane({
       replayKeyRef.current = null;
       liveSerialRef.current = null;
       liveChunkSerialRef.current = null;
+      replayCoveredLiveSerialRef.current = 0;
       replayingOutputRef.current = false;
       lastResizeRef.current = null;
       scheduleNextTask(() => terminal.dispose());
@@ -566,6 +574,16 @@ export function XtermPane({
       ? liveChunks?.at(-1)?.flow
       : undefined;
 
+    const enqueueReplayOutput = (output: string, suppressGeneratedInput: boolean, onComplete?: () => void) => {
+      // Only the chunks present when replay is actually queued can be covered by it.
+      // Later spaces, repeated characters and cursor controls are new output even
+      // when their bytes happen to match the frozen replay suffix.
+      replayCoveredLiveSerialRef.current = liveChunksCoveredByReplay(data, liveChunks)
+        ? (liveChunks?.at(-1)?.serial ?? 0)
+        : 0;
+      enqueueTerminalOutput(output, suppressGeneratedInput, onComplete);
+    };
+
     if (liveSerial !== undefined) {
       const streamChanged = streamIdRef.current !== streamId;
       const replayChanged = replayKeyRef.current !== replayKey;
@@ -588,7 +606,7 @@ export function XtermPane({
       semanticHighlighterRef.current?.clear();
       terminal.clear();
       if (data) {
-        enqueueTerminalOutput(
+        enqueueReplayOutput(
           data,
           !isOnlyTerminalStatusQuery(data),
           replayCoversLiveData && liveOutputFlow
@@ -604,11 +622,12 @@ export function XtermPane({
       streamIdRef.current = streamId;
       writtenLengthRef.current = 0;
       liveChunkSerialRef.current = null;
+      replayCoveredLiveSerialRef.current = 0;
       cancelQueuedOutputWrites();
       semanticHighlighterRef.current?.clear();
       terminal.clear();
       if (data) {
-        enqueueTerminalOutput(
+        enqueueReplayOutput(
           data,
           !isOnlyTerminalStatusQuery(data),
           replayFlow ? () => markTerminalOutputRendered(replayFlow) : undefined,
@@ -624,7 +643,7 @@ export function XtermPane({
       const nextChunk = data.slice(previousLength);
       if (nextChunk) {
         const suppressGeneratedInput = previousLength === 0 && !isOnlyTerminalStatusQuery(nextChunk);
-        enqueueTerminalOutput(
+        enqueueReplayOutput(
           nextChunk,
           suppressGeneratedInput,
           replayFlow ? () => markTerminalOutputRendered(replayFlow) : undefined,
@@ -634,7 +653,7 @@ export function XtermPane({
       cancelQueuedOutputWrites();
       semanticHighlighterRef.current?.clear();
       terminal.clear();
-      enqueueTerminalOutput(
+      enqueueReplayOutput(
         data,
         !isOnlyTerminalStatusQuery(data),
         replayFlow ? () => markTerminalOutputRendered(replayFlow) : undefined,
@@ -669,11 +688,10 @@ export function XtermPane({
   useEffect(() => {
     const terminal = terminalRef.current;
     if (!terminal || !liveChunks?.length) return;
-    const replayCoversLiveChunks = liveChunksCoveredByReplay(data, liveChunks);
     let throughSerial = liveChunkSerialRef.current ?? 0;
     for (const chunk of liveChunks) {
       if (chunk.serial <= throughSerial) continue;
-      if (!replayCoversLiveChunks) {
+      if (chunk.serial > replayCoveredLiveSerialRef.current) {
         const flow = chunk.flow;
         enqueueTerminalOutput(
           chunk.data,

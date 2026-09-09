@@ -1785,14 +1785,17 @@
 
 .zt-agent-codex-panel {
   display: flex;
+  min-width: 0;
   min-height: 0;
   height: 100%;
+  overflow: hidden;
   flex-direction: column;
   background: var(--zt-surface-terminal);
 }
 
 .zt-agent-codex-header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -1827,22 +1830,36 @@
 }
 
 .zt-agent-codex-terminal {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
   min-height: 0;
-  flex: 1;
-  padding: 6px;
+  flex: 1 1 0;
+  overflow: hidden;
+  padding: 6px 6px 10px;
 }
 
 .zt-agent-codex-terminal .zt-xterm-pane {
-  height: 100%;
+  height: auto;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .zt-agent-codex-approvals {
   display: grid;
+  flex: 0 1 auto;
+  min-height: 0;
   max-height: 35%;
   gap: 6px;
   overflow: auto;
   padding: 8px;
-  border-bottom: 1px solid var(--zt-border);
+  border-top: 1px solid var(--zt-border);
+  background: var(--zt-surface-elevated);
+  overscroll-behavior: contain;
+}
+
+.zt-agent-codex-panel > .zt-agent-codex-state {
+  flex: 0 0 auto;
+  height: auto;
 }
 
 .zt-agent-codex-state {

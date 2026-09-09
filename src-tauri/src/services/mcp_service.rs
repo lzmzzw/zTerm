@@ -28,7 +28,7 @@ use crate::{
         terminal::RuntimeSessionKind,
     },
     services::{
-        ai_tool_service::AiToolService,
+        ai_tool_service::{AiToolService, TERMINAL_READ_DEFAULT_CHARS, TERMINAL_READ_MAX_CHARS},
         credential_service::{SecretStore, SystemSecretStore},
     },
     storage::{ai::get_ai_connection_approval_mode, sessions::get_session, sqlite::SqliteStore},
@@ -1228,8 +1228,8 @@ async fn handle_agent_json_rpc(
                     "description": format!("读取 zTerm 可见 SSH 终端的滚动屏；不提供 runtime_session_id 时保持初始绑定终端，若其已关闭则仅回退到同一 SSH 连接的可见终端：{}", binding.target_label),
                     "inputSchema": object_schema(json!({
                         "runtime_session_id": { "type": "string", "description": "可选；来自 terminal.list。" },
-                        "cursor": { "type": "integer", "minimum": 0 },
-                        "max_chars": { "type": "integer", "minimum": 1, "maximum": 4000 }
+                        "cursor": { "type": "integer", "minimum": 0, "description": "上次响应的 UTF-8 字节游标，原样传回；不是字符数，不要自行累加。省略时读取最近输出。返回游标总是指向快照末尾，truncated=true 时省略的历史不会在下次自动补回。" },
+                        "max_chars": { "type": "integer", "minimum": 1, "default": TERMINAL_READ_DEFAULT_CHARS, "description": format!("期望读取的字符预算，默认 {}；最多返回 {} 字符，更大的正整数自动按上限读取，不会因超限报错。响应 effective_max_chars 给出实际预算；需要更多上下文时可主动增大。", TERMINAL_READ_DEFAULT_CHARS, TERMINAL_READ_MAX_CHARS) }
                     }), &[])
                 },
                 {

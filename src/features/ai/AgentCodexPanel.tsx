@@ -76,6 +76,44 @@ export function AgentCodexPanel({
         </label>
       </header>
 
+      {session && runtimeSessionId && loading ? (
+        <div className="zt-agent-codex-state"><LoaderCircle className="zt-spin" size={18} />正在启动本机 Codex CLI...</div>
+      ) : null}
+      {session && runtimeSessionId && error ? (
+        <div className="zt-agent-codex-state is-error">
+          <ZtInlineError>{error}</ZtInlineError>
+        </div>
+      ) : null}
+
+      <div className="zt-agent-codex-terminal">
+        {session && runtimeSessionId ? (
+          <XtermPane
+            autoFocus={active}
+            followOutput
+            contextMenuEnabled
+            contextMenuClearEnabled={false}
+            contextMenuSearchEnabled={false}
+            data={initialOutput}
+            replayKind="raw"
+            replayKey={runtimeSessionId}
+            streamId={runtimeSessionId}
+            liveChunks={outputChunks}
+            onLiveChunksQueued={(throughSerial) => discardLiveOutputChunks(runtimeSessionId, throughSerial)}
+            onInput={(data) => void writeTerminal(runtimeSessionId, data)}
+            onCloseTerminal={() => void onClose()}
+            onResize={(cols, rows) => void resizeTerminal(runtimeSessionId, cols, rows)}
+            onRestart={() => void onRestart()}
+          />
+        ) : loading ? (
+          <div className="zt-agent-codex-state"><LoaderCircle className="zt-spin" size={18} />正在启动本机 Codex CLI...</div>
+        ) : error ? (
+          <div className="zt-agent-codex-state is-error">
+            <ZtInlineError>{error}</ZtInlineError>
+          </div>
+        ) : (
+          <div className="zt-agent-codex-state">请先选择一个可操作的终端标签页。</div>
+        )}
+      </div>
       {pendingInvocations.length > 0 ? (
         <div className="zt-agent-codex-approvals" aria-label="待审批操作">
           {pendingInvocations.map((invocation) => (
@@ -121,43 +159,6 @@ export function AgentCodexPanel({
         </div>
       ) : null}
 
-      {session && runtimeSessionId && loading ? (
-        <div className="zt-agent-codex-state"><LoaderCircle className="zt-spin" size={18} />正在启动本机 Codex CLI...</div>
-      ) : null}
-      {session && runtimeSessionId && error ? (
-        <div className="zt-agent-codex-state is-error">
-          <ZtInlineError>{error}</ZtInlineError>
-        </div>
-      ) : null}
-
-      <div className="zt-agent-codex-terminal">
-        {session && runtimeSessionId ? (
-          <XtermPane
-            autoFocus={active}
-            contextMenuEnabled
-            contextMenuClearEnabled={false}
-            contextMenuSearchEnabled={false}
-            data={initialOutput}
-            replayKind="raw"
-            replayKey={runtimeSessionId}
-            streamId={runtimeSessionId}
-            liveChunks={outputChunks}
-            onLiveChunksQueued={(throughSerial) => discardLiveOutputChunks(runtimeSessionId, throughSerial)}
-            onInput={(data) => void writeTerminal(runtimeSessionId, data)}
-            onCloseTerminal={() => void onClose()}
-            onResize={(cols, rows) => void resizeTerminal(runtimeSessionId, cols, rows)}
-            onRestart={() => void onRestart()}
-          />
-        ) : loading ? (
-          <div className="zt-agent-codex-state"><LoaderCircle className="zt-spin" size={18} />正在启动本机 Codex CLI...</div>
-        ) : error ? (
-          <div className="zt-agent-codex-state is-error">
-            <ZtInlineError>{error}</ZtInlineError>
-          </div>
-        ) : (
-          <div className="zt-agent-codex-state">请先选择一个可操作的终端标签页。</div>
-        )}
-      </div>
     </div>
   );
 }

@@ -64,6 +64,7 @@ const terminalMock = vi.hoisted(() => {
     resizeListener?: (size: { cols: number; rows: number }) => void;
     rows: number;
     selectAll: ReturnType<typeof vi.fn>;
+    scrollToBottom: ReturnType<typeof vi.fn>;
     bufferLines: Map<number, string>;
     customKeyEventHandler?: (event: KeyboardEvent) => boolean;
     scrollListener?: () => void;
@@ -185,6 +186,7 @@ const terminalMock = vi.hoisted(() => {
       }),
       rows: 10,
       selectAll: vi.fn(),
+      scrollToBottom: vi.fn(),
       write: vi.fn((_data: string, callback?: () => void) => callback?.()),
     };
     instances.push(instance);
@@ -1453,4 +1455,62 @@ describe("XtermPane", () => {
     expect(view.container.querySelector('[role="menu"]')).toBeNull();
     view.unmount();
   });
+});
+
+it("follows Agent output only after xterm parses it and follows a resize", () => {
+  const view = render(<XtermPane followOutput data="" />);
+  const terminal = terminalMock.instances.at(-1)!;
+  let parsed: (() => void) | undefined;
+  terminal.write.mockImplementation((_data: string, callback?: () => void) => { parsed = callback; });
+  terminal.scrollToBottom.mockClear();
+  view.rerender(<XtermPane followOutput data="new output" />);
+  expect(terminal.scrollToBottom).not.toHaveBeenCalled();
+  act(() => parsed?.());
+  expect(terminal.scrollToBottom).toHaveBeenCalledTimes(1);
+  act(() => window.dispatchEvent(new Event("resize")));
+  expect(terminal.scrollToBottom).toHaveBeenCalledTimes(2);
+  view.unmount();
+});
+
+it("does not force ordinary terminal output to the bottom", () => {
+  const view = render(<XtermPane data="output" />);
+  const terminal = terminalMock.instances.at(-1)!;
+  act(() => window.dispatchEvent(new Event("resize")));
+  expect(terminal.scrollToBottom).not.toHaveBeenCalled();
+  view.unmount();
+});
+
+it.each([" ", "d", "\b", "\r", "\x1b[D"])("preserves a new live fragment %j matching an old replay suffix", (fragment) => {
+  const snapshot = "prompt> " + fragment;
+  const view = render(<XtermPane data={snapshot} liveChunks={[]} streamId="runtime-1" />);
+  const terminal = terminalMock.instances.at(-1)!;
+  terminal.write.mockClear();
+  view.rerender(<XtermPane data={snapshot} liveChunks={[{serial: 1, data: "df"}]} streamId="runtime-1" />);
+  view.rerender(<XtermPane data={snapshot} liveChunks={[{serial: 2, data: fragment}]} streamId="runtime-1" />);
+  view.rerender(<XtermPane data={snapshot} liveChunks={[{serial: 3, data: "-h"}]} streamId="runtime-1" />);
+  expect(terminal.write.mock.calls.map(([data]) => data)).toEqual(["df", fragment, "-h"]);
+  view.unmount();
+});
+
+it("renders Backspace correction consistently with the emitted echo bytes", async () => {
+  const erase = "\b \b";
+  const snapshot = "prompt>  " + erase;
+  const view = render(<XtermPane data={snapshot} liveChunks={[]} streamId="runtime-1" />);
+  const terminal = terminalMock.instances.at(-1)!;
+  const fragments = ["dd", erase, "f", " ", "-h"];
+  for (const [index, data] of fragments.entries()) {
+    view.rerender(<XtermPane data={snapshot} liveChunks={[{serial:index+1, data}]} streamId="runtime-1" />);
+  }
+  const actual = await vi.importActual<typeof import("@xterm/xterm")>("@xterm/xterm");
+  const screen = new actual.Terminal({cols:80, rows:10});
+  try {
+    for (const [data] of terminal.write.mock.calls) {
+      await new Promise<void>(resolve => screen.write(data, resolve));
+    }
+    expect(screen.buffer.active.getLine(0)?.translateToString(true)).toBe("prompt> df -h");
+    expect(screen.buffer.active.cursorX).toBe("prompt> df -h".length);
+  } finally {
+    screen.dispose();
+    view.unmount();
+  }
 });

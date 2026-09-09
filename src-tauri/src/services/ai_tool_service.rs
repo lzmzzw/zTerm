@@ -70,6 +70,17 @@ use crate::{
     validation::required_text,
 };
 
+pub(crate) const TERMINAL_READ_DEFAULT_CHARS: usize = 4000;
+pub(crate) const TERMINAL_READ_MAX_CHARS: usize = 24_000;
+
+fn terminal_read_budget(arguments: &Value) -> usize {
+    arguments
+        .get("max_chars")
+        .and_then(Value::as_u64)
+        .unwrap_or(TERMINAL_READ_DEFAULT_CHARS as u64)
+        .clamp(1, TERMINAL_READ_MAX_CHARS as u64) as usize
+}
+
 pub struct AiTerminalOutputSnapshot {
     pub output: Option<String>,
     pub cursor: Option<usize>,
@@ -814,9 +825,7 @@ impl AiToolService {
             }
             "terminal.read" => {
                 let runtime_session_id = string_arg(arguments, "runtime_session_id")?;
-                let max_chars = optional_usize_arg(arguments, "max_chars")
-                    .unwrap_or(4000)
-                    .clamp(1, 4000);
+                let max_chars = terminal_read_budget(arguments);
                 let cursor = optional_usize_arg(arguments, "cursor");
                 let snapshot = self.writer.read_terminal_output_snapshot(
                     &runtime_session_id,
@@ -840,7 +849,8 @@ impl AiToolService {
                         "runtime_session_id": runtime_session_id,
                         "output": output,
                         "cursor": next_cursor,
-                        "truncated": snapshot.truncated
+                        "truncated": snapshot.truncated,
+                        "effective_max_chars": max_chars
                     }),
                 ))
             }
@@ -1685,8 +1695,13 @@ fn validate_arguments(tool_id: &str, arguments: &Value) -> AppResult<()> {
         }
         "terminal.read" => {
             let _ = string_arg(arguments, "runtime_session_id")?;
-            if optional_usize_arg(arguments, "max_chars").is_some_and(|value| value > 4000) {
-                return Err(AppError::validation("max_chars 不能超过 4000"));
+            if arguments
+                .get("max_chars")
+                .is_some_and(|value| value.as_u64().is_none_or(|budget| budget == 0))
+            {
+                return Err(AppError::validation(
+                    "max_chars 必须是正整数；可省略以使用默认值",
+                ));
             }
         }
         "terminal.open" => {
@@ -2899,6 +2914,61 @@ fn spawn_ai_file_transfer(
 #[cfg(test)]
 mod output_snapshot_tests {
     use super::*;
+
+    #[test]
+    fn terminal_read_budget_is_bounded_and_preserves_unicode_snapshot() {
+        assert_eq!(terminal_read_budget(&json!({})), 4000);
+        let manager = Arc::new(TerminalManager::default());
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let writer =
+            RuntimeAiToolWriter::new(manager.clone(), Arc::new(CommandHistoryService::new(store)));
+        manager.record_output("test", &"中".repeat(24_000)).unwrap();
+        for (requested, expected) in [
+            (1, 1),
+            (4000, 4000),
+            (5000, 5000),
+            (24_000, 24_000),
+            (100_000, 24_000),
+            (u64::MAX, 24_000),
+        ] {
+            let budget = terminal_read_budget(&json!({"max_chars": requested}));
+            assert_eq!(budget, expected);
+            let snapshot = writer
+                .read_terminal_output_snapshot("test", Some(0), budget)
+                .unwrap();
+            assert_eq!(snapshot.output.unwrap().chars().count(), expected);
+            assert_eq!(snapshot.cursor, Some(72_000));
+            assert_eq!(snapshot.truncated, expected < 24_000);
+        }
+    }
+
+    #[test]
+    fn terminal_read_accepts_large_budgets_but_rejects_invalid_types() {
+        for budget in [1, 4000, 5000, 24_000, 100_000, u64::MAX] {
+            assert!(
+                validate_arguments(
+                    "terminal.read",
+                    &json!({
+                        "runtime_session_id": "test", "max_chars": budget
+                    })
+                )
+                .is_ok(),
+                "budget {budget}"
+            );
+        }
+        for budget in [json!(0), json!(-1), json!(1.5), json!("5000"), Value::Null] {
+            assert!(
+                validate_arguments(
+                    "terminal.read",
+                    &json!({
+                        "runtime_session_id": "test", "max_chars": budget
+                    })
+                )
+                .is_err(),
+                "invalid budget {budget}"
+            );
+        }
+    }
 
     #[test]
     fn runtime_writer_preserves_cursor_and_reports_lost_history() {
