@@ -35,6 +35,7 @@ import type { TerminalReplayKind } from "./terminalReplay";
 import type { TerminalInputSource } from "./syncInputStore";
 
 interface XtermPaneProps {
+  applicationMode?: boolean;
   autoFocus?: boolean;
   followOutput?: boolean;
   data?: string;
@@ -126,6 +127,7 @@ const DIGE_WHITE_TERMINAL_THEME = {
 };
 const MAX_REPLAY_OUTPUT_CHARS = 16_000;
 const MAX_TERMINAL_WRITE_CHUNK_CHARS = 4_096;
+const MAX_APPLICATION_WRITE_CHUNK_CHARS = 65_536;
 const TERMINAL_STATUS_QUERY_PATTERN = /\x1b\[[0-9?;]*n/g;
 const ANSI_CONTROL_SEQUENCE_PATTERN = /\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*?(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-Z\\-_]/g;
 
@@ -136,6 +138,7 @@ interface QueuedTerminalWrite {
 }
 
 export function XtermPane({
+  applicationMode = false,
   autoFocus = true,
   followOutput = false,
   data = "",
@@ -250,7 +253,10 @@ export function XtermPane({
         replayingOutputRef.current = false;
         return;
       }
-      const chunk = item.data.slice(offset, offset + MAX_TERMINAL_WRITE_CHUNK_CHARS);
+      // Keep typical TUI redraws together; xterm already budgets parsing time.
+      // Retain a finite cap for unusually large output and the shell's smaller chunks.
+      const chunkSize = applicationMode ? MAX_APPLICATION_WRITE_CHUNK_CHARS : MAX_TERMINAL_WRITE_CHUNK_CHARS;
+      const chunk = item.data.slice(offset, offset + chunkSize);
       offset += chunk.length;
       parsingOutputRef.current = true;
       terminal.write(chunk, () => {
@@ -259,7 +265,7 @@ export function XtermPane({
           replayingOutputRef.current = false;
           return;
         }
-        if (followOutputRef.current) terminal.scrollToBottom();
+        if (followOutputRef.current && (!applicationMode || offset >= item.data.length)) terminal.scrollToBottom();
         if (offset < item.data.length) {
           outputWriteTimerRef.current = window.setTimeout(writeNextChunk, 0);
           return;
@@ -271,7 +277,7 @@ export function XtermPane({
     };
 
     writeNextChunk();
-  }, []);
+  }, [applicationMode]);
 
   const enqueueTerminalOutput = useCallback(
     (data: string, suppressGeneratedInput: boolean, onComplete?: () => void) => {
@@ -455,7 +461,7 @@ export function XtermPane({
 
     const terminal = new Terminal({
       allowProposedApi: true,
-      cursorBlink: true,
+      cursorBlink: !applicationMode,
       minimumContrastRatio: 4.5,
       cursorInactiveStyle: "outline",
       cursorStyle: "block",
@@ -497,7 +503,7 @@ export function XtermPane({
       }
       return true;
     });
-    const semanticHighlighter = createTerminalSemanticHighlighter(
+    const semanticHighlighter = applicationMode ? null : createTerminalSemanticHighlighter(
       terminal,
       resolveTerminalSemanticPalette(),
       resolveTerminalLineHighlightPalette(),
@@ -541,7 +547,7 @@ export function XtermPane({
       scrollDisposable.dispose();
       resizeDisposable.dispose();
       cwdDisposable.dispose();
-      semanticHighlighter.dispose();
+      semanticHighlighter?.dispose();
       terminalRef.current = null;
       semanticHighlighterRef.current = null;
       searchAddonRef.current = null;
@@ -555,7 +561,7 @@ export function XtermPane({
       lastResizeRef.current = null;
       scheduleNextTask(() => terminal.dispose());
     };
-  }, [cancelQueuedOutputWrites, handleTerminalInput, pasteClipboardText, syncGhostPosition]);
+  }, [applicationMode, cancelQueuedOutputWrites, handleTerminalInput, pasteClipboardText, syncGhostPosition]);
 
   useEffect(() => {
     if (autoFocus) terminalRef.current?.focus();

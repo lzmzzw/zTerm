@@ -88,6 +88,7 @@ export function AgentCodexPanel({
       <div className="zt-agent-codex-terminal">
         {session && runtimeSessionId ? (
           <XtermPane
+            applicationMode
             autoFocus={active}
             followOutput
             contextMenuEnabled

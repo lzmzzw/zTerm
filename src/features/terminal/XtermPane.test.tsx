@@ -313,6 +313,45 @@ describe("XtermPane", () => {
     delete document.documentElement.dataset.ztTheme;
   });
 
+  it("keeps application redraws together without shell decorations or host cursor blinking", () => {
+    const view = render(<XtermPane applicationMode followOutput />);
+    const terminal = terminalMock.instances[0];
+    terminal.bufferLines.set(5, "$ redraw");
+    terminal.writeParsedListener?.();
+    expect(terminal.registerDecoration).not.toHaveBeenCalled();
+    expect(terminal.options).toMatchObject({ cursorBlink: false });
+    const redraw = `\x1b[?25l\x1b[H${"text ".repeat(2000)}\x1b[?25h`;
+    let complete: (() => void) | undefined;
+    terminal.write.mockImplementation((_data: string, callback?: () => void) => { complete = callback; });
+    const onQueued = vi.fn();
+    view.rerender(<XtermPane applicationMode followOutput liveChunks={[{ data: redraw, serial: 1 }]} onLiveChunksQueued={onQueued} />);
+    expect(terminal.write).toHaveBeenCalledExactlyOnceWith(redraw, expect.any(Function));
+    expect(terminal.scrollToBottom).not.toHaveBeenCalled();
+    act(() => complete?.());
+    expect(terminal.scrollToBottom).toHaveBeenCalledTimes(1);
+    expect(onQueued).toHaveBeenCalledWith(1);
+    view.unmount();
+  });
+
+  it("bounds large application writes and preserves their bytes and terminal instance", async () => {
+    const view = render(<XtermPane applicationMode followOutput />);
+    const terminal = terminalMock.instances[0];
+    const output = `\x1b[?2026h${"x".repeat(140_000)}\x1b[?2026l`;
+    const chunks = [{ data: output, serial: 1 }];
+    view.rerender(<XtermPane applicationMode followOutput liveChunks={chunks} onInput={vi.fn()} />);
+    expect(terminal.scrollToBottom).not.toHaveBeenCalled();
+    await flushQueuedTerminalWrites();
+    expect(writtenTerminalText(terminal)).toBe(output);
+    expect(terminal.write.mock.calls.every(([part]) => part.length <= 65_536)).toBe(true);
+    expect(terminal.scrollToBottom).toHaveBeenCalledTimes(1);
+    const writes = terminal.write.mock.calls.length;
+    view.rerender(<XtermPane applicationMode followOutput liveChunks={chunks} onInput={vi.fn()} />);
+    expect(terminalMock.instances).toHaveLength(1);
+    expect(terminal.write).toHaveBeenCalledTimes(writes);
+    expect(terminal.clear).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it("initializes xterm with the dige-black ANSI palette without changing font settings", () => {
     const view = render(<XtermPane data="" />);
 

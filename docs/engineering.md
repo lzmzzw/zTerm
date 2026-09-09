@@ -41,3 +41,7 @@ Windows 上检测到 WebView2 主版本为 152 时，zTerm 主窗口禁用 `Hide
 交互失败在操作位置反馈。快捷键尊重输入控件、弹窗和输入法组合；历史批量发送遇首个失败停止；传输动作按任务去重并将错误归属到连接。
 
 终端数据先经 ZMODEM 处理、后台 replay 解析，再由可见 Xterm 按序写入并确认。前端使用保序 chunk 队列，避免 React 合并更新丢失片段；缓存清理不截断尚未消费的原始协议数据。`rz/sz` 故障事件不直接回显原始二进制，传输失败后清理协议状态和残留发送，详见 API 契约。
+
+## Agent CLI 渲染
+
+Agent Codex CLI 使用 `XtermPane.applicationMode`：关闭 Shell 语义装饰与宿主默认光标闪烁，保留应用自己的 ANSI 光标和同步输出控制；每次写入上限为 65,536 字符，仅在该条输出全部解析后跟随到底部，减少 4 KB 分片暴露的中间重绘。普通 Shell 保持原有装饰、默认光标闪烁和 4,096 字符分片；应用模式不保证跨 PTY 事件的整帧原子性。验证需覆盖字节保序、超限分片、重复更新不重挂载；浏览器合成输出测试不替代真实桌面 CLI 验收。（证据：`src/features/ai/AgentCodexPanel.tsx`, `src/features/terminal/XtermPane.tsx`, `src/features/terminal/XtermPane.test.tsx`）
