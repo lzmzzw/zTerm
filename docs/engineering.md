@@ -44,4 +44,8 @@ Windows 上检测到 WebView2 主版本为 152 时，zTerm 主窗口禁用 `Hide
 
 ## Agent CLI 渲染
 
-Agent Codex CLI 使用 `XtermPane.applicationMode`：关闭 Shell 语义装饰与宿主默认光标闪烁，保留应用自己的 ANSI 光标和同步输出控制；每次写入上限为 65,536 字符，仅在该条输出全部解析后跟随到底部，减少 4 KB 分片暴露的中间重绘。普通 Shell 保持原有装饰、默认光标闪烁和 4,096 字符分片；应用模式不保证跨 PTY 事件的整帧原子性。验证需覆盖字节保序、超限分片、重复更新不重挂载；浏览器合成输出测试不替代真实桌面 CLI 验收。（证据：`src/features/ai/AgentCodexPanel.tsx`, `src/features/terminal/XtermPane.tsx`, `src/features/terminal/XtermPane.test.tsx`）
+Agent Codex CLI 使用 `XtermPane.applicationMode`：保留默认色文本的语义配色与应用 ANSI 色，关闭跟随光标变化的整行背景和光标 CSS 闪烁动画，保留光标位置、形状及显隐控制。同步输出帧未结束时暂缓装饰刷新，同轮已收到的 live chunks 合并后按序写入，每片最多 65,536 字符；不注入 ANSI 或声称跨 PTY 事件的整帧原子性。
+
+`followOutput` 仅在 viewport 位于底部时跟随。滚轮或拖动滚动条上翻后保留阅读位置，回到底部恢复；输出解析回调读取当前跟随状态，不能按写入前的状态强拉回底部。初始及后续 fit 必须先检查宿主宽高大于零，隐藏面板不向 PTY 上报极小尺寸。
+
+普通 Shell 保留原有行背景、光标默认闪烁和 4,096 字符分片。回归覆盖文字配色、移动光标不重建行背景、同步控制字节保序、隐藏恢复尺寸、历史阅读及异步写入间上翻。浏览器需实测滚轮、拖动滚动条与恢复跟随；合成输出测试不能替代真实 WebView2/Codex CLI 视觉验收。证据：`AgentCodexPanel.tsx`、`XtermPane.tsx`、`terminalSemanticHighlight.ts` 及对应测试。

@@ -191,6 +191,7 @@ export function XtermPane({
   const pasteInFlightRef = useRef<Promise<void> | null>(null);
   const [clipboardError, setClipboardError] = useState<string | null>(null);
   const followOutputRef = useRef(followOutput);
+  const viewportAtBottomRef = useRef(true);
   const onInputRef = useRef(onInput);
   const onCwdResolveRef = useRef(onCwdResolve);
   const onCwdChangeRef = useRef(onCwdChange);
@@ -265,7 +266,7 @@ export function XtermPane({
           replayingOutputRef.current = false;
           return;
         }
-        if (followOutputRef.current && (!applicationMode || offset >= item.data.length)) terminal.scrollToBottom();
+        if (followOutputRef.current && viewportAtBottomRef.current && (!applicationMode || offset >= item.data.length)) terminal.scrollToBottom();
         if (offset < item.data.length) {
           outputWriteTimerRef.current = window.setTimeout(writeNextChunk, 0);
           return;
@@ -503,10 +504,11 @@ export function XtermPane({
       }
       return true;
     });
-    const semanticHighlighter = applicationMode ? null : createTerminalSemanticHighlighter(
+    const semanticHighlighter = createTerminalSemanticHighlighter(
       terminal,
       resolveTerminalSemanticPalette(),
       resolveTerminalLineHighlightPalette(),
+      applicationMode,
     );
     terminalRef.current = terminal;
     semanticHighlighterRef.current = semanticHighlighter;
@@ -522,18 +524,24 @@ export function XtermPane({
       onResizeRef.current?.(size.cols, size.rows);
     };
     const cursorDisposable = terminal.onCursorMove(syncGhostPosition);
-    const scrollDisposable = terminal.onScroll(syncGhostPosition);
+    const scrollDisposable = terminal.onScroll(() => {
+      const buffer = terminal.buffer.active;
+      viewportAtBottomRef.current = buffer.viewportY >= buffer.baseY;
+      syncGhostPosition();
+    });
     const resizeDisposable = terminal.onResize((size) => {
       reportTerminalSize(size);
       syncGhostPosition();
     });
-    fitAddon.fit();
-    reportTerminalSize({ cols: terminal.cols, rows: terminal.rows });
     const fit = () => {
+      const bounds = containerRef.current?.getBoundingClientRect();
+      if (!bounds || bounds.width <= 0 || bounds.height <= 0) return;
       fitAddon.fit();
-      if (followOutputRef.current) terminal.scrollToBottom();
+      reportTerminalSize({ cols: terminal.cols, rows: terminal.rows });
+      if (followOutputRef.current && viewportAtBottomRef.current) terminal.scrollToBottom();
       syncGhostPosition();
     };
+    fit();
     const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fit);
     resizeObserver?.observe(containerRef.current);
     window.addEventListener("resize", fit);
@@ -559,6 +567,7 @@ export function XtermPane({
       replayCoveredLiveSerialRef.current = 0;
       replayingOutputRef.current = false;
       lastResizeRef.current = null;
+      viewportAtBottomRef.current = true;
       scheduleNextTask(() => terminal.dispose());
     };
   }, [applicationMode, cancelQueuedOutputWrites, handleTerminalInput, pasteClipboardText, syncGhostPosition]);
@@ -695,11 +704,13 @@ export function XtermPane({
     const terminal = terminalRef.current;
     if (!terminal || !liveChunks?.length) return;
     let throughSerial = liveChunkSerialRef.current ?? 0;
+    const applicationChunks: TerminalLiveOutputChunk[] = [];
     for (const chunk of liveChunks) {
       if (chunk.serial <= throughSerial) continue;
       if (chunk.serial > replayCoveredLiveSerialRef.current) {
         const flow = chunk.flow;
-        enqueueTerminalOutput(
+        if (applicationMode) applicationChunks.push(chunk);
+        else enqueueTerminalOutput(
           chunk.data,
           false,
           flow ? () => markTerminalOutputRendered(flow) : undefined,
@@ -707,14 +718,21 @@ export function XtermPane({
       }
       throughSerial = chunk.serial;
     }
+    if (applicationChunks.length) {
+      enqueueTerminalOutput(applicationChunks.map((chunk) => chunk.data).join(""), false, () => {
+        for (const chunk of applicationChunks) {
+          if (chunk.flow) markTerminalOutputRendered(chunk.flow);
+        }
+      });
+    }
     if (throughSerial === (liveChunkSerialRef.current ?? 0)) return;
     liveChunkSerialRef.current = throughSerial;
     onLiveChunksQueued?.(throughSerial);
-  }, [data, enqueueTerminalOutput, liveChunks, onLiveChunksQueued]);
+  }, [applicationMode, data, enqueueTerminalOutput, liveChunks, onLiveChunksQueued]);
 
   return (
     <div
-      className="zt-xterm-pane"
+      className={`zt-xterm-pane${applicationMode ? " zt-xterm-application" : ""}`}
       ref={paneRef}
       onPasteCapture={handlePasteCapture}
       onContextMenu={(event) => {

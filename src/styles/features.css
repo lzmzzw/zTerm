@@ -1793,6 +1793,12 @@
   background: var(--zt-surface-terminal);
 }
 
+/* Keep the Agent cursor steady even when the CLI requests a blinking style.
+   xterm still owns cursor position, shape and visibility. */
+.zt-xterm-application .xterm-rows .xterm-cursor {
+  animation: none !important;
+}
+
 .zt-agent-codex-header {
   display: flex;
   flex-shrink: 0;

@@ -82,6 +82,21 @@ function fakeTerminal(
 }
 
 describe("createTerminalSemanticHighlighter", () => {
+  it("keeps application text colors stable when the cursor moves without adding line backgrounds", () => {
+    const fake = fakeTerminal(["success 42", "root@host:~# ls"], [], "normal", 0);
+    const highlighter = createTerminalSemanticHighlighter(fake.terminal, DIGE_BLACK_SEMANTIC_PALETTE, undefined, true);
+    highlighter.refresh();
+    expect(fake.decorationOptions.some((item) => item.foregroundColor)).toBe(true);
+    expect(fake.decorationOptions.some((item) => item.backgroundColor)).toBe(false);
+    const count = fake.decorationOptions.length;
+    (fake.terminal.buffer.active as {cursorY: number}).cursorY = 1;
+    fake.emitCursorMove();
+    highlighter.refresh();
+    expect(fake.decorationOptions).toHaveLength(count);
+    expect(fake.decorations.every((item) => item.dispose.mock.calls.length === 0)).toBe(true);
+    highlighter.dispose();
+  });
+
   it("requires xterm's proposed API gate before decorations can be registered", async () => {
     const getContextSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(() => null);
     const { Terminal: XtermTerminal } = await import("@xterm/xterm");

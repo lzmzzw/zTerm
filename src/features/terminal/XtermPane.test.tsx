@@ -141,6 +141,7 @@ const terminalMock = vi.hoisted(() => {
       }),
       open: vi.fn((container: HTMLElement) => {
         instance.host = container;
+        container.getBoundingClientRect = () => ({ width: 800, height: 400 } as DOMRect);
         const terminal = document.createElement("div");
         terminal.className = "terminal xterm";
         terminal.style.lineHeight = "17px";
@@ -313,17 +314,19 @@ describe("XtermPane", () => {
     delete document.documentElement.dataset.ztTheme;
   });
 
-  it("keeps application redraws together without shell decorations or host cursor blinking", () => {
+  it("keeps application redraws together with text colors but without cursor-line backgrounds", () => {
     const view = render(<XtermPane applicationMode followOutput />);
     const terminal = terminalMock.instances[0];
     terminal.bufferLines.set(5, "$ redraw");
     terminal.writeParsedListener?.();
-    expect(terminal.registerDecoration).not.toHaveBeenCalled();
+    expect(terminal.registerDecoration).toHaveBeenCalled();
+    expect(terminal.registerDecoration.mock.calls.every(([options]) => !options.backgroundColor)).toBe(true);
     expect(terminal.options).toMatchObject({ cursorBlink: false });
     const redraw = `\x1b[?25l\x1b[H${"text ".repeat(2000)}\x1b[?25h`;
     let complete: (() => void) | undefined;
     terminal.write.mockImplementation((_data: string, callback?: () => void) => { complete = callback; });
     const onQueued = vi.fn();
+    terminal.scrollToBottom.mockClear();
     view.rerender(<XtermPane applicationMode followOutput liveChunks={[{ data: redraw, serial: 1 }]} onLiveChunksQueued={onQueued} />);
     expect(terminal.write).toHaveBeenCalledExactlyOnceWith(redraw, expect.any(Function));
     expect(terminal.scrollToBottom).not.toHaveBeenCalled();
@@ -336,6 +339,7 @@ describe("XtermPane", () => {
   it("bounds large application writes and preserves their bytes and terminal instance", async () => {
     const view = render(<XtermPane applicationMode followOutput />);
     const terminal = terminalMock.instances[0];
+    terminal.scrollToBottom.mockClear();
     const output = `\x1b[?2026h${"x".repeat(140_000)}\x1b[?2026l`;
     const chunks = [{ data: output, serial: 1 }];
     view.rerender(<XtermPane applicationMode followOutput liveChunks={chunks} onInput={vi.fn()} />);
@@ -349,6 +353,65 @@ describe("XtermPane", () => {
     expect(terminalMock.instances).toHaveLength(1);
     expect(terminal.write).toHaveBeenCalledTimes(writes);
     expect(terminal.clear).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("pauses follow while reading history and resumes only after scrolling to the bottom", () => {
+    const view = render(<XtermPane applicationMode followOutput />);
+    const terminal = terminalMock.instances[0];
+    terminal.scrollToBottom.mockClear();
+    terminal.buffer.active.baseY = 100;
+    terminal.buffer.active.viewportY = 30;
+    act(() => terminal.scrollListener?.());
+    view.rerender(<XtermPane applicationMode followOutput liveChunks={[{serial: 1, data: "new output"}]} />);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(terminal.scrollToBottom).not.toHaveBeenCalled();
+    expect(terminal.buffer.active.viewportY).toBe(30);
+    terminal.buffer.active.viewportY = 100;
+    act(() => terminal.scrollListener?.());
+    view.rerender(<XtermPane applicationMode followOutput liveChunks={[{serial: 2, data: "latest"}]} />);
+    expect(terminal.scrollToBottom).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("does not resize a hidden terminal and measures it again after it becomes visible", () => {
+    const onResize = vi.fn();
+    const view = render(<XtermPane applicationMode onResize={onResize} />);
+    const terminal = terminalMock.instances[0];
+    const fit = fitAddonMock.instances[0].fit;
+    fit.mockClear();
+    onResize.mockClear();
+    terminal.host!.getBoundingClientRect = () => ({width: 0, height: 0} as DOMRect);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(fit).not.toHaveBeenCalled();
+    expect(onResize).not.toHaveBeenCalled();
+    terminal.host!.getBoundingClientRect = () => ({width: 600, height: 400} as DOMRect);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(fit).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
+  it("does not pull history back when the user scrolls during an asynchronous write", () => {
+    const view = render(<XtermPane applicationMode followOutput />);
+    const terminal = terminalMock.instances[0];
+    terminal.scrollToBottom.mockClear();
+    let complete: (() => void) | undefined;
+    terminal.write.mockImplementation((_data: string, callback?: () => void) => { complete = callback; });
+    view.rerender(<XtermPane applicationMode followOutput liveChunks={[{serial:1, data:"pending"}]} />);
+    terminal.buffer.active.baseY = 100;
+    terminal.buffer.active.viewportY = 20;
+    act(() => terminal.scrollListener?.());
+    act(() => complete?.());
+    expect(terminal.scrollToBottom).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("combines already available application fragments without altering cursor controls", () => {
+    const view = render(<XtermPane applicationMode />);
+    const terminal = terminalMock.instances[0];
+    const fragments = ["\x1b[?2026h\x1b[?25l", "\x1b[Hhello", "\x1b[?25h\x1b[?2026l"];
+    view.rerender(<XtermPane applicationMode liveChunks={fragments.map((data, i) => ({data, serial:i+1}))} />);
+    expect(terminal.write).toHaveBeenCalledExactlyOnceWith(fragments.join(""), expect.any(Function));
     view.unmount();
   });
 

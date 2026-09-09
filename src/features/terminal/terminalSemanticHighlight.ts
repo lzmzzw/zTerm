@@ -108,13 +108,16 @@ export function createTerminalSemanticHighlighter(
   terminal: Terminal,
   palette: TerminalSemanticPalette,
   linePalette: TerminalLineHighlightPalette = DIGE_BLACK_LINE_HIGHLIGHT_PALETTE,
+  applicationMode = false,
 ): TerminalSemanticHighlighter {
   const highlightedLines = new Map<number, HighlightedTerminalLine>();
   const writeDisposable = terminal.onWriteParsed(() => refresh());
   const scrollDisposable = terminal.onScroll(() => refresh());
-  const cursorDisposable = terminal.onCursorMove(() => refresh());
+  const cursorDisposable = applicationMode ? null : terminal.onCursorMove(() => refresh());
 
   function refresh() {
+    // A TUI can move through many intermediate cursor positions within one frame.
+    if (applicationMode && terminal.modes?.synchronizedOutputMode) return;
     const buffer = terminal.buffer.active;
     if (buffer.type !== "normal") {
       clear();
@@ -132,7 +135,7 @@ export function createTerminalSemanticHighlighter(
       const highlights = findTerminalSemanticHighlights(line.text);
       // Readline uses default-color inverse video for pasted regions. Render both colors
       // with the selection palette; retain explicitly colored shell output unchanged.
-      const backgroundColor = line.cells.some((cell) => !cell.defaultBackground)
+      const backgroundColor = applicationMode || line.cells.some((cell) => !cell.defaultBackground)
         ? undefined
         : lineIndex === cursorLine
         ? linePalette.cursorLineBackground
@@ -204,7 +207,7 @@ export function createTerminalSemanticHighlighter(
     dispose: () => {
       writeDisposable.dispose();
       scrollDisposable.dispose();
-      cursorDisposable.dispose();
+      cursorDisposable?.dispose();
       clear();
     },
     refresh,
