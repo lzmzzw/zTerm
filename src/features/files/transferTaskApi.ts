@@ -22,3 +22,7 @@ export function cancelTransferTask(taskId: string) {
 export async function deleteTransferTask(taskId: string) {
   await invokeTauri("transfer_delete", { taskId });
 }
+
+export function clearAllTransferTasks() {
+  return invokeTauri<number>("transfer_clear_all");
+}

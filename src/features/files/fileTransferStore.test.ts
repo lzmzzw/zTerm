@@ -28,6 +28,14 @@ function entry(path: string): FileEntry {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function transferTask(overrides: Partial<TransferTask> = {}): TransferTask {
   return {
     id: "task-1",
@@ -209,6 +217,37 @@ describe("fileTransferStore", () => {
     expect(useFileTransferStore.getState().transfers).toEqual([progressTask, oldTask]);
   });
 
+  it("does not regress a completed task when a stale progress event arrives later", async () => {
+    const completed = transferTask({
+      status: "done",
+      transferred_bytes: 100,
+      updated_at_ms: 10,
+    });
+    useFileTransferStore.setState({ transfers: [completed] });
+    await useFileTransferStore.getState().bindTransferEvents();
+
+    const progressHandler = listenMock.mock.calls.find(([eventName]) => eventName === "transfer:progress")?.[1];
+    progressHandler?.({
+      payload: transferTask({ status: "running", transferred_bytes: 100, updated_at_ms: 10 }),
+    });
+
+    expect(useFileTransferStore.getState().transfers).toEqual([completed]);
+  });
+
+  it("does not regress a completed task when an older transfer list resolves later", async () => {
+    const staleRunning = transferTask({ status: "running", transferred_bytes: 100, updated_at_ms: 9 });
+    const completed = transferTask({ status: "done", transferred_bytes: 100, updated_at_ms: 10 });
+    const pendingList = deferred<TransferTask[]>();
+    invokeMock.mockReturnValueOnce(pendingList.promise);
+
+    const loading = useFileTransferStore.getState().loadTransfers();
+    useFileTransferStore.setState({ transfers: [completed] });
+    pendingList.resolve([staleRunning]);
+    await loading;
+
+    expect(useFileTransferStore.getState().transfers).toEqual([completed]);
+  });
+
   it("keeps browser preview usable when transfer event binding is unavailable", async () => {
     listenMock.mockRejectedValueOnce(new Error("missing tauri runtime"));
 
@@ -217,7 +256,7 @@ describe("fileTransferStore", () => {
     expect(useFileTransferStore.getState().transferError).toContain("missing tauri runtime");
   });
 
-  it("pauses resumes and clears multiple transfer tasks through existing transfer IPC", async () => {
+  it("pauses and resumes visible tasks but clears all tasks through one unbounded IPC", async () => {
     const queued = transferTask({ id: "queued-task", status: "queued" });
     const paused = transferTask({ id: "paused-task", status: "paused" });
     const running = transferTask({ id: "running-task", status: "running" });
@@ -225,9 +264,7 @@ describe("fileTransferStore", () => {
     invokeMock
       .mockResolvedValueOnce({ ...queued, status: "paused" })
       .mockResolvedValueOnce({ ...paused, status: "running" })
-      .mockResolvedValueOnce({ deleted: true })
-      .mockResolvedValueOnce({ deleted: true })
-      .mockResolvedValueOnce({ deleted: true });
+      .mockResolvedValueOnce(6809);
 
     await useFileTransferStore.getState().pauseTransfers(["queued-task"]);
     await useFileTransferStore.getState().resumeTransfers(["paused-task"]);
@@ -235,29 +272,25 @@ describe("fileTransferStore", () => {
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, "transfer_pause", { taskId: "queued-task" });
     expect(invokeMock).toHaveBeenNthCalledWith(2, "transfer_resume", { taskId: "paused-task" });
-    expect(invokeMock).toHaveBeenNthCalledWith(3, "transfer_delete", { taskId: "queued-task" });
-    expect(invokeMock).toHaveBeenNthCalledWith(4, "transfer_delete", { taskId: "paused-task" });
-    expect(invokeMock).toHaveBeenNthCalledWith(5, "transfer_delete", { taskId: "running-task" });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "transfer_clear_all");
+    expect(invokeMock).toHaveBeenCalledTimes(3);
     expect(useFileTransferStore.getState().transfers).toEqual([]);
   });
 
-  it("keeps failed bulk clear tasks visible after removing successful tasks", async () => {
-    const first = transferTask({ id: "clear-success-1", saved_session_id: "session-a" });
-    const failed = transferTask({ id: "clear-failed", saved_session_id: "session-b" });
-    const last = transferTask({ id: "clear-success-2", saved_session_id: "session-c" });
-    useFileTransferStore.setState({ transfers: [first, failed, last] });
-    invokeMock
-      .mockResolvedValueOnce({ deleted: true })
-      .mockRejectedValueOnce(new Error("连接已关闭"))
-      .mockResolvedValueOnce({ deleted: true });
+  it("keeps the current list visible when clearing all tasks fails", async () => {
+    const visible = [
+      transferTask({ id: "clear-1", saved_session_id: "session-a" }),
+      transferTask({ id: "clear-2", saved_session_id: "session-b" }),
+    ];
+    useFileTransferStore.setState({ transfers: visible });
+    invokeMock.mockRejectedValueOnce(new Error("数据库繁忙"));
 
-    await expect(useFileTransferStore.getState().clearTransfers()).rejects.toThrow("连接已关闭");
+    await expect(useFileTransferStore.getState().clearTransfers()).rejects.toThrow("数据库繁忙");
 
-    expect(useFileTransferStore.getState().transfers).toEqual([failed]);
-    expect(useFileTransferStore.getState().transferError).toContain("已清理 2 个任务");
-    expect(useFileTransferStore.getState().transferError).toContain("连接已关闭");
-    expect(useFileTransferStore.getState().transferErrorSessionId).toBe("session-b");
-    expect(invokeMock).toHaveBeenCalledTimes(3);
+    expect(useFileTransferStore.getState().transfers).toEqual(visible);
+    expect(useFileTransferStore.getState().transferError).toContain("数据库繁忙");
+    expect(useFileTransferStore.getState().transferErrorSessionId).toBeNull();
+    expect(invokeMock).toHaveBeenCalledOnce();
   });
 
   it("clears a task error when its remote endpoint changes to another connection", async () => {

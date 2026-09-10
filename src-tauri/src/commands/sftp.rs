@@ -669,6 +669,11 @@ pub fn transfer_delete(state: State<'_, AppState>, task_id: String) -> AppResult
     Ok(SftpDeleteResult { deleted: true })
 }
 
+#[tauri::command]
+pub fn transfer_clear_all(state: State<'_, AppState>) -> AppResult<usize> {
+    state.transfer_queue().clear_all()
+}
+
 fn spawn_transfer(
     app: AppHandle,
     service: SftpService,

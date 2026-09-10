@@ -446,7 +446,8 @@ describe("TransferPanel", () => {
       "清理全部任务会取消进行中的传输并删除任务记录",
     );
     await click(button(view.container, "确认清理"));
-    expect(onClearAll).toHaveBeenCalledWith(["task-1", "task-2", "task-3", "task-4"]);
+    expect(onClearAll).toHaveBeenCalledOnce();
+    expect(onClearAll).toHaveBeenCalledWith();
 
     view.unmount();
   });

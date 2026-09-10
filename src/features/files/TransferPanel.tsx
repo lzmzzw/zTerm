@@ -17,7 +17,7 @@ interface TransferPanelProps {
   onPause: (taskId: string) => Promise<void> | void;
   onRetry: (taskId: string) => Promise<void> | void;
   onResume: (taskId: string) => Promise<void> | void;
-  onClearAll?: (taskIds: string[]) => Promise<void> | void;
+  onClearAll?: () => Promise<void> | void;
   onPauseAll?: (taskIds: string[]) => Promise<void> | void;
   onResumeAll?: (taskIds: string[]) => Promise<void> | void;
   onCollapsedChange?: (collapsed: boolean) => void;
@@ -243,7 +243,7 @@ export function TransferPanel({
                       title: "清理传输任务",
                       message: "清理全部任务会取消进行中的传输并删除任务记录，确认清理？",
                       confirmLabel: "确认清理",
-                      onConfirm: () => void runBulkAction("批量清理", allTaskIds, onClearAll),
+                      onConfirm: () => void runBulkAction("批量清理", allTaskIds, () => onClearAll()),
                     })
                   }
                 >

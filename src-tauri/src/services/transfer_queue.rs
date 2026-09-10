@@ -585,6 +585,18 @@ impl TransferQueue {
         Ok(())
     }
 
+    pub fn clear_all(&self) -> AppResult<usize> {
+        self.cancel_all_controls()?;
+        let transient_count = {
+            let mut tasks = self.lock_transient_tasks()?;
+            let count = tasks.len();
+            tasks.clear();
+            count
+        };
+        let persistent_count = transfers::delete_all_transfer_tasks(self.store.as_ref())?;
+        Ok(transient_count + persistent_count)
+    }
+
     pub fn register_control(&self, task_id: &str) -> AppResult<TransferRunControl> {
         self.control_for(task_id)
     }
@@ -863,5 +875,58 @@ mod tests {
                 .expect("repeat reconciliation should be idempotent"),
             0
         );
+    }
+
+    #[test]
+    fn clear_all_removes_tasks_beyond_the_list_limit_across_restart() {
+        let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite store should open"));
+        let session = save_session(
+            store.as_ref(),
+            SavedSessionDraft {
+                id: None,
+                name: "bulk-clear".to_string(),
+                session_type: SessionType::Ssh,
+                group_id: None,
+                host: "example.test".to_string(),
+                port: 22,
+                username: "ops".to_string(),
+                auth_mode: AuthMode::Agent,
+                credential_ref: None,
+                description: None,
+                tags: Vec::new(),
+                sort_order: 0,
+                ssh_options: None,
+                rdp_options: None,
+                local_options: None,
+                ftp_options: None,
+            },
+        )
+        .expect("session should save");
+        let queue = TransferQueue::from_storage(store.clone());
+        for index in 0..1001 {
+            queue
+                .enqueue(
+                    &session.id,
+                    TransferDirection::Upload,
+                    &format!("C:/tmp/source-{index}.bin"),
+                    &format!("/tmp/source-{index}.bin"),
+                    Some(TransferKind::File),
+                    TransferConflictPolicy::Overwrite,
+                    1,
+                )
+                .expect("transfer should enqueue");
+        }
+
+        assert_eq!(
+            queue.list(None, 1000).expect("tasks should list").len(),
+            1000
+        );
+        assert_eq!(queue.clear_all().expect("all tasks should clear"), 1001);
+
+        let restarted_queue = TransferQueue::from_storage(store);
+        assert!(restarted_queue
+            .list(None, 1000)
+            .expect("cleared tasks should stay absent after restart")
+            .is_empty());
     }
 }

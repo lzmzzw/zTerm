@@ -15,11 +15,13 @@ import { listTransferEndpoint } from "./fileTransferApi";
 import { nextSelectedFilePaths, type FileSelectionEvent } from "./fileSelectionModel";
 import {
   cancelTransferTask,
+  clearAllTransferTasks,
   deleteTransferTask,
   pauseTransferTask,
   resumeTransferTask,
   retryTransferTask,
 } from "./transferTaskApi";
+import { mergeTransferTaskList, newerTransferTask } from "./transferTaskSnapshots";
 
 export type FileTransferSide = "left" | "right";
 
@@ -89,7 +91,7 @@ interface FileTransferState {
   deleteTransfer: (taskId: string) => Promise<void>;
   pauseTransfers: (taskIds: string[]) => Promise<void>;
   resumeTransfers: (taskIds: string[]) => Promise<void>;
-  clearTransfers: (taskIds?: string[]) => Promise<void>;
+  clearTransfers: () => Promise<void>;
   bindTransferEvents: () => Promise<UnlistenFn>;
 }
 
@@ -300,7 +302,10 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     try {
       const transfers = await invokeTauri<TransferTask[]>("file_transfer_list", { limit: 1000 });
       if (transferListRequestId === requestId) {
-        set({ transfers, transferLoading: false });
+        set((state) => ({
+          transfers: mergeTransferTaskList(state.transfers, transfers),
+          transferLoading: false,
+        }));
       }
     } catch (error) {
       if (transferListRequestId === requestId) {
@@ -335,30 +340,15 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       await get().resumeTransfer(taskId);
     }
   },
-  async clearTransfers(taskIds) {
-    const ids = taskIds ?? get().transfers.map((task) => task.id);
-    const tasksById = new Map(get().transfers.map((task) => [task.id, task]));
-    let firstError: unknown = null;
-    let firstFailedTask: TransferTask | undefined;
-    let deletedCount = 0;
-    for (const taskId of ids) {
-      try {
-        await deleteTransferTask(taskId);
-        deletedTransferIds.add(taskId);
-        deletedCount += 1;
-        set((state) => ({ transfers: state.transfers.filter((task) => task.id !== taskId) }));
-      } catch (error) {
-        firstError ??= error;
-        firstFailedTask ??= tasksById.get(taskId);
-      }
-    }
-    if (firstError) {
-      const message = fileTransferErrorMessage(firstError);
-      set({
-        transferError: deletedCount > 0 ? `已清理 ${deletedCount} 个任务，仍有任务清理失败：${message}` : message,
-        transferErrorSessionId: firstFailedTask?.saved_session_id ?? null,
-      });
-      throw firstError;
+  async clearTransfers() {
+    const visibleTaskIds = get().transfers.map((task) => task.id);
+    try {
+      await clearAllTransferTasks();
+      visibleTaskIds.forEach((taskId) => deletedTransferIds.add(taskId));
+      set({ transfers: [], transferError: null, transferErrorSessionId: null });
+    } catch (error) {
+      set({ transferError: fileTransferErrorMessage(error), transferErrorSessionId: null });
+      throw error;
     }
   },
   async bindTransferEvents() {
@@ -437,7 +427,7 @@ function upsertTransfer(set: FileTransferSet, task: TransferTask) {
     const exists = state.transfers.some((item) => item.id === task.id);
     return {
       transfers: exists
-        ? state.transfers.map((item) => (item.id === task.id ? task : item))
+        ? state.transfers.map((item) => (item.id === task.id ? newerTransferTask(item, task) : item))
         : [task, ...state.transfers],
     };
   });

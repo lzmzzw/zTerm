@@ -21,6 +21,7 @@ import {
   resumeTransferTask,
   retryTransferTask,
 } from "./transferTaskApi";
+import { mergeTransferTaskList, newerTransferTask } from "./transferTaskSnapshots";
 
 interface TransferOptions {
   kind?: TransferKind;
@@ -174,7 +175,10 @@ export const useFileStore = create<FileState>((set, get) => ({
         return;
       }
       set({
-        transfers: transfers.filter((task) => task.saved_session_id === savedSessionId),
+        transfers: mergeTransferTaskList(
+          get().transfers,
+          transfers.filter((task) => task.saved_session_id === savedSessionId),
+        ),
         transferLoading: false,
         transferSessionId: savedSessionId,
       });
@@ -242,7 +246,7 @@ function upsertTransfer(set: FileStoreSet, task: TransferTask) {
     const exists = state.transfers.some((item) => item.id === task.id);
     return {
       transfers: exists
-        ? state.transfers.map((item) => (item.id === task.id ? task : item))
+        ? state.transfers.map((item) => (item.id === task.id ? newerTransferTask(item, task) : item))
         : [task, ...state.transfers],
     };
   });

@@ -365,6 +365,13 @@ pub fn delete_transfer_task(store: &SqliteStore, id: &str) -> AppResult<()> {
     })
 }
 
+pub fn delete_all_transfer_tasks(store: &SqliteStore) -> AppResult<usize> {
+    store.write_transaction(|transaction| {
+        let changed = transaction.execute("delete from transfer_tasks", [])?;
+        Ok(changed)
+    })
+}
+
 pub fn retry_transfer_task(store: &SqliteStore, id: &str) -> AppResult<TransferTask> {
     let id = required_text("传输任务 ID", id)?;
     let now = now_ms();
