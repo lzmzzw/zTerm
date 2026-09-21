@@ -44,6 +44,19 @@ Windows 上检测到 WebView2 主版本为 152 时，zTerm 主窗口禁用 `Hide
 
 ## Agent CLI 渲染
 
+Windows Agent 子进程通过 `WT_SESSION=zterm-agent-conpty` 兼容标识选择 Codex 的 FullScreen 历史写入策略，`TERM_PROGRAM` 仍为 `zTerm`，不修改父进程环境。已核对 Codex CLI 0.153.4 的 [`ScrollbackStrategy::detect`](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/tui/src/tui/scrollback.rs)：未识别的终端默认使用局部 DEC 滚动区域，ConPTY 下可能丢弃历史或留下临时 composer 重绘内容。该标识只用于当前上游检测器的兼容，不代表实际运行 Windows Terminal；上游提供明确 ConPTY 能力开关或支持 zTerm 后应改用该入口。升级 CLI 时重验历史编号、重复/空白行、任务结束后的上翻阅读；既有会话需要重开 Agent 才应用新环境，已损坏的历史不会被恢复。
+
+本地 ConPTY 回归探针使用固定编号内容，不启动模型或连接服务器。在仓库根目录执行：
+
+```powershell
+./scripts/run-cargo-msvc.ps1 build --example conpty_history_probe
+./src-tauri/target/debug/examples/conpty_history_probe.exe src-tauri/target/conpty-standard.json
+./src-tauri/target/debug/examples/conpty_history_probe.exe src-tauri/target/conpty-fullscreen.json --fullscreen
+node scripts/inspect-conpty-history-probe.mjs src-tauri/target/conpty-standard.json src-tauri/target/conpty-fullscreen.json
+```
+
+该对照检查局部滚动区域增长导致的编号历史丢失，并断言 FullScreen 保留编号；两组均检查末尾标记与结果数量。它不复现截图中的全部空白和 `Working` 逐字残片，不能替代真实 Codex/WebView2 任务完成后的滚轮、拖动滚动条与恢复到底部验证。捕获只保存在被 Git 忽略的 `target` 下。
+
 Agent Codex CLI 使用 `XtermPane.applicationMode`：保留默认色文本的语义配色与应用 ANSI 色，关闭跟随光标变化的整行背景和光标 CSS 闪烁动画，保留光标位置、形状及显隐控制。同步输出帧未结束时暂缓装饰刷新，同轮已收到的 live chunks 合并后按序写入，每片最多 65,536 字符；不注入 ANSI 或声称跨 PTY 事件的整帧原子性。
 
 `followOutput` 仅在 viewport 位于底部时跟随。滚轮或拖动滚动条上翻后保留阅读位置，回到底部恢复；输出解析回调读取当前跟随状态，不能按写入前的状态强拉回底部。初始及后续 fit 必须先检查宿主宽高大于零，隐藏面板不向 PTY 上报极小尺寸。

@@ -197,7 +197,7 @@ pub async fn agent_codex_open(
 }
 
 fn agent_codex_environment(mcp_token: String) -> Vec<(String, String)> {
-    vec![
+    let mut environment = vec![
         (AGENT_MCP_TOKEN_ENV.to_string(), mcp_token),
         ("TERM".to_string(), AGENT_TERM.to_string()),
         ("COLORTERM".to_string(), AGENT_COLORTERM.to_string()),
@@ -206,7 +206,16 @@ fn agent_codex_environment(mcp_token: String) -> Vec<(String, String)> {
             "TERM_PROGRAM_VERSION".to_string(),
             env!("CARGO_PKG_VERSION").to_string(),
         ),
-    ]
+    ];
+    if cfg!(windows) {
+        // Codex's FullScreen history strategy avoids partial DEC scroll regions,
+        // which ConPTY can turn into discarded history and stale composer rows.
+        // Its current detector recognizes WT_SESSION, not TERM_PROGRAM=zTerm.
+        // Scope this compatibility marker to the Agent child; keep our identity
+        // and the parent process environment unchanged.
+        environment.push(("WT_SESSION".to_string(), "zterm-agent-conpty".to_string()));
+    }
+    environment
 }
 
 #[tauri::command]
@@ -615,6 +624,22 @@ mod tests {
             Some(env!("CARGO_PKG_VERSION"))
         );
         assert_ne!(value("TERM"), Some("dumb"));
+    }
+
+    #[test]
+    fn codex_conpty_uses_full_screen_history_without_changing_terminal_identity() {
+        let environment = agent_codex_environment("scoped-token".to_string());
+        let value = |name: &str| {
+            environment
+                .iter()
+                .find_map(|(key, value)| (key == name).then_some(value.as_str()))
+        };
+        assert_eq!(value("TERM_PROGRAM"), Some("zTerm"));
+        if cfg!(windows) {
+            assert_eq!(value("WT_SESSION"), Some("zterm-agent-conpty"));
+        } else {
+            assert_eq!(value("WT_SESSION"), None);
+        }
     }
 
     #[test]

@@ -25,13 +25,14 @@ fn agent_codex_pty_overrides_inherited_dumb_terminal_environment() {
                 "/D".to_string(),
                 "/S".to_string(),
                 "/C".to_string(),
-                "echo TERM=%TERM% COLORTERM=%COLORTERM% TERM_PROGRAM=%TERM_PROGRAM%".to_string(),
+                "echo TERM=%TERM% COLORTERM=%COLORTERM% TERM_PROGRAM=%TERM_PROGRAM% & echo WT_SESSION=%WT_SESSION%".to_string(),
             ],
             cwd: std::env::temp_dir(),
             environment: vec![
                 ("TERM".to_string(), "xterm-256color".to_string()),
                 ("COLORTERM".to_string(), "truecolor".to_string()),
                 ("TERM_PROGRAM".to_string(), "zTerm".to_string()),
+                ("WT_SESSION".to_string(), "zterm-agent-conpty".to_string()),
             ],
             pane_id: "agent:terminal-env-smoke".to_string(),
             title: "Codex terminal environment smoke".to_string(),
@@ -70,6 +71,10 @@ fn agent_codex_pty_overrides_inherited_dumb_terminal_environment() {
         terminal_tail(&output)
     );
     assert!(!output.contains("TERM=dumb"));
+    assert!(
+        output.contains("WT_SESSION=zterm-agent-conpty"),
+        "Agent ConPTY child must receive the full-screen history compatibility marker"
+    );
 }
 
 #[cfg(windows)]
