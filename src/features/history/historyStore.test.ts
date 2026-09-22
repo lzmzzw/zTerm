@@ -7,7 +7,8 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: invokeMock,
 }));
 
-import { useHistoryStore, type CommandHistoryEntry } from "./historyStore";
+import { useHistoryStore } from "./historyStore";
+import type { CommandHistoryEntry } from "./types";
 
 function historyEntry(id: string, command: string, runtimeSessionId: string): CommandHistoryEntry {
   return {

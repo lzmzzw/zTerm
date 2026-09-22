@@ -422,9 +422,17 @@ impl TerminalManager {
         let pty = crate::services::local_pty_service::spawn_pty_command(command, cols, rows)?;
         let info = RuntimeSessionInfo {
             runtime_session_id: Uuid::new_v4().to_string(),
+            history_scope_kind: Some(if saved_session_id.is_some() {
+                HistoryScopeKind::SavedSession
+            } else {
+                HistoryScopeKind::LocalProfile
+            }),
+            history_scope_id: Some(
+                saved_session_id
+                    .clone()
+                    .unwrap_or_else(|| profile.id.clone()),
+            ),
             saved_session_id,
-            history_scope_kind: Some(HistoryScopeKind::LocalProfile),
-            history_scope_id: Some(profile.id.clone()),
             pane_id,
             title,
             kind: RuntimeSessionKind::Local,

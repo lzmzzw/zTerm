@@ -12,7 +12,7 @@ import type {
   HistoryScopeKind,
   SessionCommandGroup,
   SessionCommandGroupDraft,
-} from "./historyStore";
+} from "./types";
 
 export type CommandHistoryView = "history" | "groups";
 type CommandGroupFormMode = "selected" | "new" | "edit";

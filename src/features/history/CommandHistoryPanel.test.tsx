@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 
 import { CommandHistoryPanel } from "./CommandHistoryPanel";
-import type { CommandHistoryEntry, SessionCommandGroup } from "./historyStore";
+import type { CommandHistoryEntry, SessionCommandGroup } from "./types";
 
 function render(ui: ReactElement) {
   const container = document.createElement("div");

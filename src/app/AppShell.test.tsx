@@ -4501,21 +4501,21 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("refreshes history for the ssh connection bound to the active terminal tab", async () => {
+  it.each(["ssh", "local"] as const)("refreshes history and groups for the %s connection bound to the active terminal tab", async (kind) => {
     storeMocks.terminalState.runtimes = {
       "runtime-a": {
         runtime_session_id: "runtime-a",
         saved_session_id: "session-a",
         history_scope_kind: "saved_session",
         history_scope_id: "session-a",
-        kind: "ssh",
+        kind,
       },
       "runtime-b": {
         runtime_session_id: "runtime-b",
         saved_session_id: "session-b",
         history_scope_kind: "saved_session",
         history_scope_id: "session-b",
-        kind: "ssh",
+        kind,
       },
     };
     storeMocks.workspaceState.tabs = [

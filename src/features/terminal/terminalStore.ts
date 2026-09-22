@@ -1,5 +1,6 @@
 // Author: Liz
 import { create } from "zustand";
+import type { HistoryScopeKind } from "../history/types";
 
 import { invokeTauri, invokeTypedTauri, listenTauri, type UnlistenFn } from "../../lib/tauriClient";
 import { useWorkspaceStore } from "../workspace/workspaceStore";
@@ -22,7 +23,6 @@ import {
 } from "./terminalRuntimeResources";
 
 type RuntimeSessionKind = "local" | "ssh" | "ssh_container" | "rdp_placeholder";
-type HistoryScopeKind = "saved_session" | "local_profile";
 
 export interface RuntimeSessionInfo {
   runtime_session_id: string;

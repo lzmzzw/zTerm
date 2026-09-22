@@ -15,7 +15,7 @@ import type {
   HistoryScopeKind,
   SessionCommandGroup,
   SessionCommandGroupDraft,
-} from "../features/history/historyStore";
+} from "../features/history/types";
 import type { CommandHistoryView } from "../features/history/CommandHistoryPanel";
 import { ServerMonitorPanel, type ServerMonitorTarget } from "../features/monitor/ServerMonitorPanel";
 import { useServerInfoSnapshot } from "../features/monitor/useServerInfoSnapshot";

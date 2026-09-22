@@ -30,7 +30,7 @@ describe("resolveHistoryScope", () => {
     ).toEqual({ scopeKind: "saved_session", scopeId: "session-ssh" });
   });
 
-  it("uses a local session profile before the default local profile", () => {
+  it("uses the saved local connection instead of its shared profile", () => {
     expect(
       resolveHistoryScope({
         runtimeScopeKind: null,
@@ -40,10 +40,10 @@ describe("resolveHistoryScope", () => {
         savedSessionLocalProfileId: "custom-local",
         defaultLocalProfileId: "default-local",
       }),
-    ).toEqual({ scopeKind: "local_profile", scopeId: "custom-local" });
+    ).toEqual({ scopeKind: "saved_session", scopeId: "session-local" });
   });
 
-  it("uses the default local profile when a local session has no profile", () => {
+  it("uses the saved local connection even with the default profile", () => {
     expect(
       resolveHistoryScope({
         runtimeScopeKind: null,
@@ -53,7 +53,25 @@ describe("resolveHistoryScope", () => {
         savedSessionLocalProfileId: null,
         defaultLocalProfileId: "default-local",
       }),
-    ).toEqual({ scopeKind: "local_profile", scopeId: "default-local" });
+    ).toEqual({ scopeKind: "saved_session", scopeId: "session-local" });
+  });
+
+  it("isolates local connections sharing a profile and keeps the scope stable on reopen", () => {
+    const input = {
+      runtimeScopeKind: null,
+      runtimeScopeId: null,
+      savedSessionType: "local" as const,
+      savedSessionLocalProfileId: "pwsh",
+      defaultLocalProfileId: "pwsh",
+    };
+    expect(resolveHistoryScope({ ...input, savedSessionId: "local-a" }))
+      .toEqual({ scopeKind: "saved_session", scopeId: "local-a" });
+    expect(resolveHistoryScope({ ...input, savedSessionId: "local-b" }))
+      .toEqual({ scopeKind: "saved_session", scopeId: "local-b" });
+    expect(resolveHistoryScope({ ...input, savedSessionId: "local-a", savedSessionLocalProfileId: "powershell" }))
+      .toEqual({ scopeKind: "saved_session", scopeId: "local-a" });
+    expect(resolveHistoryScope({ ...input, savedSessionId: null }))
+      .toEqual({ scopeKind: "local_profile", scopeId: "pwsh" });
   });
 
   it("keeps RDP and empty sessions out of history scope", () => {

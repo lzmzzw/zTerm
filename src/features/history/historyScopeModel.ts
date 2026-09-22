@@ -1,5 +1,5 @@
 // Author: Liz
-import type { HistoryScopeKind } from "./historyStore";
+import type { HistoryScopeKind } from "./types";
 
 type HistoryScopeSessionType = "ssh" | "local" | "rdp";
 
@@ -18,29 +18,19 @@ interface HistoryScopeResolution {
 }
 
 export function resolveHistoryScope(input: HistoryScopeResolutionInput): HistoryScopeResolution {
-  const localProfileScopeId =
-    input.savedSessionType === "local"
-      ? input.savedSessionLocalProfileId ?? input.defaultLocalProfileId ?? null
-      : null;
-  const fallbackScopeKind: HistoryScopeKind | null =
-    input.savedSessionType === "rdp"
-      ? null
-      : input.savedSessionType === "local"
-        ? localProfileScopeId
-          ? "local_profile"
-          : null
-        : input.savedSessionId
-          ? "saved_session"
-          : null;
-  const fallbackScopeId: string | null =
-    input.savedSessionType === "rdp"
-      ? null
-      : input.savedSessionType === "local"
-        ? localProfileScopeId
-        : input.savedSessionId ?? null;
-
-  return {
-    scopeKind: input.runtimeScopeKind ?? fallbackScopeKind,
-    scopeId: input.runtimeScopeId ?? fallbackScopeId,
-  };
+  if (input.runtimeScopeKind && input.runtimeScopeId) {
+    return { scopeKind: input.runtimeScopeKind, scopeId: input.runtimeScopeId };
+  }
+  if (input.savedSessionType === "rdp") {
+    return { scopeKind: null, scopeId: null };
+  }
+  if (input.savedSessionId) {
+    return { scopeKind: "saved_session", scopeId: input.savedSessionId };
+  }
+  const profileId = input.savedSessionType === "local"
+    ? input.savedSessionLocalProfileId ?? input.defaultLocalProfileId
+    : null;
+  return profileId
+    ? { scopeKind: "local_profile", scopeId: profileId }
+    : { scopeKind: null, scopeId: null };
 }

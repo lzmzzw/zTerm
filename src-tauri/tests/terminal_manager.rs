@@ -561,3 +561,46 @@ fn terminal_tail(output: &str) -> String {
     chars.reverse();
     chars.into_iter().collect()
 }
+
+#[cfg(windows)]
+#[test]
+fn saved_local_connections_keep_distinct_history_scopes_across_reopens() {
+    use zterm_lib::models::history::HistoryScopeKind;
+    let manager = TerminalManager::default();
+    let profile = pwsh_profile().unwrap_or_else(cmd_profile);
+    let first_dir = std::env::temp_dir();
+    let second_dir = std::env::current_dir().expect("current directory");
+    for (session_id, directory) in [
+        ("local-a", &first_dir),
+        ("local-b", &second_dir),
+        ("local-a", &second_dir),
+    ] {
+        let opened = manager
+            .open_local_session(
+                &profile,
+                Some(&LocalOptions {
+                    profile_id: Some(profile.id.clone()),
+                    working_directory: Some(directory.to_string_lossy().into_owned()),
+                    environment: Vec::new(),
+                }),
+                "pane-scope-test".to_string(),
+                Some(session_id.to_string()),
+                profile.name.clone(),
+                100,
+                30,
+            )
+            .expect("saved local runtime should open");
+        let info = opened.info;
+        let (sender, _receiver) = mpsc::channel();
+        thread::spawn(move || read_terminal(opened.reader, sender));
+        manager
+            .close(&info.runtime_session_id)
+            .expect("runtime should close");
+        assert_eq!(
+            info.history_scope_kind,
+            Some(HistoryScopeKind::SavedSession)
+        );
+        assert_eq!(info.history_scope_id.as_deref(), Some(session_id));
+        assert_eq!(info.saved_session_id.as_deref(), Some(session_id));
+    }
+}

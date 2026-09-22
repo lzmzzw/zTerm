@@ -783,3 +783,97 @@ fn session_command_groups_round_trip_and_stay_scoped_to_saved_session() {
     .expect("groups should list")
     .is_empty());
 }
+
+#[test]
+fn saved_local_connections_isolate_history_and_command_groups() {
+    let store = Arc::new(SqliteStore::open_in_memory().expect("store should open"));
+    let service = CommandHistoryService::new(Arc::clone(&store));
+    let sessions = ["project-a", "project-b"].map(|name| {
+        let mut draft = ssh_draft(name);
+        draft.session_type = SessionType::Local;
+        draft.local_options = Some(zterm_lib::models::session::LocalOptions {
+            profile_id: Some("pwsh".to_string()),
+            working_directory: Some(format!("C:\\{name}")),
+            environment: Vec::new(),
+        });
+        save_session(store.as_ref(), draft).expect("local session should save")
+    });
+    for session in &sessions {
+        service.register_runtime(
+            &session.id,
+            Some(session.id.clone()),
+            Some(HistoryScopeKind::SavedSession),
+            Some(session.id.clone()),
+        );
+        service
+            .capture_input(&session.id, &format!("echo {}\r", session.name))
+            .expect("history should save");
+        save_session_command_group(
+            store.as_ref(),
+            SessionCommandGroupDraft {
+                id: None,
+                saved_session_id: Some(session.id.clone()),
+                scope_kind: HistoryScopeKind::SavedSession,
+                scope_id: session.id.clone(),
+                name: "build".to_string(),
+                commands: vec![format!("echo {}", session.name)],
+            },
+        )
+        .expect("local command group should save");
+    }
+    for session in &sessions {
+        let entries = search_command_history(
+            store.as_ref(),
+            HistorySearchOptions {
+                query: None,
+                scope_kind: Some(HistoryScopeKind::SavedSession),
+                scope_id: Some(session.id.clone()),
+                limit: None,
+                deduplicate: None,
+            },
+        )
+        .expect("history should search");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].command, format!("echo {}", session.name));
+        let groups = list_session_command_groups(
+            store.as_ref(),
+            HistoryScopeKind::SavedSession,
+            &session.id,
+        )
+        .expect("groups should list");
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0].saved_session_id.as_deref(),
+            Some(session.id.as_str())
+        );
+        assert_eq!(groups[0].items[0].command, entries[0].command);
+    }
+    clear_command_history(
+        store.as_ref(),
+        Some(HistoryScopeKind::SavedSession),
+        Some(&sessions[0].id),
+    )
+    .expect("first connection history should clear");
+    let remaining = search_command_history(
+        store.as_ref(),
+        HistorySearchOptions {
+            query: None,
+            scope_kind: Some(HistoryScopeKind::SavedSession),
+            scope_id: Some(sessions[1].id.clone()),
+            limit: None,
+            deduplicate: None,
+        },
+    )
+    .expect("second connection history should remain");
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(
+        list_session_command_groups(
+            store.as_ref(),
+            HistoryScopeKind::SavedSession,
+            &sessions[0].id
+        )
+        .expect("clear must retain groups")
+        .len(),
+        1
+    );
+}
