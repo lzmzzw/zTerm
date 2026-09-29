@@ -10,6 +10,7 @@ interface ZtNumberInputProps {
   ariaLabel: string;
   disabled?: boolean;
   onChange: (value: number) => void;
+  onClear?: () => void;
 }
 
 export function ZtNumberInput({
@@ -20,6 +21,7 @@ export function ZtNumberInput({
   ariaLabel,
   disabled = false,
   onChange,
+  onClear,
 }: ZtNumberInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -35,12 +37,16 @@ export function ZtNumberInput({
 
   const handleInputChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
+      if (event.currentTarget.value === "" && onClear) {
+        onClear();
+        return;
+      }
       const parsed = Number(event.currentTarget.value);
       if (!Number.isNaN(parsed)) {
         onChange(clamp(parsed));
       }
     },
-    [clamp, onChange],
+    [clamp, onChange, onClear],
   );
 
   const handleKeyDown = useCallback(

@@ -102,7 +102,7 @@ export function SessionEditorDialog({
     const normalizedPort = type === "local" ? 1 : Number(port);
     const normalizedCredentialRef = credentialRef.trim();
 
-    if (!normalizedName || !normalizedHost || (type !== "local" && !normalizedUsername) || !Number.isInteger(normalizedPort)) {
+    if (!normalizedName || !normalizedHost || (type !== "local" && !normalizedUsername) || !Number.isInteger(normalizedPort) || normalizedPort < 1 || normalizedPort > 65535) {
       setError("请填写名称、主机、用户名和端口");
       return;
     }
@@ -461,8 +461,9 @@ export function SessionEditorDialog({
                         min={1}
                         max={65535}
                         step={1}
-                        value={Number(port) || 22}
+                        value={port === "" ? null : Number(port)}
                         onChange={(value) => setPort(String(value))}
+                        onClear={() => setPort("")}
                       />
                     </label>
                     <label>

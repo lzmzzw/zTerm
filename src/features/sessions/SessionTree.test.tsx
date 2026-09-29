@@ -833,6 +833,26 @@ describe("SessionTree", () => {
     view.unmount();
   });
 
+  it("allows clearing the connection port and requires a valid port before saving", async () => {
+    const onSaveSession = vi.fn().mockResolvedValue(undefined);
+    const view = render(<SessionTree groups={groups} sessions={sessions} onSaveSession={onSaveSession} />);
+
+    await sessionMenuAction(view.container, "生产跳板机", "编辑");
+    const port = input(view.container, "端口");
+    change(port, "2");
+    change(port, "");
+    expect(port.value).toBe("");
+    await click(button(view.container, "保存会话"));
+    expect(onSaveSession).not.toHaveBeenCalled();
+    expect(view.container.textContent).toContain("请填写名称、主机、用户名和端口");
+
+    change(port, "2222");
+    expect(port.value).toBe("2222");
+    await click(button(view.container, "保存会话"));
+    expect(onSaveSession).toHaveBeenCalledWith(expect.objectContaining({ port: 2222 }));
+    view.unmount();
+  });
+
   it("switches FTP and SFTP tabs with protocol defaults and protocol-specific sections", async () => {
     const view = render(<SessionTree groups={[]} sessions={[]} />);
     await contextMenu(view.container.querySelector(".zt-session-tree") as HTMLElement);
