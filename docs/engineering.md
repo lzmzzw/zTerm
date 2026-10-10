@@ -17,6 +17,8 @@ powershell -NoProfile -File scripts/run-cargo-msvc.ps1 clippy --lib -- -D warnin
 
 Windows 测试 runner 为测试可执行文件写入 Common Controls v6 manifest，避免 GUI 依赖的 `TaskDialogIndirect` 入口缺失；正式应用沿用 Tauri 的 manifest。
 
+无前端的 PTY 集成测试需模拟终端对 `ESC[6n` 光标位置查询的响应：跨 reader 分片保存匹配状态，每次完整查询均回复 CPR，不假定查询与读取块对齐或仅出现一次。Windows CI 冷启动等待与进程关闭时限分别设置；允许较长的 shell 启动等待，不放宽关闭后子进程必须退出的断言。
+
 <a id="webview2-152-指针兼容"></a>
 
 ### WebView2 152 及后续版本的指针兼容

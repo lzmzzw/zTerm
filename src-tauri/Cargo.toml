@@ -1,6 +1,6 @@
 [package]
 name = "zterm"
-version = "0.4.5"
+version = "0.4.6"
 description = "Windows-first Tauri terminal workspace for SSH, SFTP, command history, and AI-assisted operations."
 authors = ["zTerm contributors"]
 edition = "2021"

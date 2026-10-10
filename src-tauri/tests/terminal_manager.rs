@@ -45,17 +45,12 @@ fn agent_codex_pty_overrides_inherited_dumb_terminal_environment() {
     let (sender, receiver) = mpsc::channel::<Option<String>>();
     thread::spawn(move || read_terminal(reader, sender));
     let mut output = String::new();
-    let mut answered_cpr = false;
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut cursor_queries = CursorPositionQueries::default();
+    let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {
         match receiver.recv_timeout(Duration::from_millis(200)) {
             Ok(Some(chunk)) => {
-                if !answered_cpr && chunk.contains("\u{1b}[6n") {
-                    answered_cpr = true;
-                    manager
-                        .write(&runtime_id, "\u{1b}[1;1R")
-                        .expect("agent Codex PTY should accept CPR response");
-                }
+                cursor_queries.answer(&manager, &runtime_id, &chunk);
                 output.push_str(&chunk);
             }
             Ok(None) => break,
@@ -114,15 +109,12 @@ fn closing_pty_runtime_reaps_its_child_within_the_bounded_close_path() {
     let (sender, receiver) = mpsc::channel::<Option<String>>();
     thread::spawn(move || read_terminal(opened.reader, sender));
 
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + Duration::from_secs(15);
     let mut output = String::new();
+    let mut cursor_queries = CursorPositionQueries::default();
     while !pid_path.is_file() && Instant::now() < deadline {
         if let Ok(Some(chunk)) = receiver.recv_timeout(Duration::from_millis(20)) {
-            if chunk.contains("\u{1b}[6n") {
-                manager
-                    .write(&runtime_id, "\u{1b}[1;1R")
-                    .expect("PTY child should accept CPR response");
-            }
+            cursor_queries.answer(&manager, &runtime_id, &chunk);
             output.push_str(&chunk);
         }
     }
@@ -194,18 +186,14 @@ fn local_cmd_runtime_executes_basic_command() {
 
     let marker = "ZTERM_LOCAL_CMD_SMOKE_OK";
     let mut output = String::new();
+    let mut cursor_queries = CursorPositionQueries::default();
     let mut answered_cpr = false;
     let mut sent_command = false;
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
         match receiver.recv_timeout(Duration::from_millis(200)) {
             Ok(Some(chunk)) => {
-                if !answered_cpr && chunk.contains("\u{1b}[6n") {
-                    answered_cpr = true;
-                    manager
-                        .write(&runtime_id, "\u{1b}[1;1R")
-                        .expect("local cmd runtime should accept CPR response");
-                }
+                answered_cpr |= cursor_queries.answer(&manager, &runtime_id, &chunk);
                 output.push_str(&chunk);
                 if !sent_command && (answered_cpr || output.contains('>')) {
                     sent_command = true;
@@ -262,19 +250,15 @@ fn local_git_bash_runtime_executes_basic_command_when_available() {
 
     let marker = "ZTERM_LOCAL_GIT_BASH_SMOKE_OK";
     let mut output = String::new();
+    let mut cursor_queries = CursorPositionQueries::default();
     let mut answered_cpr = false;
     let mut sent_command = false;
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < deadline {
         match receiver.recv_timeout(Duration::from_millis(200)) {
             Ok(Some(chunk)) => {
                 output.push_str(&chunk);
-                if !answered_cpr && chunk.contains("\u{1b}[6n") {
-                    answered_cpr = true;
-                    manager
-                        .write(&runtime_id, "\u{1b}[1;1R")
-                        .expect("local Git Bash runtime should accept CPR response");
-                }
+                answered_cpr |= cursor_queries.answer(&manager, &runtime_id, &chunk);
                 if !sent_command && answered_cpr {
                     sent_command = true;
                     manager
@@ -325,6 +309,7 @@ fn local_powershell_history_hook_reports_recalled_commands_when_available() {
     let command = "Write-Output ZTERM_PWSH_HISTORY_RECALL_OK";
     let history_marker = "\u{1b}]633;ZTermCommand;";
     let mut output = String::new();
+    let mut cursor_queries = CursorPositionQueries::default();
     let mut sent_command = false;
     let mut recalled_command = false;
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -332,11 +317,7 @@ fn local_powershell_history_hook_reports_recalled_commands_when_available() {
         match receiver.recv_timeout(Duration::from_millis(200)) {
             Ok(Some(chunk)) => {
                 output.push_str(&chunk);
-                if chunk.contains("\u{1b}[6n") {
-                    manager
-                        .write(&runtime_id, "\u{1b}[1;1R")
-                        .expect("PowerShell runtime should accept CPR response");
-                }
+                cursor_queries.answer(&manager, &runtime_id, &chunk);
                 if !sent_command && output.contains("PS ") && output.contains('>') {
                     assert!(
                         !output.contains(r"Microsoft.PowerShell.Core\FileSystem::"),
@@ -534,6 +515,66 @@ fn pwsh_profile() -> Option<TerminalProfile> {
         created_at_ms: 0,
         updated_at_ms: 0,
     })
+}
+
+#[derive(Default)]
+struct CursorPositionQueries {
+    matched: usize,
+}
+
+impl CursorPositionQueries {
+    fn consume(&mut self, chunk: &str) -> usize {
+        const QUERY: &[u8] = b"\x1b[6n";
+        let mut queries = 0;
+        for byte in chunk.bytes() {
+            if byte == QUERY[self.matched] {
+                self.matched += 1;
+                if self.matched == QUERY.len() {
+                    queries += 1;
+                    self.matched = 0;
+                }
+            } else {
+                self.matched = usize::from(byte == QUERY[0]);
+            }
+        }
+        queries
+    }
+
+    fn answer(&mut self, manager: &TerminalManager, runtime_id: &str, chunk: &str) -> bool {
+        let queries = self.consume(chunk);
+        for _ in 0..queries {
+            manager
+                .write(runtime_id, "\u{1b}[1;1R")
+                .expect("headless PTY should accept CPR response");
+        }
+        queries > 0
+    }
+}
+
+#[test]
+fn cursor_position_queries_survive_every_chunk_boundary() {
+    let query = "\u{1b}[6n";
+    for split in 1..query.len() {
+        let mut parser = CursorPositionQueries::default();
+        assert_eq!(parser.consume(&query[..split]), 0);
+        assert_eq!(parser.consume(&query[split..]), 1);
+        assert_eq!(parser.consume("ordinary output"), 0);
+    }
+    let mut parser = CursorPositionQueries::default();
+    let total: usize = query
+        .bytes()
+        .map(|byte| parser.consume(&(byte as char).to_string()))
+        .sum();
+    assert_eq!(total, 1);
+}
+
+#[test]
+fn cursor_position_queries_answer_repeats_without_matching_other_sequences() {
+    let mut parser = CursorPositionQueries::default();
+    assert_eq!(parser.consume("\u{1b}[?9001h\u{1b}[6n\u{1b}[6n"), 2);
+    assert_eq!(parser.consume("\u{1b}[6X\u{1b}["), 0);
+    assert_eq!(parser.consume("\u{1b}[6n"), 1);
+    assert_eq!(parser.consume("\u{1b}[1;1R"), 0);
 }
 
 fn read_terminal(mut reader: Box<dyn Read + Send>, sender: mpsc::Sender<Option<String>>) {
