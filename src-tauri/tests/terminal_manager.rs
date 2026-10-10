@@ -84,9 +84,11 @@ fn closing_pty_runtime_reaps_its_child_within_the_bounded_close_path() {
             .expect("system time should be after Unix epoch")
             .as_nanos()
     ));
+    let pending_pid_path = pid_path.with_extension("pending");
     let quoted_pid_path = pid_path.to_string_lossy().replace('\'', "''");
+    let quoted_pending_path = pending_pid_path.to_string_lossy().replace('\'', "''");
     let command = format!(
-        "$PID | Set-Content -NoNewline -LiteralPath '{quoted_pid_path}'; Start-Sleep -Seconds 30"
+        "[IO.File]::WriteAllText('{quoted_pending_path}', $PID.ToString()); [IO.File]::Move('{quoted_pending_path}', '{quoted_pid_path}'); Start-Sleep -Seconds 30"
     );
     let opened = manager
         .open_agent_codex_session(AgentCodexPtyOptions {
@@ -112,24 +114,35 @@ fn closing_pty_runtime_reaps_its_child_within_the_bounded_close_path() {
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut output = String::new();
     let mut cursor_queries = CursorPositionQueries::default();
-    while !pid_path.is_file() && Instant::now() < deadline {
+    let mut process_id = None;
+    while Instant::now() < deadline {
+        match try_read_child_pid(&pid_path) {
+            Ok(Some(pid)) => {
+                process_id = Some(pid);
+                break;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = manager.close(&runtime_id);
+                let _ = fs::remove_file(&pid_path);
+                let _ = fs::remove_file(&pending_pid_path);
+                panic!("PTY PID file could not be read: {error}");
+            }
+        }
         if let Ok(Some(chunk)) = receiver.recv_timeout(Duration::from_millis(20)) {
             cursor_queries.answer(&manager, &runtime_id, &chunk);
             output.push_str(&chunk);
         }
     }
-    if !pid_path.is_file() {
+    let Some(process_id) = process_id else {
         let _ = manager.close(&runtime_id);
+        let _ = fs::remove_file(&pid_path);
+        let _ = fs::remove_file(&pending_pid_path);
         panic!(
             "PTY child should write its process ID; terminal output: {}",
             terminal_tail(&output)
         );
-    }
-    let process_id = fs::read_to_string(&pid_path)
-        .expect("PTY child should write its process ID")
-        .trim()
-        .parse::<u32>()
-        .expect("PTY child process ID should be a positive integer");
+    };
 
     manager
         .close(&runtime_id)
@@ -156,6 +169,64 @@ fn closing_pty_runtime_reaps_its_child_within_the_bounded_close_path() {
         thread::sleep(Duration::from_millis(20));
     }
     let _ = fs::remove_file(pid_path);
+}
+
+#[cfg(windows)]
+fn try_read_child_pid(path: &std::path::Path) -> std::io::Result<Option<u32>> {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || matches!(error.raw_os_error(), Some(32 | 33)) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    let value = contents.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    value
+        .parse::<u32>()
+        .ok()
+        .filter(|pid| *pid > 0)
+        .map(Some)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid child PID"))
+}
+
+#[cfg(windows)]
+#[test]
+fn child_pid_read_waits_for_exclusive_writer_and_complete_contents() {
+    use std::io::Write;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let path = std::env::temp_dir().join(format!("zterm-pid-read-{}.txt", uuid::Uuid::new_v4()));
+    assert_eq!(try_read_child_pid(&path).unwrap(), None);
+    let mut writer = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .share_mode(0)
+        .open(&path)
+        .unwrap();
+    assert!(path.is_file());
+    assert_eq!(
+        fs::read_to_string(&path).unwrap_err().raw_os_error(),
+        Some(32)
+    );
+    assert_eq!(try_read_child_pid(&path).unwrap(), None);
+    writer.write_all(b"12345").unwrap();
+    assert_eq!(try_read_child_pid(&path).unwrap(), None);
+    drop(writer);
+    assert_eq!(try_read_child_pid(&path).unwrap(), Some(12345));
+    fs::write(&path, "").unwrap();
+    assert_eq!(try_read_child_pid(&path).unwrap(), None);
+    fs::write(&path, "invalid").unwrap();
+    assert_eq!(
+        try_read_child_pid(&path).unwrap_err().kind(),
+        std::io::ErrorKind::InvalidData
+    );
+    fs::remove_file(path).unwrap();
 }
 
 #[test]
