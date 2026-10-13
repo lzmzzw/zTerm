@@ -194,6 +194,8 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 
 ## Codex Sidebar And MCP Approval
 
+侧栏通过 `skills.include_instructions=false` 隐藏通用 Skill 清单，并禁用 bundled Skills、apps、plugins；侧栏指令明确不加载外部 Skill、不查找 `SKILL.md`，不因缺少 Skill 阻断运行。服务器操作使用 zTerm 自己维护的内置策略：活动目标确认、可见终端路由、变更范围与恢复办法、同资源写入串行、敏感信息脱敏，以及连接策略和 pending 审批。内置策略同时写入启动时的 developer instructions 与会话 `AGENTS.md`，不依赖任何特定 Skill、安装路径或内容；用户调整或删除个人 Skill 无需重新打包 zTerm。这里约束侧栏模型行为，不增加文件系统访问门禁，也不放宽 MCP 权限。既有 Agent 进程需关闭并重新打开后应用新启动指令。
+
 当前右侧 Agent 面板完全由本机已登录的 `codex` CLI 实现。每个可操作终端标签最多保留一个 Codex PTY；切换到没有 Codex 会话的标签时关闭侧栏，手动打开时新建进程，切回已有会话的标签时自动恢复显示。Codex 本地 sandbox 固定为 `read-only`，远程写入必须经过 zTerm MCP 和连接级审批链路。zTerm 不提供模型管理、内置模型请求或 AI Conversation IPC，也不向 Codex 注入自定义模型目录。
 
 | Command | 入参 | 返回 | 说明 |

@@ -126,7 +126,7 @@ describe("TitleBar", () => {
     expect(logo?.tagName).toBe("IMG");
     expect(logo?.getAttribute("alt")).toBe("zTerm");
     expect(logo?.getAttribute("src")).toContain("data:image/svg+xml");
-    expect(logo?.getAttribute("src")).toContain("borderGrad");
+    expect(logo?.getAttribute("src")).toContain("zterm");
 
     view.unmount();
   });
