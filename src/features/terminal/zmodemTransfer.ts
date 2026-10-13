@@ -11,6 +11,7 @@ import Zmodem, {
 } from "zmodem.js/src/zmodem_browser";
 
 import { stringifiedErrorMessage } from "../../lib/unknownErrorMessage";
+import { reportZmodemDiagnostic, ZmodemStartupObserver, ZmodemHexBodyObserver } from "./zmodemDiagnostics";
 
 interface TerminalZmodemDataEvent {
   runtimeSessionId: string;
@@ -64,6 +65,7 @@ export function consumeTerminalZmodemData(
   dependencies: ZmodemTransferDependencies,
 ) {
   if (!event.dataBase64) {
+    if (event.data.includes("**\x18B")) reportZmodemDiagnostic("frontend-missing-base64", "", event.runtimeSessionId);
     dependencies.appendOutput(event.runtimeSessionId, event.data);
     return;
   }
@@ -118,6 +120,8 @@ function discardTerminalZmodemController(runtimeSessionId: string) {
 }
 
 class ZmodemRuntimeController {
+  private hexBodyObserver = new ZmodemHexBodyObserver();
+  private startupObserver = new ZmodemStartupObserver();
   private dependencies: ZmodemTransferDependencies;
   private sentry: ZmodemSentry;
   private textDecoder = new TextDecoder("utf-8", { fatal: false });
@@ -134,6 +138,11 @@ class ZmodemRuntimeController {
   constructor(private readonly runtimeSessionId: string, dependencies: ZmodemTransferDependencies) {
     this.dependencies = withDefaultDependencies(dependencies);
     this.sentry = this.createSentry();
+    this.diagnose("frontend-ready");
+  }
+
+  private diagnose(stage: string, header = "") {
+    reportZmodemDiagnostic(stage, header, this.runtimeSessionId);
   }
 
   private createSentry(): ZmodemSentry {
@@ -156,6 +165,16 @@ class ZmodemRuntimeController {
 
   consume(bytes: Uint8Array): boolean {
     if (this.disposed) return false;
+    if (!this.activeSession) {
+      for (const body of this.hexBodyObserver.consume(bytes)) this.diagnose("frontend-body", body);
+      const hadCandidate = this.startupObserver.hasCandidate();
+      const headers = this.startupObserver.consume(bytes);
+      if (hadCandidate || this.startupObserver.hasCandidate() || headers.length) {
+        const chunkLength = [24, 16, 8, 0].map((shift) => ((bytes.length >>> shift) & 255).toString(16).padStart(2, "0")).join(" ");
+        this.diagnose("frontend-fragment", chunkLength);
+      }
+      for (const header of headers) this.diagnose("frontend-input", header);
+    }
     try {
       const completedBytes = this.completeMissingReceiveOverAndOut(bytes);
       if (!completedBytes) return true;
@@ -179,6 +198,7 @@ class ZmodemRuntimeController {
       }
       return true;
     } catch (error) {
+      this.diagnose("frontend-parse-error");
       this.appendOutput(`\r\n传输解析失败：${stringifiedErrorMessage(error)}\r\n`);
       this.abortAndDiscard();
       return false;
@@ -214,6 +234,7 @@ class ZmodemRuntimeController {
     }
 
     const session = detection.confirm();
+    this.diagnose(session.type === "send" ? "frontend-send" : "frontend-receive");
     this.activeSession = session;
     try {
       if (session.type === "send") {

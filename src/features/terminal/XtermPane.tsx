@@ -15,6 +15,7 @@ import {
 
 import { ZtContextMenu, ZtInlineError } from "../../components/ZtUi";
 import { scheduleNextTask } from "../../lib/renderScheduling";
+import { reportZmodemDiagnostic } from "./zmodemDiagnostics";
 import { readClipboardTextWithRetry, sanitizeTerminalPaste } from "./terminalClipboard";
 import { parseOsc7Cwd, parseSimpleCdTarget } from "./terminalCwd";
 import { createTerminalCursorPresentation } from "./terminalCursorPresentation";
@@ -348,6 +349,9 @@ export function XtermPane({
 
   const handleTerminalInput = useCallback(
     (value: string) => {
+      if (value === "\x03" && streamIdRef.current) {
+        reportZmodemDiagnostic(replayingOutputRef.current ? "xterm-ctrl-c-replay" : "xterm-ctrl-c", "", streamIdRef.current);
+      }
       if (replayingOutputRef.current) {
         return;
       }

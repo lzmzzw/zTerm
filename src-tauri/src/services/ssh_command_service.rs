@@ -44,6 +44,10 @@ const REUSABLE_CONNECTION_MAX_ENTRIES: usize = 8;
 
 pub trait SshCommandSecretResolver: Send + Sync {
     fn secret_for(&self, credential_ref: &str) -> AppResult<String>;
+
+    fn saved_ssh_sessions(&self) -> &[SavedSession] {
+        &[]
+    }
 }
 
 impl SshCommandSecretResolver for CredentialService {
@@ -726,7 +730,7 @@ fn normalize_script(script: String) -> AppResult<String> {
     Ok(format!("{trimmed}\n"))
 }
 
-fn matching_jump_session<'a>(
+pub(crate) fn matching_jump_session<'a>(
     jump_host: &str,
     all_sessions: &'a [SavedSession],
     current_session_id: &str,

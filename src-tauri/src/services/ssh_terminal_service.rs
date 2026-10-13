@@ -2,12 +2,14 @@
 use std::{
     io::{Read, Write},
     path::PathBuf,
-    sync::{mpsc as std_mpsc, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc as std_mpsc, Arc, Mutex,
+    },
     thread,
     time::Duration,
 };
 
-use portable_pty::CommandBuilder;
 use russh::{
     client,
     keys::{
@@ -22,9 +24,10 @@ use crate::{
     models::session::{AuthMode, SavedSession, SessionType, SshTunnel, SshTunnelKind},
     services::{
         credential_service::read_system_secret,
-        local_pty_service::{spawn_pty_command, PtySpawn},
+        local_pty_service::PtySpawn,
         ssh_command_service::SshCommandSecretResolver,
         ssh_container_service::{build_container_exec_command, enabled_container_options},
+        ssh_native_tunnels::{ForwardedTcpip, NativeTunnels},
     },
     validation::required_text,
 };
@@ -92,21 +95,7 @@ pub fn spawn_ssh_terminal_with_resolver(
         ));
     }
 
-    if requires_system_ssh(session) {
-        return spawn_system_ssh_terminal(session, cols, rows, secrets);
-    }
-
     spawn_native_ssh_terminal(session, cols, rows, secrets)
-}
-
-fn spawn_system_ssh_terminal(
-    session: &SavedSession,
-    cols: u16,
-    rows: u16,
-    secrets: &dyn SshCommandSecretResolver,
-) -> AppResult<SshTerminalSpawn> {
-    let args = build_ssh_arguments(session)?;
-    spawn_system_ssh_terminal_with_args(session, args, cols, rows, secrets)
 }
 
 pub fn spawn_ssh_container_terminal(
@@ -131,42 +120,9 @@ pub fn spawn_ssh_container_terminal_with_resolver(
     rows: u16,
     secrets: &dyn SshCommandSecretResolver,
 ) -> AppResult<SshTerminalSpawn> {
-    if ssh_container_terminal_transport(session) == SshContainerTerminalTransport::Native {
-        let container = enabled_container_options(session)?;
-        let command = container_command(container, container_id)?;
-        return spawn_native_ssh_exec_terminal(session, command, cols, rows, secrets);
-    }
-    let args = build_ssh_container_arguments(session, container_id)?;
-    spawn_system_ssh_terminal_with_args(session, args, cols, rows, secrets)
-}
-
-fn spawn_system_ssh_terminal_with_args(
-    session: &SavedSession,
-    args: Vec<String>,
-    cols: u16,
-    rows: u16,
-    secrets: &dyn SshCommandSecretResolver,
-) -> AppResult<SshTerminalSpawn> {
-    let mut command = CommandBuilder::new("ssh");
-    for arg in &args {
-        command.arg(arg.as_str());
-    }
-
-    let auth_secret = match session.auth_mode {
-        AuthMode::Password | AuthMode::Key => session
-            .credential_ref
-            .as_deref()
-            .map(|credential_ref| secrets.secret_for(credential_ref))
-            .transpose()?,
-        AuthMode::Agent | AuthMode::None => None,
-    };
-
-    let pty =
-        spawn_pty_command(command, cols, rows).map_err(|error| AppError::ssh(error.to_string()))?;
-    Ok(SshTerminalSpawn {
-        runtime: SshTerminalRuntime::Pty(pty),
-        auth_secret,
-    })
+    let container = enabled_container_options(session)?;
+    let command = container_command(container, container_id)?;
+    spawn_native_ssh_exec_terminal(session, command, cols, rows, secrets)
 }
 
 fn spawn_native_ssh_terminal(
@@ -201,7 +157,30 @@ fn spawn_native_ssh_runtime(
     rows: u16,
     secrets: &dyn SshCommandSecretResolver,
 ) -> AppResult<SshTerminalSpawn> {
-    let target = NativeSshTarget::from_session(session, secrets)?;
+    let mut target = NativeSshTarget::from_session(session, secrets)?;
+    if target
+        .proxy_command
+        .as_deref()
+        .is_none_or(|command| command.trim().is_empty())
+    {
+        target.resolved_jumps = target
+            .jump_hosts
+            .iter()
+            .filter(|hop| !hop.trim().is_empty())
+            .map(|hop| {
+                if let Some(saved) = super::ssh_command_service::matching_jump_session(
+                    hop,
+                    secrets.saved_ssh_sessions(),
+                    &session.id,
+                ) {
+                    NativeSshTarget::from_session(saved, secrets)
+                        .map(|target| NativeSshHop::Saved(Box::new(target)))
+                } else {
+                    Ok(NativeSshHop::OpenSsh(hop.clone()))
+                }
+            })
+            .collect::<AppResult<_>>()?;
+    }
     let (command_sender, command_receiver) = tokio_mpsc::unbounded_channel();
     let (output_sender, output_receiver) = tokio_mpsc::channel(NATIVE_SSH_OUTPUT_QUEUE_CAPACITY);
     let (output_receiver, _output_bridge) = spawn_native_ssh_output_bridge(output_receiver);
@@ -254,43 +233,6 @@ fn spawn_native_ssh_runtime(
 enum NativeSshStartup {
     Shell,
     Exec(String),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SshContainerTerminalTransport {
-    Native,
-    System,
-}
-
-fn ssh_container_terminal_transport(session: &SavedSession) -> SshContainerTerminalTransport {
-    if requires_system_ssh(session) {
-        SshContainerTerminalTransport::System
-    } else {
-        SshContainerTerminalTransport::Native
-    }
-}
-
-fn requires_system_ssh(session: &SavedSession) -> bool {
-    if requires_system_ssh_for_gateway_identity(session) {
-        return true;
-    }
-    let Some(options) = session.ssh_options.as_ref() else {
-        return false;
-    };
-    options
-        .proxy_command
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-        || options
-            .jump_hosts
-            .iter()
-            .any(|host| !host.trim().is_empty())
-        || options.tunnels.iter().any(|tunnel| tunnel.auto_open)
-}
-
-fn requires_system_ssh_for_gateway_identity(session: &SavedSession) -> bool {
-    session.username.trim().starts_with("b64>>")
 }
 
 pub fn build_ssh_arguments(session: &SavedSession) -> AppResult<Vec<String>> {
@@ -402,31 +344,62 @@ async fn run_native_ssh_terminal(
     output_sender: tokio_mpsc::Sender<Vec<u8>>,
     exit_status: Arc<Mutex<Option<i32>>>,
 ) -> AppResult<()> {
-    let mut handle = connect_native_ssh(&target).await?;
-    authenticate_native_ssh(&mut handle, &target).await?;
-    let channel = handle.channel_open_session().await.map_err(russh_error)?;
-    let pty_modes = native_pty_modes();
-    channel
-        .request_pty(
-            true,
-            "xterm-256color",
-            u32::from(cols),
-            u32::from(rows),
-            0,
-            0,
-            &pty_modes,
+    let (forward_sender, forward_receiver) = tokio_mpsc::channel(256);
+    let (auth_sender, auth_receiver) = tokio_mpsc::unbounded_channel();
+    let auth_pending = Arc::new(AtomicBool::new(false));
+    let mut interaction = NativeAuthInteraction {
+        input: auth_receiver,
+        output: output_sender.clone(),
+        pending: Arc::clone(&auth_pending),
+    };
+    let setup = async {
+        let (mut handle, jumps) =
+            connect_native_ssh(&target, forward_sender, &mut interaction).await?;
+        tokio::time::timeout(
+            Duration::from_secs(60),
+            authenticate_native_ssh(&mut handle, &target, &mut interaction),
         )
         .await
-        .map_err(russh_error)?;
-    match startup {
-        NativeSshStartup::Shell => {
-            channel.request_shell(true).await.map_err(russh_error)?;
+        .map_err(|_| AppError::ssh("SSH 认证超时"))??;
+        let handle = Arc::new(handle);
+        let tunnels =
+            NativeTunnels::start(Arc::clone(&handle), &target.tunnels, forward_receiver).await?;
+        let channel = handle.channel_open_session().await.map_err(russh_error)?;
+        let pty_modes = native_pty_modes();
+        channel
+            .request_pty(
+                true,
+                "xterm-256color",
+                u32::from(cols),
+                u32::from(rows),
+                0,
+                0,
+                &pty_modes,
+            )
+            .await
+            .map_err(russh_error)?;
+        match startup {
+            NativeSshStartup::Shell => {
+                channel.request_shell(true).await.map_err(russh_error)?;
+            }
+            NativeSshStartup::Exec(command) => {
+                channel.exec(true, command).await.map_err(russh_error)?;
+            }
         }
-        NativeSshStartup::Exec(command) => {
-            channel.exec(true, command).await.map_err(russh_error)?;
+        Ok::<_, AppError>((handle, tunnels, jumps, channel))
+    };
+    // Closing a tab also cancels a proxy handshake, authentication or tunnel setup.
+    let mut queued_commands = Vec::new();
+    let (handle, mut tunnels, jumps, channel) = tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(120), setup) => result.map_err(|_| AppError::ssh("SSH 建立终端超时"))??,
+        _ = wait_for_native_close(&mut command_receiver, &mut queued_commands, &auth_pending, &auth_sender) => return Ok(()),
+    };
+    let (mut reader, writer) = channel.split();
+    for command in queued_commands {
+        if !apply_native_ssh_command(Some(command), &writer).await? {
+            return Ok(());
         }
     }
-    let (mut reader, writer) = channel.split();
     let mut pending_output: Option<NativeSshPendingOutput> = None;
 
     loop {
@@ -497,9 +470,15 @@ async fn run_native_ssh_terminal(
         }
     }
 
+    tunnels.shutdown().await;
     let _ = handle
         .disconnect(russh::Disconnect::ByApplication, "terminal closed", "")
         .await;
+    for hop in jumps.into_iter().rev() {
+        let _ = hop
+            .disconnect(russh::Disconnect::ByApplication, "terminal closed", "")
+            .await;
+    }
     Ok(())
 }
 
@@ -523,6 +502,26 @@ async fn apply_native_ssh_command(
             let _ = writer.close().await;
             Ok(false)
         }
+    }
+}
+
+async fn wait_for_native_close(
+    receiver: &mut tokio_mpsc::UnboundedReceiver<NativeSshCommand>,
+    queued: &mut Vec<NativeSshCommand>,
+    auth_pending: &AtomicBool,
+    auth_sender: &tokio_mpsc::UnboundedSender<Vec<u8>>,
+) {
+    while let Some(command) = receiver.recv().await {
+        if matches!(command, NativeSshCommand::Close) {
+            return;
+        }
+        if auth_pending.load(Ordering::SeqCst) {
+            if let NativeSshCommand::Input(data) = command {
+                let _ = auth_sender.send(data);
+                continue;
+            }
+        }
+        queued.push(command);
     }
 }
 
@@ -594,11 +593,26 @@ struct NativeSshTarget {
     keepalive_interval: Option<Duration>,
     port: u16,
     username: String,
+    tunnels: Vec<SshTunnel>,
+    proxy_command: Option<String>,
+    jump_hosts: Vec<String>,
+    resolved_jumps: Vec<NativeSshHop>,
+}
+
+#[derive(Clone)]
+enum NativeSshHop {
+    Saved(Box<NativeSshTarget>),
+    OpenSsh(String),
 }
 
 #[derive(Clone)]
 enum NativeSshAuth {
     Agent,
+    OpenSsh {
+        paths: Vec<PathBuf>,
+        use_agent: bool,
+        identities_only: bool,
+    },
     None,
     Password(String),
     PrivateKey {
@@ -662,6 +676,21 @@ impl NativeSshTarget {
             keepalive_interval: effective_keepalive_interval(session),
             port: session.port,
             username,
+            tunnels: session
+                .ssh_options
+                .as_ref()
+                .map(|o| o.tunnels.clone())
+                .unwrap_or_default(),
+            proxy_command: session
+                .ssh_options
+                .as_ref()
+                .and_then(|o| o.proxy_command.clone()),
+            jump_hosts: session
+                .ssh_options
+                .as_ref()
+                .map(|o| o.jump_hosts.clone())
+                .unwrap_or_default(),
+            resolved_jumps: Vec::new(),
         })
     }
 }
@@ -675,54 +704,231 @@ impl SshCommandSecretResolver for SystemSshSecretResolver {
 }
 
 #[derive(Debug)]
-struct NativeSshHandler;
+struct NativeSshHandler {
+    forwarded: tokio_mpsc::Sender<ForwardedTcpip>,
+    host: String,
+    port: u16,
+}
 
 impl client::Handler for NativeSshHandler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &PublicKey,
+        server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
+        verify_native_server_key(&self.host, self.port, server_public_key).map_err(|error| {
+            russh::Error::IO(std::io::Error::other(format!(
+                "SSH 主机密钥校验失败: {error}"
+            )))
+        })?;
         Ok(true)
     }
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        // Never wait for channel IO inside the SSH driver callback.
+        if let Err(rejected) = self.forwarded.try_send(ForwardedTcpip {
+            channel,
+            connected_address: connected_address.to_owned(),
+            connected_port,
+        }) {
+            let incoming = rejected.into_inner();
+            session.close(incoming.channel.id())?;
+        }
+        Ok(())
+    }
+}
+
+fn verify_native_server_key(host: &str, port: u16, key: &PublicKey) -> Result<(), keys::Error> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    #[cfg(not(test))]
+    let path = dirs::home_dir()
+        .ok_or(keys::Error::NoHomeDir)?
+        .join(".ssh")
+        .join("known_hosts");
+    #[cfg(test)]
+    let path = {
+        static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        PATH.get_or_init(|| {
+            std::env::temp_dir().join(format!("zterm-test-known-hosts-{}", uuid::Uuid::new_v4()))
+        })
+        .clone()
+    };
+    // Do not silently bypass OpenSSH trust markers which this parser does not support.
+    match std::fs::read_to_string(&path) {
+        Ok(content)
+            if content
+                .lines()
+                .any(|line| line.trim_start().starts_with('@')) =>
+        {
+            return Err(
+                std::io::Error::other("known_hosts 包含当前原生 SSH 不支持的信任标记").into(),
+            );
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let recorded = keys::known_hosts::known_host_keys_path(host, port, &path)?;
+    if recorded.is_empty() {
+        keys::known_hosts::learn_known_hosts_path(host, port, key, &path)?;
+    } else if !recorded
+        .iter()
+        .any(|(_, known)| known.key_data() == key.key_data())
+    {
+        // A changed algorithm is still a changed host identity.
+        return Err(keys::Error::KeyChanged {
+            line: recorded[0].0,
+        });
+    }
+    Ok(())
 }
 
 async fn connect_native_ssh(
     target: &NativeSshTarget,
-) -> AppResult<client::Handle<NativeSshHandler>> {
+    forwarded: tokio_mpsc::Sender<ForwardedTcpip>,
+    interaction: &mut NativeAuthInteraction,
+) -> AppResult<(
+    client::Handle<NativeSshHandler>,
+    Vec<client::Handle<NativeSshHandler>>,
+)> {
     let config = client::Config {
         inactivity_timeout: None,
         keepalive_interval: target.keepalive_interval,
         keepalive_max: DEFAULT_KEEPALIVE_MAX,
         ..Default::default()
     };
-    let connect = client::connect(
-        Arc::new(config),
-        (target.host.as_str(), target.port),
-        NativeSshHandler,
-    );
+    let connect = async {
+        let handler = NativeSshHandler {
+            forwarded,
+            host: target.host.clone(),
+            port: target.port,
+        };
+        let config = Arc::new(config);
+        if !target.resolved_jumps.is_empty() {
+            let mut jumps: Vec<client::Handle<NativeSshHandler>> = Vec::new();
+            for hop in &target.resolved_jumps {
+                let hop = match hop {
+                    NativeSshHop::Saved(hop) => *hop.clone(),
+                    NativeSshHop::OpenSsh(value) => {
+                        let config = super::ssh_openssh_config::resolve_jump(value).await?;
+                        NativeSshTarget {
+                            auth: NativeSshAuth::OpenSsh {
+                                paths: config.identity_files,
+                                use_agent: config.use_agent,
+                                identities_only: config.identities_only,
+                            },
+                            connect_timeout: target.connect_timeout,
+                            host: config.host,
+                            port: config.port,
+                            username: config.username,
+                            keepalive_interval: target.keepalive_interval,
+                            proxy_command: config.proxy_command,
+                            jump_hosts: Vec::new(),
+                            resolved_jumps: Vec::new(),
+                            tunnels: Vec::new(),
+                        }
+                    }
+                };
+                let (forwarded, _unused) = tokio_mpsc::channel(1);
+                let handler = NativeSshHandler {
+                    forwarded,
+                    host: hop.host.clone(),
+                    port: hop.port,
+                };
+                let mut handle = if let Some(upstream) = jumps.last() {
+                    let channel = upstream
+                        .channel_open_direct_tcpip(&hop.host, u32::from(hop.port), "127.0.0.1", 0)
+                        .await
+                        .map_err(russh_error)?;
+                    client::connect_stream(Arc::clone(&config), channel.into_stream(), handler)
+                        .await
+                        .map_err(russh_error)?
+                } else if let Some(stream) = super::ssh_native_proxy::spawn_target_stream(
+                    &hop.host,
+                    hop.port,
+                    &hop.username,
+                    hop.proxy_command.as_deref(),
+                    &[],
+                )? {
+                    client::connect_stream(Arc::clone(&config), stream, handler)
+                        .await
+                        .map_err(russh_error)?
+                } else {
+                    client::connect(Arc::clone(&config), (hop.host.as_str(), hop.port), handler)
+                        .await
+                        .map_err(russh_error)?
+                };
+                authenticate_native_ssh(&mut handle, &hop, interaction).await?;
+                jumps.push(handle);
+            }
+            let upstream = jumps.last().expect("resolved jump chain is nonempty");
+            let channel = upstream
+                .channel_open_direct_tcpip(&target.host, u32::from(target.port), "127.0.0.1", 0)
+                .await
+                .map_err(russh_error)?;
+            let handle = client::connect_stream(config, channel.into_stream(), handler)
+                .await
+                .map_err(russh_error)?;
+            return Ok((handle, jumps));
+        }
+        let stream = super::ssh_native_proxy::spawn_target_stream(
+            &target.host,
+            target.port,
+            &target.username,
+            target.proxy_command.as_deref(),
+            &target.jump_hosts,
+        )?;
+        if let Some(stream) = stream {
+            client::connect_stream(config, stream, handler)
+                .await
+                .map_err(russh_error)
+                .map(|handle| (handle, Vec::new()))
+        } else {
+            client::connect(config, (target.host.as_str(), target.port), handler)
+                .await
+                .map_err(russh_error)
+                .map(|handle| (handle, Vec::new()))
+        }
+    };
     if let Some(timeout) = target.connect_timeout {
         tokio::time::timeout(timeout, connect)
             .await
             .map_err(|_| AppError::ssh(format!("SSH 连接超时（{} 秒）", timeout.as_secs())))?
-            .map_err(russh_error)
     } else {
-        connect.await.map_err(russh_error)
+        connect.await
     }
 }
 
 async fn authenticate_native_ssh(
     handle: &mut client::Handle<NativeSshHandler>,
     target: &NativeSshTarget,
+    interaction: &mut NativeAuthInteraction,
 ) -> AppResult<()> {
     let username = target.username.clone();
     let authenticated = match &target.auth {
-        NativeSshAuth::Password(password) => handle
-            .authenticate_password(username, password.clone())
-            .await
-            .map_err(russh_error)?
-            .success(),
+        NativeSshAuth::Password(password) => {
+            if handle
+                .authenticate_password(username.clone(), password.clone())
+                .await
+                .map_err(russh_error)?
+                .success()
+            {
+                true
+            } else {
+                authenticate_keyboard_password(handle, username, Some(password), interaction)
+                    .await?
+            }
+        }
         NativeSshAuth::PrivateKey {
             identity_file,
             passphrase,
@@ -730,12 +936,97 @@ async fn authenticate_native_ssh(
             let key = load_secret_key(identity_file, passphrase.as_deref()).map_err(key_error)?;
             authenticate_private_key(handle, username, key).await?
         }
-        NativeSshAuth::Agent => authenticate_agent(handle, username).await?,
+        NativeSshAuth::Agent => authenticate_agent(handle, username).await.unwrap_or(false),
+        NativeSshAuth::OpenSsh {
+            paths,
+            use_agent,
+            identities_only,
+        } => {
+            let none = handle
+                .authenticate_none(username.clone())
+                .await
+                .map_err(russh_error)?;
+            let password_allowed = matches!(&none, client::AuthResult::Failure { remaining_methods, .. } if remaining_methods.contains(&russh::MethodKind::Password));
+            let mut authenticated = none.success();
+            if !authenticated && *use_agent && !*identities_only {
+                authenticated = authenticate_agent(handle, username.clone())
+                    .await
+                    .unwrap_or(false);
+            }
+            if !authenticated && *use_agent && *identities_only {
+                let allowed = paths
+                    .iter()
+                    .filter_map(|path| {
+                        let encoded = std::fs::read(path).ok()?;
+                        PrivateKey::from_openssh(encoded)
+                            .ok()
+                            .map(|key| key.public_key().clone())
+                    })
+                    .collect::<Vec<_>>();
+                if !allowed.is_empty() {
+                    authenticated =
+                        authenticate_agent_matching(handle, username.clone(), Some(&allowed))
+                            .await
+                            .unwrap_or(false);
+                }
+            }
+            for path in paths {
+                if authenticated {
+                    break;
+                }
+                let key = match load_secret_key(path, None) {
+                    Ok(key) => Some(key),
+                    Err(keys::Error::KeyIsEncrypted) => {
+                        let passphrase = interaction
+                            .answer("密钥口令", "", "Passphrase:", false)
+                            .await?;
+                        Some(load_secret_key(path, Some(&passphrase)).map_err(key_error)?)
+                    }
+                    Err(_) => None,
+                };
+                if let Some(key) = key {
+                    authenticated = authenticate_private_key(handle, username.clone(), key).await?;
+                }
+            }
+            if !authenticated && password_allowed {
+                let password = interaction
+                    .answer("跳板登录", "", "Password:", false)
+                    .await?;
+                authenticated = handle
+                    .authenticate_password(username.clone(), password.clone())
+                    .await
+                    .map_err(russh_error)?
+                    .success();
+                if !authenticated {
+                    authenticated = authenticate_keyboard_password(
+                        handle,
+                        username.clone(),
+                        Some(&password),
+                        interaction,
+                    )
+                    .await?;
+                }
+            }
+            if !authenticated {
+                authenticated =
+                    authenticate_keyboard_password(handle, username, None, interaction).await?;
+            }
+            authenticated
+        }
         NativeSshAuth::None => handle
             .authenticate_none(username)
             .await
             .map_err(russh_error)?
             .success(),
+    };
+    let authenticated = if !authenticated
+        && matches!(
+            target.auth,
+            NativeSshAuth::PrivateKey { .. } | NativeSshAuth::Agent
+        ) {
+        authenticate_keyboard_password(handle, target.username.clone(), None, interaction).await?
+    } else {
+        authenticated
     };
     if authenticated {
         Ok(())
@@ -745,6 +1036,134 @@ async fn authenticate_native_ssh(
             target.username, target.host, target.port
         )))
     }
+}
+
+struct NativeAuthInteraction {
+    input: tokio_mpsc::UnboundedReceiver<Vec<u8>>,
+    output: tokio_mpsc::Sender<Vec<u8>>,
+    pending: Arc<AtomicBool>,
+}
+
+impl NativeAuthInteraction {
+    async fn answer(
+        &mut self,
+        name: &str,
+        instructions: &str,
+        prompt: &str,
+        echo: bool,
+    ) -> AppResult<String> {
+        fn clean(value: &str) -> String {
+            value
+                .chars()
+                .filter(|ch| !ch.is_control() || *ch == '\n')
+                .take(2048)
+                .collect()
+        }
+        while self.input.try_recv().is_ok() {}
+        self.pending.store(true, Ordering::SeqCst);
+        struct Reset(Arc<AtomicBool>);
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::SeqCst);
+            }
+        }
+        let _reset = Reset(Arc::clone(&self.pending));
+        self.output
+            .send(
+                format!(
+                    "\r\n[SSH 认证] {} {}\r\n{}",
+                    clean(name),
+                    clean(instructions),
+                    clean(prompt)
+                )
+                .into_bytes(),
+            )
+            .await
+            .map_err(|_| AppError::ssh("SSH 终端已关闭"))?;
+        let mut answer = Vec::new();
+        while let Some(input) = self.input.recv().await {
+            for byte in input {
+                match byte {
+                    b'\r' | b'\n' => {
+                        self.output
+                            .send(b"\r\n".to_vec())
+                            .await
+                            .map_err(|_| AppError::ssh("SSH 终端已关闭"))?;
+                        return String::from_utf8(answer)
+                            .map_err(|_| AppError::credential("SSH 认证响应必须是 UTF-8 文本"));
+                    }
+                    3 => return Err(AppError::credential("SSH 认证已取消")),
+                    8 | 127 => {
+                        answer.pop();
+                    }
+                    byte if !byte.is_ascii_control() => {
+                        if answer.len() >= 4096 {
+                            return Err(AppError::credential("SSH 认证响应过长"));
+                        }
+                        answer.push(byte);
+                        if echo {
+                            let _ = self.output.send(vec![byte]).await;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err(AppError::ssh("SSH 终端已关闭"))
+    }
+}
+
+async fn authenticate_keyboard_password(
+    handle: &mut client::Handle<NativeSshHandler>,
+    username: String,
+    password: Option<&str>,
+    interaction: &mut NativeAuthInteraction,
+) -> AppResult<bool> {
+    use client::KeyboardInteractiveAuthResponse as Response;
+    let mut response = handle
+        .authenticate_keyboard_interactive_start(username, None)
+        .await
+        .map_err(russh_error)?;
+    for _ in 0..8 {
+        match response {
+            Response::Success => return Ok(true),
+            Response::Failure { .. } => return Ok(false),
+            Response::InfoRequest {
+                name,
+                instructions,
+                prompts,
+            } => {
+                let mut answers = Vec::with_capacity(prompts.len());
+                for prompt in prompts {
+                    if let Some(password) =
+                        password.filter(|_| is_password_prompt(&prompt.prompt, prompt.echo))
+                    {
+                        answers.push(password.to_owned());
+                    } else {
+                        answers.push(
+                            interaction
+                                .answer(&name, &instructions, &prompt.prompt, prompt.echo)
+                                .await?,
+                        );
+                    }
+                }
+                response = handle
+                    .authenticate_keyboard_interactive_respond(answers)
+                    .await
+                    .map_err(russh_error)?;
+            }
+        }
+    }
+    Err(AppError::credential("SSH 交互认证轮次过多"))
+}
+
+fn is_password_prompt(prompt: &str, echo: bool) -> bool {
+    let prompt = prompt.trim().to_lowercase();
+    !echo
+        && matches!(
+            prompt.as_str(),
+            "password:" | "password" | "密码:" | "密码："
+        )
 }
 
 async fn authenticate_private_key(
@@ -768,6 +1187,14 @@ async fn authenticate_agent(
     handle: &mut client::Handle<NativeSshHandler>,
     username: String,
 ) -> AppResult<bool> {
+    authenticate_agent_matching(handle, username, None).await
+}
+
+async fn authenticate_agent_matching(
+    handle: &mut client::Handle<NativeSshHandler>,
+    username: String,
+    allowed: Option<&[PublicKey]>,
+) -> AppResult<bool> {
     let mut agent = connect_agent().await?;
     let identities = agent.request_identities().await.map_err(agent_error)?;
     for identity in identities {
@@ -775,6 +1202,13 @@ async fn authenticate_agent(
             AgentIdentity::PublicKey { key, .. } => key.clone(),
             AgentIdentity::Certificate { .. } => identity.public_key().into_owned(),
         };
+        if allowed.is_some_and(|allowed| {
+            !allowed
+                .iter()
+                .any(|selected| selected.key_data() == key.key_data())
+        }) {
+            continue;
+        }
         let hash = handle
             .best_supported_rsa_hash()
             .await
@@ -1009,6 +1443,10 @@ fn native_pty_modes() -> Vec<(Pty, u32)> {
 }
 
 #[cfg(test)]
+#[path = "ssh_terminal_integration_tests.rs"]
+mod integration_tests;
+
+#[cfg(test)]
 mod tests {
     use std::{io::Read, sync::mpsc};
 
@@ -1016,82 +1454,11 @@ mod tests {
 
     use super::{
         build_ssh_arguments, effective_keepalive_interval, spawn_native_ssh_output_bridge,
-        ssh_container_terminal_transport, wait_for_native_ssh_output_slot_or_command,
-        NativeSshCommand, NativeSshOutputWait, NativeSshPendingOutput, NativeSshReader,
-        SshContainerTerminalTransport, NATIVE_SSH_OUTPUT_CHUNK_BYTES,
+        wait_for_native_ssh_output_slot_or_command, NativeSshCommand, NativeSshOutputWait,
+        NativeSshPendingOutput, NativeSshReader, NATIVE_SSH_OUTPUT_CHUNK_BYTES,
         NATIVE_SSH_OUTPUT_QUEUE_CAPACITY,
     };
-    use crate::models::session::{
-        AuthMode, SavedSession, SessionType, SshContainerOptions, SshOptions, SshTunnel,
-        SshTunnelKind,
-    };
-
-    #[test]
-    fn container_terminal_uses_native_transport_without_system_ssh_features() {
-        let session = ssh_session_with_options(SshOptions {
-            connect_timeout_ms: None,
-            keepalive_interval_ms: None,
-            proxy_command: None,
-            identity_file: None,
-            jump_hosts: Vec::new(),
-            tunnels: Vec::new(),
-            container: Some(container_options()),
-        });
-
-        assert_eq!(
-            ssh_container_terminal_transport(&session),
-            SshContainerTerminalTransport::Native
-        );
-    }
-
-    #[test]
-    fn container_terminal_keeps_system_transport_when_tunnels_are_active() {
-        let session = ssh_session_with_options(SshOptions {
-            connect_timeout_ms: None,
-            keepalive_interval_ms: None,
-            proxy_command: None,
-            identity_file: None,
-            jump_hosts: Vec::new(),
-            tunnels: vec![SshTunnel {
-                mode: Some("host_service".to_string()),
-                name: Some("Web".to_string()),
-                kind: SshTunnelKind::Local,
-                auto_open: true,
-                bind_address: Some("127.0.0.1".to_string()),
-                local_port: Some(18080),
-                remote_host: Some("10.11.0.71".to_string()),
-                remote_port: Some(8080),
-            }],
-            container: Some(container_options()),
-        });
-
-        assert_eq!(
-            ssh_container_terminal_transport(&session),
-            SshContainerTerminalTransport::System
-        );
-    }
-
-    #[test]
-    fn container_terminal_keeps_system_transport_for_bhost_gateway_identity() {
-        let mut session = ssh_session_with_options(SshOptions {
-            connect_timeout_ms: None,
-            keepalive_interval_ms: None,
-            proxy_command: None,
-            identity_file: None,
-            jump_hosts: Vec::new(),
-            tunnels: Vec::new(),
-            container: Some(container_options()),
-        });
-        session.host = "172.21.195.223".to_string();
-        session.port = 222;
-        session.username =
-            "b64>>d2VuOjE4NTU1MDQ2ODQzMTJAcm9vdEAxMC4xMS4wLjcxOjIyOlNTSDI=".to_string();
-
-        assert_eq!(
-            ssh_container_terminal_transport(&session),
-            SshContainerTerminalTransport::System
-        );
-    }
+    use crate::models::session::{AuthMode, SavedSession, SessionType, SshOptions};
 
     #[test]
     fn ssh_keepalive_uses_the_safe_default_when_options_are_missing() {
@@ -1244,17 +1611,6 @@ mod tests {
             rdp_options: None,
             local_options: None,
             ftp_options: None,
-        }
-    }
-
-    fn container_options() -> SshContainerOptions {
-        SshContainerOptions {
-            enabled: true,
-            runtime: "docker".to_string(),
-            container: String::new(),
-            shell: Some("/bin/sh".to_string()),
-            user: None,
-            workdir: None,
         }
     }
 }

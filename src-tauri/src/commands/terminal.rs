@@ -26,7 +26,8 @@ use crate::{
     services::{
         command_completion_service::CommandCompletionService,
         command_history_service::CommandHistoryService, credential_service::read_system_secret,
-        external_launch_service::is_external_session_id, terminal_manager::TerminalManager,
+        external_launch_service::is_external_session_id,
+        ssh_command_service::SshCommandSecretResolver, terminal_manager::TerminalManager,
         terminal_output_dispatcher::TerminalOutputDispatcher,
     },
     state::AppState,
@@ -42,6 +43,36 @@ const ZMODEM_MAX_SINGLE_FILE_LABEL: &str = "32 MiB";
 const ZMODEM_MAX_UPLOAD_BATCH_LABEL: &str = "64 MiB";
 const TERMINAL_READER_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
 const TERMINAL_EXIT_CODE_TIMEOUT: Duration = Duration::from_millis(250);
+
+struct TerminalSecretResolver<'a> {
+    inner: &'a dyn SshCommandSecretResolver,
+    sessions: Vec<SavedSession>,
+}
+
+impl SshCommandSecretResolver for TerminalSecretResolver<'_> {
+    fn secret_for(&self, credential_ref: &str) -> AppResult<String> {
+        self.inner.secret_for(credential_ref)
+    }
+
+    fn saved_ssh_sessions(&self) -> &[SavedSession] {
+        &self.sessions
+    }
+}
+
+#[tauri::command]
+pub fn terminal_zmodem_diagnostic(
+    app: AppHandle,
+    runtime_session_id: String,
+    stage: String,
+    header: String,
+) -> AppResult<()> {
+    let diagnostics = crate::services::zmodem_diagnostics::valid_frontend_record(&stage, &header);
+    if !diagnostics || uuid::Uuid::parse_str(&runtime_session_id).is_err() {
+        return Err(AppError::validation("invalid ZMODEM diagnostic record"));
+    }
+    crate::services::zmodem_diagnostics::record_session(&app, &runtime_session_id, &stage, &header);
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AuthPromptSecret {
@@ -143,6 +174,14 @@ pub fn terminal_open(
             let secrets = state
                 .external_launch_service()
                 .composite_secret_resolver(state.credential_service());
+            let secrets = TerminalSecretResolver {
+                inner: &secrets,
+                sessions: if is_external {
+                    Vec::new()
+                } else {
+                    list_sessions(storage.as_ref())?.sessions
+                },
+            };
             let opened = manager.open_ssh_session_with_resolver(
                 &session,
                 pane_id,
@@ -151,6 +190,7 @@ pub fn terminal_open(
                 &secrets,
                 !is_external,
             )?;
+            auth_secrets.clear(); // Native SSH handles each hop authentication directly.
             if let Some(secret) = opened.auth_secret {
                 auth_secrets.push(AuthPromptSecret::new(ssh_prompt_target(&session), secret));
             }
@@ -219,6 +259,14 @@ pub fn terminal_open_ssh_container(
     let secrets = state
         .external_launch_service()
         .composite_secret_resolver(state.credential_service());
+    let secrets = TerminalSecretResolver {
+        inner: &secrets,
+        sessions: if is_external {
+            Vec::new()
+        } else {
+            list_sessions(storage.as_ref())?.sessions
+        },
+    };
     let opened = manager.open_ssh_container_session_with_resolver(
         &session,
         pane_id,
@@ -229,6 +277,7 @@ pub fn terminal_open_ssh_container(
         &secrets,
         !is_external,
     )?;
+    auth_secrets.clear(); // Do not inject saved passwords into an MFA prompt.
     if let Some(secret) = opened.auth_secret {
         auth_secrets.push(AuthPromptSecret::new(ssh_prompt_target(&session), secret));
     }
@@ -339,11 +388,28 @@ fn local_options_with_working_directory(
 
 #[tauri::command]
 pub fn terminal_write(
+    app: AppHandle,
     state: State<'_, AppState>,
     runtime_session_id: String,
     data: String,
 ) -> AppResult<TerminalAccepted> {
+    if data == "\x03" {
+        crate::services::zmodem_diagnostics::record_session(
+            &app,
+            &runtime_session_id,
+            "backend-ctrl-c",
+            "received",
+        );
+    }
     let accepted = state.terminal_manager().write(&runtime_session_id, &data)?;
+    if data == "\x03" {
+        crate::services::zmodem_diagnostics::record_session(
+            &app,
+            &runtime_session_id,
+            "backend-ctrl-c",
+            "accepted",
+        );
+    }
     state
         .command_history_service()
         .capture_input(&runtime_session_id, &data)?;
@@ -586,6 +652,26 @@ pub(crate) fn spawn_terminal_reader(
 
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
+        let diagnose = crate::services::zmodem_diagnostics::enabled();
+        let mut raw_body = crate::services::zmodem_diagnostics::HexBodyObserver::default();
+        let mut dispatch_body = crate::services::zmodem_diagnostics::HexBodyObserver::default();
+        let mut read_count = 0u64;
+        let mut raw_observer = crate::services::zmodem_diagnostics::StartupObserver::default();
+        let mut dispatch_observer = crate::services::zmodem_diagnostics::StartupObserver::default();
+        if diagnose {
+            crate::services::zmodem_diagnostics::record_session(
+                &app,
+                &runtime_session_id,
+                "reader-ready",
+                "",
+            );
+            crate::services::zmodem_diagnostics::record_session(
+                &app,
+                &runtime_session_id,
+                "transport",
+                manager.diagnostic_transport(&runtime_session_id),
+            );
+        }
         let mut used_auth_secrets = vec![false; auth_secrets.len()];
         let mut output_stop_message = None;
         loop {
@@ -599,6 +685,33 @@ pub(crate) fn spawn_terminal_reader(
                         break;
                     }
                     let raw_data = String::from_utf8_lossy(&buffer[..read]).to_string();
+                    if diagnose {
+                        read_count += 1;
+                        if matches!(read_count, 1 | 4 | 16 | 64 | 256) {
+                            crate::services::zmodem_diagnostics::record_session(
+                                &app,
+                                &runtime_session_id,
+                                "reader-pulse",
+                                &format!("chunk={read_count} length={read}"),
+                            );
+                        }
+                        for header in raw_body.consume(&buffer[..read]) {
+                            crate::services::zmodem_diagnostics::record_session(
+                                &app,
+                                &runtime_session_id,
+                                "reader-body",
+                                &header,
+                            );
+                        }
+                        for header in raw_observer.consume(&buffer[..read]) {
+                            crate::services::zmodem_diagnostics::record_session(
+                                &app,
+                                &runtime_session_id,
+                                "reader-input",
+                                &header,
+                            );
+                        }
+                    }
                     if let Some(secret) = select_auth_secret_for_prompt(
                         &raw_data,
                         &auth_secrets,
@@ -627,6 +740,24 @@ pub(crate) fn spawn_terminal_reader(
                         } else {
                             visible_data.as_bytes().to_vec()
                         };
+                        if diagnose {
+                            for header in dispatch_body.consume(&raw_bytes) {
+                                crate::services::zmodem_diagnostics::record_session(
+                                    &app,
+                                    &runtime_session_id,
+                                    "dispatch-body",
+                                    &header,
+                                );
+                            }
+                            for header in dispatch_observer.consume(&raw_bytes) {
+                                crate::services::zmodem_diagnostics::record_session(
+                                    &app,
+                                    &runtime_session_id,
+                                    "dispatch-output",
+                                    &header,
+                                );
+                            }
+                        }
                         if !output_dispatcher.push(&runtime_session_id, visible_data, raw_bytes) {
                             output_stop_message =
                                 output_dispatcher.stop_reason(&runtime_session_id);

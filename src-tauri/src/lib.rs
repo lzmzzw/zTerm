@@ -126,6 +126,7 @@ pub fn run() {
             commands::terminal::terminal_write_bytes,
             commands::terminal::terminal_zmodem_read_files,
             commands::terminal::terminal_zmodem_save_file,
+            commands::terminal::terminal_zmodem_diagnostic,
             commands::terminal::terminal_resize,
             commands::terminal::terminal_close,
             commands::terminal_output_flow::terminal_output_flow_open,
@@ -313,7 +314,7 @@ mod tests {
     #[test]
     fn crate_metadata_matches_project() {
         assert_eq!(env!("CARGO_PKG_NAME"), "zterm");
-        assert_eq!(env!("CARGO_PKG_VERSION"), "0.4.8");
+        assert_eq!(env!("CARGO_PKG_VERSION"), "0.4.9");
     }
 
     #[test]

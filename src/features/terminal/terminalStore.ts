@@ -1,5 +1,6 @@
 // Author: Liz
 import { create } from "zustand";
+import { reportZmodemDiagnostic } from "./zmodemDiagnostics";
 import type { HistoryScopeKind } from "../history/types";
 
 import { invokeTauri, invokeTypedTauri, listenTauri, type UnlistenFn } from "../../lib/tauriClient";
@@ -246,12 +247,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return runtime;
   },
   async writeTerminal(runtimeSessionId, data) {
+    if (data === "\x03") reportZmodemDiagnostic("frontend-ctrl-c", "", runtimeSessionId);
     const resources = terminalRuntimeResources.acquire(runtimeSessionId);
     await invokeTypedTauri("terminal_write", { runtimeSessionId, data });
     if (!terminalRuntimeResources.isCurrent(runtimeSessionId, resources)) return;
     const tracked = trackTerminalInput(resources.commandInput, data);
     resources.commandInput = tracked.buffer;
     for (const command of tracked.submittedCommands) {
+      if (command.trim() === "rz") reportZmodemDiagnostic("frontend-rz", "", runtimeSessionId);
       const parsedCd = parseSimpleCdTarget(command);
       if (parsedCd) queueRuntimeCwdResolution(runtimeSessionId, parsedCd.target, resources, get);
     }

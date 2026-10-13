@@ -637,6 +637,14 @@ impl TerminalManager {
             })
     }
 
+    pub fn diagnostic_transport(&self, runtime_session_id: &str) -> &'static str {
+        match self.runtime_session(runtime_session_id).as_deref() {
+            Ok(RuntimeSession::NativeSsh(_)) => "native-ssh",
+            Ok(RuntimeSession::Pty(_)) => "pty",
+            _ => "other",
+        }
+    }
+
     pub fn runtime_count(&self) -> usize {
         self.sessions
             .lock()
