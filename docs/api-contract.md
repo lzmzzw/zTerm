@@ -40,7 +40,7 @@
 | `agent_codex_open` | `{ tabId, targetRuntimeSessionId, targetSavedSessionId?, targetLabel }` | `AgentCodexSession` | 按目标普通 SSH 的 `saved_session_id` 复用或启动唯一的本机 Codex CLI PTY（无标识或容器终端按 runtime 隔离）；`tabId` 仅保留参数兼容，不作为会话身份，注入 Visible Terminal Profile 的会话级 MCP 身份，并显式设置 `TERM=xterm-256color`、`COLORTERM=truecolor` 与 `TERM_PROGRAM=zTerm`，避免继承宿主的 `TERM=dumb` 导致交互式 TUI 降级；初始绑定目标可省略 runtime 参数；初始普通 SSH runtime 关闭后仅回退到相同连接的普通 SSH runtime，无可用目标时返回错误，容器目标不回退；显式指定 runtime 时按该目标校验，不自动替换。不会覆盖 Codex CLI 模型配置；会话启动时禁用用户配置中除 scoped `zterm` 外的 MCP，并将 scoped zTerm 工具设为客户端直接批准，由 zTerm 连接策略承担唯一最终审批 |
 | `agent_set_active_terminal` | `{ runtimeSessionId: string \| null }` | `null` | 主窗口同步活动 SSH/SSH Container runtime 的内存观测值；无活动 SSH 时清空；无效 ID 先清空再报错。不改变 Agent 绑定、待审批参数或执行目标 |
 | `agent_codex_unbind` | `{ agentSessionId }` | `null` | 兼容清理接口；活动共享会话拒绝单独解绑，须调用 `agent_codex_close` 一并关闭 PTY 与撤销绑定 |
-| `agent_codex_close` | `{ agentSessionId, runtimeSessionId }` | `null` | 校验 Agent 与 PTY 配对后关闭共享会话并撤销绑定；前端仅在最后一个关联标签关闭或用户关闭/重启 Agent 时调用 |
+| `agent_codex_close` | `{ agentSessionId, runtimeSessionId }` | `null` | 校验 Agent 与 PTY 配对后关闭共享会话并撤销绑定；前端仅在最后一个关联标签关闭或用户关闭/重启 Agent 时调用。临时目录出现 Windows sharing/lock violation（32/33）时后台每 100ms 重试，最多 5 秒，不阻塞关闭；超时保留目录至下次启动清理并记录诊断。路径校验及其他清理错误仍返回错误 |
 
 `AppSettings.workspace_restore_strategy` 支持 `visible_first`、`connect_all`、`layout_only`，旧设置 JSON 缺字段时默认 `visible_first`。`visible_first` 先显示布局，再优先恢复当前可见 pane/tab；`connect_all` 显示布局后尽快低并发连接全部标签；`layout_only` 只恢复布局和 queued 状态，不自动打开终端。`settings_get` 和 `settings_reset` 返回的 `AppSettings.shortcuts` 会合并当前 `shortcut_registry_list` 中缺失的动作，调用方应以返回值作为 UI 展示和后续保存的有效配置。
 

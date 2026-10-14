@@ -286,10 +286,10 @@ pub async fn agent_codex_close(
     state
         .mcp_service()
         .unregister_agent_binding(&agent_session_id)?;
-    remove_agent_session_directory(&agent_session_root(&agent_session_id)?)?;
     if let Some(slot) = shared_session.as_mut() {
         **slot = None;
     }
+    remove_agent_session_directory(&agent_session_root(&agent_session_id)?)?;
     Ok(())
 }
 
@@ -485,30 +485,68 @@ fn remove_agent_session_directory(path: &Path) -> AppResult<()> {
     let expected_root = AppPaths::default_for_install()?
         .data_dir()
         .join("agent-sessions");
+    remove_agent_session_directory_under_root(path, &expected_root)
+}
+
+fn remove_agent_session_directory_under_root(path: &Path, expected_root: &Path) -> AppResult<()> {
+    if try_remove_agent_session_directory(path, expected_root)? {
+        return Ok(());
+    }
+    // ConPTY/cmd/Codex may still be releasing cwd or file handles after close.
+    // Directory housekeeping must not keep a closed session bound or fail its UI close.
+    let path = path.to_path_buf();
+    let expected_root = expected_root.to_path_buf();
+    std::thread::Builder::new()
+        .name("agent-session-cleanup".to_string())
+        .spawn(move || {
+            for _ in 0..50 {
+                std::thread::sleep(Duration::from_millis(100));
+                match try_remove_agent_session_directory(&path, &expected_root) {
+                    Ok(true) => return,
+                    Ok(false) => {}
+                    Err(error) => {
+                        eprintln!("Agent 会话目录后台清理失败: {error}");
+                        return;
+                    }
+                }
+            }
+            eprintln!("Agent 会话目录仍被占用，保留至下次启动清理");
+        })
+        .map_err(|error| AppError::storage(format!("无法启动 Agent 会话目录清理: {error}")))?;
+    Ok(())
+}
+
+// false means only a Windows sharing/lock violation; all other failures propagate.
+fn try_remove_agent_session_directory(path: &Path, expected_root: &Path) -> AppResult<bool> {
     let name = path
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| AppError::validation("Agent 会话目录名称无效"))?;
     required_agent_session_id(name)?;
-    if path.parent() != Some(expected_root.as_path()) {
+    if path.parent() != Some(expected_root) {
         return Err(AppError::validation("Agent 会话目录超出允许范围"));
     }
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
         Err(error) => return Err(error.into()),
     };
     if metadata.file_type().is_symlink() {
         return Err(AppError::validation("Agent 会话目录不能是符号链接"));
     }
-    let canonical_root = fs::canonicalize(&expected_root)?;
-    let canonical_path = fs::canonicalize(path)?;
+    let canonical_root = fs::canonicalize(expected_root)?;
+    let canonical_path = match fs::canonicalize(path) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(error.into()),
+    };
     if !canonical_path.starts_with(&canonical_root) || canonical_path == canonical_root {
         return Err(AppError::validation("Agent 会话目录超出允许范围"));
     }
     match fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) if cfg!(windows) && matches!(error.raw_os_error(), Some(32 | 33)) => Ok(false),
         Err(error) => Err(AppError::storage(format!(
             "清理 Agent 会话目录失败: {error}"
         ))),
@@ -552,6 +590,115 @@ mod tests {
         sidebar_instructions,
     };
     use crate::models::ai::AiApprovalMode;
+
+    #[cfg(windows)]
+    #[test]
+    fn agent_cleanup_defers_locked_files_and_removes_them_after_release() {
+        use std::{
+            fs,
+            fs::OpenOptions,
+            os::windows::fs::OpenOptionsExt,
+            thread,
+            time::{Duration, Instant},
+        };
+
+        let root = std::env::temp_dir().join(format!("zterm-cleanup-{}", uuid::Uuid::new_v4()));
+        let path = root.join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir_all(&path).unwrap();
+        let file = path.join("AGENTS.md");
+        fs::write(&file, "test instructions").unwrap();
+        let lock = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&file)
+            .unwrap();
+        let started = Instant::now();
+        super::remove_agent_session_directory_under_root(&path, &root)
+            .expect("a sharing violation must not fail session close");
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(
+            path.exists(),
+            "the locked directory should remain pending cleanup"
+        );
+        drop(lock);
+        let deadline = Instant::now() + Duration::from_secs(7);
+        while path.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            !path.exists(),
+            "cleanup should complete after the lock is released"
+        );
+        // Repeated cleanup (exit callback plus explicit close) is idempotent.
+        super::remove_agent_session_directory_under_root(&path, &root).unwrap();
+        fs::remove_dir(&root).unwrap();
+    }
+
+    #[test]
+    fn agent_cleanup_rejects_out_of_scope_paths_without_deleting_them() {
+        let root = std::env::temp_dir().join(format!("zterm-cleanup-{}", uuid::Uuid::new_v4()));
+        let path = root.join("not-a-session");
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(super::remove_agent_session_directory_under_root(&path, &root).is_err());
+        assert!(path.exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn agent_cleanup_after_real_conpty_close_releases_session_directory() {
+        use crate::services::terminal_manager::{AgentCodexPtyOptions, TerminalManager};
+        use std::{
+            io::Read,
+            sync::mpsc,
+            thread,
+            time::{Duration, Instant},
+        };
+
+        let root =
+            std::env::temp_dir().join(format!("zterm-conpty-cleanup-{}", uuid::Uuid::new_v4()));
+        let path = root.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&path).unwrap();
+        let manager = TerminalManager::default();
+        let opened = manager
+            .open_agent_codex_session(AgentCodexPtyOptions {
+                command_path: "cmd.exe".to_string(),
+                args: vec![
+                    "/D".to_string(),
+                    "/S".to_string(),
+                    "/C".to_string(),
+                    "echo ready & ping -n 30 127.0.0.1 >nul".to_string(),
+                ],
+                cwd: path.clone(),
+                environment: vec![],
+                pane_id: "agent:cleanup-test".to_string(),
+                title: "cleanup-test".to_string(),
+                cols: 80,
+                rows: 30,
+            })
+            .unwrap();
+        let runtime = opened.info.runtime_session_id;
+        let (send, receive) = mpsc::channel();
+        let mut reader = opened.reader;
+        thread::spawn(move || {
+            let mut bytes = [0; 8192];
+            if reader.read(&mut bytes).is_ok() {
+                let _ = send.send(());
+            }
+            while matches!(reader.read(&mut bytes), Ok(n) if n > 0) {}
+        });
+        let ready = receive.recv_timeout(Duration::from_secs(5));
+        manager.close(&runtime).unwrap();
+        assert!(ready.is_ok(), "the real PTY should produce startup output");
+        assert_eq!(manager.runtime_count(), 0);
+        super::remove_agent_session_directory_under_root(&path, &root).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(7);
+        while path.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!path.exists(), "ConPTY close must allow session cleanup");
+        std::fs::remove_dir(&root).unwrap();
+    }
 
     #[test]
     fn sidebar_instructions_force_page_terminal_transport() {
