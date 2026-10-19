@@ -329,6 +329,36 @@ describe("FileTransferPanel", () => {
     view.unmount();
   });
 
+  it.each(["重命名", "删除"])("dismisses a pending %s operation when its pane changes connection", async (action) => {
+    const localFile = fileEntry("C:/Users/Ops/bundle.zip");
+    invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
+      if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
+      if (command === "file_transfer_default_local_path") return Promise.resolve("C:/Users/Ops");
+      if (command === "file_transfer_list") return Promise.resolve([]);
+      if (command === "file_transfer_list_endpoint") {
+        return Promise.resolve((args?.endpoint as { kind: string }).kind === "local" ? [localFile] : []);
+      }
+      throw new Error(`unexpected invoke: ${command}`);
+    });
+    const view = render(<FileTransferPanel />);
+    await flushEffects();
+    await flushEffects();
+    const row = view.container.querySelector('button[role="listitem"]') as HTMLButtonElement;
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    await click(button(document.body, action));
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+
+    act(() => {
+      useFileTransferStore.getState().setEndpoint("left", { kind: "saved_session", saved_session_id: "ssh-1", path: "/" });
+    });
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(invokeMock.mock.calls.some(([command]) => command === "file_transfer_rename_endpoint" || command === "file_transfer_delete_endpoint")).toBe(false);
+    view.unmount();
+  });
+
   it("renames and deletes a local endpoint entry from its context menu", async () => {
     const localFile = fileEntry("C:/Users/Ops/bundle.zip");
     invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {

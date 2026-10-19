@@ -99,6 +99,7 @@ let localPathRequest: Promise<string> | null = null;
 let leftRequestId = 0;
 let rightRequestId = 0;
 let transferListRequestId = 0;
+let prepareSessionRequestId = 0;
 const deletedTransferIds = new Set<string>();
 
 const initialLeft: FileTransferPaneState = {
@@ -155,17 +156,15 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     }
   },
   async restoreViewState() {
+    const leftEndpoint = get().left.endpoint;
+    const rightEndpoint = get().right.endpoint;
     try {
       const viewState = await invokeTauri<FileTransferViewState | null>("file_transfer_view_state_get");
       if (viewState) {
-        set({
-          left: paneStateForEndpoint(viewState.left),
-          right: paneStateForEndpoint(viewState.right),
-          viewStateInitialized: true,
-        });
-      } else {
-        set({ viewStateInitialized: true });
+        if (get().left.endpoint === leftEndpoint) get().setEndpoint("left", viewState.left);
+        if (get().right.endpoint === rightEndpoint) get().setEndpoint("right", viewState.right);
       }
+      set({ viewStateInitialized: true });
       return viewState;
     } catch (error) {
       set({ viewStateInitialized: true, transferError: fileTransferErrorMessage(error), transferErrorSessionId: null });
@@ -184,6 +183,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
   },
   setConflictPolicy: (policy) => set({ conflictPolicy: policy }),
   setEndpoint(side, endpoint) {
+    nextPaneRequestId(side);
     const previousEndpoint = get()[side].endpoint;
     const errorSessionId = get().transferErrorSessionId;
     updatePane(set, side, {
@@ -191,6 +191,7 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
       entries: [],
       selectedPaths: [],
       selectionAnchorPath: null,
+      loading: false,
       error: null,
     });
     if (
@@ -203,11 +204,13 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     }
   },
   setPath(side, path) {
-    updatePane(set, side, (pane) => ({ endpoint: { ...pane.endpoint, path } }));
+    get().setEndpoint(side, { ...get()[side].endpoint, path });
   },
   async prepareForSession(savedSessionId, remotePath = "/") {
+    const requestId = ++prepareSessionRequestId;
     set({ viewStateInitialized: true });
     const defaultLocalPath = get().defaultLocalPath || (await get().loadDefaultLocalPath());
+    if (requestId !== prepareSessionRequestId) return;
     get().setEndpoint("left", { kind: "local", saved_session_id: null, path: defaultLocalPath });
     get().setEndpoint("right", { kind: "saved_session", saved_session_id: savedSessionId, path: remotePath || "/" });
     await Promise.all([get().loadEndpoint("left"), get().loadEndpoint("right")]);
@@ -256,12 +259,15 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     }
   },
   async renameEndpoint(side, from, to) {
-    const endpoint = { ...get()[side].endpoint, path: from };
+    const paneEndpoint = get()[side].endpoint;
+    const endpoint = { ...paneEndpoint, path: from };
     try {
       await invokeTauri("file_transfer_rename_endpoint", { endpoint, to });
-      await get().loadEndpoint(side);
+      if (get()[side].endpoint === paneEndpoint) await get().loadEndpoint(side);
     } catch (error) {
-      updatePane(set, side, { error: fileTransferErrorMessage(error) });
+      if (get()[side].endpoint === paneEndpoint) {
+        updatePane(set, side, { error: fileTransferErrorMessage(error) });
+      }
     }
   },
   async deleteEndpoint(side, paths, recursive) {
@@ -277,8 +283,11 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     } catch (error) {
       operationError = error;
     }
+    if (get()[side].endpoint !== paneEndpoint) return;
     await get().loadEndpoint(side);
-    if (operationError) updatePane(set, side, { error: fileTransferErrorMessage(operationError) });
+    if (operationError && get()[side].endpoint === paneEndpoint) {
+      updatePane(set, side, { error: fileTransferErrorMessage(operationError) });
+    }
   },
   checkConflicts(items) {
     return invokeTauri<TransferEndpointConflict[]>("file_transfer_check_conflicts", { items });
@@ -352,8 +361,9 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
     }
   },
   async bindTransferEvents() {
+    let progress: UnlistenFn | undefined;
     try {
-      const progress = await listenTauri<TransferTask>("transfer:progress", (event) => {
+      progress = await listenTauri<TransferTask>("transfer:progress", (event) => {
         upsertTransfer(set, event.payload);
       });
       const done = await listenTauri<TransferDoneEvent>("transfer:done", (event) => {
@@ -366,10 +376,11 @@ export const useFileTransferStore = create<FileTransferState>((set, get) => ({
         }
       });
       return () => {
-        progress();
+        progress?.();
         done();
       };
     } catch (error) {
+      progress?.();
       set({ transferError: fileTransferErrorMessage(error), transferErrorSessionId: null });
       return () => {};
     }
@@ -390,17 +401,6 @@ function updatePane(
     const next = typeof update === "function" ? update(pane) : update;
     return { [side]: { ...pane, ...next } };
   });
-}
-
-function paneStateForEndpoint(endpoint: TransferEndpoint): FileTransferPaneState {
-  return {
-    endpoint,
-    entries: [],
-    selectedPaths: [],
-    selectionAnchorPath: null,
-    loading: false,
-    error: null,
-  };
 }
 
 function isPersistableEndpoint(endpoint: TransferEndpoint) {

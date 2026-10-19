@@ -178,6 +178,44 @@ describe("terminalActions", () => {
     expect(deps.openTerminal).toHaveBeenCalledWith("external:launch-1", "pane-1");
   });
 
+  it("reconnects an inactive pane using its own container rather than the active pane's target", async () => {
+    const activePaneTab = paneTab({
+      connection_source: "ssh_container", container_target: { id: "active-container", name: "Active" },
+    });
+    const deps = dependencies({ activePaneTab });
+    deps.activeTab.root = {
+      kind: "split", id: "split-1", direction: "horizontal", ratio: 0.5,
+      first: deps.activeTab.root,
+      second: {
+        kind: "leaf", id: "pane-2", title: "Target", runtime_session_id: null, saved_session_id: "session-2",
+        active_terminal_tab_id: "pane-tab-2",
+        terminal_tabs: [paneTab({
+          id: "pane-tab-2", saved_session_id: "session-2", connection_source: "ssh_container",
+          container_target: { id: "target-container", name: "Target" },
+        })],
+      },
+    };
+
+    await createTerminalActions(deps).reconnectTerminal("pane-2", "pane-tab-2", "session-2", null);
+
+    expect(deps.openSshContainerTerminal).toHaveBeenCalledWith("session-2", "pane-2", "target-container", "Target");
+    expect(deps.openTerminal).not.toHaveBeenCalled();
+  });
+
+  it("reconnects a host tab without inheriting the active container connection", async () => {
+    const deps = dependencies({
+      activePaneTab: paneTab({
+        id: "other-tab", connection_source: "ssh_container", container_target: { id: "active-container" },
+      }),
+    });
+    if (deps.activeTab.root.kind === "leaf") deps.activeTab.root.terminal_tabs!.push(paneTab());
+
+    await createTerminalActions(deps).reconnectTerminal("pane-1", "pane-tab-1", "session-1", null);
+
+    expect(deps.openSshContainerTerminal).not.toHaveBeenCalled();
+    expect(deps.openTerminal).toHaveBeenCalledWith("session-1", "pane-1");
+  });
+
   it("sends trimmed commands to the active runtime", async () => {
     const deps = dependencies({ activeRuntimeSessionId: "runtime-active" });
     const actions = createTerminalActions(deps);
@@ -240,7 +278,7 @@ function dependencies({
     workbenchId: "live-workbench",
     workbenchTabId: "tab-1",
     activePaneTab,
-    activeTab: terminalLayoutTab(),
+    activeTab: terminalLayoutTab(activePaneTab ?? paneTab()),
     setTerminalError: vi.fn(),
     addPaneTab: vi.fn(() => addedPaneTab),
     bindRuntimeToPaneTab: vi.fn(),
@@ -254,7 +292,7 @@ function dependencies({
   };
 }
 
-function terminalLayoutTab(): TerminalLayoutTab {
+function terminalLayoutTab(activePaneTab: PaneTerminalTab): TerminalLayoutTab {
   return {
     id: "tab-1",
     title: "连接组",
@@ -266,7 +304,7 @@ function terminalLayoutTab(): TerminalLayoutTab {
       saved_session_id: null,
       title: "终端",
       active_terminal_tab_id: "pane-tab-1",
-      terminal_tabs: [paneTab()],
+      terminal_tabs: [activePaneTab],
     },
     sort_order: 0,
     created_at_ms: 1,

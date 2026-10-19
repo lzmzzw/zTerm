@@ -3,6 +3,7 @@ import type { RuntimeSessionInfo } from "../features/terminal/terminalStore";
 import type { PaneTerminalTab, TerminalLayoutTab } from "../features/terminal-layout/types";
 import type { SavedSession } from "../features/sessions/types";
 import { isReusableConnectionTab } from "../features/terminal-layout/terminalLayoutShellModel";
+import { findPane, getLeafTerminalTabs } from "../features/terminal-layout/terminalLayoutLayout";
 import { fallbackOnlyErrorMessage } from "../lib/unknownErrorMessage";
 
 interface TerminalActionDependencies {
@@ -101,6 +102,11 @@ export function createTerminalActions({
     runtimeSessionId: string | null,
   ) {
     if (!workbenchTabId) return;
+    const targetPane = activeTab ? findPane(activeTab.root, paneId) : null;
+    const targetPaneTab = targetPane?.kind === "leaf"
+      ? getLeafTerminalTabs(targetPane).find((tab) => tab.id === paneTabId)
+      : null;
+    if (!targetPaneTab) return;
     setTerminalError(null);
     try {
       if (runtimeSessionId) {
@@ -113,12 +119,12 @@ export function createTerminalActions({
       });
       if (!hasPaneTerminalTab(workbenchId, workbenchTabId, paneId, paneTabId)) return;
       const runtime =
-        activePaneTab?.connection_source === "ssh_container" && activePaneTab.container_target?.id
+        targetPaneTab.connection_source === "ssh_container" && targetPaneTab.container_target?.id
           ? await openSshContainerTerminal(
               savedSessionId,
               paneId,
-              activePaneTab.container_target.id,
-              activePaneTab.container_target.name ?? null,
+              targetPaneTab.container_target.id,
+              targetPaneTab.container_target.name ?? null,
             )
           : await openTerminal(savedSessionId, paneId);
       if (!hasPaneTerminalTab(workbenchId, workbenchTabId, paneId, paneTabId)) {

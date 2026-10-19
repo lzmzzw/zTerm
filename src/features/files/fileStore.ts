@@ -77,7 +77,10 @@ export const useFileStore = create<FileState>((set, get) => ({
   loading: false,
   transferLoading: false,
   error: null,
-  setPath: (path) => set({ path }),
+  setPath(path) {
+    listFilesRequestId += 1;
+    set({ path, entries: [], selectedPaths: [], selectionAnchorPath: null, loading: false, error: null });
+  },
   selectPath: (path, event, orderedEntries) => {
     if (!path) {
       set({ selectedPaths: [], selectionAnchorPath: null });
@@ -96,6 +99,8 @@ export const useFileStore = create<FileState>((set, get) => ({
       entries: [],
       activeSavedSessionId: null,
       transferSessionId: null,
+      transfers: [],
+      transferLoading: false,
       path: "/",
       selectedPaths: [],
       selectionAnchorPath: null,
@@ -107,7 +112,15 @@ export const useFileStore = create<FileState>((set, get) => ({
     if (!savedSessionId) return;
     const requestId = listFilesRequestId + 1;
     listFilesRequestId = requestId;
-    set({ activeSavedSessionId: savedSessionId, loading: true, error: null, path });
+    set({
+      activeSavedSessionId: savedSessionId,
+      loading: true,
+      error: null,
+      path,
+      entries: [],
+      selectedPaths: [],
+      selectionAnchorPath: null,
+    });
     try {
       const entries = await invokeTauri<FileEntry[]>("sftp_list", { savedSessionId, path });
       if (listFilesRequestId === requestId) {
@@ -120,8 +133,9 @@ export const useFileStore = create<FileState>((set, get) => ({
     }
   },
   async mkdir(savedSessionId, path) {
+    const currentPath = get().path;
     await invokeTauri("sftp_mkdir", { savedSessionId, path });
-    await get().listFiles(savedSessionId);
+    if (isActiveDirectory(get(), savedSessionId, currentPath)) await get().listFiles(savedSessionId, currentPath);
   },
   async upload(savedSessionId, localPath, remotePath, options = {}) {
     const task = await invokeTauri<TransferTask>("sftp_upload", {
@@ -148,12 +162,14 @@ export const useFileStore = create<FileState>((set, get) => ({
     upsertTransfer(set, task);
   },
   async deletePath(savedSessionId, path, recursive) {
+    const currentPath = get().path;
     await invokeTauri("sftp_delete", { savedSessionId, path, recursive });
-    await get().listFiles(savedSessionId);
+    if (isActiveDirectory(get(), savedSessionId, currentPath)) await get().listFiles(savedSessionId, currentPath);
   },
   async renamePath(savedSessionId, from, to) {
+    const currentPath = get().path;
     await invokeTauri("sftp_rename", { savedSessionId, from, to });
-    await get().listFiles(savedSessionId);
+    if (isActiveDirectory(get(), savedSessionId, currentPath)) await get().listFiles(savedSessionId, currentPath);
   },
   async classifyLocalPaths(paths) {
     return invokeTauri<LocalPathInfo[]>("sftp_classify_local_paths", { paths });
@@ -168,7 +184,11 @@ export const useFileStore = create<FileState>((set, get) => ({
       set({ transfers: [], transferLoading: false, transferSessionId: null });
       return;
     }
-    set({ transferLoading: true, transferSessionId: savedSessionId });
+    set({
+      transferLoading: true,
+      transferSessionId: savedSessionId,
+      transfers: get().transferSessionId === savedSessionId ? get().transfers : [],
+    });
     try {
       const transfers = await invokeTauri<TransferTask[]>("transfer_list", { savedSessionId, limit: 1000 });
       if (transferListRequestId !== requestId) {
@@ -213,19 +233,27 @@ export const useFileStore = create<FileState>((set, get) => ({
     const progress = await listenTauri<TransferTask>("transfer:progress", (event) => {
       upsertTransfer(set, event.payload);
     });
-    const done = await listenTauri<TransferDoneEvent>("transfer:done", (event) => {
-      const task = event.payload.task;
-      if (task) {
-        upsertTransfer(set, task);
-        if (task.direction === "upload" && task.status === "done") {
-          const state = get();
-          if (state.activeSavedSessionId === task.saved_session_id) {
-            void state.listFiles(task.saved_session_id, state.path);
+    let done: UnlistenFn;
+    try {
+      done = await listenTauri<TransferDoneEvent>("transfer:done", (event) => {
+        const task = event.payload.task;
+        if (task) {
+          upsertTransfer(set, task);
+          if (task.direction === "upload" && task.status === "done") {
+            const state = get();
+            if (state.activeSavedSessionId === task.saved_session_id) {
+              void state.listFiles(task.saved_session_id, state.path);
+            }
           }
         }
-      }
-      if (event.payload.error) set({ error: event.payload.error });
-    });
+        if (event.payload.error && (!task || task.saved_session_id === get().activeSavedSessionId)) {
+          set({ error: event.payload.error });
+        }
+      });
+    } catch (error) {
+      progress();
+      throw error;
+    }
     return () => {
       progress();
       done();
@@ -234,6 +262,10 @@ export const useFileStore = create<FileState>((set, get) => ({
 }));
 
 type FileStoreSet = (partial: Partial<FileState> | ((state: FileState) => Partial<FileState>)) => void;
+
+function isActiveDirectory(state: FileState, savedSessionId: string, path: string) {
+  return state.activeSavedSessionId === savedSessionId && state.path === path;
+}
 
 function upsertTransfer(set: FileStoreSet, task: TransferTask) {
   if (deletedTransferIds.has(task.id)) {

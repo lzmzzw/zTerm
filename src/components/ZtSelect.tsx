@@ -160,6 +160,9 @@ export function ZtSelect({
 
   function handleKeyboard(event: KeyboardEvent<HTMLElement>) {
     if (disabled) return;
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    // 搜索框中的空格属于查询内容，不应提交当前选项。
+    if (event.key === " " && event.currentTarget === searchRef.current) return;
     if (event.key === "Tab") return;
     if (event.key === "Escape") {
       if (open) {

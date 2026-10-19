@@ -94,6 +94,65 @@ describe("fileStore", () => {
     expect(useFileStore.getState().loading).toBe(false);
   });
 
+  it("ignores an in-flight SFTP result after editing the directory path", async () => {
+    const pending = deferred<FileEntry[]>();
+    invokeMock.mockReturnValueOnce(pending.promise);
+    const loading = useFileStore.getState().listFiles("session-1", "/old");
+    useFileStore.getState().setPath("/new");
+    pending.resolve([entry("/old/stale.txt")]);
+    await loading;
+
+    expect(useFileStore.getState()).toMatchObject({ path: "/new", entries: [], loading: false });
+  });
+
+  it.each(["mkdir", "deletePath", "renamePath"] as const)("does not switch back to an old session after %s completes", async (action) => {
+    const store = useFileStore.getState();
+    invokeMock.mockResolvedValueOnce([entry("/old/a")]);
+    await store.listFiles("old", "/old");
+    const pending = deferred<void>();
+    invokeMock.mockReturnValueOnce(pending.promise).mockResolvedValueOnce([entry("/new/b")]);
+    const operation = action === "mkdir" ? store.mkdir("old", "/old/dir")
+      : action === "deletePath" ? store.deletePath("old", "/old/a", false)
+      : store.renamePath("old", "/old/a", "/old/renamed");
+    await store.listFiles("new", "/new");
+    pending.resolve();
+    await operation;
+
+    expect(invokeMock).toHaveBeenCalledTimes(3);
+    expect(useFileStore.getState()).toMatchObject({ activeSavedSessionId: "new", path: "/new", entries: [entry("/new/b")] });
+  });
+
+  it("clears transfer loading and entries when leaving the session", async () => {
+    const pending = deferred<TransferTask[]>();
+    useFileStore.setState({ transfers: [transferTask()], transferSessionId: "session-1" });
+    invokeMock.mockReturnValueOnce(pending.promise);
+    const loading = useFileStore.getState().loadTransfers("session-1");
+    useFileStore.getState().clearFiles();
+    pending.resolve([transferTask()]);
+    await loading;
+
+    expect(useFileStore.getState()).toMatchObject({ transfers: [], transferLoading: false, transferSessionId: null });
+  });
+
+  it("cleans up the progress subscription if completion subscription registration fails", async () => {
+    const unlisten = vi.fn();
+    listenMock.mockResolvedValueOnce(unlisten).mockRejectedValueOnce(new Error("subscription failed"));
+
+    await expect(useFileStore.getState().bindTransferEvents()).rejects.toThrow("subscription failed");
+
+    expect(unlisten).toHaveBeenCalledOnce();
+  });
+
+  it("ignores completion errors belonging to another SSH session", async () => {
+    useFileStore.setState({ activeSavedSessionId: "current", transferSessionId: "current" });
+    await useFileStore.getState().bindTransferEvents();
+    const done = listenMock.mock.calls.find(([name]) => name === "transfer:done")?.[1];
+    done?.({ payload: { task_id: "old", task: transferTask({ saved_session_id: "old" }), error: "old failure" } });
+
+    expect(useFileStore.getState().error).toBeNull();
+    expect(useFileStore.getState().transfers).toEqual([]);
+  });
+
   it("keeps the latest transfer list result when an older SSH context request resolves later", async () => {
     const stale = deferred<TransferTask[]>();
     const currentTransfers = [transferTask({ id: "task-current", saved_session_id: "session-current" })];

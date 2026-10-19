@@ -66,6 +66,12 @@ export function FileExplorerPanel({
   );
   const disabled = !savedSessionId;
 
+  useEffect(() => {
+    setConfirmDeletePaths(null);
+    setContextMenu(null);
+    setDragActive(false);
+  }, [savedSessionId, path]);
+
   function requestDelete(entriesToDelete = selectedEntries) {
     if (entriesToDelete.length === 0) return;
     const paths = entriesToDelete.map((entry) => entry.path);

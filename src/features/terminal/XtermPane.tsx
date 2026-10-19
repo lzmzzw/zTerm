@@ -222,6 +222,9 @@ export function XtermPane({
   const syncGhostPosition = useCallback(() => {
     const element = ghostElementRef.current;
     if (!element) return;
+    // PSReadLine and other shells render their own inline predictions in the
+    // terminal buffer. Keep the fallback completion from painting over them.
+    element.hidden = hasTerminalTextAfterCursor(terminalRef.current);
     const position = resolveGhostPosition(
       terminalRef.current,
       containerRef.current,
@@ -324,12 +327,13 @@ export function XtermPane({
   }, [initialCwd, streamId]);
 
   useEffect(() => {
+    const requestId = (completionRequestIdRef.current += 1);
+    ghostCandidateRef.current = null;
+    setGhostCandidate(null);
     if (!onCompletionRequest || !lineInput.trim()) {
-      setGhostCandidate(null);
       return;
     }
 
-    const requestId = (completionRequestIdRef.current += 1);
     void onCompletionRequest(lineInput, countChars(lineInput), cwdRef.current)
       .then((candidates) => {
         if (completionRequestIdRef.current !== requestId) return;
@@ -341,6 +345,9 @@ export function XtermPane({
           setGhostCandidate(null);
         }
       });
+    return () => {
+      if (completionRequestIdRef.current === requestId) completionRequestIdRef.current += 1;
+    };
   }, [lineInput, onCompletionRequest]);
 
   useLayoutEffect(() => {
@@ -360,7 +367,7 @@ export function XtermPane({
         cwdResolveGenerationRef.current += 1;
       }
 
-      const candidate = ghostCandidateRef.current;
+      const candidate = hasTerminalTextAfterCursor(terminalRef.current) ? null : ghostCandidateRef.current;
       if (value === "\t" && candidate) {
         onInputRef.current?.(completionInputForCandidate(candidate, lineInputRef.current));
         lineInputRef.current = candidate.replacement_text;
@@ -380,6 +387,9 @@ export function XtermPane({
         return;
       }
 
+      completionRequestIdRef.current += 1;
+      ghostCandidateRef.current = null;
+      setGhostCandidate(null);
       onInputRef.current?.(value);
       const currentInput = lineInputRef.current;
       const submittedParts = value.split(/[\r\n]/);
@@ -402,6 +412,7 @@ export function XtermPane({
         }
       }
       const nextInput = applyTerminalInput(currentInput, value);
+      lineInputRef.current = nextInput;
       if (nextInput !== currentInput) {
         setLineInput(nextInput);
       } else if (value !== "\t") {
@@ -539,6 +550,7 @@ export function XtermPane({
       onResizeRef.current?.(size.cols, size.rows);
     };
     const cursorDisposable = terminal.onCursorMove(syncGhostPosition);
+    const ghostWriteDisposable = terminal.onWriteParsed(syncGhostPosition);
     const scrollDisposable = terminal.onScroll(() => {
       const buffer = terminal.buffer.active;
       viewportAtBottomRef.current = buffer.viewportY >= buffer.baseY;
@@ -569,6 +581,7 @@ export function XtermPane({
       window.removeEventListener("resize", fit);
       inputDisposable.dispose();
       cursorDisposable.dispose();
+      ghostWriteDisposable.dispose();
       scrollDisposable.dispose();
       resizeDisposable.dispose();
       cwdDisposable.dispose();
@@ -1008,6 +1021,17 @@ function resolveGhostPosition(
     ),
     top: Math.max(originTop, originTop + Math.min(rows - 1, cursorY) * rowHeight),
   };
+}
+
+function hasTerminalTextAfterCursor(terminal: Terminal | null) {
+  if (!terminal) return false;
+  const buffer = terminal.buffer.active;
+  const line = buffer.getLine(buffer.baseY + buffer.cursorY);
+  if (!line) return false;
+  for (let column = buffer.cursorX; column < Math.min(terminal.cols, line.length); column += 1) {
+    if (line.getCell(column)?.getChars().trim()) return true;
+  }
+  return false;
 }
 
 function normalizedCandidateForInput(candidates: CommandCompletionCandidate[], input: string) {

@@ -7,6 +7,11 @@ server monitoring, and Codex-assisted operations. It is designed for a dense,
 keyboard-friendly workstation layout: sessions on the left, split terminal
 panes in the center, and files/history/monitor/Codex tools on the right.
 
+The title bar contains sessions, file transfer, and settings on the left and
+Agent on the right. Connection-specific tools appear inside the active terminal
+pane. See the [development documentation](docs/README.md) for module ownership
+and verification commands.
+
 ![zTerm workbench](assets/screenshots/workbench.png)
 
 ## Features
@@ -67,13 +72,16 @@ npm run build
 
 `npm run quality:check` enforces the single frontend IPC gateway, base/feature/app dependency direction, unique cross-file ownership of Tauri commands, and removal of exports with no external references. It is included in `npm run check`.
 
-Rust and Tauri checks:
+Windows Rust and Tauri checks (from the repository root):
 
-```bash
-cd src-tauri
-cargo fmt --check
-cargo test
+```powershell
+npm run version:check
+npm run test:rust
+./scripts/run-cargo-msvc.ps1 fmt --check
+powershell -NoProfile -File scripts/run-cargo-msvc.ps1 clippy --lib -- -D warnings
 ```
+
+On other platforms, run `cargo fmt --check` and `cargo test` in `src-tauri`.
 
 Desktop package build:
 

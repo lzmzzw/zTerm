@@ -23,6 +23,9 @@ function render(ui: ReactElement) {
 
   return {
     container,
+    rerender(ui: ReactElement) {
+      act(() => root.render(ui));
+    },
     unmount() {
       act(() => root.unmount());
       container.remove();
@@ -80,6 +83,25 @@ const entries: FileEntry[] = [
 ];
 
 describe("FileExplorerPanel", () => {
+  it("clears a pending directory deletion when switching connections or directories", async () => {
+    const props = {
+      savedSessionId: "old", path: "/home/ops", entries, selectedPaths: [entries[0].path],
+      loading: false, error: null, onPathChange: vi.fn(), onSelect: vi.fn(), onSelectAll: vi.fn(),
+      onRefresh: vi.fn(), onParent: vi.fn(), onMkdir: vi.fn(), onUpload: vi.fn(),
+      onUploadDropped: vi.fn(), onDownload: vi.fn(), onRename: vi.fn(), onDelete: vi.fn(),
+    };
+    const view = render(<FileExplorerPanel {...props} />);
+    await click(button(view.container, "删除"));
+    expect(view.container.textContent).toContain("确认删除选中的 1 个项目");
+
+    view.rerender(<FileExplorerPanel {...props} savedSessionId="new" />);
+    expect(view.container.querySelector(".zt-confirm-inline")).toBeNull();
+    await click(button(view.container, "删除"));
+    view.rerender(<FileExplorerPanel {...props} savedSessionId="new" path="/srv" />);
+    expect(view.container.querySelector(".zt-confirm-inline")).toBeNull();
+    expect(props.onDelete).not.toHaveBeenCalled();
+    view.unmount();
+  });
   it("renders remote file errors as an inline alert", () => {
     const view = render(
       <FileExplorerPanel

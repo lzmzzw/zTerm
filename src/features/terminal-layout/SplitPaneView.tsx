@@ -108,6 +108,8 @@ export function SplitPaneView({
   onDragStateChange: inheritedDragStateChange,
   splitAvailability: inheritedSplitAvailability,
 }: SplitPaneViewProps) {
+  const splitResizeCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => splitResizeCleanupRef.current?.(), [root.id, root.kind]);
   const [localDragState, setLocalDragState] = useState<PaneTabDragState | null>(null);
   const localDragStateRef = useRef<PaneTabDragState | null>(null);
   const dragState = inheritedDragStateRef ? (inheritedDragState ?? null) : localDragState;
@@ -127,7 +129,7 @@ export function SplitPaneView({
   ) as PaneSplitAvailability;
   const handleSplitDividerPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>, split: Extract<PaneNode, { kind: "split" }>) => {
-      if (!onResizeSplit) return;
+      if (!onResizeSplit || event.button !== 0) return;
 
       event.preventDefault();
       event.stopPropagation();
@@ -135,6 +137,7 @@ export function SplitPaneView({
       const container = event.currentTarget.parentElement;
       if (!container) return;
 
+      splitResizeCleanupRef.current?.();
       event.currentTarget.setPointerCapture?.(event.pointerId);
       let resizeFrame: number | null = null;
       let pendingPosition: { clientX: number; clientY: number } | null = null;
@@ -172,18 +175,30 @@ export function SplitPaneView({
         scheduleResize(moveEvent.clientX, moveEvent.clientY);
       };
 
-      const handlePointerUp = () => {
+      const cleanup = () => {
         if (resizeFrame !== null && typeof window.cancelAnimationFrame === "function") {
           window.cancelAnimationFrame(resizeFrame);
           resizeFrame = null;
         }
-        flushPendingResize();
+        pendingPosition = null;
         window.removeEventListener("pointermove", handlePointerMove);
         window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", cleanup);
+        splitResizeCleanupRef.current = null;
       };
 
+      const handlePointerUp = () => {
+        if (resizeFrame !== null && typeof window.cancelAnimationFrame === "function") {
+          window.cancelAnimationFrame(resizeFrame);
+        }
+        flushPendingResize();
+        cleanup();
+      };
+
+      splitResizeCleanupRef.current = cleanup;
       window.addEventListener("pointermove", handlePointerMove);
       window.addEventListener("pointerup", handlePointerUp, { once: true });
+      window.addEventListener("pointercancel", cleanup, { once: true });
     },
     [onResizeSplit],
   );

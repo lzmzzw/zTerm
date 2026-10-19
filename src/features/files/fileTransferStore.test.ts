@@ -110,6 +110,80 @@ describe("fileTransferStore", () => {
     expect(invokeMock).toHaveBeenNthCalledWith(2, "file_transfer_view_state_save", { viewState: restored });
   });
 
+  it.each(["endpoint", "path"] as const)("ignores an in-flight listing after its %s changes without a new load", async (change) => {
+    const pending = deferred<FileEntry[]>();
+    const store = useFileTransferStore.getState();
+    store.setEndpoint("right", { kind: "saved_session", saved_session_id: "old", path: "/old" });
+    invokeMock.mockReturnValueOnce(pending.promise);
+    const loading = store.loadEndpoint("right");
+
+    if (change === "endpoint") {
+      store.setEndpoint("right", { kind: "saved_session", saved_session_id: "new", path: "/new" });
+    } else {
+      store.setPath("right", "/new");
+    }
+    pending.resolve([entry("/old/stale.txt")]);
+    await loading;
+
+    expect(useFileTransferStore.getState().right).toMatchObject({
+      endpoint: { path: "/new" }, entries: [], selectedPaths: [], loading: false, error: null,
+    });
+  });
+
+  it("keeps a manually selected endpoint when saved view restoration resolves later", async () => {
+    const pending = deferred<{ left: { kind: "local"; saved_session_id: null; path: string }; right: { kind: "saved_session"; saved_session_id: string; path: string } }>();
+    invokeMock.mockReturnValueOnce(pending.promise);
+    const store = useFileTransferStore.getState();
+    const restoring = store.restoreViewState();
+    store.setEndpoint("right", { kind: "saved_session", saved_session_id: "new", path: "/new" });
+    pending.resolve({
+      left: { kind: "local", saved_session_id: null, path: "C:/saved" },
+      right: { kind: "saved_session", saved_session_id: "old", path: "/old" },
+    });
+    await restoring;
+
+    expect(useFileTransferStore.getState().left.endpoint.path).toBe("C:/saved");
+    expect(useFileTransferStore.getState().right.endpoint).toMatchObject({ saved_session_id: "new", path: "/new" });
+  });
+
+  it("keeps a rename failure out of a replacement endpoint", async () => {
+    const pending = deferred<void>();
+    const store = useFileTransferStore.getState();
+    store.setEndpoint("right", { kind: "saved_session", saved_session_id: "old", path: "/old" });
+    invokeMock.mockReturnValueOnce(pending.promise.then(() => { throw new Error("old connection failed"); }));
+    const operation = store.renameEndpoint("right", "/old/a", "/old/b");
+    store.setEndpoint("right", { kind: "saved_session", saved_session_id: "new", path: "/new" });
+    pending.resolve();
+    await operation;
+
+    expect(useFileTransferStore.getState().right.error).toBeNull();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not refresh a replacement endpoint after deleting on the previous one", async () => {
+    const pending = deferred<void>();
+    const store = useFileTransferStore.getState();
+    store.setEndpoint("right", { kind: "saved_session", saved_session_id: "old", path: "/old" });
+    invokeMock.mockReturnValueOnce(pending.promise);
+    const operation = store.deleteEndpoint("right", ["/old/a"], false);
+    store.setEndpoint("right", { kind: "saved_session", saved_session_id: "new", path: "/new" });
+    pending.resolve();
+    await operation;
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(useFileTransferStore.getState().right.endpoint.saved_session_id).toBe("new");
+  });
+
+  it("removes the progress subscription when completion subscription registration fails", async () => {
+    const unlisten = vi.fn();
+    listenMock.mockResolvedValueOnce(unlisten).mockRejectedValueOnce(new Error("subscription failed"));
+
+    await useFileTransferStore.getState().bindTransferEvents();
+
+    expect(unlisten).toHaveBeenCalledOnce();
+    expect(useFileTransferStore.getState().transferError).toBe("subscription failed");
+  });
+
   it("loads a local endpoint through the file transfer IPC with the default local path", async () => {
     invokeMock.mockResolvedValueOnce("C:/Users/Ops").mockResolvedValueOnce([entry("C:/Users/Ops/a.txt")]);
 
@@ -134,6 +208,22 @@ describe("fileTransferStore", () => {
 
     expect(invokeMock).toHaveBeenCalledWith("file_transfer_local_roots");
     expect(useFileTransferStore.getState().localRoots).toEqual(["C:\\", "D:\\"]);
+  });
+
+  it("keeps the latest session preparation when an earlier default-path lookup finishes later", async () => {
+    invokeMock.mockImplementation(async () => []);
+    const store = useFileTransferStore.getState();
+    const earlier = store.prepareForSession("old", "/old");
+    useFileTransferStore.setState({ defaultLocalPath: "C:/current-default" });
+    const latest = store.prepareForSession("current", "/current");
+    await Promise.all([earlier, latest]);
+
+    expect(useFileTransferStore.getState().right.endpoint).toEqual({
+      kind: "saved_session", saved_session_id: "current", path: "/current",
+    });
+    expect(invokeMock).not.toHaveBeenCalledWith("file_transfer_list_endpoint", {
+      endpoint: { kind: "saved_session", saved_session_id: "old", path: "/old" },
+    });
   });
 
   it("checks endpoint conflicts and enqueues a remote-to-remote file transfer with endpoint snapshots", async () => {

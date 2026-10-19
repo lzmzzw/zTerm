@@ -17,6 +17,8 @@ powershell -NoProfile -File scripts/run-cargo-msvc.ps1 clippy --lib -- -D warnin
 
 Windows 测试 runner 为测试可执行文件写入 Common Controls v6 manifest，避免 GUI 依赖的 `TaskDialogIndirect` 入口缺失；正式应用沿用 Tauri 的 manifest。
 
+若本机并行编译报告 `failed to mmap`、`os error 1455` 或页面文件不足，可执行 `powershell -NoProfile -File scripts/run-cargo-msvc.ps1 test -j 1` 降低编译并发。先核对资源错误，不因伴随的 crate metadata 错误就认定源码或依赖损坏。
+
 无前端的 PTY 集成测试需模拟终端对 `ESC[6n` 光标位置查询的响应：跨 reader 分片保存匹配状态，每次完整查询均回复 CPR，不假定查询与读取块对齐或仅出现一次。Windows CI 冷启动等待与进程关闭时限分别设置；允许较长的 shell 启动等待，不放宽关闭后子进程必须退出的断言。
 
 PTY 子进程 PID 文件先写入临时路径，关闭写入句柄后再重命名发布；测试等待可读且内容为有效 PID，不以文件存在作为写入完成依据。Windows sharing/lock violation（32/33）、尚未创建或空内容只在启动期限内等待重试；其他读取错误和非法 PID 立即失败。回归测试用独占写入句柄复现竞争，不靠重跑 CI 掩盖问题。
@@ -56,6 +58,10 @@ Windows 上检测到 WebView2 主版本大于或等于 152 时，zTerm 主窗口
 活动 Agent 目标同步由 `useActiveAgentTerminalSync` 顺序执行；运行时缓存与清理由 `terminalRuntimeResources` 统一管理。核心终端写入、调整大小、关闭及 Agent 活动目标 IPC 使用 `invokeTypedTauri` 限定参数，其他命令渐进迁移，禁止绕过统一 IPC 入口。
 
 交互失败在操作位置反馈。快捷键尊重输入控件、弹窗和输入法组合；历史批量发送遇首个失败停止；传输动作按任务去重并将错误归属到连接。
+
+文件面板在目录或连接改变时失效旧列表请求并清空选择与操作确认；异步重命名、删除、新建目录完成后只刷新原操作上下文，旧会话结果不得切回当前面板。事件监听注册部分失败时释放已注册监听。分栏拖拽在结束、取消及组件卸载时清理全局监听和待执行动画帧；非活动标签重连使用该标签自身的容器目标。
+
+命令提示优先保留 Shell 自己绘制的行内预测：光标后的当前缓冲行已有文字时，隐藏 zTerm 候选叠层，并将 Tab 原样交给 Shell。终端解析输出后重新同步提示可见性；输入变化、提交或组件卸载后，过期的异步候选不得回填。该规则用于避免 PSReadLine 等预测文字与 zTerm 提示重叠，不改变 Shell 的预测配置。
 
 终端数据先经 ZMODEM 处理、后台 replay 解析，再由可见 Xterm 按序写入并确认。前端使用保序 chunk 队列，避免 React 合并更新丢失片段；缓存清理不截断尚未消费的原始协议数据。`rz/sz` 故障事件不直接回显原始二进制，传输失败后清理协议状态和残留发送，详见 API 契约。
 

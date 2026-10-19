@@ -2,6 +2,7 @@
 import { StrictMode, act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { CommandCompletionCandidate } from "./terminalStore";
 
 const terminalMock = vi.hoisted(() => {
   interface MockDisposable {
@@ -77,6 +78,7 @@ const terminalMock = vi.hoisted(() => {
   const instances: MockTerminalInstance[] = [];
   const Terminal = vi.fn(function (this: unknown, options: unknown) {
     const loadAddon = vi.fn();
+    const writeParsedListeners = new Set<() => void>();
     const instance: MockTerminalInstance = {
       attachCustomKeyEventHandler: vi.fn((handler: (event: KeyboardEvent) => boolean) => {
         instance.customKeyEventHandler = handler;
@@ -138,8 +140,9 @@ const terminalMock = vi.hoisted(() => {
         return disposable();
       }),
       onWriteParsed: vi.fn((listener: () => void) => {
-        instance.writeParsedListener = listener;
-        return disposable();
+        writeParsedListeners.add(listener);
+        instance.writeParsedListener = () => writeParsedListeners.forEach((callback) => callback());
+        return { dispose: vi.fn(() => writeParsedListeners.delete(listener)) };
       }),
       open: vi.fn((container: HTMLElement) => {
         instance.host = container;
@@ -730,6 +733,77 @@ describe("XtermPane", () => {
     expect(onInput).toHaveBeenLastCalledWith("ho");
     expect(view.container.querySelector(".zt-command-ghost")).toBeNull();
 
+    view.unmount();
+  });
+
+  it("hides fallback completions over a shell's inline prediction and leaves Tab to the shell", async () => {
+    const onInput = vi.fn();
+    const onCompletionRequest = vi.fn().mockResolvedValue([{
+      provider: "history", replacement_text: "git push", replacement_range: { start: 0, end: 4 },
+      score: 1, source_label: "history", suffix: "push",
+    }]);
+    const view = render(<XtermPane data="" onInput={onInput} onCompletionRequest={onCompletionRequest} />);
+    const terminal = terminalMock.instances[0];
+    const prefix = "PS E:\\github\\Kerminal> git ";
+    terminal.buffer.active.cursorX = prefix.length;
+    terminal.bufferLines.set(5, prefix);
+    await act(async () => {
+      terminal.dataListener?.("git ");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const ghost = view.container.querySelector<HTMLElement>(".zt-command-ghost")!;
+    expect(ghost.hidden).toBe(false);
+
+    // PSReadLine paints a prediction, then returns the cursor before it.
+    act(() => {
+      terminal.bufferLines.set(5, `${prefix}pull`);
+      terminal.writeParsedListener?.();
+    });
+    expect(ghost.hidden).toBe(true);
+    act(() => {
+      terminal.bufferLines.set(5, prefix);
+      terminal.writeParsedListener?.();
+    });
+    expect(ghost.hidden).toBe(false);
+    act(() => {
+      terminal.bufferLines.set(5, `${prefix}pull`);
+      terminal.writeParsedListener?.();
+      terminal.dataListener?.("\t");
+    });
+    expect(onInput).toHaveBeenLastCalledWith("\t");
+    expect(onInput).not.toHaveBeenCalledWith("push");
+    view.unmount();
+  });
+
+  it("does not revive a pending completion after the command has been submitted", async () => {
+    let resolveCompletion!: (value: CommandCompletionCandidate[]) => void;
+    const onCompletionRequest = vi.fn(() => new Promise<CommandCompletionCandidate[]>((resolve) => { resolveCompletion = resolve; }));
+    const view = render(<XtermPane data="" onCompletionRequest={onCompletionRequest} onInput={vi.fn()} />);
+    const terminal = terminalMock.instances[0];
+    await act(async () => { terminal.dataListener?.("git "); });
+    await act(async () => { terminal.dataListener?.("\r"); });
+    await act(async () => {
+      resolveCompletion([{
+        provider: "history", replacement_text: "git pull", replacement_range: { start: 0, end: 4 },
+        score: 1, source_label: "history", suffix: "pull",
+      }]);
+      await Promise.resolve();
+    });
+    expect(view.container.querySelector(".zt-command-ghost")).toBeNull();
+    view.unmount();
+  });
+
+  it("retains every input chunk when completion tracking receives input in the same render batch", async () => {
+    const onCompletionRequest = vi.fn().mockResolvedValue([]);
+    const view = render(<XtermPane data="" onCompletionRequest={onCompletionRequest} onInput={vi.fn()} />);
+    const terminal = terminalMock.instances[0];
+    await act(async () => {
+      terminal.dataListener?.("ec");
+      terminal.dataListener?.("ho");
+      await Promise.resolve();
+    });
+    expect(onCompletionRequest).toHaveBeenLastCalledWith("echo", 4, null);
     view.unmount();
   });
 

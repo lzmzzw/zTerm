@@ -192,6 +192,32 @@ describe("ZtSelect", () => {
     expect(document.querySelector('[role="listbox"]')).toBeNull();
   });
 
+  it("keeps spaces and IME confirmation in the search input without selecting an option", async () => {
+    const onChange = vi.fn();
+    render(<ZtSelect ariaLabel="选择主机" value="" options={options()} searchable onChange={onChange} />);
+    await click(trigger());
+    const search = input("搜索选择项");
+    changeInput(search, "production");
+
+    for (const init of [
+      { key: " " },
+      { key: "Enter", isComposing: true },
+      { key: "Enter", keyCode: 229 },
+      { key: "ArrowDown", isComposing: true },
+    ]) {
+      const event = new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true });
+      await act(async () => { search.dispatchEvent(event); });
+      expect(event.defaultPrevented).toBe(false);
+      expect(document.querySelector('[role="listbox"]')).not.toBeNull();
+      expect(onChange).not.toHaveBeenCalled();
+    }
+
+    changeInput(search, "production gateway");
+    expect(document.querySelector('[role="listbox"]')?.textContent).toContain("host-5");
+    await keyDown(search, "Enter");
+    expect(onChange).toHaveBeenCalledWith("host-5");
+  });
+
   it("renders tree groups and skips them during keyboard selection", async () => {
     const onChange = vi.fn();
     const onToggle = vi.fn();

@@ -220,6 +220,12 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   const transferPreparingRef = useRef(false);
 
   useEffect(() => {
+    setRenameEntry(null);
+    setDeleteEntries(null);
+    setContextMenu(null);
+  }, [left.endpoint, right.endpoint]);
+
+  useEffect(() => {
     void loadLocalRoots();
   }, [loadLocalRoots]);
 

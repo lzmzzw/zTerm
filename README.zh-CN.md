@@ -4,6 +4,8 @@
 
 zTerm 是一个基于 Tauri 的桌面终端工作台，面向 SSH、SFTP、命令历史、服务器监控和 Codex 辅助运维场景。界面采用高密度终端布局：左侧管理会话，中间使用分栏终端，右侧提供文件、历史、监控和 Codex CLI。
 
+标题栏左侧提供会话、文件传输和设置入口，右侧提供 Agent 入口。监控、历史、SFTP、容器和隧道工具随连接类型显示在当前激活终端内。开发入口见 [工程文档](docs/README.md)。
+
 ![zTerm 工作台](assets/screenshots/workbench.png)
 
 ## 功能特性
@@ -59,13 +61,16 @@ npm run build
 
 `npm run quality:check` 检查前端 IPC 单一入口、基础层/feature/app 依赖方向、Tauri command 跨文件重复所有权和无外部引用的导出；`npm run check` 已包含该门禁。
 
-Rust 和 Tauri 检查：
+Windows Rust 和 Tauri 检查（仓库根目录）：
 
-```bash
-cd src-tauri
-cargo fmt --check
-cargo test
+```powershell
+npm run version:check
+npm run test:rust
+./scripts/run-cargo-msvc.ps1 fmt --check
+powershell -NoProfile -File scripts/run-cargo-msvc.ps1 clippy --lib -- -D warnings
 ```
+
+其他平台在 `src-tauri` 中运行 `cargo fmt --check` 与 `cargo test`。
 
 桌面安装包构建：
 

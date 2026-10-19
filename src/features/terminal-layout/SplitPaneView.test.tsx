@@ -1608,4 +1608,44 @@ describe("SplitPaneView", () => {
     expect(onResizeSplit).toHaveBeenLastCalledWith("split-root", 0.75);
     view.unmount();
   });
+
+  it.each(["pointercancel", "unmount"])("stops resizing and cancels the queued frame after %s", (ending) => {
+    const onResizeSplit = vi.fn();
+    let pendingFrame: FrameRequestCallback | null = null;
+    const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      pendingFrame = callback;
+      return 123;
+    });
+    const cancelFrame = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {
+      pendingFrame = null;
+    });
+    const view = render(<SplitPaneView
+      root={{ kind: "split", id: "split-root", direction: "horizontal", ratio: 0.5, first: leaf("a", "A"), second: leaf("b", "B") }}
+      activePaneId="a" onActivatePane={vi.fn()} onAddPaneTab={vi.fn()} onSelectPaneTab={vi.fn()}
+      onClosePaneTab={vi.fn()} onSplitPane={vi.fn()} onClosePane={vi.fn()} onResizeSplit={onResizeSplit}
+    />);
+    const split = view.container.querySelector(".zt-split-pane")!;
+    Object.defineProperty(split, "getBoundingClientRect", { value: () => ({ left: 0, top: 0, width: 800, height: 400 }) });
+    try {
+      act(() => {
+        view.container.querySelector(".zt-split-divider")!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0 }));
+        window.dispatchEvent(new MouseEvent("pointermove", { clientX: 600 }));
+      });
+      expect(pendingFrame).not.toBeNull();
+      if (ending === "unmount") view.unmount();
+      else act(() => { window.dispatchEvent(new Event("pointercancel")); });
+
+      expect(cancelFrame).toHaveBeenCalledWith(123);
+      expect(pendingFrame).toBeNull();
+      act(() => {
+        window.dispatchEvent(new MouseEvent("pointermove", { clientX: 700 }));
+        window.dispatchEvent(new Event("pointerup"));
+      });
+      expect(onResizeSplit).not.toHaveBeenCalled();
+    } finally {
+      if (ending !== "unmount") view.unmount();
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+    }
+  });
 });
