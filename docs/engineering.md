@@ -35,8 +35,9 @@ Windows 上检测到 WebView2 主版本大于或等于 152 时，zTerm 主窗口
 
 ## 本地打包与正式发布
 
-- `npm run tauri:build`：使用 `tauri.local.conf.json` 关闭 updater 签名产物生成，供本地验证。主配置的 updater 校验与权限不变。
-- `npm run tauri:release`：使用主配置，必须提供 `TAURI_SIGNING_PRIVATE_KEY`；不在配置、日志或文档记录密钥。
+- Windows 本地构建和正式发布统一使用 NSIS（`--bundles nsis`），不生成 MSI。
+- `npm run tauri:build`：生成 NSIS 安装包，使用 `tauri.local.conf.json` 关闭 updater 签名产物生成，供本地验证。主配置的 updater 校验与权限不变。
+- `npm run tauri:release`：生成 NSIS 安装包并使用主配置，必须提供 `TAURI_SIGNING_PRIVATE_KEY`；不在配置、日志或文档记录密钥。
 - GitHub Release 依赖 Check 工作流通过，再执行现有签名构建与发布。普通 PR、main/master 提交也执行前端检查、Rust 测试及 Clippy。
 - 本地未签名安装包不能冒充正式自动更新产物；发布行为仍需明确授权。
 
