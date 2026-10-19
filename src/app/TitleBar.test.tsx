@@ -52,6 +52,15 @@ async function click(element: HTMLElement) {
 }
 
 describe("TitleBar", () => {
+  it("places Agent actions before the Windows window controls outside the drag region", () => {
+    const view = render(<TitleBar actions={<button aria-label="Agent">Agent</button>} />);
+    const actions = view.container.querySelector(".zt-titlebar-actions")!;
+    expect(actions.querySelector('[aria-label="Agent"]')).not.toBeNull();
+    expect(actions.nextElementSibling?.classList.contains("zt-window-actions")).toBe(true);
+    expect(actions.closest("[data-tauri-drag-region]")).toBeNull();
+    view.unmount();
+  });
+
   beforeEach(() => {
     tauriWindow.minimize.mockClear();
     tauriWindow.toggleMaximize.mockClear();

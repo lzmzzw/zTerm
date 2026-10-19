@@ -1,7 +1,7 @@
 // Author: Liz
 import { CircleAlert, Clock3, LoaderCircle, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, MutableRefObject, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, MutableRefObject, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 
 import { TerminalPlaceholder } from "../terminal/TerminalPlaceholder";
 import { TerminalSnapshotPane } from "../terminal/TerminalSnapshotPane";
@@ -37,6 +37,7 @@ function isSshLikeTerminalRuntime(kind: TerminalRuntimeKind) {
 }
 
 interface SplitPaneViewProps {
+  activePaneTools?: ReactNode;
   root: PaneNode;
   activePaneId: string;
   onActivatePane: (paneId: string) => void;
@@ -83,6 +84,7 @@ interface PaneTabPointerDragState extends PaneTabDragState {
 type PaneSplitAvailability = Record<string, Record<PaneSplitDirection, boolean>>;
 
 export function SplitPaneView({
+  activePaneTools,
   root,
   activePaneId,
   onActivatePane,
@@ -194,6 +196,7 @@ export function SplitPaneView({
         }
       >
         <SplitPaneView
+          activePaneTools={activePaneTools}
           root={root.first}
           activePaneId={activePaneId}
           onActivatePane={onActivatePane}
@@ -221,6 +224,7 @@ export function SplitPaneView({
           onPointerDown={(event) => handleSplitDividerPointerDown(event, root)}
         />
         <SplitPaneView
+          activePaneTools={activePaneTools}
           root={root.second}
           activePaneId={activePaneId}
           onActivatePane={onActivatePane}
@@ -247,6 +251,7 @@ export function SplitPaneView({
 
   return (
     <LeafPane
+      activePaneTools={activePaneTools}
       root={root}
       active={root.id === activePaneId}
       onActivatePane={onActivatePane}
@@ -270,6 +275,7 @@ export function SplitPaneView({
 }
 
 function LeafPane({
+  activePaneTools,
   root,
   active,
   onActivatePane,
@@ -289,6 +295,7 @@ function LeafPane({
   onDragStateChange,
   splitAvailability,
 }: {
+  activePaneTools?: ReactNode;
   root: Extract<PaneNode, { kind: "leaf" }>;
   active: boolean;
   onActivatePane: (paneId: string) => void;
@@ -627,6 +634,7 @@ function LeafPane({
       className={`zt-terminal-frame ${active ? "active" : ""}`}
       aria-label={`终端区域 ${activeTerminalTab.title}`}
       onClick={activatePane}
+      onFocusCapture={activatePane}
     >
       <div className="zt-pane-tabs">
         <div
@@ -772,6 +780,7 @@ function LeafPane({
           onCloseSyncChannel={closeSyncChannel}
         />
       </div>
+      {active && terminalLayoutActive && visualMode === "normal" ? activePaneTools : null}
       {dragState?.sourcePaneId === root.id ? (
         <DragOverlay
           ref={dragOverlayRef}

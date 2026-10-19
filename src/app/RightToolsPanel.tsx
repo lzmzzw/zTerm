@@ -1,5 +1,5 @@
 // Author: Liz
-import { Activity, Box, Cable, Clock3, Folder, LogIn, MessageSquareMore, Plus, RefreshCw, type LucideIcon } from "lucide-react";
+import { LogIn, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { AgentCodexPanel } from "../features/ai/AgentCodexPanel";
@@ -27,21 +27,11 @@ import type { SshContainerInfo } from "../features/terminal/sshContainerApi";
 import { t } from "../features/settings/i18n";
 import { ZtSelect } from "../components/ZtSelect";
 import { ZtContextMenu, ZtInlineError } from "../components/ZtUi";
-import { PanelHeader, ToolButton } from "./ShellControls";
-import { rightToolLabelKey, visibleRightTools, type ActiveConnectionKind, type RightTool } from "./rightTools";
-
-const rightToolRailIcons: Record<RightTool, LucideIcon> = {
-  agent: MessageSquareMore,
-  containers: Box,
-  files: Folder,
-  history: Clock3,
-  monitor: Activity,
-  tunnels: Cable,
-};
+import { PanelHeader } from "./ShellControls";
+import { rightToolLabelKey, type RightTool } from "./rightTools";
 
 interface RightToolsPanelProps {
   activeTool: RightTool | null;
-  activeConnectionKind: ActiveConnectionKind;
   agent: {
     session: AgentCodexSession | null;
     sessionsByConnectionKey: Record<string, AgentCodexSession>;
@@ -139,12 +129,10 @@ interface RightToolsPanelProps {
     onResume: (taskId: string) => Promise<void> | void;
   };
   language?: AppLanguage;
-  onActiveToolChange: (tool: RightTool) => void;
 }
 
 export function RightToolsPanel({
   activeTool,
-  activeConnectionKind,
   agent,
   files,
   history,
@@ -153,10 +141,8 @@ export function RightToolsPanel({
   tunnels,
   transfers,
   language = "zhCN",
-  onActiveToolChange,
 }: RightToolsPanelProps) {
   const monitorSnapshot = useServerInfoSnapshot(monitor.target?.id ?? null, activeTool === "monitor");
-  const visibleTools = visibleRightTools(activeConnectionKind);
 
   return (
     <aside
@@ -358,21 +344,6 @@ export function RightToolsPanel({
         </section>
       ) : null}
 
-      <nav className="zt-tool-rail" aria-label="工具切换">
-        {visibleTools.map((tool) => {
-          const Icon = rightToolRailIcons[tool];
-          return (
-            <ToolButton
-              key={tool}
-              label={t(language, rightToolLabelKey(tool))}
-              active={activeTool === tool}
-              className={tool === "agent" ? "zt-tool-rail-agent" : undefined}
-              icon={<Icon size={16} aria-hidden="true" />}
-              onClick={() => onActiveToolChange(tool)}
-            />
-          );
-        })}
-      </nav>
     </aside>
   );
 }

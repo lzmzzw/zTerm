@@ -43,7 +43,7 @@ Windows 上检测到 WebView2 主版本大于或等于 152 时，zTerm 主窗口
 
 ## 维护边界
 
-前端采用标题栏左侧主导航与中性深浅主题：会话、文件传输、设置依次排列，图标统一为 20px，会话复用应用 logo（内部“>_”等比例放大以对齐其他图标的可见尺寸）；原左侧活动导航栏移除，会话面板仍可展开。终端外缘及与会话面板之间沿用 5px 间距。颜色和几何 token 统一在 `src/styles/tokens.css`；`design.css` 管理紧凑外壳和 Lucide 图标色，`design-shell.css`、`design-connections.css`、`design-files.css`、`design-tools.css` 分别管理设置、连接表单、文件传输和右侧工具的视觉规则。终端背景、光标和行高亮使用中性色，保留 ANSI 输出及语义文字颜色。
+前端采用标题栏左侧主导航与中性深浅主题：会话、文件传输、设置依次排列，图标统一为 20px，会话复用应用 logo（内部“>_”等比例放大以对齐其他图标的可见尺寸）；Agent 入口位于标题栏右侧、窗口控制按钮左边。左右活动导航栏均已移除，会话与工具面板仍可展开。监控、历史、SFTP、容器和隧道入口保留原连接类型显隐规则，在当前激活分栏的终端内容区右上方竖排悬浮；激活其他分栏时只在新分栏显示，预览和非活动布局不显示。工具面板关闭后终端延伸至窗口右侧，外缘及与相邻面板之间统一保留 5px 间距。颜色和几何 token 统一在 `src/styles/tokens.css`；`design.css` 管理紧凑外壳和 Lucide 图标色，`design-shell.css`、`design-connections.css`、`design-files.css`、`design-tools.css` 分别管理设置、连接表单、文件传输和右侧工具的视觉规则。终端背景、光标和行高亮使用中性色，保留 ANSI 输出及语义文字颜色。
 
 应用 logo 的唯一矢量源为 `src/assets/zterm-logo.svg`，界面与 favicon 直接引用；`src-tauri/icons/` 中配置使用的 PNG、ICO、ICNS 均由该 SVG 通过 `npm run tauri -- icon` 生成，桌面、安装器和卸载器复用这些产物。调整 logo 后需同步生成这些资源，避免各入口比例不一致。
 

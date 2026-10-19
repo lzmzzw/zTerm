@@ -40,7 +40,7 @@
 .zt-session-panel { border: 1px solid var(--zt-border); border-radius: 5px; margin: 5px; height: calc(100% - 10px); background: var(--zt-surface-sidebar); }
 .zt-sidebar { background: var(--zt-surface-page); }
 .zt-session-tree { padding: 5px; }
-.zt-right-tools > .zt-tool-panel, .zt-right-tools > .zt-ai-panel { margin: 5px 0; border: 1px solid var(--zt-border); border-radius: 5px; background: var(--zt-surface-sidebar); }
+.zt-right-tools > .zt-tool-panel, .zt-right-tools > .zt-ai-panel { margin: 5px 5px 5px 0; border: 1px solid var(--zt-border); border-radius: 5px; background: var(--zt-surface-sidebar); }
 .zt-window-actions { align-items: center; padding-right: 4px; gap: 2px; }
 .zt-window-actions button { height: 32px; width: 38px; border-radius: 6px; }
 .zt-window-actions .danger:hover { background: var(--zt-bg-selected); color: var(--zt-text-primary); }

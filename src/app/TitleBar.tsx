@@ -6,7 +6,7 @@ import type { MouseEvent, ReactNode } from "react";
 import zTermLogoUrl from "../assets/zterm-logo.svg";
 import { isMacOS } from "../lib/platform";
 
-export function TitleBar({ centerContent = null, navigation }: { centerContent?: string | null; navigation?: ReactNode }) {
+export function TitleBar({ centerContent = null, navigation, actions }: { centerContent?: string | null; navigation?: ReactNode; actions?: ReactNode }) {
   const [maximized, setMaximized] = useState(false);
   const macOS = isMacOS();
 
@@ -67,6 +67,7 @@ export function TitleBar({ centerContent = null, navigation }: { centerContent?:
           {centerContent}
         </div>
       ) : null}
+      <div className="zt-titlebar-actions">{actions}</div>
       {!macOS ? <div className="zt-window-actions" aria-label="窗口操作">
         <button
           type="button"

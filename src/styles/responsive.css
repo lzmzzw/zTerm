@@ -17,22 +17,22 @@
   .zt-workbench {
     grid-template-columns:
       minmax(260px, var(--zt-left-sidebar-width)) minmax(0, 1fr)
-      minmax(var(--zt-rail-width), 32vw);
+      minmax(260px, 32vw);
     min-width: 0;
   }
 
   .zt-workbench-right-collapsed {
     grid-template-columns:
-      minmax(260px, var(--zt-left-sidebar-width)) minmax(0, 1fr) var(--zt-rail-width);
+      minmax(260px, var(--zt-left-sidebar-width)) minmax(0, 1fr) 0;
   }
 
   .zt-workbench-left-collapsed {
     grid-template-columns:
-      0 minmax(0, 1fr) minmax(var(--zt-rail-width), 32vw);
+      0 minmax(0, 1fr) minmax(260px, 32vw);
   }
 
   .zt-workbench-left-collapsed.zt-workbench-right-collapsed {
-    grid-template-columns: 0 minmax(0, 1fr) var(--zt-rail-width);
+    grid-template-columns: 0 minmax(0, 1fr) 0;
   }
 
   .zt-workbench-settings {

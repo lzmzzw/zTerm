@@ -18,6 +18,7 @@ const exact: Record<string, string> = {
   "左侧管理切换": "Left Navigation Switcher",
   "右侧工具栏": "Right Tools",
   "工具切换": "Tool Switcher",
+  "终端工具": "Terminal Tools",
   "会话管理": "Session Manager",
   "编辑": "Edit",
   "删除": "Delete",

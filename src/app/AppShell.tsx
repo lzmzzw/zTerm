@@ -1,5 +1,5 @@
 // Author: Liz
-import { ArrowLeftRight, FolderPlus, LayoutGrid } from "lucide-react";
+import { ArrowLeftRight, FolderPlus, LayoutGrid, MessageSquareMore } from "lucide-react";
 import zTermLogoUrl from "../assets/zterm-logo.svg";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -17,6 +17,7 @@ import { ExternalSshTunnelEditorDialog, SshTunnelEditorDialog } from "./SshTunne
 import { RightToolsPanel } from "./RightToolsPanel";
 import { PanelHeader, ToolButton } from "./ShellControls";
 import { TitleBar } from "./TitleBar";
+import { TerminalTools } from "./TerminalTools";
 import { loadTerminalLayout, saveTerminalLayout } from "../features/terminal-layout/terminalLayoutPersistence";
 import { markTerminalLayoutRestoreQueued, runTerminalLayoutRestoreQueue } from "../features/terminal-layout/terminalLayoutRestoreScheduler";
 import { TerminalLayoutStage } from "./TerminalLayoutStage";
@@ -70,6 +71,7 @@ import type { SavedSession, SshOptions, SshTunnel } from "../features/sessions/t
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { applyAppSettings } from "../features/settings/applyAppSettings";
 import { useDomI18n } from "../features/settings/domI18n";
+import { t } from "../features/settings/i18n";
 import { useSettingsStore } from "../features/settings/settingsStore";
 import { listSshContainers, type SshContainerInfo } from "../features/terminal/sshContainerApi";
 import {
@@ -1662,13 +1664,26 @@ export function AppShell() {
     </nav>
   );
 
+  const headerActions = (
+    <ToolButton
+      label={t(language, "agent")}
+      active={viewMode === "workbench" && activeTool === "agent"}
+      icon={<MessageSquareMore size={20} aria-hidden="true" />}
+      onClick={() => {
+        setViewMode("workbench");
+        if (viewMode === "settings" && activeTool === "agent") return;
+        toggleRightTool("agent");
+      }}
+    />
+  );
+
   if (viewMode === "settings") {
     return (
       <ZtCenteredPageLayout
         className="zt-workbench zt-workbench-settings"
         onContextMenu={(event) => event.preventDefault()}
       >
-        <TitleBar navigation={headerNavigation} />
+        <TitleBar navigation={headerNavigation} actions={headerActions} />
         <SettingsPage
           settings={appSettings}
           terminalProfiles={terminalProfiles}
@@ -1698,7 +1713,7 @@ export function AppShell() {
 
   return (
     <div className={workbenchClassName} onContextMenu={(event) => event.preventDefault()}>
-      <TitleBar centerContent={titleBarCenterContent} navigation={headerNavigation} />
+      <TitleBar centerContent={titleBarCenterContent} navigation={headerNavigation} actions={headerActions} />
 
       {activeLeftTool ? <aside
         className="zt-sidebar zt-sidebar-left zt-left-tools"
@@ -1863,6 +1878,14 @@ export function AppShell() {
           </ZtInlineError>
         ) : null}
         <TerminalLayoutStage
+          activePaneTools={
+            <TerminalTools
+              activeTool={activeTool}
+              connectionKind={activeConnectionKind}
+              language={language}
+              onToolChange={toggleRightTool}
+            />
+          }
           onActivatePane={setActivePane}
           onAddPaneTab={handleRequestPaneConnection}
           onDuplicatePaneTab={(paneId, paneTabId) => void handleDuplicatePaneConnection(paneId, paneTabId)}
@@ -1883,7 +1906,6 @@ export function AppShell() {
 
       <RightToolsPanel
         activeTool={activeTool}
-        activeConnectionKind={activeConnectionKind}
         agent={{
           session: activeAgentSession,
           activeTargetLabel: activeAgentTargetLabel,
@@ -2031,7 +2053,6 @@ export function AppShell() {
           onResume: (taskId) => void resumeTransfer(taskId),
         }}
         language={language}
-        onActiveToolChange={toggleRightTool}
       />
     </div>
   );

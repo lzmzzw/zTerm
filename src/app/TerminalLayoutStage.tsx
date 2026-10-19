@@ -1,11 +1,13 @@
 // Author: Liz
 import { useShallow } from "zustand/react/shallow";
+import type { ReactNode } from "react";
 
 import { SplitPaneView } from "../features/terminal-layout/SplitPaneView";
 import type { PaneSplitDirection } from "../features/terminal-layout/types";
 import { useTerminalLayoutStore } from "../features/terminal-layout/terminalLayoutStore";
 
 interface TerminalLayoutStageProps {
+  activePaneTools?: ReactNode;
   onActivatePane: (paneId: string) => void;
   onAddPaneTab: (paneId: string) => void;
   onDuplicatePaneTab: (paneId: string, paneTabId: string) => void;
@@ -20,6 +22,7 @@ interface TerminalLayoutStageProps {
 }
 
 export function TerminalLayoutStage({
+  activePaneTools,
   onActivatePane,
   onAddPaneTab,
   onDuplicatePaneTab,
@@ -46,6 +49,7 @@ export function TerminalLayoutStage({
           data-active="true"
         >
           <SplitPaneView
+            activePaneTools={activePaneTools}
             root={activeTab.root}
             activePaneId={activeTab.active_pane_id}
             onActivatePane={onActivatePane}

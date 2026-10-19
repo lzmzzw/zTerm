@@ -67,16 +67,16 @@ describe("split pane css direction mapping", () => {
   });
 
   it("keeps rail icons, side panel headers, and compact terminal pane headers consistently sized", () => {
-    const toolRailStyles = ruleBodiesForSelector(".zt-tool-rail");
-    const railButtonStyles = ruleBodiesForSelector(".zt-tool-rail button");
+    const toolRailStyles = ruleBodiesForSelector(".zt-terminal-tools");
+    const railButtonStyles = ruleBodiesForSelector(".zt-terminal-tools button");
     const panelHeaderStyles = ruleBodiesForSelector(".zt-panel-header");
     const frameStyles = ruleBodiesForSelector(".zt-terminal-frame");
     const paneTabsStyles = ruleBodiesForSelector(".zt-pane-tabs");
     const paneTablistStyles = ruleBodiesForSelector(".zt-pane-tablist");
     const terminalToolbarStyles = ruleBodiesForSelector(".zt-terminal-toolbar");
 
-    expect(toolRailStyles).toContain("var(--zt-rail-block-inset)");
-    expect(toolRailStyles).toContain("var(--zt-rail-inline-inset)");
+    expect(toolRailStyles).toContain("position: absolute");
+    expect(toolRailStyles).toContain("flex-direction: column");
     expect(railButtonStyles).toContain("height: var(--zt-rail-button-size)");
     expect(panelHeaderStyles).toContain("height: var(--zt-workbar-height)");
     expect(frameStyles).toContain("grid-template-rows: var(--zt-workbar-height) 1fr");
@@ -192,7 +192,7 @@ describe("split pane css direction mapping", () => {
   });
 
   it("keeps sidebar and tool panel icon buttons borderless", () => {
-    expectBorderlessIconButton(".zt-tool-rail button");
+    expectBorderlessIconButton(".zt-terminal-tools button");
     expectBorderlessIconButton(".zt-panel-action-button");
     expect(ruleBodiesForSelector(".zt-session-node-actions button")).toBe("");
     expectBorderlessIconButton(".zt-file-toolbar button");

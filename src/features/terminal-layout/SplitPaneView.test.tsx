@@ -126,6 +126,49 @@ function seedTerminalOutput(outputs: Record<string, string>) {
 }
 
 describe("SplitPaneView", () => {
+  it("moves the only tool overlay to the active pane across nested splits and hides it in previews", () => {
+    const root: PaneNode = {
+      kind: "split", id: "outer", direction: "horizontal", ratio: 0.5,
+      first: leaf("pane-a", "A"),
+      second: {
+        kind: "split", id: "inner", direction: "vertical", ratio: 0.5,
+        first: leaf("pane-b", "B"), second: leaf("pane-c", "C"),
+      },
+    };
+    const onActivatePane = vi.fn();
+    const props = {
+      root,
+      onActivatePane,
+      onAddPaneTab: vi.fn(), onSelectPaneTab: vi.fn(), onClosePaneTab: vi.fn(),
+      onSplitPane: vi.fn(), onClosePane: vi.fn(),
+      activePaneTools: <nav aria-label="终端工具"><button>工具</button></nav>,
+    };
+    const view = render(<SplitPaneView {...props} activePaneId="pane-a" />);
+    const overlay = () => view.container.querySelector('[aria-label="终端工具"]');
+    expect(view.container.querySelectorAll('[aria-label="终端工具"]')).toHaveLength(1);
+    expect(overlay()?.closest("section")?.getAttribute("aria-label")).toBe("终端区域 A");
+
+    act(() => {
+      view.container.querySelector('[aria-label="终端区域 C"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onActivatePane).toHaveBeenCalledWith("pane-c");
+    view.rerender(<SplitPaneView {...props} activePaneId="pane-c" />);
+    expect(view.container.querySelectorAll('[aria-label="终端工具"]')).toHaveLength(1);
+    expect(overlay()?.closest("section")?.getAttribute("aria-label")).toBe("终端区域 C");
+    expect(view.container.querySelector('[aria-label="终端区域 A"] nav')).toBeNull();
+
+    onActivatePane.mockClear();
+    act(() => {
+      view.container.querySelector('[aria-label="终端区域 B"] button')?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+    expect(onActivatePane).toHaveBeenCalledWith("pane-b");
+    view.rerender(<SplitPaneView {...props} activePaneId="pane-b" visualMode="snapshot" />);
+    expect(overlay()).toBeNull();
+    view.rerender(<SplitPaneView {...props} activePaneId="pane-b" terminalLayoutActive={false} />);
+    expect(overlay()).toBeNull();
+    view.unmount();
+  });
+
   beforeEach(() => {
     useTerminalStore.setState({ runtimes: {}, outputChunks: {}, inputSerialByRuntime: {} });
     resetTerminalOutputCachesForTest();

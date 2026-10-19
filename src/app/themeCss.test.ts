@@ -70,8 +70,8 @@ describe("global dark theme colors", () => {
     expect(ruleBodiesForSelector(".zt-titlebar-logo-slot")).toContain("width: var(--zt-rail-width)");
     expect(ruleBodiesForSelector(".zt-titlebar-navigation button")).toContain("width: 36px");
     expect(ruleBodiesForSelector(".zt-titlebar-navigation button")).toContain("height: 36px");
-    expect(ruleBodiesForSelector(".zt-tool-rail button")).toContain("width: var(--zt-rail-button-size)");
-    expect(ruleBodiesForSelector(".zt-tool-rail button")).toContain("height: var(--zt-rail-button-size)");
+    expect(ruleBodiesForSelector(".zt-terminal-tools button")).toContain("width: var(--zt-rail-button-size)");
+    expect(ruleBodiesForSelector(".zt-terminal-tools button")).toContain("height: var(--zt-rail-button-size)");
 
     for (const selector of [".zt-panel-header", ".zt-pane-tabs", ".zt-terminal-toolbar"]) {
       expect(ruleBodiesForSelector(selector)).toContain("height: var(--zt-workbar-height)");
@@ -170,10 +170,10 @@ describe("global dark theme colors", () => {
       "grid-template-columns: 0 minmax(420px, 1fr) var(--zt-right-sidebar-width)",
     );
     expect(ruleBodiesForSelector(".zt-workbench-right-collapsed")).toContain(
-      "grid-template-columns: var(--zt-left-sidebar-width) minmax(420px, 1fr) var(--zt-rail-width)",
+      "grid-template-columns: var(--zt-left-sidebar-width) minmax(420px, 1fr) 0",
     );
     expect(ruleBodiesForSelector(".zt-workbench-left-collapsed.zt-workbench-right-collapsed")).toContain(
-      "grid-template-columns: 0 minmax(420px, 1fr) var(--zt-rail-width)",
+      "grid-template-columns: 0 minmax(420px, 1fr) 0",
     );
   });
 

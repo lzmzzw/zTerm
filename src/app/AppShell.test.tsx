@@ -178,7 +178,7 @@ const storeMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./TitleBar", () => ({
-  TitleBar: ({ centerContent, navigation }: { centerContent?: string | null; navigation?: ReactNode }) => <header aria-label="标题栏">{navigation}{centerContent}</header>,
+  TitleBar: ({ centerContent, navigation, actions }: { centerContent?: string | null; navigation?: ReactNode; actions?: ReactNode }) => <header aria-label="标题栏">{navigation}{centerContent}<div className="zt-titlebar-actions">{actions}</div></header>,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -349,6 +349,7 @@ vi.mock("../features/sessions/SessionTree", () => ({
 
 vi.mock("../features/terminal-layout/SplitPaneView", () => ({
   SplitPaneView: ({
+    activePaneTools,
     root,
     activePaneId,
     onAddPaneTab,
@@ -359,6 +360,7 @@ vi.mock("../features/terminal-layout/SplitPaneView", () => ({
     terminalLayoutActive = true,
     visualMode = "normal",
   }: {
+    activePaneTools?: ReactNode;
     root: Record<string, unknown>;
     activePaneId: string;
     onAddPaneTab: (paneId: string) => void;
@@ -378,6 +380,7 @@ vi.mock("../features/terminal-layout/SplitPaneView", () => ({
       </section>
     ) : (
       <section aria-label="终端分栏" data-terminal-layout-active={String(terminalLayoutActive)}>
+      {terminalLayoutActive ? activePaneTools : null}
       <span>{collectMockPaneTitles(root).join(" ")}</span>
       <button type="button" aria-label="创建连接" onClick={() => onAddPaneTab("pane-1")}>
         创建连接
@@ -1340,9 +1343,9 @@ describe("AppShell", () => {
 
     expect(storeMocks.getExternalSshOptions).toHaveBeenCalledWith("external:launch-1");
     expect(view.container.querySelector(".zt-right-tools-collapsed")).not.toBe(null);
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SFTP 文件"]')).not.toBe(null);
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).not.toBe(null);
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="SFTP 文件"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="SSH 容器"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="SSH 隧道"]')).not.toBe(null);
 
     await clickButton(view.container, "SSH 容器");
     await act(async () => {
@@ -1433,9 +1436,9 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SFTP 文件"]')).toBe(null);
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).toBe(null);
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="SFTP 文件"]')).toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="SSH 容器"]')).toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="SSH 隧道"]')).toBe(null);
     expect(storeMocks.listSshContainers).not.toHaveBeenCalled();
 
     view.unmount();
@@ -1580,7 +1583,7 @@ describe("AppShell", () => {
     const settingsButton = view.container.querySelector('.zt-titlebar-navigation [aria-label="打开设置"]') as HTMLButtonElement;
 
     expect(settingsButton).not.toBe(null);
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="打开设置"]')).toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="打开设置"]')).toBe(null);
 
     await act(async () => {
       settingsButton.click();
@@ -1779,14 +1782,15 @@ describe("AppShell", () => {
   it("keeps the right tool panel collapsed on startup even when settings define a default right tool", async () => {
     const view = render(<AppShell />);
     const workbench = view.container.querySelector(".zt-workbench");
-    const agentButton = view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement;
-    const rightRailButtons = Array.from(view.container.querySelectorAll(".zt-tool-rail button"));
+    const agentButton = view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement;
+    const rightRailButtons = Array.from(view.container.querySelectorAll(".zt-terminal-tools button"));
 
     expect(view.container.querySelector('[aria-label="AI 面板"]')).toBe(null);
     expect(workbench?.classList.contains("zt-workbench-right-collapsed")).toBe(true);
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="打开设置"]')).toBe(null);
-    expect(rightRailButtons.at(-1)).toBe(agentButton);
-    expect(agentButton.classList.contains("zt-tool-rail-agent")).toBe(true);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="打开设置"]')).toBe(null);
+    expect(rightRailButtons).not.toContain(agentButton);
+    expect(view.container.querySelector(".zt-right-tools nav")).toBe(null);
+    expect(agentButton.closest("header")).not.toBe(null);
     expect(agentButton.querySelector("svg")?.classList.contains("lucide-message-square-more")).toBe(true);
     expect(agentButton.getAttribute("aria-pressed")).toBe("false");
     expect(agentButton.getAttribute("aria-expanded")).toBe("false");
@@ -1842,7 +1846,7 @@ describe("AppShell", () => {
     expect(storeMocks.terminalOutputAccesses).toBe(0);
     expect(storeMocks.captureContext).not.toHaveBeenCalled();
 
-    const agentButton = view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement;
+    const agentButton = view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement;
     await act(async () => {
       agentButton.click();
       await Promise.resolve();
@@ -1876,7 +1880,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await act(async () => {
-      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
 
@@ -1983,7 +1987,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await act(async () => {
-      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
 
@@ -2060,11 +2064,11 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await act(async () => {
-      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
     await act(async () => {
-      (view.container.querySelector('.zt-tool-rail [aria-label="历史"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-terminal-tools [aria-label="历史"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
 
@@ -2080,7 +2084,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await act(async () => {
-      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
     expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(1);
@@ -2133,7 +2137,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await act(async () => {
-      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
 
@@ -2190,7 +2194,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await act(async () => {
-      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
     const onRestart = storeMocks.aiPanelProps?.onRestart as () => Promise<void>;
@@ -2247,7 +2251,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await act(async () => {
-      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
     const closeFirstConnection = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
@@ -2271,7 +2275,7 @@ describe("AppShell", () => {
     view.rerender(<AppShell />);
     await act(async () => {
       await Promise.resolve();
-      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
 
@@ -2280,7 +2284,7 @@ describe("AppShell", () => {
       await closingFirstConnection;
     });
 
-    expect((view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).getAttribute("aria-pressed")).toBe("true");
+    expect((view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).getAttribute("aria-pressed")).toBe("true");
     expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ agent_session_id: "agent-pane-1-tab-2" }));
     view.unmount();
   });
@@ -2290,7 +2294,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await act(async () => {
-      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
     expect(storeMocks.terminalState.runtimes).toHaveProperty("agent-runtime-pane-1-tab-1");
@@ -2313,7 +2317,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await act(async () => {
-      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
     const onRestart = storeMocks.aiPanelProps?.onRestart as () => Promise<void>;
@@ -2346,7 +2350,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await act(async () => {
-      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
     const onClose = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
@@ -2369,7 +2373,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     await act(async () => {
-      (view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement).click();
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
       await Promise.resolve();
     });
     const onClose = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
@@ -2404,7 +2408,7 @@ describe("AppShell", () => {
   it("shows a no-target Codex panel for the startup placeholder pane", async () => {
     const view = render(<AppShell />);
 
-    const agentButton = view.container.querySelector('.zt-tool-rail [aria-label="Agent"]') as HTMLButtonElement;
+    const agentButton = view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement;
     await act(async () => {
       agentButton.click();
       await Promise.resolve();
@@ -2656,10 +2660,10 @@ describe("AppShell", () => {
       },
     ];
     const view = render(<AppShell />);
-    const filesButton = view.container.querySelector('.zt-tool-rail [aria-label="SFTP 文件"]') as HTMLButtonElement;
+    const filesButton = view.container.querySelector('.zt-terminal-tools [aria-label="SFTP 文件"]') as HTMLButtonElement;
 
     expect(storeMocks.bindApprovalModeToSession).toHaveBeenCalledWith("session-1");
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="传输任务"]')).toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="传输任务"]')).toBe(null);
     expect(storeMocks.loadTransfers).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -2722,7 +2726,7 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
     const transferButton = view.container.querySelector('.zt-titlebar-navigation [aria-label="文件传输"]') as HTMLButtonElement;
 
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="文件传输"]')).toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="文件传输"]')).toBe(null);
     expect(transferButton).not.toBe(null);
 
     await act(async () => {
@@ -2778,7 +2782,7 @@ describe("AppShell", () => {
       },
     ];
     const view = render(<AppShell />);
-    const historyButton = view.container.querySelector('.zt-tool-rail [aria-label="历史"]') as HTMLButtonElement;
+    const historyButton = view.container.querySelector('.zt-terminal-tools [aria-label="历史"]') as HTMLButtonElement;
 
     await act(async () => {
       historyButton.click();
@@ -2872,7 +2876,7 @@ describe("AppShell", () => {
     ];
     storeMocks.terminalState.inputSerialByRuntime = { "runtime-1": 0 };
     const view = render(<AppShell />);
-    const historyButton = view.container.querySelector('.zt-tool-rail [aria-label="历史"]') as HTMLButtonElement;
+    const historyButton = view.container.querySelector('.zt-terminal-tools [aria-label="历史"]') as HTMLButtonElement;
 
     await act(async () => {
       historyButton.click();
@@ -2963,7 +2967,7 @@ describe("AppShell", () => {
       },
     ];
     const view = render(<AppShell />);
-    const historyButton = view.container.querySelector('.zt-tool-rail [aria-label="历史"]') as HTMLButtonElement;
+    const historyButton = view.container.querySelector('.zt-terminal-tools [aria-label="历史"]') as HTMLButtonElement;
 
     await act(async () => {
       historyButton.click();
@@ -3063,7 +3067,7 @@ describe("AppShell", () => {
       },
     };
     const view = render(<AppShell />);
-    const historyButton = view.container.querySelector('.zt-tool-rail [aria-label="历史"]') as HTMLButtonElement;
+    const historyButton = view.container.querySelector('.zt-terminal-tools [aria-label="历史"]') as HTMLButtonElement;
 
     await act(async () => {
       historyButton.click();
@@ -3137,8 +3141,8 @@ describe("AppShell", () => {
       },
     };
     const view = render(<AppShell />);
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="历史"]')).toBe(null);
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SFTP 文件"]')).toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="历史"]')).toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="SFTP 文件"]')).toBe(null);
 
     view.unmount();
   });
@@ -3184,7 +3188,7 @@ describe("AppShell", () => {
       },
     ];
     const view = render(<AppShell />);
-    const monitorButton = view.container.querySelector('.zt-tool-rail [aria-label="资源监控"]') as HTMLButtonElement;
+    const monitorButton = view.container.querySelector('.zt-terminal-tools [aria-label="资源监控"]') as HTMLButtonElement;
 
     await act(async () => {
       monitorButton.click();
@@ -3276,12 +3280,12 @@ describe("AppShell", () => {
 
   it("opens resource monitor for the local machine without an active connection", async () => {
     const view = render(<AppShell />);
-    const monitorButton = view.container.querySelector('.zt-tool-rail [aria-label="资源监控"]') as HTMLButtonElement;
-    const rightRailLabels = Array.from(view.container.querySelectorAll(".zt-tool-rail button")).map((item) =>
+    const monitorButton = view.container.querySelector('.zt-terminal-tools [aria-label="资源监控"]') as HTMLButtonElement;
+    const rightRailLabels = Array.from(view.container.querySelectorAll(".zt-terminal-tools button")).map((item) =>
       item.getAttribute("aria-label"),
     );
 
-    expect(rightRailLabels).toEqual(["资源监控", "Agent"]);
+    expect(rightRailLabels).toEqual(["资源监控"]);
 
     await act(async () => {
       monitorButton.click();
@@ -3332,12 +3336,12 @@ describe("AppShell", () => {
       ],
     };
     const view = render(<AppShell />);
-    const monitorButton = view.container.querySelector('.zt-tool-rail [aria-label="资源监控"]') as HTMLButtonElement;
-    const rightRailLabels = Array.from(view.container.querySelectorAll(".zt-tool-rail button")).map((item) =>
+    const monitorButton = view.container.querySelector('.zt-terminal-tools [aria-label="资源监控"]') as HTMLButtonElement;
+    const rightRailLabels = Array.from(view.container.querySelectorAll(".zt-terminal-tools button")).map((item) =>
       item.getAttribute("aria-label"),
     );
 
-    expect(rightRailLabels).toEqual(["资源监控", "历史", "Agent"]);
+    expect(rightRailLabels).toEqual(["资源监控", "历史"]);
 
     await act(async () => {
       monitorButton.click();
@@ -3426,7 +3430,7 @@ describe("AppShell", () => {
       },
     ];
     const view = render(<AppShell />);
-    const tunnelButton = view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]') as HTMLButtonElement;
+    const tunnelButton = view.container.querySelector('.zt-terminal-tools [aria-label="SSH 隧道"]') as HTMLButtonElement;
 
     expect(tunnelButton).not.toBe(null);
     expect(tunnelButton.querySelector("svg")?.classList.contains("lucide-cable")).toBe(true);
@@ -3477,7 +3481,7 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 隧道"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="SSH 隧道"]')).not.toBe(null);
 
     view.unmount();
   });
@@ -3720,7 +3724,7 @@ describe("AppShell", () => {
       },
     ];
     const view = render(<AppShell />);
-    const containerButton = view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]') as HTMLButtonElement;
+    const containerButton = view.container.querySelector('.zt-terminal-tools [aria-label="SSH 容器"]') as HTMLButtonElement;
 
     expect(containerButton).not.toBe(null);
     expect(containerButton.querySelector("svg")?.classList.contains("lucide-box")).toBe(true);
@@ -3835,7 +3839,7 @@ describe("AppShell", () => {
 
     const view = render(<AppShell />);
 
-    expect(view.container.querySelector('.zt-tool-rail [aria-label="SSH 容器"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-terminal-tools [aria-label="SSH 容器"]')).not.toBe(null);
 
     view.unmount();
   });
