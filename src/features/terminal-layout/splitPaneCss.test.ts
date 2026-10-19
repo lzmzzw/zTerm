@@ -77,7 +77,7 @@ describe("split pane css direction mapping", () => {
 
     expect(toolRailStyles).toContain("position: absolute");
     expect(toolRailStyles).toContain("flex-direction: column");
-    expect(railButtonStyles).toContain("height: var(--zt-rail-button-size)");
+    expect(railButtonStyles).toContain("height: var(--zt-workbar-control-size)");
     expect(panelHeaderStyles).toContain("height: var(--zt-workbar-height)");
     expect(frameStyles).toContain("grid-template-rows: var(--zt-workbar-height) 1fr");
     expect(paneTabsStyles).toContain("height: var(--zt-workbar-height)");

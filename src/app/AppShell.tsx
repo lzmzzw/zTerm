@@ -1,6 +1,5 @@
 // Author: Liz
-import { ArrowLeftRight, FolderPlus, LayoutGrid, MessageSquareMore } from "lucide-react";
-import zTermLogoUrl from "../assets/zterm-logo.svg";
+import { ArrowLeftRight, FolderPlus, LayoutGrid, MessageSquareMore, Terminal } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -1639,7 +1638,7 @@ export function AppShell() {
       <ToolButton
         label="会话"
         active={viewMode === "workbench" && activeLeftTool === "sessions"}
-        icon={<img className="zt-titlebar-logo" src={zTermLogoUrl} alt="" aria-hidden="true" />}
+        icon={<Terminal size={16} aria-hidden="true" />}
         onClick={() => {
           setViewMode("workbench");
           if (viewMode === "settings") setActiveLeftTool("sessions");
@@ -1649,7 +1648,7 @@ export function AppShell() {
       <ToolButton
         label="文件传输"
         active={viewMode === "workbench" && fileTransferDialogOpen}
-        icon={<ArrowLeftRight size={20} aria-hidden="true" />}
+        icon={<ArrowLeftRight size={16} aria-hidden="true" />}
         onClick={() => {
           setViewMode("workbench");
           setFileTransferDialogOpen((current) => viewMode === "settings" || !current);
@@ -1658,7 +1657,7 @@ export function AppShell() {
       <ToolButton
         label="打开设置"
         active={viewMode === "settings"}
-        icon={<LayoutGrid size={20} aria-hidden="true" />}
+        icon={<LayoutGrid size={16} aria-hidden="true" />}
         onClick={() => setViewMode("settings")}
       />
     </nav>
@@ -1668,7 +1667,7 @@ export function AppShell() {
     <ToolButton
       label={t(language, "agent")}
       active={viewMode === "workbench" && activeTool === "agent"}
-      icon={<MessageSquareMore size={20} aria-hidden="true" />}
+      icon={<MessageSquareMore size={16} aria-hidden="true" />}
       onClick={() => {
         setViewMode("workbench");
         if (viewMode === "settings" && activeTool === "agent") return;

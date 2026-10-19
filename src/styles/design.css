@@ -60,5 +60,6 @@ svg.lucide-trash-2, svg.lucide-circle-x, svg.lucide-triangle-alert { color: #e87
 svg.lucide-chevron-down, svg.lucide-chevron-right, svg.lucide-chevron-up, svg.lucide-chevron-left,
 svg.lucide-x, svg.lucide-minus, svg.lucide-square, svg.lucide-copy, svg.lucide-ellipsis,
 svg.lucide-search, svg.lucide-grip-vertical { color: currentColor; }
+.zt-titlebar svg.lucide { width: 16px; height: 16px; color: inherit; }
 button:disabled svg.lucide { opacity: .45; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }

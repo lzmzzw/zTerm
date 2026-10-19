@@ -52,7 +52,7 @@ describe("global dark theme colors", () => {
     expect(rootVariable("--zt-left-sidebar-width")).toBe("300px");
     expect(rootVariable("--zt-right-sidebar-width")).toBe("430px");
     expect(rootVariable("--zt-settings-nav-width")).toBe("218px");
-    expect(rootVariable("--zt-window-actions-width")).toBe("120px");
+    expect(rootVariable("--zt-window-actions-width")).toBe("122px");
   });
 
   it("keeps shared typography and spinner rules single-sourced", () => {
@@ -68,10 +68,10 @@ describe("global dark theme colors", () => {
     );
     expect(ruleBodiesForSelector(".zt-titlebar")).toContain("height: var(--zt-titlebar-height)");
     expect(ruleBodiesForSelector(".zt-titlebar-logo-slot")).toContain("width: var(--zt-rail-width)");
-    expect(ruleBodiesForSelector(".zt-titlebar-navigation button")).toContain("width: 36px");
-    expect(ruleBodiesForSelector(".zt-titlebar-navigation button")).toContain("height: 36px");
-    expect(ruleBodiesForSelector(".zt-terminal-tools button")).toContain("width: var(--zt-rail-button-size)");
-    expect(ruleBodiesForSelector(".zt-terminal-tools button")).toContain("height: var(--zt-rail-button-size)");
+    expect(ruleBodiesForSelector(".zt-titlebar-navigation button")).toContain("width: 38px");
+    expect(ruleBodiesForSelector(".zt-titlebar-navigation button")).toContain("height: 32px");
+    expect(ruleBodiesForSelector(".zt-terminal-tools button")).toContain("width: var(--zt-workbar-control-size)");
+    expect(ruleBodiesForSelector(".zt-terminal-tools button")).toContain("height: var(--zt-workbar-control-size)");
 
     for (const selector of [".zt-panel-header", ".zt-pane-tabs", ".zt-terminal-toolbar"]) {
       expect(ruleBodiesForSelector(selector)).toContain("height: var(--zt-workbar-height)");

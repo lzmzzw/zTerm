@@ -92,8 +92,8 @@
 .zt-titlebar-navigation {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 8px;
+  gap: 2px;
+  padding: 0 4px;
   height: 100%;
 }
 
@@ -103,25 +103,26 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 32px;
   padding: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #ffffff;
+  color: var(--zt-text-secondary);
   cursor: pointer;
 }
 
 .zt-titlebar-navigation .zt-titlebar-logo,
 .zt-titlebar-navigation svg.lucide {
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   color: inherit;
 }
 
 .zt-titlebar-navigation button:hover {
   background: var(--zt-bg-hover);
+  color: var(--zt-text-primary);
 }
 
 .zt-titlebar-navigation button[aria-pressed="true"] {
@@ -141,19 +142,6 @@
 .zt-titlebar-navigation button:focus-visible {
   outline: 2px solid var(--zt-focus-ring);
   outline-offset: -2px;
-}
-
-:root[data-zt-theme="light"] .zt-titlebar-navigation button {
-  background: #444444;
-}
-
-:root[data-zt-theme="light"] .zt-titlebar-navigation button:hover,
-:root[data-zt-theme="light"] .zt-titlebar-navigation button[aria-pressed="true"] {
-  background: #242424;
-}
-
-:root[data-zt-theme="light"] .zt-titlebar-navigation button:focus-visible {
-  outline-offset: 2px;
 }
 
 .zt-titlebar-menu {
@@ -549,21 +537,17 @@
 
 .zt-terminal-tools {
   position: absolute;
-  top: calc(var(--zt-workbar-height) + 12px);
-  right: 20px;
+  top: calc(var(--zt-workbar-height) + 8px);
+  right: var(--zt-space-3);
   z-index: 5;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
   max-height: calc(100% - var(--zt-workbar-height) - 24px);
-  padding: 4px;
+  padding: 0;
   overflow-y: auto;
   scrollbar-width: thin;
-  border: 1px solid var(--zt-border-subtle);
-  border-radius: 8px;
-  background: var(--zt-surface-floating);
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.16);
 }
 
 .zt-terminal-tools button {
@@ -571,8 +555,9 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  width: var(--zt-rail-button-size);
-  height: var(--zt-rail-button-size);
+  width: var(--zt-workbar-control-size);
+  height: var(--zt-workbar-control-size);
+  padding: 0;
   border: 0;
   border-radius: var(--zt-radius-control);
   background: transparent;
@@ -598,15 +583,16 @@
 .zt-titlebar-actions {
   display: flex;
   align-items: center;
-  padding: 0 8px;
+  padding: 0;
+  margin-right: 2px;
 }
 
 .zt-titlebar-actions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 32px;
   padding: 0;
   border: 0;
   border-radius: 6px;
@@ -616,6 +602,7 @@
 
 .zt-titlebar-actions button:hover {
   background: var(--zt-bg-hover);
+  color: var(--zt-text-primary);
 }
 
 .zt-titlebar-actions button[aria-pressed="true"] {

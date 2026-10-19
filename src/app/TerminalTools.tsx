@@ -34,7 +34,7 @@ export function TerminalTools({
             key={tool}
             label={t(language, rightToolLabelKey(tool))}
             active={activeTool === tool}
-            icon={<Icon size={20} aria-hidden="true" />}
+            icon={<Icon size={14} aria-hidden="true" />}
             onClick={() => onToolChange(tool)}
           />
         );
