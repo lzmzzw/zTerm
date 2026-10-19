@@ -163,8 +163,8 @@ describe("createTerminalSemanticHighlighter", () => {
 
     expect(fake.decorationOptions).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ x: 0, width: 120, backgroundColor: "#27272b" }),
-        expect.objectContaining({ x: 0, width: 120, backgroundColor: "#30303a" }),
+        expect.objectContaining({ x: 0, width: 120, backgroundColor: "#272727" }),
+        expect.objectContaining({ x: 0, width: 120, backgroundColor: "#303030" }),
       ]),
     );
   });
@@ -179,8 +179,8 @@ describe("createTerminalSemanticHighlighter", () => {
 
     expect(fake.decorationOptions).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ marker: expect.objectContaining({ line: 0 }), backgroundColor: "#30303a" }),
-        expect.objectContaining({ marker: expect.objectContaining({ line: 1 }), backgroundColor: "#30303a" }),
+        expect.objectContaining({ marker: expect.objectContaining({ line: 0 }), backgroundColor: "#303030" }),
+        expect.objectContaining({ marker: expect.objectContaining({ line: 1 }), backgroundColor: "#303030" }),
       ]),
     );
     expect(fake.decorations.some((decoration) => decoration.dispose.mock.calls.length > 0)).toBe(true);

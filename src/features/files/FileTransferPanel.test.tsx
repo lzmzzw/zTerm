@@ -736,8 +736,8 @@ describe("FileTransferPanel", () => {
     const headers = view.container.querySelectorAll(".zt-file-transfer-pane-header");
     expect(headers).toHaveLength(2);
     headers.forEach((header) => expect(header.querySelector("strong")).toBeNull());
-    expect((headers[0].firstElementChild as HTMLElement).getAttribute("aria-label")).toBe("左侧端点");
-    expect((headers[1].firstElementChild as HTMLElement).getAttribute("aria-label")).toBe("右侧端点");
+    expect((headers[0].querySelector(".zt-select-trigger") as HTMLElement).getAttribute("aria-label")).toBe("左侧端点");
+    expect((headers[1].querySelector(".zt-select-trigger") as HTMLElement).getAttribute("aria-label")).toBe("右侧端点");
 
     view.unmount();
   });
@@ -822,7 +822,7 @@ describe("FileTransferPanel", () => {
     reopenedView.unmount();
   });
 
-  it("starts with the transfer task dock collapsed", async () => {
+  it("starts with the standalone transfer task dock expanded", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
       if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
@@ -837,8 +837,8 @@ describe("FileTransferPanel", () => {
     await flushEffects();
     await flushEffects();
 
-    expect(button(view.container, "展开传输任务")).toBeTruthy();
-    expect(view.container.querySelector('[aria-label="传输任务列表"]')).toBeNull();
+    expect(button(view.container, "折叠传输任务")).toBeTruthy();
+    expect(view.container.querySelector('[aria-label="传输记录筛选"]')).toBeTruthy();
 
     view.unmount();
   });

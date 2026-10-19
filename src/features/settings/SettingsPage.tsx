@@ -189,7 +189,13 @@ function McpSettings({
   const [tools, setTools] = useState<McpToolDefinition[] | null>(null);
   const [toolsLoading, setToolsLoading] = useState(false);
   const [toolsError, setToolsError] = useState<string | null>(null);
-  const toolGroups = useMemo(() => groupMcpTools(tools ?? []), [tools]);
+  const [toolQuery, setToolQuery] = useState("");
+  const toolGroups = useMemo(() => {
+    const query = toolQuery.trim().toLocaleLowerCase();
+    return groupMcpTools((tools ?? []).filter((tool) =>
+      !query || `${tool.id} ${tool.title} ${tool.description}`.toLocaleLowerCase().includes(query),
+    ));
+  }, [tools, toolQuery]);
 
   async function setEnabled(enabled: boolean) {
     await onSetEnabled(enabled, null);
@@ -275,17 +281,28 @@ function McpSettings({
         </div>
       </div>
       <div className="zt-mcp-tools-panel">
-        <button
-          type="button"
-          className="zt-mcp-tools-toggle"
-          aria-expanded={toolsExpanded}
-          aria-controls="zt-mcp-tools-details"
-          onClick={toggleTools}
-        >
-          {toolsExpanded ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
-          <strong>{t(language, "mcpToolDetails")}</strong>
-          <span>{tools ? t(language, "mcpToolCount", { count: tools.length }) : null}</span>
-        </button>
+        <div className="zt-mcp-tools-heading">
+          <button
+            type="button"
+            className="zt-mcp-tools-toggle"
+            aria-expanded={toolsExpanded}
+            aria-controls="zt-mcp-tools-details"
+            onClick={toggleTools}
+          >
+            {toolsExpanded ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
+            <strong>{t(language, "mcpToolDetails")}</strong>
+            <span>{tools ? t(language, "mcpToolCount", { count: tools.length }) : null}</span>
+          </button>
+          {toolsExpanded ? (
+            <input
+              className="zt-mcp-tool-search"
+              aria-label={language === "enUS" ? "Search MCP tools" : "搜索 MCP 工具"}
+              placeholder={language === "enUS" ? "Search name, ID or description" : "搜索名称、ID 或说明"}
+              value={toolQuery}
+              onChange={(event) => setToolQuery(event.currentTarget.value)}
+            />
+          ) : null}
+        </div>
         {toolsExpanded ? (
           <div id="zt-mcp-tools-details" className="zt-mcp-tools-details">
             {toolsLoading ? <div className="zt-mcp-tools-message">{t(language, "mcpToolsLoading")}</div> : null}
@@ -300,10 +317,13 @@ function McpSettings({
             {!toolsLoading && !toolsError && tools?.length === 0 ? (
               <div className="zt-mcp-tools-message">{t(language, "mcpToolsEmpty")}</div>
             ) : null}
+            {!toolsLoading && !toolsError && Boolean(tools?.length) && toolGroups.length === 0 ? (
+              <div className="zt-mcp-tools-message">{language === "enUS" ? "No matching tools" : "没有匹配的工具"}</div>
+            ) : null}
             {!toolsLoading && !toolsError
               ? toolGroups.map((group) => (
-                  <section key={group.key} className="zt-mcp-tool-group" aria-label={mcpToolGroupLabel(language, group.key)}>
-                    <h3>{mcpToolGroupLabel(language, group.key)} ({group.tools.length})</h3>
+                  <details open key={group.key} className="zt-mcp-tool-group" aria-label={mcpToolGroupLabel(language, group.key)}>
+                    <summary>{mcpToolGroupLabel(language, group.key)} <span>({group.tools.length})</span></summary>
                     <div className="zt-mcp-tool-list">
                       {group.tools.map((tool) => (
                         <div key={tool.id} className="zt-mcp-tool-item">
@@ -315,7 +335,7 @@ function McpSettings({
                         </div>
                       ))}
                     </div>
-                  </section>
+                  </details>
                 ))
               : null}
           </div>
@@ -399,57 +419,69 @@ function GeneralSettings({
             onSave();
           }}
         >
-          <label>
-            <span>{t(language, "language")}</span>
-            <ZtSelect
-              ariaLabel={t(language, "language")}
-              value={draft.language}
-              options={localizedLanguageOptions}
-              onChange={(nextValue) => onDraftChange({ ...draft, language: nextValue as AppLanguage })}
-            />
-          </label>
-          <label>
-            <span>{t(language, "theme")}</span>
-            <ZtSelect
-              ariaLabel={t(language, "theme")}
-              value={draft.theme}
-              options={themeOptions}
-              onChange={(nextValue) => onDraftChange({ ...draft, theme: nextValue as AppTheme })}
-            />
-          </label>
-          <label>
-            <span>{t(language, "uiFontSize")}</span>
-            <ZtNumberInput
-              ariaLabel={t(language, "uiFontSize")}
-              min={11}
-              max={18}
-              step={1}
-              value={draft.ui_font_size}
-              onChange={(value) => onDraftChange({ ...draft, ui_font_size: value })}
-            />
-          </label>
-          <label>
-            <span>{t(language, "terminalFontSize")}</span>
-            <ZtNumberInput
-              ariaLabel={t(language, "terminalFontSize")}
-              min={9}
-              max={24}
-              step={1}
-              value={draft.terminal_font_size}
-              onChange={(value) => onDraftChange({ ...draft, terminal_font_size: value })}
-            />
-          </label>
-          <label>
-            <span>{t(language, "workspaceRestoreStrategy")}</span>
-            <ZtSelect
-              ariaLabel={t(language, "workspaceRestoreStrategy")}
-              value={draft.workspace_restore_strategy ?? "visible_first"}
-              options={localizedWorkspaceRestoreStrategyOptions}
-              onChange={(nextValue) =>
-                onDraftChange({ ...draft, workspace_restore_strategy: nextValue as WorkspaceRestoreStrategy })
-              }
-            />
-          </label>
+          <h3 className="zt-settings-group-title">{language === "enUS" ? "Appearance & language" : "外观与语言"}</h3>
+          <div className="zt-settings-group">
+            <label>
+              <span>{t(language, "language")}</span>
+              <ZtSelect
+                ariaLabel={t(language, "language")}
+                value={draft.language}
+                options={localizedLanguageOptions}
+                onChange={(nextValue) => onDraftChange({ ...draft, language: nextValue as AppLanguage })}
+              />
+            </label>
+            <div className="zt-settings-theme-row">
+              <span>{t(language, "theme")}</span>
+              <div className="zt-theme-segment" role="group" aria-label={t(language, "theme")}>
+                {themeOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={draft.theme === option.value}
+                    onClick={() => onDraftChange({ ...draft, theme: option.value as AppTheme })}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <h3 className="zt-settings-group-title">{language === "enUS" ? "Display & restore" : "显示与恢复"}</h3>
+          <div className="zt-settings-group">
+            <label>
+              <span>{t(language, "uiFontSize")}</span>
+              <ZtNumberInput
+                ariaLabel={t(language, "uiFontSize")}
+                min={11}
+                max={18}
+                step={1}
+                value={draft.ui_font_size}
+                onChange={(value) => onDraftChange({ ...draft, ui_font_size: value })}
+              />
+            </label>
+            <label>
+              <span>{t(language, "terminalFontSize")}</span>
+              <ZtNumberInput
+                ariaLabel={t(language, "terminalFontSize")}
+                min={9}
+                max={24}
+                step={1}
+                value={draft.terminal_font_size}
+                onChange={(value) => onDraftChange({ ...draft, terminal_font_size: value })}
+              />
+            </label>
+            <label>
+              <span>{t(language, "workspaceRestoreStrategy")}</span>
+              <ZtSelect
+                ariaLabel={t(language, "workspaceRestoreStrategy")}
+                value={draft.workspace_restore_strategy ?? "visible_first"}
+                options={localizedWorkspaceRestoreStrategyOptions}
+                onChange={(nextValue) =>
+                  onDraftChange({ ...draft, workspace_restore_strategy: nextValue as WorkspaceRestoreStrategy })
+                }
+              />
+            </label>
+          </div>
         </form>
       </div>
       <SettingsActionBar language={language} loading={loading} status={status} formId="zt-general-settings-form" onReset={onReset} />

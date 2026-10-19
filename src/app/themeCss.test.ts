@@ -40,18 +40,18 @@ describe("global dark theme colors", () => {
   });
 
   it("defines shared geometry tokens for cross-module alignment", () => {
-    expect(rootVariable("--zt-titlebar-height")).toBe("30px");
+    expect(rootVariable("--zt-titlebar-height")).toBe("52px");
     expect(rootVariable("--zt-rail-width")).toBe("40px");
-    expect(rootVariable("--zt-workbar-height")).toBe("32px");
+    expect(rootVariable("--zt-workbar-height")).toBe("36px");
     expect(rootVariable("--zt-rail-button-size")).toBe("28px");
-    expect(rootVariable("--zt-rail-block-inset")).toBe("3px");
+    expect(rootVariable("--zt-rail-block-inset")).toBe("5px");
     expect(rootVariable("--zt-rail-inline-inset")).toBe("6px");
     expect(rootVariable("--zt-pane-border-width")).toBe("1px");
     expect(rootVariable("--zt-workbar-control-size")).toBe("24px");
     expect(rootVariable("--zt-font-size-caption")).toBe("11px");
     expect(rootVariable("--zt-left-sidebar-width")).toBe("300px");
     expect(rootVariable("--zt-right-sidebar-width")).toBe("430px");
-    expect(rootVariable("--zt-settings-nav-width")).toBe("260px");
+    expect(rootVariable("--zt-settings-nav-width")).toBe("218px");
     expect(rootVariable("--zt-window-actions-width")).toBe("120px");
   });
 
@@ -107,11 +107,11 @@ describe("global dark theme colors", () => {
     expect(ruleBodiesForSelector(".zt-container-panel > .zt-tunnel-list")).toContain("flex: 1 1 0");
   });
 
-  it("uses kerminal-like semantic surface and line tokens in the dark theme", () => {
-    expect(rootVariable("--zt-surface-page")).toBe("#101012");
-    expect(rootVariable("--zt-surface-chrome")).toBe("#111113");
-    expect(rootVariable("--zt-surface-sidebar")).toBe("#101012");
-    expect(rootVariable("--zt-surface-terminal")).toBe("#1f1f21");
+  it("uses neutral semantic surface and line tokens in the dark theme", () => {
+    expect(rootVariable("--zt-surface-page")).toBe("#191919");
+    expect(rootVariable("--zt-surface-chrome")).toBe("#202020");
+    expect(rootVariable("--zt-surface-sidebar")).toBe("#242424");
+    expect(rootVariable("--zt-surface-terminal")).toBe("#141414");
     expect(rootVariable("--zt-line-hairline")).toBe("rgb(255 255 255 / 0.08)");
     expect(rootVariable("--zt-line-regular")).toBe("rgb(255 255 255 / 0.1)");
     expect(rootVariable("--zt-line-strong")).toBe("rgb(255 255 255 / 0.14)");
@@ -133,11 +133,11 @@ describe("global dark theme colors", () => {
     expect(ruleBodiesForSelector(".zt-xterm-host")).toContain("background: var(--zt-bg-terminal)");
   });
 
-  it("uses kerminal-like light surfaces including a light terminal background", () => {
-    expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-surface-page")).toBe("#f5f5f7");
-    expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-surface-chrome")).toBe("#ffffff");
-    expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-surface-sidebar")).toBe("#f5f5f7");
-    expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-surface-terminal")).toBe("#f7f7fa");
+  it("uses neutral light surfaces including a light terminal background", () => {
+    expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-surface-page")).toBe("#f5f5f5");
+    expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-surface-chrome")).toBe("#f6f6f6");
+    expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-surface-sidebar")).toBe("#ffffff");
+    expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-surface-terminal")).toBe("#fafafa");
     expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-line-hairline")).toBe(
       "rgb(0 0 0 / 0.08)",
     );
@@ -146,7 +146,7 @@ describe("global dark theme colors", () => {
     );
   });
 
-  it("uses kerminal-like settings navigation and content surfaces", () => {
+  it("uses neutral settings navigation and content surfaces", () => {
     expect(rootVariable("--zt-bg-settings-nav")).toBe("var(--zt-surface-chrome)");
     expect(rootVariable("--zt-bg-settings-content")).toBe("var(--zt-surface-page)");
     expect(ruleBodiesForSelector(".zt-settings-page-body")).toContain(
@@ -222,7 +222,7 @@ describe("global dark theme colors", () => {
   it("uses one high-contrast non-blue focus-visible ring across interactive elements", () => {
     expect(rootVariable("--zt-focus-ring")).toBe("rgb(255 255 255 / 0.92)");
     expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-focus-ring")).toBe(
-      "rgb(24 31 42 / 0.78)",
+      "#444444",
     );
 
     for (const selector of [
@@ -308,7 +308,7 @@ describe("global dark theme colors", () => {
   });
 
   it("keeps floating surfaces opaque so background text cannot show through dialogs", () => {
-    expect(rootVariable("--zt-surface-floating")).toBe("#1c1c1e");
+    expect(rootVariable("--zt-surface-floating")).toBe("#292929");
     expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-surface-floating")).toBe("#ffffff");
 
     for (const selector of [".zt-surface-frame", ".zt-settings-dialog"]) {

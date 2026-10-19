@@ -457,7 +457,7 @@ function SshContainerListPanel({
                   <span>{container.image || "-"}</span>
                 </div>
                 <div className="zt-container-actions">
-                  <code>{container.running ? "running" : "stopped"}</code>
+                  <code>{container.running ? "运行中" : "已停止"}</code>
                   <button
                     type="button"
                     className="zt-icon-button zt-container-enter-button"
@@ -484,6 +484,7 @@ function SshContainerListPanel({
                     }}
                   >
                     <LogIn size={14} aria-hidden="true" />
+                    <span>进入</span>
                   </button>
                 </div>
               </section>

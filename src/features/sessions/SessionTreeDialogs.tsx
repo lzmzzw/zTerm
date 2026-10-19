@@ -117,6 +117,7 @@ export function SessionGroupDialog({
 
   return (
     <ZtDialog
+      className="zt-session-group-editor"
       ariaLabel={title}
       title={title}
       size="compact"

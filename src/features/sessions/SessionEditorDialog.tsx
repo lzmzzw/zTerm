@@ -1,5 +1,5 @@
 // Author: Liz
-import { FolderKey, FolderSync, Monitor, Server, Terminal } from "lucide-react";
+import { FolderKey, FolderSync, Monitor, Server, Terminal, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { ZtNumberInput } from "../../components/ZtNumberInput";
@@ -395,7 +395,7 @@ export function SessionEditorDialog({
           <header>
             <strong>{sessionEditorDialogTitle(type, Boolean(initialSession))}</strong>
             <button type="button" aria-label="关闭会话编辑" onClick={onClose}>
-              ×
+              <X size={16} aria-hidden="true" />
             </button>
           </header>
 
@@ -405,6 +405,7 @@ export function SessionEditorDialog({
             return (
               <button
                 key={tab.type}
+                role="tab"
                 type="button"
                 aria-selected={type === tab.type}
                 disabled={Boolean(initialSession) && type !== tab.type}
@@ -472,8 +473,7 @@ export function SessionEditorDialog({
                     </label>
                   </>
                 ) : null}
-                <label className="zt-session-form-wide">
-                  <span>描述</span>
+                <label className="zt-session-form-description"><span>描述</span>
                   <ZtInput aria-label="描述" value={description} onChange={(event) => setDescription(event.currentTarget.value)} />
                 </label>
               </div>

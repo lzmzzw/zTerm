@@ -32,6 +32,7 @@ export function FileToolbar({
     <div className="zt-file-toolbar">
       <button type="button" aria-label="刷新文件列表" disabled={disabled || loading} onClick={() => void onRefresh()}>
         <RefreshCw size={14} aria-hidden="true" />
+        <span>刷新</span>
       </button>
       <button type="button" aria-label="上级目录" disabled={disabled || loading} onClick={() => void onParent()}>
         <ArrowUp size={14} aria-hidden="true" />
@@ -41,9 +42,11 @@ export function FileToolbar({
       </button>
       <button type="button" aria-label="上传" title="上传" disabled={disabled || loading} onClick={() => void onUpload()}>
         <Upload size={14} aria-hidden="true" />
+        <span>上传</span>
       </button>
       <button type="button" aria-label="下载" disabled={disabled || !hasSelection} onClick={() => void onDownload()}>
         <Download size={14} aria-hidden="true" />
+        <span>下载</span>
       </button>
       <button type="button" aria-label="重命名" disabled={disabled || !canRename} onClick={() => void onRename()}>
         <Edit3 size={14} aria-hidden="true" />

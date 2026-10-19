@@ -579,12 +579,12 @@ a[href]:focus-visible,
 }
 
 .zt-switch-input:checked + .zt-switch-control {
-  border-color: color-mix(in srgb, var(--zt-accent) 62%, var(--zt-border));
-  background: color-mix(in srgb, var(--zt-accent) 52%, var(--zt-bg-active));
+  border-color: #007aff;
+  background: #007aff;
 }
 
 .zt-switch-input:checked + .zt-switch-control::after {
-  background: var(--zt-text-primary);
+  background: #fff;
   transform: translateX(14px);
 }
 

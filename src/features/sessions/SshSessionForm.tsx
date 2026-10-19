@@ -94,8 +94,7 @@ export function SshSessionForm({
           ) : null}
           {authMode === "key" ? (
             <>
-              <label className="zt-session-form-wide">
-                <span>身份文件</span>
+              <label><span>身份文件</span>
                 <div className="zt-path-picker">
                   <input
                     aria-label="身份文件"

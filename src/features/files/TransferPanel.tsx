@@ -26,6 +26,11 @@ interface TransferPanelProps {
 
 const activeTransferStatuses = new Set<TransferTask["status"]>(["queued", "running", "paused"]);
 const pausableTransferStatuses = new Set<TransferStatus>(["queued", "running"]);
+const transferStatusLabels: Record<TransferStatus, string> = {
+  queued: "等待中", running: "传输中", paused: "已暂停",
+  done: "已完成", failed: "失败", cancelled: "已取消",
+};
+const taskFilters = [["all", "全部"], ["current", "当前任务"], ["history", "历史任务"]] as const;
 
 export function TransferPanel({
   collapsible = false,
@@ -48,8 +53,12 @@ export function TransferPanel({
   const allTaskIds = tasks.map((task) => task.id);
   const hasBulkActions = Boolean(onPauseAll || onResumeAll || onClearAll);
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const [drawerHeight, setDrawerHeight] = useState<number | null>(null);
+  const [taskFilter, setTaskFilter] = useState<"all" | "current" | "history">("all");
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(() => new Set());
   const dockRef = useRef<HTMLElement | null>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
   const [pendingConfirm, setPendingConfirm] = useState<{
     title: string;
     message: string;
@@ -114,7 +123,7 @@ export function TransferPanel({
   };
 
   const list = renderTransferList(
-    tasks,
+    tasks.filter((task) => taskFilter === "all" || (taskFilter === "current" ? activeTransferStatuses.has(task.status) : !activeTransferStatuses.has(task.status))),
     collapsedGroupIds,
     (groupId) =>
       setCollapsedGroupIds((current) => {
@@ -141,19 +150,28 @@ export function TransferPanel({
   }
 
   function resizeFromMouse(event: MouseEvent<HTMLButtonElement>) {
-    if (collapsed || !onResize) return;
+    if (collapsed) return;
+    resizeCleanupRef.current?.();
     event.preventDefault();
     const startY = event.clientY;
     const startHeight = dockRef.current?.getBoundingClientRect().height || 200;
     const onMouseMove = (moveEvent: globalThis.MouseEvent) => {
-      onResize(startHeight + startY - moveEvent.clientY);
+      resizeDrawer(startHeight + startY - moveEvent.clientY);
     };
     const onMouseUp = () => {
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
+      resizeCleanupRef.current = null;
     };
+    resizeCleanupRef.current = onMouseUp;
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp, { once: true });
+  }
+
+  function resizeDrawer(height: number) {
+    const next = Math.max(160, Math.min(600, height));
+    if (onResize) onResize(next);
+    else setDrawerHeight(next);
   }
 
   const confirmDialog = pendingConfirm ? (
@@ -176,6 +194,7 @@ export function TransferPanel({
       <section
         ref={dockRef}
         className={collapsed ? "zt-transfer-dock zt-transfer-dock-collapsed" : "zt-transfer-dock"}
+        style={!collapsed && !onResize && drawerHeight !== null ? { flexBasis: drawerHeight } : undefined}
         aria-label="传输任务"
       >
         {collapsed ? null : (
@@ -188,10 +207,10 @@ export function TransferPanel({
             tabIndex={0}
             onMouseDown={resizeFromMouse}
             onKeyDown={(event) => {
-              if (!onResize || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+              if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
               event.preventDefault();
               const currentHeight = dockRef.current?.getBoundingClientRect().height || 200;
-              onResize(currentHeight + (event.key === "ArrowUp" ? 24 : -24));
+              resizeDrawer(currentHeight + (event.key === "ArrowUp" ? 24 : -24));
             }}
           />
         )}
@@ -254,7 +273,18 @@ export function TransferPanel({
           ) : null}
         </div>
         {actionError ? <ZtInlineError>{actionError}</ZtInlineError> : null}
-        {collapsed ? null : list}
+        {collapsed ? null : (
+          <>
+            <div className="zt-transfer-filter" aria-label="传输记录筛选">
+              {taskFilters.map(([value, label]) => (
+                <button key={value} type="button" aria-pressed={taskFilter === value} onClick={() => setTaskFilter(value)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {list}
+          </>
+        )}
         {confirmDialog}
       </section>
     );
@@ -310,7 +340,7 @@ function renderTransferList(
                 <span style={{ width: `${percent ?? 0}%` }} />
               </span>
               <small>{percent === null ? `${transferredBytes} B` : `${percent}%`}</small>
-              <span className={`zt-transfer-status ${status}`}>{status}</span>
+              <span className={`zt-transfer-status ${status}`}>{transferStatusLabels[status]}</span>
             </button>
             {collapsed ? null : (
               <div className="zt-transfer-group-children">
@@ -342,14 +372,14 @@ function renderTransferRow(
   return (
     <div className={child ? "zt-transfer-row zt-transfer-child-row" : "zt-transfer-row"} key={task.id}>
       <div className="zt-transfer-main">
-        <strong>{sourcePath}</strong>
-        <span>{destinationPath}</span>
+        <strong title={sourcePath}>{sourcePath.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) || sourcePath}</strong>
+        <span title={`${sourcePath} → ${destinationPath}`}>{sourcePath} → {destinationPath}</span>
       </div>
       <div className="zt-transfer-progress" aria-label={`${task.id} 进度`}>
         <span style={{ width: `${percent ?? 0}%` }} />
       </div>
       <small>{percent === null ? `${task.transferred_bytes} B` : `${percent}%`}</small>
-      <span className={`zt-transfer-status ${task.status}`}>{task.status}</span>
+      <span className={`zt-transfer-status ${task.status}`}>{transferStatusLabels[task.status]}</span>
       <div className="zt-transfer-actions">
         {task.status === "queued" || task.status === "running" ? (
           <button type="button" aria-label={`暂停 ${task.id}`} title="暂停" disabled={busy} onClick={() => void onTaskAction("暂停", task.id, onPause)}>

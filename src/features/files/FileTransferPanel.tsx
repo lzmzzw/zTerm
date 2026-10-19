@@ -566,7 +566,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       </div>
       <TransferPanel
         collapsible
-        defaultCollapsed
+        defaultCollapsed={false}
         tasks={transfers}
         onCancel={cancelTransfer}
         onDelete={deleteTransfer}
@@ -825,6 +825,7 @@ function EndpointPane({
       style={columnStyle}
     >
       <div className="zt-file-transfer-pane-header">
+        {pane.endpoint.kind === "local" ? <HardDrive size={16} aria-hidden="true" /> : <Server size={16} aria-hidden="true" />}
         <ZtSelect
           ariaLabel={`${title}端点`}
           value={endpointValue}
@@ -954,9 +955,9 @@ function EndpointPane({
             <span className="zt-file-kind-icon" aria-hidden="true">
               {resolveFileIcon(entry)}
             </span>
-            <strong>{entry.name}</strong>
+            <strong title={entry.path}>{entry.name}</strong>
             <small>{entry.kind === "directory" ? "-" : formatBytes(entry.size, { maxUnit: "MB" })}</small>
-            <small>{formatFileModifiedTime(entry.modified_at_ms)}</small>
+            <small title={formatFileModifiedTime(entry.modified_at_ms)}>{entry.modified_at_ms ? new Date(entry.modified_at_ms).toLocaleDateString(undefined, { month: "2-digit", day: "2-digit" }) : "-"}</small>
           </button>
         ))}
       </div>

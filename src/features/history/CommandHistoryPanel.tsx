@@ -368,6 +368,7 @@ export function CommandHistoryPanel({
               <input
                 type="text"
                 aria-label={t(language, "filterHistory")}
+                placeholder="搜索命令"
                 value={query}
                 onChange={(event) => onQueryChange(event.currentTarget.value)}
               />

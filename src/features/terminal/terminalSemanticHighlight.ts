@@ -85,16 +85,16 @@ export const DIGE_WHITE_SEMANTIC_PALETTE: TerminalSemanticPalette = {
 };
 
 export const DIGE_BLACK_LINE_HIGHLIGHT_PALETTE: TerminalLineHighlightPalette = {
-  commandLineBackground: "#27272b",
-  cursorLineBackground: "#30303a",
+  commandLineBackground: "#272727",
+  cursorLineBackground: "#303030",
   selectionBackground: "#606060",
   selectionForeground: "#F8F8F2",
 };
 
 export const DIGE_WHITE_LINE_HIGHLIGHT_PALETTE: TerminalLineHighlightPalette = {
-  commandLineBackground: "#ebecf2",
-  cursorLineBackground: "#dde1ec",
-  selectionBackground: "#c5c5c7",
+  commandLineBackground: "#ececec",
+  cursorLineBackground: "#e1e1e1",
+  selectionBackground: "#c5c5c5",
   selectionForeground: "#333333",
 };
 

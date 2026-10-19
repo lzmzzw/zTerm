@@ -107,16 +107,16 @@ describe("split pane css direction mapping", () => {
 
   it("uses neutral selected surfaces instead of blue-green highlights", () => {
     expect(css).toContain("--zt-surface-hover: rgb(255 255 255 / 0.07)");
-    expect(css).toContain("--zt-surface-selected: rgb(255 255 255 / 0.14)");
+    expect(css).toContain("--zt-surface-selected: #393939");
     expect(css).toContain("--zt-accent-muted: rgb(255 255 255 / 0.1)");
     expect(css).toContain("--zt-focus-ring: rgb(255 255 255 / 0.92)");
     expect(css).toContain("--zt-focus-soft: rgb(255 255 255 / 0.18)");
     expect(css).not.toContain("100 210 255");
 
     expect(css).toContain("--zt-surface-hover: rgb(0 0 0 / 0.04)");
-    expect(css).toContain("--zt-surface-selected: rgb(0 0 0 / 0.09)");
+    expect(css).toContain("--zt-surface-selected: #dedede");
     expect(css).toContain("--zt-accent-muted: rgb(0 0 0 / 0.07)");
-    expect(css).toContain("--zt-focus-ring: rgb(24 31 42 / 0.78)");
+    expect(css).toContain("--zt-focus-ring: #444444");
     expect(css).toContain("--zt-focus-soft: rgb(0 0 0 / 0.13)");
     expect(css).not.toContain("10 132 255");
   });
@@ -129,12 +129,16 @@ describe("split pane css direction mapping", () => {
     expect(frameStyles).not.toContain("border-radius: var(--zt-radius-window)");
   });
 
-  it("marks the active pane with a theme-blue titlebar dot instead of a highlighted frame", () => {
+  it("marks the active pane with a neutral titlebar instead of a dot", () => {
     const activePaneStyles = ruleBodiesForSelector(".zt-terminal-frame.active");
     const activeIndicatorStyles = ruleBodiesForSelector(".zt-pane-active-indicator");
 
     expect(activePaneStyles).toBe("");
-    expect(activeIndicatorStyles).toContain("background: var(--zt-accent)");
+    expect(activeIndicatorStyles).toContain("display: none");
+    expect(ruleBodiesForSelector(".zt-terminal-frame.active > .zt-pane-tabs")).toBe("");
+    expect(ruleBodiesForSelector(".zt-terminal-frame:focus-within > .zt-pane-tabs")).toBe("");
+    expect(ruleBodiesForSelector(".zt-split-pane .zt-terminal-frame.active > .zt-pane-tabs")).toContain("background: var(--zt-bg-selected)");
+    expect(ruleBodiesForSelector(".zt-pane-tabs > .zt-terminal-toolbar")).toContain("background: transparent");
     expect(activeIndicatorStyles).toContain("border-radius: 50%");
   });
 

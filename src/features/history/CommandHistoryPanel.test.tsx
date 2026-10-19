@@ -204,7 +204,7 @@ describe("CommandHistoryPanel", () => {
     });
 
     const filterInput = input(view.container, "筛选");
-    expect(filterInput.getAttribute("placeholder")).toBeNull();
+    expect(filterInput.getAttribute("placeholder")).toBe("搜索命令");
     expect(filterInput.getAttribute("aria-label")).toBe("筛选");
     expect(buttonExists(view.container, "搜索")).toBe(false);
 

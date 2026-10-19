@@ -29,13 +29,15 @@ export function SshContainerSection({ sshOptions, onSshOptionsChange }: SshConta
 
   return (
     <section className="zt-session-form-section zt-session-form-wide" aria-label="容器">
-      <div className="zt-session-form-section-title">容器</div>
-      <ZtSwitch
-        label="启用容器入口"
-        ariaLabel="启用容器"
-        checked={sshOptions.container?.enabled ?? false}
-        onChange={(checked) => updateContainer({ enabled: checked })}
-      />
+      <div className="zt-session-section-heading">
+        <div className="zt-session-form-section-title">容器</div>
+        <ZtSwitch
+          label="启用容器入口"
+          ariaLabel="启用容器"
+          checked={sshOptions.container?.enabled ?? false}
+          onChange={(checked) => updateContainer({ enabled: checked })}
+        />
+      </div>
       <div className="zt-session-form-grid zt-session-nested-grid">
         <label>
           <span>运行时</span>
@@ -63,7 +65,7 @@ export function SshContainerSection({ sshOptions, onSshOptionsChange }: SshConta
             onChange={(event) => updateContainer({ user: event.currentTarget.value.trim() || null })}
           />
         </label>
-        <label className="zt-session-form-wide">
+        <label>
           <span>Workdir</span>
           <input
             aria-label="容器工作目录"

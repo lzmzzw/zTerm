@@ -42,6 +42,10 @@ Windows 上检测到 WebView2 主版本大于或等于 152 时，zTerm 主窗口
 
 ## 维护边界
 
+前端采用四角导航与中性深浅主题。颜色和几何 token 统一在 `src/styles/tokens.css`；`design.css` 管理紧凑外壳和 Lucide 图标色，`design-shell.css`、`design-connections.css`、`design-files.css`、`design-tools.css` 分别管理设置/工作区、连接表单、文件传输和右侧工具的视觉规则。终端背景、光标和行高亮使用中性色，保留 ANSI 输出及语义文字颜色。
+
+文件传输的当前/历史筛选只筛选已加载任务，不改变任务动作和后端数据。右侧任务栏默认收起，底栏高38px，展开默认总高278px。监控趋势只记录现有快照，最多20点，切换目标清空，不增加后台采集。MCP工具搜索与分组折叠仅作用于已返回目录。正式构建保持真实Tauri接口；浏览器检阅沿用显式开发模式，生产不启用Mock。
+
 终端输出 cursor 是单调递增的 UTF-8 字节位置，缓存裁剪不重置。`truncated` 表示请求范围已有淘汰或返回长度受限，详见 [API 契约](api-contract.md)。输出调度按固定期限刷新，避免持续繁忙连接拖延其他连接。
 
 活动 Agent 目标同步由 `useActiveAgentTerminalSync` 顺序执行；运行时缓存与清理由 `terminalRuntimeResources` 统一管理。核心终端写入、调整大小、关闭及 Agent 活动目标 IPC 使用 `invokeTypedTauri` 限定参数，其他命令渐进迁移，禁止绕过统一 IPC 入口。

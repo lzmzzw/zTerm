@@ -66,6 +66,7 @@ export function AgentCodexPanel({
         </div>
         <label className={`zt-ai-approval-mode mode-${approvalMode}`}>
           <ShieldCheck size={14} aria-hidden="true" />
+          <span>审批模式</span>
           <ZtSelect
             ariaLabel="审批模式"
             className={`zt-ai-approval-select mode-${approvalMode}`}

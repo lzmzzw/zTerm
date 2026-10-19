@@ -5,3 +5,9 @@
 @import "./styles/shell.css";
 @import "./styles/features.css";
 @import "./styles/responsive.css";
+
+@import "./styles/design.css";
+@import "./styles/design-shell.css";
+@import "./styles/design-connections.css";
+@import "./styles/design-files.css";
+@import "./styles/design-tools.css";

@@ -151,10 +151,12 @@ export function FileExplorerPanel({
         }}
         onDelete={requestDelete}
       />
-      {disabled ? <div className="zt-empty-line">打开 SSH 会话后显示远程文件</div> : null}
-      {error ? <ZtInlineError className="zt-file-panel-error">{error}</ZtInlineError> : null}
-      {loading ? <div className="zt-empty-line">加载中</div> : null}
-      {!disabled && !loading && visibleEntries.length === 0 ? <div className="zt-empty-line">暂无文件</div> : null}
+      <div className="zt-file-browser-status" aria-live="polite">
+        {disabled ? <div className="zt-empty-line">打开 SSH 会话后显示远程文件</div> : null}
+        {error ? <ZtInlineError className="zt-file-panel-error">{error}</ZtInlineError> : null}
+        {loading ? <div className="zt-empty-line">加载中</div> : null}
+        {!disabled && !loading && !error && visibleEntries.length === 0 ? <div className="zt-empty-line">暂无文件</div> : null}
+      </div>
       <div
         className="zt-file-list"
         role="list"
@@ -199,7 +201,7 @@ export function FileExplorerPanel({
             <span className="zt-file-kind-icon" aria-hidden="true">
               {resolveFileIcon(entry)}
             </span>
-            <strong>{entry.name}</strong>
+            <strong title={entry.path}>{entry.name}</strong>
             <small>{entry.kind === "directory" ? "-" : formatBytes(entry.size, { maxUnit: "MB" })}</small>
             <small>{formatFileModifiedTime(entry.modified_at_ms)}</small>
             <small>{entry.permissions ?? "-"}</small>

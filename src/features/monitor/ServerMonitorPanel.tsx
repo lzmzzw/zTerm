@@ -82,12 +82,15 @@ export function ServerMonitorPanel({
             <RefreshCw size={14} aria-hidden="true" className={loading ? "zt-spin" : ""} />
           </button>
         </header>
-        <div className="zt-monitor-overview-grid">
-          <OverviewTile label="主机名" value={snapshot?.hostname ?? snapshot?.host_name} />
-          <OverviewTile label="系统" value={joinDefined([snapshot?.os, snapshot?.architecture])} />
-          <OverviewTile label="Kernel" value={snapshot?.kernel} />
-          <OverviewTile label="运行时间" value={formatUptime(snapshot?.uptime_seconds)} />
-        </div>
+        <details className="zt-monitor-host-details">
+          <summary>{joinDefined([snapshot?.os, formatUptime(snapshot?.uptime_seconds)]) || "主机详情"}</summary>
+          <div className="zt-monitor-overview-grid">
+            <OverviewTile label="主机名" value={snapshot?.hostname ?? snapshot?.host_name} />
+            <OverviewTile label="系统" value={joinDefined([snapshot?.os, snapshot?.architecture])} />
+            <OverviewTile label="Kernel" value={snapshot?.kernel} />
+            <OverviewTile label="运行时间" value={formatUptime(snapshot?.uptime_seconds)} />
+          </div>
+        </details>
         <footer>
           <span>{snapshot ? `上次采集 ${formatTimestamp(snapshot.captured_at)}` : loading ? "正在读取服务器信息" : "等待首次采集"}</span>
           <label>
@@ -107,6 +110,7 @@ export function ServerMonitorPanel({
       {!loading && !snapshot && !error ? <div className="zt-empty-line">暂无服务器信息，点击刷新重新采集。</div> : null}
       {snapshot ? (
         <ServerMetrics
+          key={`${target.kind}:${target.id}`}
           expandedCards={expandedCards}
           networkTraffic={networkTraffic}
           onToggleMetric={toggleCard}

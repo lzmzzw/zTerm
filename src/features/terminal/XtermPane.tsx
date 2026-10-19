@@ -77,13 +77,13 @@ interface TerminalLiveOutputChunk {
 // Keep xterm's palette aligned with the shell surface; CSS controls the surrounding chrome.
 // ANSI text colors reference WindTerm's dige-black and dige-white themes.
 const DIGE_BLACK_TERMINAL_THEME = {
-  background: "#1f1f21",
+  background: "#141414",
   selectionBackground: DIGE_BLACK_LINE_HIGHLIGHT_PALETTE.selectionBackground,
   selectionInactiveBackground: DIGE_BLACK_LINE_HIGHLIGHT_PALETTE.selectionBackground,
   selectionForeground: DIGE_BLACK_LINE_HIGHLIGHT_PALETTE.selectionForeground,
   foreground: "#F8F8F2",
-  cursor: "#ff9d00",
-  cursorAccent: "#1f1f21",
+  cursor: "#888888",
+  cursorAccent: "#141414",
   black: "#333333",
   red: "#C4265E",
   green: "#86B42B",
@@ -103,13 +103,13 @@ const DIGE_BLACK_TERMINAL_THEME = {
 };
 
 const DIGE_WHITE_TERMINAL_THEME = {
-  background: "#f7f7fa",
+  background: "#fafafa",
   selectionBackground: DIGE_WHITE_LINE_HIGHLIGHT_PALETTE.selectionBackground,
   selectionInactiveBackground: DIGE_WHITE_LINE_HIGHLIGHT_PALETTE.selectionBackground,
   selectionForeground: DIGE_WHITE_LINE_HIGHLIGHT_PALETTE.selectionForeground,
   foreground: "#333333",
-  cursor: "#ff9d00",
-  cursorAccent: "#f7f7fa",
+  cursor: "#888888",
+  cursorAccent: "#fafafa",
   black: "#272822",
   red: "#dc322f",
   green: "#32CD32",

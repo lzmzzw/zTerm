@@ -1,0 +1,62 @@
+/* Shared compact shell and Lucide icon accents. Theme values live in tokens.css. */
+.zt-workspace-stage { inset: 5px 5px 5px 0; }
+.zt-terminal-frame { border-color: var(--zt-border-subtle); }
+.zt-split-pane .zt-terminal-frame.active > .zt-pane-tabs { background: var(--zt-bg-selected); }
+.zt-pane-tabs { background: var(--zt-surface-elevated); }
+.zt-pane-tabs > .zt-terminal-toolbar { background: transparent; }
+.zt-pane-active-indicator { display: none; }
+.zt-pane-tablist { align-items: flex-end; gap: 8px; padding: 0 8px; }
+.zt-pane-tab {
+  position: relative;
+  height: calc(var(--zt-workbar-height) - 6px);
+  border: 0;
+  border-radius: 10px 10px 0 0;
+  overflow: visible;
+}
+.zt-pane-tab.active {
+  background: var(--zt-surface-terminal);
+  box-shadow: none;
+}
+.zt-pane-tab.active::before,
+.zt-pane-tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 8px;
+  height: 8px;
+  pointer-events: none;
+}
+.zt-pane-tab.active::before {
+  left: -8px;
+  background: radial-gradient(circle at 0 0, transparent 8px, var(--zt-surface-terminal) 8.5px);
+}
+.zt-pane-tab.active::after {
+  right: -8px;
+  background: radial-gradient(circle at 100% 0, transparent 8px, var(--zt-surface-terminal) 8.5px);
+}
+.zt-pane-tablist > .zt-pane-tab-icon { align-self: center; }
+.zt-session-panel { border: 1px solid var(--zt-border); border-radius: 5px; margin: 5px; height: calc(100% - 10px); background: var(--zt-surface-sidebar); }
+.zt-sidebar { background: var(--zt-surface-page); }
+.zt-session-tree { padding: 5px; }
+.zt-right-tools > .zt-tool-panel, .zt-right-tools > .zt-ai-panel { margin: 5px 0; border: 1px solid var(--zt-border); border-radius: 5px; background: var(--zt-surface-sidebar); }
+.zt-window-actions { align-items: center; padding-right: 4px; gap: 2px; }
+.zt-window-actions button { height: 32px; width: 38px; border-radius: 6px; }
+.zt-window-actions .danger:hover { background: var(--zt-bg-selected); color: var(--zt-text-primary); }
+.zt-select-popover { border-radius: 8px; box-shadow: var(--zt-dialog-shadow); }
+.zt-select-option { margin: 2px 4px; border-radius: 5px; }
+.zt-settings-sidebar svg { display: none; }
+.zt-split-pane-horizontal { grid-template-columns: minmax(0, var(--zt-split-ratio)) 5px minmax(0, 1fr); }
+.zt-split-pane-vertical { grid-template-rows: minmax(0, var(--zt-split-ratio)) 5px minmax(0, 1fr); }
+svg.lucide { color: #879bf5; stroke-width: 1.7; }
+svg.lucide-folder, svg.lucide-folder-open, svg.lucide-folder-plus, svg.lucide-files { color: #e3aa3b; }
+svg.lucide-terminal, svg.lucide-square-terminal, svg.lucide-play, svg.lucide-circle-check, svg.lucide-check { color: #38b78c; }
+svg.lucide-server, svg.lucide-monitor, svg.lucide-upload, svg.lucide-download, svg.lucide-arrow-up-down { color: #419ee7; }
+svg.lucide-bot, svg.lucide-message-square-more, svg.lucide-sparkles, svg.lucide-box, svg.lucide-blocks { color: #b386ed; }
+svg.lucide-clock-3, svg.lucide-history, svg.lucide-key-round, svg.lucide-shield-check { color: #e49a4d; }
+svg.lucide-activity, svg.lucide-cable, svg.lucide-network { color: #2bb8ab; }
+svg.lucide-trash-2, svg.lucide-circle-x, svg.lucide-triangle-alert { color: #e87882; }
+svg.lucide-chevron-down, svg.lucide-chevron-right, svg.lucide-chevron-up, svg.lucide-chevron-left,
+svg.lucide-x, svg.lucide-minus, svg.lucide-square, svg.lucide-copy, svg.lucide-ellipsis,
+svg.lucide-search, svg.lucide-grip-vertical { color: currentColor; }
+button:disabled svg.lucide { opacity: .45; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }

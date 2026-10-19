@@ -56,17 +56,26 @@ describe("file transfer dialog styles", () => {
   });
 
   it("scrolls the transfer task list vertically when it exceeds the dock", () => {
-    const ruleStart = css.lastIndexOf("\n.zt-transfer-list {");
-    const styles = css.slice(ruleStart, css.indexOf("}", ruleStart));
+    // The design layer overrides spacing, while layout and scrolling remain
+    // inherited from the base rule. Resolve declarations in source order.
+    const declarations = new Map<string, string>();
+    const rules = [...css.matchAll(/(?:^|\n)\.zt-transfer-list\s*\{([^}]*)\}/g)];
+    for (const rule of rules) {
+      for (const declaration of rule[1].split(";")) {
+        const separator = declaration.indexOf(":");
+        if (separator < 0) continue;
+        declarations.set(declaration.slice(0, separator).trim(), declaration.slice(separator + 1).trim());
+      }
+    }
     const groupStyles = ruleBody(".zt-transfer-group");
 
-    expect(ruleStart).toBeGreaterThanOrEqual(0);
-    expect(styles).toContain("display: flex");
-    expect(styles).toContain("flex-direction: column");
-    expect(styles).toContain("min-height: 0");
-    expect(styles).toContain("overflow-x: hidden");
-    expect(styles).toContain("overflow-y: auto");
-    expect(styles).toContain("scrollbar-gutter: stable");
+    expect(rules.length).toBeGreaterThan(0);
+    expect(declarations.get("display")).toBe("flex");
+    expect(declarations.get("flex-direction")).toBe("column");
+    expect(declarations.get("min-height")).toBe("0");
+    expect(declarations.get("overflow-x")).toBe("hidden");
+    expect(declarations.get("overflow-y")).toBe("auto");
+    expect(declarations.get("scrollbar-gutter")).toBe("stable");
     expect(groupStyles).toContain("flex: 0 0 auto");
     expect(ruleBody(".zt-transfer-list > .zt-transfer-row")).toContain("flex: 0 0 auto");
   });

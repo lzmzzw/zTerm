@@ -442,12 +442,12 @@ describe("XtermPane", () => {
     expect(options.fontFamily).toContain("Cascadia Mono");
     expect(options.fontFamily).toContain("Microsoft YaHei Mono");
     expect(options.theme).toMatchObject({
-      background: "#1f1f21",
+      background: "#141414",
       foreground: "#F8F8F2",
       selectionBackground: "#606060",
       selectionForeground: "#F8F8F2",
-      cursor: "#ff9d00",
-      cursorAccent: "#1f1f21",
+      cursor: "#888888",
+      cursorAccent: "#141414",
       black: "#333333",
       red: "#C4265E",
       green: "#86B42B",
@@ -478,12 +478,12 @@ describe("XtermPane", () => {
     const options = terminalMock.instances[0]?.options as TerminalOptions;
 
     expect(options.theme).toMatchObject({
-      background: "#f7f7fa",
+      background: "#fafafa",
       foreground: "#333333",
-      selectionBackground: "#c5c5c7",
+      selectionBackground: "#c5c5c5",
       selectionForeground: "#333333",
-      cursor: "#ff9d00",
-      cursorAccent: "#f7f7fa",
+      cursor: "#888888",
+      cursorAccent: "#fafafa",
       black: "#272822",
       red: "#dc322f",
       green: "#32CD32",
@@ -575,7 +575,7 @@ describe("XtermPane", () => {
     protectedStyle = false;
     act(() => terminal.writeParsedListener?.());
     expect(terminal.registerDecoration).toHaveBeenCalledWith(
-      expect.objectContaining({ backgroundColor: "#30303a" }),
+      expect.objectContaining({ backgroundColor: "#303030" }),
     );
     for (const decoration of previousDecorations) expect(decoration.dispose).toHaveBeenCalled();
     view.unmount();

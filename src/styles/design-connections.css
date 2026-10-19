@@ -1,0 +1,99 @@
+/* Latest gallery connection-dialog + forms: full protocol strip, continuous form. */
+.zt-session-editor-dialog {
+  width: min(1180px, calc(100vw - 48px));
+  height: min(710px, calc(100dvh - 64px));
+  border: 1px solid var(--zt-border);
+  border-radius: 12px;
+  background: var(--zt-surface-elevated);
+  box-shadow: var(--zt-dialog-shadow);
+}
+.zt-session-editor-dialog > form { grid-template-rows: 52px 78px minmax(0,1fr) auto 58px; }
+.zt-session-editor-dialog header { padding: 0 20px; background: var(--zt-surface-chrome); border-bottom-color: var(--zt-border); }
+.zt-session-editor-dialog header strong { font-size: var(--zt-font-size-section); }
+.zt-session-editor-dialog .zt-session-type-tabs {
+  display: grid; grid-template-columns: repeat(5,minmax(0,1fr));
+  padding: 18px 20px; gap: 10px; border-bottom: 1px solid var(--zt-border);
+  background: var(--zt-surface-sidebar);
+}
+.zt-session-type-tabs button { height: 40px; min-height: 40px; gap: 9px; border-radius: 7px; background: transparent; font-weight: 400; }
+.zt-session-type-tabs button svg { width: 17px; height: 17px; }
+.zt-session-type-tabs button[aria-selected="true"] { background: var(--zt-surface-selected); border-color: var(--zt-line-active); box-shadow: inset 0 0 0 1px var(--zt-border-subtle); }
+.zt-session-editor-body { grid-template-columns: 170px minmax(0,1fr); grid-template-rows: minmax(0,1fr); }
+.zt-session-editor-nav { padding: 18px 12px; gap: 6px; background: var(--zt-surface-sidebar); }
+.zt-session-editor-nav button { height: 36px; min-height: 36px; padding: 0 13px; border-radius: 6px; font-weight: 400; }
+.zt-session-editor-nav button[aria-current="page"] { background: var(--zt-surface-selected); font-weight: 500; }
+.zt-session-editor-fields { padding: 20px 22px; gap: 16px; background: var(--zt-surface-elevated); }
+.zt-session-editor-fields .zt-session-form-grid { gap: 16px 20px; }
+.zt-session-editor-fields .zt-session-form-grid > label { min-width: 0; gap: 6px; font-size: 12px; font-weight: 400; }
+.zt-session-editor-fields .zt-session-form-grid input:not(.zt-switch-input) { min-width: 0; width: 100%; height: 34px; border-radius: 7px; }
+.zt-session-editor-fields .zt-select-trigger { min-height: 34px; height: 34px; border-radius: 7px; }
+.zt-session-editor-fields .zt-session-form-description { grid-column: auto; }
+.zt-session-editor-fields .zt-path-picker,
+.zt-session-editor-fields .zt-secret-input {
+  display: grid; grid-template-columns: minmax(0,1fr) 32px; gap: 0;
+  min-height: 34px; height: 34px; overflow: hidden;
+  border: 1px solid var(--zt-border); border-radius: 7px; background: var(--zt-bg-input);
+}
+.zt-session-editor-fields :is(.zt-path-picker,.zt-secret-input) input { border: 0; height: 32px; background: transparent; box-shadow: none; border-radius: 0; }
+.zt-session-editor-fields :is(.zt-path-picker,.zt-secret-input) button { width: 32px; height: 32px; min-height: 32px; padding: 0; border: 0; border-left: 1px solid var(--zt-border); border-radius: 0; background: transparent; }
+.zt-session-editor-fields :is(.zt-path-picker,.zt-secret-input):focus-within { outline: 2px solid var(--zt-focus-ring); outline-offset: 2px; }
+.zt-session-editor-fields .zt-number-input { height: 34px; min-height: 34px; border-radius: 7px; overflow: hidden; }
+.zt-session-editor-fields .zt-number-input input { height: 34px; min-height: 34px; padding-right: 76px; }
+.zt-session-editor-fields .zt-number-input-buttons { display: flex; flex-direction: row-reverse; width: 64px; height: 32px; border-left: 0; background: transparent; }
+.zt-session-editor-fields .zt-number-input-buttons button { width: 32px; height: 32px; min-height: 32px; border: 0; border-left: 1px solid var(--zt-border); border-radius: 0; padding: 0; }
+.zt-session-editor-fields .zt-session-form-section { padding: 0; gap: 16px; background: transparent; border: 0; }
+.zt-session-editor-fields .zt-session-section-heading { display: flex; align-items: center; justify-content: space-between; min-height: 38px; margin-bottom: 6px; }
+.zt-session-editor-fields .zt-session-form-section-title { font-size: 13px; font-weight: 500; }
+.zt-session-editor-fields section[aria-label="跳板机"] > .zt-session-form-section-title { display: none; }
+.zt-session-editor-fields .zt-ssh-jump-host-picker { display: flex; gap: 8px; }
+.zt-session-editor-fields .zt-ssh-jump-host-picker > .zt-select { width: 300px; max-width: calc(100% - 116px); flex: none; }
+.zt-session-editor-fields .zt-ssh-jump-host-picker > button { flex: none; white-space: nowrap; }
+.zt-session-editor-fields .zt-ssh-jump-host-list { gap: 0; }
+.zt-session-editor-fields .zt-ssh-jump-host-row { min-height: 48px; border: 0; border-bottom: 1px solid var(--zt-border-subtle); border-radius: 0; padding: 6px 0; background: transparent; }
+.zt-session-editor-fields .zt-ssh-jump-host-label { font-weight: 400; }
+.zt-session-editor-fields .zt-ssh-jump-host-actions { gap: 8px; }
+.zt-session-editor-fields .zt-ssh-jump-host-actions button { height: 32px; width: 32px; border: 0; background: var(--zt-surface-muted); }
+.zt-session-editor-fields .zt-ssh-tunnel-editor { gap: 16px; }
+.zt-session-editor-fields .zt-ssh-tunnel-mode-grid { gap: 6px; }
+.zt-session-editor-fields .zt-ssh-tunnel-mode-grid button { min-height: 62px; border: 1px solid var(--zt-border); border-radius: 7px; background: transparent; }
+.zt-session-editor-fields .zt-ssh-tunnel-mode-grid button[aria-pressed="true"] { background: var(--zt-surface-selected); border-color: var(--zt-line-active); }
+.zt-session-editor-fields .zt-ssh-tunnel-card { padding: 16px 0; border: 0; border-top: 1px solid var(--zt-border); border-radius: 0; background: transparent; }
+.zt-session-editor-fields .zt-ssh-tunnel-card-grid { gap: 16px 20px; }
+.zt-session-editor-fields .zt-env-row { grid-template-columns: minmax(100px,1fr) minmax(100px,1fr) 32px; gap: 10px; padding: 0; border: 0; background: transparent; }
+.zt-session-editor-fields .zt-env-row button { width: 32px; height: 34px; }
+.zt-session-editor-dialog footer { padding: 0 20px; gap: 9px; background: var(--zt-surface-chrome); border-top: 1px solid var(--zt-border); }
+.zt-session-editor-dialog footer button { height: 32px; min-width: 70px; min-height: 32px; border-radius: 7px; border-color: transparent; background: var(--zt-surface-muted); }
+.zt-session-editor-dialog footer button[type="submit"] { background: var(--zt-text-primary); color: var(--zt-surface-chrome); }
+.zt-session-editor-messages:not(:empty) { padding: 0 20px 12px 192px; background: var(--zt-surface-elevated); }
+.zt-session-editor-messages > :is(.zt-session-error,.zt-settings-status) { margin: 0; border-radius: 7px; }
+.zt-connection-picker-body { padding: 10px; gap: 4px; }
+.zt-session-picker-row { min-height: 36px; gap: 9px; border-radius: 6px; }
+.zt-session-picker-group { color: var(--zt-text-secondary); font-size: 12px; }
+.zt-session-picker-row svg { width: 16px; height: 16px; }
+.zt-session-context-menu { padding: 5px; min-width: 168px; border-radius: 8px; }
+.zt-session-context-menu button { min-height: 32px; border-radius: 5px; }
+.zt-session-group-editor .zt-dialog-form { padding: 20px; }
+.zt-session-group-editor .zt-dialog-form label { gap: 8px; font-size: 12px; }
+.zt-session-group-editor input { height: 34px; border-radius: 7px; }
+@media(max-width:760px) {
+ .zt-session-editor-dialog { width: calc(100vw - 24px); height: calc(100dvh - 36px); }
+ .zt-session-editor-dialog > form { grid-template-rows: 46px 66px minmax(0,1fr) auto 54px; }
+ .zt-session-editor-dialog .zt-session-type-tabs { padding: 12px; gap: 5px; }
+ .zt-session-type-tabs button { gap: 5px; padding: 0 6px; }
+ .zt-session-editor-body { grid-template-columns: 116px minmax(0,1fr); }
+ .zt-session-editor-nav { display: grid; padding: 12px 8px; border-right: 1px solid var(--zt-border); }
+ .zt-session-editor-fields { padding: 16px; }
+ .zt-session-editor-fields .zt-session-form-grid { gap: 14px 12px; }
+ .zt-session-editor-messages:not(:empty) { padding: 0 16px 10px 132px; }
+}
+@media(max-width:560px) {
+ .zt-session-editor-fields .zt-session-form-grid { grid-template-columns: 1fr; }
+ .zt-session-type-tabs button svg { width: 14px; height: 14px; }
+ .zt-session-editor-fields .zt-ssh-tunnel-mode-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+.zt-session-editor-fields .zt-number-input-buttons button:first-child { border-bottom: 0; border-radius: 0; }
+.zt-session-editor-fields .zt-number-input-buttons button:last-child { border-radius: 0; }
+
+.zt-session-modal-backdrop:has(.zt-session-editor-dialog) { padding: 24px; }
+.zt-session-editor-fields .zt-switch-input { width: 1px; height: 1px; min-height: 0; min-width: 0; }
+.zt-session-editor-nav { grid-auto-flow: row; grid-auto-columns: auto; }

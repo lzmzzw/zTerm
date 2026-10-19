@@ -118,6 +118,26 @@ const tasks: TransferTask[] = [
 ];
 
 describe("TransferPanel", () => {
+  it("filters current and history records without changing task actions", async () => {
+    const onResume = vi.fn();
+    const view = render(
+      <TransferPanel collapsible tasks={tasks} onRetry={vi.fn()} onPause={vi.fn()}
+        onResume={onResume} onCancel={vi.fn()} onDelete={vi.fn()} />,
+    );
+    await click(button(view.container, "当前任务"));
+    expect(view.container.querySelectorAll(".zt-transfer-row")).toHaveLength(2);
+    expect(view.container.textContent).not.toContain("permission denied");
+    await click(button(view.container, "恢复 task-3"));
+    expect(onResume).toHaveBeenCalledWith("task-3");
+    await click(button(view.container, "历史任务"));
+    expect(view.container.querySelectorAll(".zt-transfer-row")).toHaveLength(2);
+    expect(view.container.textContent).toContain("permission denied");
+    expect(view.container.querySelector('[aria-label="暂停 task-1"]')).toBeNull();
+    await click(button(view.container, "全部"));
+    expect(view.container.querySelectorAll(".zt-transfer-row")).toHaveLength(4);
+    view.unmount();
+  });
+
   it("renders transfer progress failure details and task actions", async () => {
     const onRetry = vi.fn();
     const onPause = vi.fn();

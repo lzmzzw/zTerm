@@ -424,6 +424,19 @@ describe("SettingsPage", () => {
     expect(view.container.textContent).toContain("workspace.list");
     expect(view.container.textContent).toContain("ssh.execute");
 
+    const search = input(view.container, "搜索 MCP 工具");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "SSH.EXECUTE");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(view.container.textContent).toContain("ssh.execute");
+    expect(view.container.textContent).not.toContain("terminal.list");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "no-such-tool");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(view.container.textContent).toContain("没有匹配的工具");
+
     await click(detailsButton);
     await click(detailsButton);
     expect(onLoadMcpTools).toHaveBeenCalledTimes(1);

@@ -15,6 +15,9 @@ function render(ui: ReactElement) {
   });
   return {
     container,
+    rerender(ui: ReactElement) {
+      act(() => root.render(ui));
+    },
     unmount() {
       act(() => root.unmount());
       container.remove();
@@ -48,6 +51,31 @@ async function chooseSelect(container: HTMLElement, label: string, value: string
 }
 
 describe("ServerMonitorPanel", () => {
+  it("bounds visual sampling history and clears it when the monitored target changes", () => {
+    const onRefresh = vi.fn();
+    const panel = (id: string, sampleId: string) => (
+      <ServerMonitorPanel
+        active={true}
+        target={{ kind: "ssh", host: "example.test", id, name: id, port: 22, username: "demo" }}
+        error={null}
+        loading={false}
+        networkTraffic={null}
+        refreshIntervalMs={3000}
+        snapshot={{ ...snapshot(), captured_at: sampleId }}
+        onRefresh={onRefresh}
+        onRefreshIntervalChange={vi.fn()}
+      />
+    );
+    const view = render(panel("first", "0"));
+    const pointCount = () => view.container.querySelector(".zt-monitor-cpu polyline")?.getAttribute("points")?.split(" ").length;
+    for (let index = 1; index < 30; index += 1) view.rerender(panel("first", String(index)));
+    expect(pointCount()).toBe(20);
+    view.rerender(panel("second", "30"));
+    expect(pointCount()).toBe(1);
+    expect(onRefresh).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
   it("renders the local machine overview without an active ssh session", () => {
     const view = render(
       <ServerMonitorPanel

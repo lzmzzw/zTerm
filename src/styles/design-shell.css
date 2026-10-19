@@ -1,0 +1,55 @@
+/* Gallery: settings, shortcuts, profiles, about, workspace/editor, sync and menus. */
+.zt-workbench-settings { padding: 0; grid-template-rows: var(--zt-titlebar-height) minmax(0,1fr); background: var(--zt-bg-main); }
+.zt-settings-page { width: 100%; height: 100%; border: 0; border-radius: 0; box-shadow: none; grid-template-rows: 40px minmax(0,1fr); }
+.zt-settings-page-header { border-radius: 0; padding: 0 20px; background: var(--zt-surface-chrome); }
+.zt-settings-page-header strong { font-size: 13px; font-weight: 500; }
+.zt-settings-page-tabs { padding: 14px 12px; background: var(--zt-surface-chrome); }
+.zt-settings-page-tabs button { height: 36px; border-radius: 7px; }
+.zt-settings-section { padding: 24px; gap: 16px; }
+.zt-settings-section-body, .zt-settings-action-bar { width: 100%; max-width: 1120px; }
+.zt-settings-form { gap: 0; align-content: start; }
+.zt-settings-group-title { margin: 0 0 10px; font-size: 12px; font-weight: 400; color: var(--zt-text-secondary); }
+.zt-settings-group { border: 0; border-radius: 10px; background: var(--zt-surface-elevated); padding: 0 16px; margin-bottom: 20px; }
+.zt-settings-group > label, .zt-settings-theme-row { display: flex; flex-direction: row; align-items: center; justify-content: space-between; min-height: 52px; gap: 20px; border-bottom: 1px solid var(--zt-border); font-weight: 400; color: var(--zt-text-primary); }
+.zt-settings-group > :last-child { border-bottom: 0; }
+.zt-settings-group .zt-select { width: 200px; }
+.zt-settings-group .zt-select-trigger { width: 200px; min-height: 32px; border-color: transparent; background: var(--zt-surface-field); }
+.zt-settings-group .zt-number-input { width: 108px; min-height: 32px; }
+.zt-theme-segment { display: flex; align-items: center; padding: 3px; width: 270px; border-radius: 8px; background: var(--zt-surface-field); }
+.zt-theme-segment button { flex: 1; padding: 0 10px; height: 28px; min-height: 28px; border: 0; background: transparent; font-size: 12px; font-weight: 400; }
+.zt-theme-segment button[aria-pressed="true"] { background: var(--zt-surface-elevated); color: var(--zt-text-primary); box-shadow: 0 1px 3px #00000018; }
+.zt-settings-action-bar button { border: 0; background: var(--zt-surface-field); }
+.zt-settings-action-bar button[type="submit"] { background: var(--zt-bg-selected); color: var(--zt-text-primary); }
+.zt-shortcut-list, .zt-settings-list { gap: 0; background: var(--zt-surface-elevated); border-radius: 10px; overflow: hidden; }
+.zt-shortcut-row, .zt-settings-row { border: 0; border-bottom: 1px solid var(--zt-border); border-radius: 0; min-height: 56px; padding: 12px 16px; background: transparent; }
+.zt-shortcut-row:last-child, .zt-settings-row:last-child { border-bottom: 0; }
+.zt-shortcut-row input { background: var(--zt-surface-field); text-align: center; }
+.zt-settings-about-cards { gap: 16px; }
+.zt-settings-about-card { border: 0; background: var(--zt-surface-elevated); border-radius: 10px; padding: 20px; }
+.zt-workspace-panel { margin: 5px; border: 1px solid var(--zt-border); border-radius: 5px; background: var(--zt-surface-elevated); }
+.zt-workspace-list { padding: 8px; gap: 5px; }
+.zt-workspace-item { border-radius: 8px; padding: 10px; }
+.zt-workspace-preview-dialog { border-radius: 12px; }
+.zt-workspace-preview-body { padding: 20px; gap: 16px; }
+.zt-workspace-preview-layout-editor { grid-template-columns: minmax(0,1.4fr) minmax(260px,1fr); gap: 20px; }
+.zt-workspace-preview-canvas { padding: 14px; background: var(--zt-surface-page); border: 1px solid var(--zt-border); border-radius: 10px; }
+.zt-workspace-layout-pane { border-radius: 8px; background: var(--zt-surface-elevated); }
+.zt-workspace-layout-pane.selected { border-color: var(--zt-border-strong); box-shadow: none; }
+.zt-workspace-layout-pane.selected .zt-workspace-layout-pane-tabs { background: var(--zt-bg-selected); }
+.zt-workspace-preview-inspector { padding: 0; border: 0; background: transparent; }
+.zt-workspace-preview-inspector-fields { gap: 16px; }
+.zt-workspace-preview-inspector-fields input, .zt-workspace-preview-inspector-fields textarea { background: var(--zt-surface-field); border-radius: 6px; }
+.zt-context-menu { padding: 5px; min-width: 190px; border: 1px solid var(--zt-border); border-radius: 10px; background: var(--zt-surface-floating); box-shadow: 0 12px 36px #00000030,0 2px 5px #00000012; }
+.zt-context-menu button { height: 32px; min-height: 32px; border: 0; border-radius: 6px; padding: 0 12px; }
+.zt-context-menu button:hover:not(:disabled), .zt-context-menu button:focus-visible { background: var(--zt-bg-selected); }
+.zt-context-menu button:disabled { opacity: .38; }
+.zt-dialog, .zt-surface-frame { border-radius: 12px; }
+.zt-dialog-header { padding: 0 20px; min-height: 52px; background: var(--zt-surface-chrome); }
+.zt-dialog-body { padding: 20px; }
+.zt-dialog-footer { padding: 14px 20px; border-top: 1px solid var(--zt-border); background: var(--zt-surface-chrome); }
+.zt-alert { border-radius: 8px; box-shadow: none; }
+.zt-sync-dialog { border-radius: 12px; }
+.zt-sync-channel { border-radius: 8px; border-color: var(--zt-border); background: var(--zt-surface-elevated); }
+.zt-sync-member { border-bottom: 1px solid var(--zt-border-subtle); }
+.zt-xterm-pane { padding: 10px 12px; }
+.zt-settings-page.zt-surface-frame { border-radius: 0; }
