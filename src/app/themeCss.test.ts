@@ -40,14 +40,14 @@ describe("global dark theme colors", () => {
   });
 
   it("defines shared geometry tokens for cross-module alignment", () => {
-    expect(rootVariable("--zt-titlebar-height")).toBe("52px");
+    expect(rootVariable("--zt-titlebar-height")).toBe("48px");
     expect(rootVariable("--zt-rail-width")).toBe("40px");
     expect(rootVariable("--zt-workbar-height")).toBe("36px");
     expect(rootVariable("--zt-rail-button-size")).toBe("28px");
     expect(rootVariable("--zt-rail-block-inset")).toBe("5px");
     expect(rootVariable("--zt-rail-inline-inset")).toBe("6px");
     expect(rootVariable("--zt-pane-border-width")).toBe("1px");
-    expect(rootVariable("--zt-workbar-control-size")).toBe("24px");
+    expect(rootVariable("--zt-workbar-control-size")).toBe("28px");
     expect(rootVariable("--zt-font-size-caption")).toBe("11px");
     expect(rootVariable("--zt-left-sidebar-width")).toBe("300px");
     expect(rootVariable("--zt-right-sidebar-width")).toBe("430px");

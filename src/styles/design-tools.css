@@ -1,7 +1,7 @@
 /* Approved gallery: right-history / quick-groups / right-monitor /
    right-containers / right-tunnels / right-agent / mcp. Neutral surfaces. */
 .zt-right-tools .zt-tool-panel { border: 1px solid var(--zt-border); border-radius: 5px; overflow: hidden; background: var(--zt-bg-surface); }
-.zt-right-tools .zt-panel-header { min-height: 40px; padding: 0 12px; border-bottom: 1px solid var(--zt-border); }
+.zt-right-tools .zt-panel-header { min-height: var(--zt-workbar-height); height: var(--zt-workbar-height); padding: 0 12px; border-bottom: 1px solid var(--zt-border-subtle); }
 .zt-history-panel { padding: 12px; gap: 10px; }
 .zt-history-mode-tabs { border: 0; gap: 4px; padding: 0; }
 .zt-history-mode-tabs button { min-height: 32px; border-radius: 7px; padding: 0 12px; color: var(--zt-text-muted); }

@@ -74,6 +74,54 @@ describe("terminalStore", () => {
     expect(useTerminalStore.getState().runtimes["runtime-local"]?.initial_cwd).toBe("C:\\work");
   });
 
+  function seedLocalRuntime() {
+    useTerminalStore.setState({ runtimes: {
+      local: {
+        runtime_session_id: "local", saved_session_id: null,
+        history_scope_kind: "local_profile", history_scope_id: "pwsh",
+        pane_id: "pane-1", title: "PowerShell", kind: "local",
+        initial_cwd: "C:\\work", cols: 120, rows: 32,
+      },
+    } });
+  }
+
+  it("publishes observed and resolved directories without notifying for an unchanged directory", async () => {
+    seedLocalRuntime();
+    const listener = vi.fn();
+    const unsubscribe = useTerminalStore.subscribe(listener);
+    useTerminalStore.getState().recordCwd("local", "C:\\work\\app");
+    expect(useTerminalStore.getState().runtimes.local.current_cwd).toBe("C:\\work\\app");
+    useTerminalStore.getState().recordCwd("local", "C:\\work\\app");
+    expect(listener).toHaveBeenCalledTimes(1);
+    invokeMock.mockResolvedValue("C:\\work\\other");
+    await useTerminalStore.getState().resolveCwd("local", "C:\\work\\app", "../other");
+    expect(useTerminalStore.getState().runtimes.local.current_cwd).toBe("C:\\work\\other");
+    unsubscribe();
+  });
+
+  it("does not overwrite a newer observed directory with an outstanding resolution", async () => {
+    seedLocalRuntime();
+    let finish!: (cwd: string) => void;
+    invokeMock.mockImplementation(() => new Promise<string>((resolve) => { finish = resolve; }));
+    const pending = useTerminalStore.getState().resolveCwd("local", "C:\\work", "old");
+    useTerminalStore.getState().recordCwd("local", "C:\\new");
+    finish("C:\\work\\old");
+    await pending;
+    expect(useTerminalStore.getState().runtimes.local.current_cwd).toBe("C:\\new");
+  });
+
+  it("does not recreate a closed runtime when directory resolution finishes", async () => {
+    seedLocalRuntime();
+    let finish!: (cwd: string) => void;
+    invokeMock.mockImplementation(() => new Promise<string>((resolve) => { finish = resolve; }));
+    const pending = useTerminalStore.getState().resolveCwd("local", "C:\\work", "app");
+    useTerminalStore.getState().forgetTerminalRuntime("local");
+    finish("C:\\work\\app");
+    await pending;
+    useTerminalStore.getState().recordCwd("local", "C:\\late");
+    expect(useTerminalStore.getState().runtimes.local).toBeUndefined();
+  });
+
   it("passes a saved-session working directory override when opening a terminal", async () => {
     invokeMock.mockResolvedValue({
       runtime_session_id: "runtime-ssh",
@@ -149,6 +197,7 @@ describe("terminalStore", () => {
         cwd: "/root/lss",
       },
     });
+    expect(useTerminalStore.getState().runtimes["runtime-ssh"].current_cwd).toBe("/root/lss");
   });
 
   it("retries a cold path cache a bounded number of times and returns the refreshed path", async () => {

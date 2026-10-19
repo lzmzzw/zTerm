@@ -34,6 +34,7 @@ export interface RuntimeSessionInfo {
   title: string;
   kind: RuntimeSessionKind;
   initial_cwd: string | null;
+  current_cwd?: string | null;
   cols: number;
   rows: number;
 }
@@ -133,6 +134,24 @@ interface TerminalState {
 let terminalEventBinding: Promise<UnlistenFn> | null = null;
 let terminalEventSubscribers = 0;
 const terminalRuntimeResources = new TerminalRuntimeResourceRegistry();
+const cwdUpdateGenerations = new WeakMap<TerminalRuntimeResources, number>();
+
+function nextCwdUpdateGeneration(resources: TerminalRuntimeResources) {
+  const generation = (cwdUpdateGenerations.get(resources) ?? 0) + 1;
+  cwdUpdateGenerations.set(resources, generation);
+  return generation;
+}
+
+function publishRuntimeCwd(runtimeSessionId: string, resources: TerminalRuntimeResources, cwd: string) {
+  if (!terminalRuntimeResources.isCurrent(runtimeSessionId, resources)) return;
+  useTerminalStore.setState((state) => {
+    const runtime = state.runtimes[runtimeSessionId];
+    if (!runtime) return state;
+    resources.knownCwd = cwd;
+    if (runtime.current_cwd === cwd) return state;
+    return { runtimes: { ...state.runtimes, [runtimeSessionId]: { ...runtime, current_cwd: cwd } } };
+  });
+}
 
 export function resetTerminalOutputCachesForTest() {
   terminalRuntimeResources.clear();
@@ -311,6 +330,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
   async resolveCwd(runtimeSessionId, currentCwd, target) {
     const resources = terminalRuntimeResources.acquire(runtimeSessionId);
+    const generation = nextCwdUpdateGeneration(resources);
     const resolved = await invokeTauri<string | null>("command_completion_resolve_cwd", {
       request: {
         runtime_session_id: runtimeSessionId,
@@ -318,14 +338,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         target,
       },
     });
-    if (resolved && terminalRuntimeResources.isCurrent(runtimeSessionId, resources) && get().runtimes[runtimeSessionId]) {
-      resources.knownCwd = resolved;
+    if (resolved && cwdUpdateGenerations.get(resources) === generation) {
+      publishRuntimeCwd(runtimeSessionId, resources, resolved);
     }
     return resolved;
   },
   recordCwd(runtimeSessionId, cwd) {
     if (get().runtimes[runtimeSessionId] && cwd.trim()) {
-      terminalRuntimeResources.acquire(runtimeSessionId).knownCwd = cwd;
+      const resources = terminalRuntimeResources.acquire(runtimeSessionId);
+      nextCwdUpdateGeneration(resources);
+      publishRuntimeCwd(runtimeSessionId, resources, cwd);
     }
   },
   async resizeTerminal(runtimeSessionId, cols, rows) {
@@ -523,6 +545,7 @@ function queueRuntimeCwdResolution(
   const previous = resources.cwdResolution ?? Promise.resolve();
   const current = previous.catch(() => undefined).then(async () => {
     if (!terminalRuntimeResources.isCurrent(runtimeSessionId, resources)) return;
+    const generation = nextCwdUpdateGeneration(resources);
     const currentCwd = resources.knownCwd
       ?? getState().runtimes[runtimeSessionId]?.initial_cwd
       ?? null;
@@ -533,8 +556,8 @@ function queueRuntimeCwdResolution(
         target,
       },
     });
-    if (resolved && terminalRuntimeResources.isCurrent(runtimeSessionId, resources) && getState().runtimes[runtimeSessionId]) {
-      resources.knownCwd = resolved;
+    if (resolved && cwdUpdateGenerations.get(resources) === generation) {
+      publishRuntimeCwd(runtimeSessionId, resources, resolved);
     }
   });
   resources.cwdResolution = current;

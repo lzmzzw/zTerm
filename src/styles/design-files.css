@@ -21,10 +21,10 @@
   border-radius: 7px;
   background: var(--zt-bg-sidebar);
   overflow: hidden;
-  grid-template-rows: 38px 44px auto 32px minmax(0, 1fr);
+  grid-template-rows: var(--zt-workbar-height) 44px auto 32px minmax(0, 1fr);
 }
-.zt-file-transfer-pane-header { padding: 0 8px; gap: 8px; }
-.zt-file-transfer-pane-header .zt-select-trigger { height: 32px; min-height: 32px; border-color: transparent; background: transparent; font-weight: 500; }
+.zt-file-transfer-pane-header { height: var(--zt-workbar-height); padding: 0 12px; gap: 8px; font-weight: 500; }
+.zt-file-transfer-pane-header .zt-select-trigger { height: 28px; min-height: 28px; padding-left: 0; border-color: transparent; background: transparent; font-weight: 500; }
 .zt-file-transfer-path { padding: 6px 8px; gap: 4px; grid-template-columns: minmax(40px, 1fr) repeat(3, 28px); }
 .zt-file-transfer-path-with-root { grid-template-columns: 62px minmax(40px, 1fr) repeat(3, 28px); }
 .zt-file-transfer-path input,

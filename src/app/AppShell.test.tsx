@@ -1116,7 +1116,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("shows the active SSH host in the titlebar", () => {
+  it("shows the active SSH connection name in the titlebar", () => {
     storeMocks.sessionState.sessions = [
       {
         id: "ssh-1",
@@ -1151,7 +1151,7 @@ describe("AppShell", () => {
 
     const view = render(<AppShell />);
 
-    expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("10.20.30.40");
+    expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("生产机");
     view.unmount();
   });
 
@@ -1232,6 +1232,13 @@ describe("AppShell", () => {
 
     expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("D:\\terminalLayout\\zterm");
     view.unmount();
+
+    storeMocks.terminalState.runtimes = {
+      "runtime-local": { runtime_session_id: "runtime-local", kind: "local", title: "项目终端", initial_cwd: "D:\\initial", current_cwd: "D:\\current" },
+    };
+    const currentView = render(<AppShell />);
+    expect(currentView.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("D:\\current");
+    currentView.unmount();
   });
 
   it("opens a multi-channel external SSH launch with SSH tools collapsed", async () => {

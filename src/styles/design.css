@@ -3,39 +3,29 @@
 .zt-main-with-error .zt-terminal-layout-stage { margin: 5px 5px 5px 0; }
 .zt-workbench-left-collapsed .zt-terminal-layout-stage { margin-left: 5px; }
 .zt-terminal-frame { border-color: var(--zt-border-subtle); }
-.zt-split-pane .zt-terminal-frame.active > .zt-pane-tabs { background: var(--zt-bg-selected); }
+.zt-split-pane .zt-terminal-frame.active { border-color: var(--zt-pane-active-border); }
+.zt-split-pane .zt-terminal-frame.active > .zt-pane-tabs { background: var(--zt-surface-elevated); }
 .zt-pane-tabs { background: var(--zt-surface-elevated); }
 .zt-pane-tabs > .zt-terminal-toolbar { background: transparent; }
 .zt-pane-active-indicator { display: none; }
-.zt-pane-tablist { align-items: flex-end; gap: 8px; padding: 0 8px; }
+.zt-pane-tablist { align-items: center; gap: 4px; padding: 0 12px; }
 .zt-pane-tab {
   position: relative;
-  height: calc(var(--zt-workbar-height) - 6px);
+  height: var(--zt-workbar-control-size);
   border: 0;
-  border-radius: 10px 10px 0 0;
-  overflow: visible;
+  border-radius: var(--zt-radius-control);
+  overflow: hidden;
+  font-weight: 500;
 }
 .zt-pane-tab.active {
-  background: var(--zt-surface-terminal);
+  background: var(--zt-surface-muted);
   box-shadow: none;
 }
-.zt-pane-tab.active::before,
-.zt-pane-tab.active::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  width: 8px;
-  height: 8px;
-  pointer-events: none;
-}
-.zt-pane-tab.active::before {
-  left: -8px;
-  background: radial-gradient(circle at 0 0, transparent 8px, var(--zt-surface-terminal) 8.5px);
-}
-.zt-pane-tab.active::after {
-  right: -8px;
-  background: radial-gradient(circle at 100% 0, transparent 8px, var(--zt-surface-terminal) 8.5px);
-}
+/* 标签文字随主题立即切换，避免浅色背景上短暂保留深色主题的浅字。 */
+.zt-pane-tab { transition: background-color 0.15s ease, border-color 0.15s ease; }
+.zt-pane-tab-main { transition: none; }
+:root[data-zt-theme="light"] .zt-pane-tab { color: #555555; }
+:root[data-zt-theme="light"] .zt-pane-tab:is(.active, :hover) { color: #242424; }
 .zt-pane-tablist > .zt-pane-tab-icon { align-self: center; }
 .zt-session-panel { border: 1px solid var(--zt-border); border-radius: 5px; margin: 5px; height: calc(100% - 10px); background: var(--zt-surface-sidebar); }
 .zt-sidebar { background: var(--zt-surface-page); }
@@ -61,5 +51,20 @@ svg.lucide-chevron-down, svg.lucide-chevron-right, svg.lucide-chevron-up, svg.lu
 svg.lucide-x, svg.lucide-minus, svg.lucide-square, svg.lucide-copy, svg.lucide-ellipsis,
 svg.lucide-search, svg.lucide-grip-vertical { color: currentColor; }
 .zt-titlebar svg.lucide { width: 16px; height: 16px; color: inherit; }
+/* 操作继承中性色；面板标题与内容中的对象图标保留类别色。 */
+.zt-panel-header button svg.lucide,
+.zt-pane-tabs button svg.lucide,
+.zt-file-transfer-pane-header button:not(.zt-select-trigger) svg.lucide,
+.zt-dialog-header button svg.lucide,
+.zt-settings-page-header button svg.lucide { color: inherit; }
+.zt-terminal-toolbar button svg.lucide { width: 16px; height: 16px; }
+.zt-panel-header strong { font-weight: 500; }
+.zt-panel-header button:focus-visible,
+.zt-pane-tabs button:focus-visible,
+.zt-file-transfer-pane-header button:focus-visible,
+.zt-window-actions button:focus-visible {
+  outline: 2px solid var(--zt-focus-ring);
+  outline-offset: -2px;
+}
 button:disabled svg.lucide { opacity: .45; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }

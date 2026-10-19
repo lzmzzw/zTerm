@@ -84,7 +84,7 @@ describe("split pane css direction mapping", () => {
     expect(paneTablistStyles).toContain("align-items: center");
     expect(paneTablistStyles).toContain("padding: 0 6px");
     expect(terminalToolbarStyles).toContain("height: var(--zt-workbar-height)");
-    expect(terminalToolbarStyles).toContain("padding: 0 var(--zt-space-3) 0 10px");
+    expect(terminalToolbarStyles).toContain("padding: 0 var(--zt-space-3) 0 4px");
   });
 
   it("keeps compact terminal header controls vertically centered inside the 32px header", () => {
@@ -126,7 +126,7 @@ describe("split pane css direction mapping", () => {
     expect(frameStyles).not.toContain("border-radius: var(--zt-radius-window)");
   });
 
-  it("marks the active pane with a neutral titlebar instead of a dot", () => {
+  it("keeps active pane headers neutral with a subtle pane border", () => {
     const activePaneStyles = ruleBodiesForSelector(".zt-terminal-frame.active");
     const activeIndicatorStyles = ruleBodiesForSelector(".zt-pane-active-indicator");
 
@@ -134,7 +134,7 @@ describe("split pane css direction mapping", () => {
     expect(activeIndicatorStyles).toContain("display: none");
     expect(ruleBodiesForSelector(".zt-terminal-frame.active > .zt-pane-tabs")).toBe("");
     expect(ruleBodiesForSelector(".zt-terminal-frame:focus-within > .zt-pane-tabs")).toBe("");
-    expect(ruleBodiesForSelector(".zt-split-pane .zt-terminal-frame.active > .zt-pane-tabs")).toContain("background: var(--zt-bg-selected)");
+    expect(ruleBodiesForSelector(".zt-split-pane .zt-terminal-frame.active > .zt-pane-tabs")).toContain("background: var(--zt-surface-elevated)");
     expect(ruleBodiesForSelector(".zt-pane-tabs > .zt-terminal-toolbar")).toContain("background: transparent");
     expect(activeIndicatorStyles).toContain("border-radius: 50%");
   });

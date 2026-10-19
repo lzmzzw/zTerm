@@ -2,7 +2,7 @@
 import { ArrowLeftRight, FolderPlus, LayoutGrid, MessageSquareMore, Terminal } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { save } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import {
@@ -456,15 +456,6 @@ export function AppShell() {
   const activeSyncChannelMember = activePaneTab
     ? syncChannel?.members.find((member) => member.id === activePaneTab.id) ?? null
     : null;
-  const titleBarCenterContent = activeSyncChannelMember
-    ? `频道：${syncChannel!.members.map((member) => member.host).join("、")}`
-    : activeRuntimeSessionId
-      ? activeSavedSession?.type === "ssh"
-        ? activeSavedSession.host.trim() || null
-        : activeSavedSession?.type === "local"
-          ? activeSavedSession.local_options?.working_directory?.trim() || null
-          : activeExternalSshSession?.host.trim() || null
-      : null;
   const bindTerminalEvents = useTerminalStore((state) => state.bindTerminalEvents);
   const openTerminal = useTerminalStore((state) => state.openTerminal);
   const openSshContainerTerminal = useTerminalStore((state) => state.openSshContainerTerminal);
@@ -477,6 +468,19 @@ export function AppShell() {
   const activeRuntimeInfo = useTerminalStore((state) =>
     activeRuntimeSessionId ? (state.runtimes[activeRuntimeSessionId] ?? null) : null,
   );
+  const titleBarIsLocalPath = !activeSyncChannelMember &&
+    (activeRuntimeInfo?.kind === "local" || activeSavedSession?.type === "local" || activePaneTab?.connection_source === "default_local");
+  const titleBarCenterContent = activeSyncChannelMember
+    ? `频道：${syncChannel!.members.map((member) => member.host).join("、")}`
+    : titleBarIsLocalPath
+      ? activeRuntimeInfo?.current_cwd?.trim() || activeRuntimeInfo?.initial_cwd?.trim()
+        || activePaneTab?.path?.trim() || activeSavedSession?.local_options?.working_directory?.trim() || null
+      : activeSavedSession?.name?.trim() || activeExternalSshSession?.name?.trim()
+        || activeRuntimeInfo?.title?.trim() || activePaneTab?.title?.trim() || null;
+  const terminalSessionLabels = useMemo(() => Object.fromEntries([
+    ...sessions.filter((session) => session.type === "ssh").map((session) => [session.id, session.host.trim() || session.name]),
+    ...Object.values(externalSshSessions).map((session) => [session.id, session.host.trim() || session.name]),
+  ]), [sessions, externalSshSessions]);
   const activeAgentRuntimeSessionId =
     activeRuntimeSessionId &&
     (activePaneTab?.connection_source === "ssh_container" ||
@@ -1712,7 +1716,7 @@ export function AppShell() {
 
   return (
     <div className={workbenchClassName} onContextMenu={(event) => event.preventDefault()}>
-      <TitleBar centerContent={titleBarCenterContent} navigation={headerNavigation} actions={headerActions} />
+      <TitleBar centerContent={titleBarCenterContent} centerIsPath={titleBarIsLocalPath} navigation={headerNavigation} actions={headerActions} />
 
       {activeLeftTool ? <aside
         className="zt-sidebar zt-sidebar-left zt-left-tools"
@@ -1877,6 +1881,7 @@ export function AppShell() {
           </ZtInlineError>
         ) : null}
         <TerminalLayoutStage
+          sessionLabels={terminalSessionLabels}
           activePaneTools={
             <TerminalTools
               activeTool={activeTool}

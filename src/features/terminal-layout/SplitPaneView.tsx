@@ -21,6 +21,7 @@ import {
   isVisibleTerminalTab,
 } from "./terminalLayoutLayout";
 import type { PaneNode, PaneSplitDirection } from "./types";
+import { terminalTabLabel } from "./terminalTabLabel";
 
 const ACTIVE_XTERM_MOUNT_DELAY_MS = 48;
 const INACTIVE_XTERM_MOUNT_DELAY_MS = 96;
@@ -38,6 +39,7 @@ function isSshLikeTerminalRuntime(kind: TerminalRuntimeKind) {
 
 interface SplitPaneViewProps {
   activePaneTools?: ReactNode;
+  sessionLabels?: Record<string, string>;
   root: PaneNode;
   activePaneId: string;
   onActivatePane: (paneId: string) => void;
@@ -85,6 +87,7 @@ type PaneSplitAvailability = Record<string, Record<PaneSplitDirection, boolean>>
 
 export function SplitPaneView({
   activePaneTools,
+  sessionLabels,
   root,
   activePaneId,
   onActivatePane,
@@ -197,6 +200,7 @@ export function SplitPaneView({
       >
         <SplitPaneView
           activePaneTools={activePaneTools}
+          sessionLabels={sessionLabels}
           root={root.first}
           activePaneId={activePaneId}
           onActivatePane={onActivatePane}
@@ -225,6 +229,7 @@ export function SplitPaneView({
         />
         <SplitPaneView
           activePaneTools={activePaneTools}
+          sessionLabels={sessionLabels}
           root={root.second}
           activePaneId={activePaneId}
           onActivatePane={onActivatePane}
@@ -252,6 +257,7 @@ export function SplitPaneView({
   return (
     <LeafPane
       activePaneTools={activePaneTools}
+      sessionLabels={sessionLabels}
       root={root}
       active={root.id === activePaneId}
       onActivatePane={onActivatePane}
@@ -276,6 +282,7 @@ export function SplitPaneView({
 
 function LeafPane({
   activePaneTools,
+  sessionLabels,
   root,
   active,
   onActivatePane,
@@ -296,6 +303,7 @@ function LeafPane({
   splitAvailability,
 }: {
   activePaneTools?: ReactNode;
+  sessionLabels?: Record<string, string>;
   root: Extract<PaneNode, { kind: "leaf" }>;
   active: boolean;
   onActivatePane: (paneId: string) => void;
@@ -521,7 +529,7 @@ function LeafPane({
       const pointerDrag: PaneTabPointerDragState = {
         sourcePaneId: root.id,
         paneTabId,
-        label: paneTab.title,
+        label: terminalTabLabel(paneTab, sessionLabels),
         targetPaneId: root.id,
         beforePaneTabId: paneTabId,
         overlayX: sourceRect.left,
@@ -694,6 +702,7 @@ function LeafPane({
                 <button
                   type="button"
                   className="zt-pane-tab-main"
+                  title={`${terminalTab.title}${sessionLabels?.[terminalTab.saved_session_id ?? ""] ? ` · ${sessionLabels[terminalTab.saved_session_id ?? ""]}` : ""}`}
                   role="tab"
                   aria-selected={isActivePaneTerminalTab}
                   onClick={(event) => {
@@ -702,12 +711,12 @@ function LeafPane({
                     onSelectPaneTab(root.id, terminalTab.id);
                   }}
                 >
-                  {terminalTab.title}
+                  {terminalTabLabel(terminalTab, sessionLabels)}
                 </button>
                 {connecting ? (
                   <span
                     className="zt-pane-tab-spinner"
-                    aria-label={`正在连接 ${terminalTab.title}`}
+                    aria-label={`正在连接 ${terminalTabLabel(terminalTab, sessionLabels)}`}
                     title="连接中"
                   >
                     <LoaderCircle size={14} aria-hidden="true" />
@@ -716,7 +725,7 @@ function LeafPane({
                 {queued ? (
                   <span
                     className="zt-pane-tab-status zt-pane-tab-queued"
-                    aria-label={`等待连接 ${terminalTab.title}`}
+                    aria-label={`等待连接 ${terminalTabLabel(terminalTab, sessionLabels)}`}
                     title="等待连接"
                   >
                     <Clock3 size={14} aria-hidden="true" />
@@ -725,7 +734,7 @@ function LeafPane({
                 {failed ? (
                   <span
                     className="zt-pane-tab-status zt-pane-tab-failed"
-                    aria-label={`连接失败 ${terminalTab.title}`}
+                    aria-label={`连接失败 ${terminalTabLabel(terminalTab, sessionLabels)}`}
                     title={terminalTab.restore_error ?? "连接失败"}
                   >
                     <CircleAlert size={14} aria-hidden="true" />
@@ -734,7 +743,7 @@ function LeafPane({
                 <button
                   type="button"
                   className="zt-pane-tab-close"
-                  aria-label={`关闭标签 ${terminalTab.title}`}
+                  aria-label={`关闭标签 ${terminalTabLabel(terminalTab, sessionLabels)}`}
                   title="关闭标签"
                   onClick={(event) => {
                     event.stopPropagation();

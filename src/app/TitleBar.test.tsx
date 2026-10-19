@@ -187,6 +187,18 @@ describe("TitleBar", () => {
     view.unmount();
   });
 
+  it("preserves full local paths for hover while separating the final directory for truncation", async () => {
+    const path = "F:\\Workspace\\Repos\\zTerm";
+    const view = render(<TitleBar centerContent={path} centerIsPath />);
+    const title = view.container.querySelector(".zt-titlebar-center")!;
+    expect(title.getAttribute("title")).toBe(path);
+    expect(title.textContent).toBe(path);
+    expect(title.querySelector(".zt-titlebar-path-tail")?.textContent).toBe("\\zTerm");
+    await act(async () => { title.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })); });
+    expect(tauriWindow.startDragging).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+
   it("keeps only non-interactive title regions draggable", () => {
     const view = render(<TitleBar />);
 

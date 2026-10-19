@@ -6,9 +6,10 @@ import type { MouseEvent, ReactNode } from "react";
 import zTermLogoUrl from "../assets/zterm-logo.svg";
 import { isMacOS } from "../lib/platform";
 
-export function TitleBar({ centerContent = null, navigation, actions }: { centerContent?: string | null; navigation?: ReactNode; actions?: ReactNode }) {
+export function TitleBar({ centerContent = null, centerIsPath = false, navigation, actions }: { centerContent?: string | null; centerIsPath?: boolean; navigation?: ReactNode; actions?: ReactNode }) {
   const [maximized, setMaximized] = useState(false);
   const macOS = isMacOS();
+  const pathSplit = centerIsPath && centerContent ? Math.max(centerContent.lastIndexOf("/"), centerContent.lastIndexOf("\\")) : -1;
 
   useEffect(() => {
     let mounted = true;
@@ -63,8 +64,8 @@ export function TitleBar({ centerContent = null, navigation, actions }: { center
       ) : null)}
       <div className="zt-titlebar-drag-region" data-tauri-drag-region onMouseDown={startWindowDrag} />
       {centerContent ? (
-        <div className="zt-titlebar-center" title={centerContent}>
-          {centerContent}
+        <div className="zt-titlebar-center" title={centerContent} data-tauri-drag-region onMouseDown={startWindowDrag}>
+          {pathSplit > 0 ? <><span className="zt-titlebar-path-prefix">{centerContent.slice(0, pathSplit)}</span><span className="zt-titlebar-path-tail">{centerContent.slice(pathSplit)}</span></> : <span className="zt-titlebar-text">{centerContent}</span>}
         </div>
       ) : null}
       <div className="zt-titlebar-actions">{actions}</div>

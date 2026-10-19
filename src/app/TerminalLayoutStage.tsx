@@ -8,6 +8,7 @@ import { useTerminalLayoutStore } from "../features/terminal-layout/terminalLayo
 
 interface TerminalLayoutStageProps {
   activePaneTools?: ReactNode;
+  sessionLabels?: Record<string, string>;
   onActivatePane: (paneId: string) => void;
   onAddPaneTab: (paneId: string) => void;
   onDuplicatePaneTab: (paneId: string, paneTabId: string) => void;
@@ -23,6 +24,7 @@ interface TerminalLayoutStageProps {
 
 export function TerminalLayoutStage({
   activePaneTools,
+  sessionLabels,
   onActivatePane,
   onAddPaneTab,
   onDuplicatePaneTab,
@@ -50,6 +52,7 @@ export function TerminalLayoutStage({
         >
           <SplitPaneView
             activePaneTools={activePaneTools}
+            sessionLabels={sessionLabels}
             root={activeTab.root}
             activePaneId={activeTab.active_pane_id}
             onActivatePane={onActivatePane}

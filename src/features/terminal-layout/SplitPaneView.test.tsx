@@ -126,6 +126,25 @@ function seedTerminalOutput(outputs: Record<string, string>) {
 }
 
 describe("SplitPaneView", () => {
+  it("shows SSH addresses and local terminal names across nested panes without changing tab identities", () => {
+    const ssh = leaf("ssh-pane", "实验连接");
+    if (ssh.kind === "leaf") ssh.terminal_tabs![0].saved_session_id = "ssh-session";
+    const local = leaf("local-pane", "PowerShell");
+    const onSelectPaneTab = vi.fn();
+    const view = render(<SplitPaneView
+      root={{ kind: "split", id: "split", direction: "horizontal", ratio: 0.5, first: ssh, second: local }}
+      sessionLabels={{ "ssh-session": "192.0.2.10" }} activePaneId="ssh-pane"
+      onActivatePane={vi.fn()} onAddPaneTab={vi.fn()} onSelectPaneTab={onSelectPaneTab}
+      onClosePaneTab={vi.fn()} onSplitPane={vi.fn()} onClosePane={vi.fn()}
+    />);
+    const tabs = view.container.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+    expect(Array.from(tabs, (tab) => tab.textContent)).toEqual(["192.0.2.10", "PowerShell"]);
+    expect(tabs[0].title).toContain("实验连接");
+    act(() => tabs[1].click());
+    expect(onSelectPaneTab).toHaveBeenCalledWith("local-pane", "local-pane-tab-1");
+    view.unmount();
+  });
+
   it("moves the only tool overlay to the active pane across nested splits and hides it in previews", () => {
     const root: PaneNode = {
       kind: "split", id: "outer", direction: "horizontal", ratio: 0.5,
