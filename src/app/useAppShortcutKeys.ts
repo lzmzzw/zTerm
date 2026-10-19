@@ -5,7 +5,7 @@ import { resolveAppShortcutAction } from "./appShortcutActions";
 import type { RightTool } from "./rightTools";
 import { shortcutMatches } from "../features/settings/shortcutManager";
 import type { ShortcutBinding } from "../features/settings/settingsStore";
-import type { PaneSplitDirection } from "../features/workspace/types";
+import type { PaneSplitDirection } from "../features/terminal-layout/types";
 
 interface AppShortcutKeyContext {
   activePaneId: string | null;

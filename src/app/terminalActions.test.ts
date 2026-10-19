@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { RuntimeSessionInfo } from "../features/terminal/terminalStore";
-import type { PaneTerminalTab, WorkspaceTab } from "../features/workspace/types";
+import type { PaneTerminalTab, TerminalLayoutTab } from "../features/terminal-layout/types";
 import type { SavedSession } from "../features/sessions/types";
 import { createTerminalActions } from "./terminalActions";
 
@@ -224,13 +224,13 @@ function dependencies({
     containerName?: string | null,
   ) => Promise<RuntimeSessionInfo>;
   writeTerminal?: (runtimeSessionId: string, data: string) => Promise<void>;
-  hasPaneTerminalTab?: (workspaceId: string, workspaceTabId: string, paneId: string, paneTabId: string) => boolean;
+  hasPaneTerminalTab?: (terminalLayoutId: string, terminalLayoutTabId: string, paneId: string, paneTabId: string) => boolean;
 } = {}) {
   return {
     workbenchId: "live-workbench",
     workbenchTabId: "tab-1",
     activePaneTab,
-    activeTab: workspaceTab(),
+    activeTab: terminalLayoutTab(),
     setTerminalError: vi.fn(),
     addPaneTab: vi.fn(() => addedPaneTab),
     bindRuntimeToPaneTab: vi.fn(),
@@ -244,10 +244,10 @@ function dependencies({
   };
 }
 
-function workspaceTab(): WorkspaceTab {
+function terminalLayoutTab(): TerminalLayoutTab {
   return {
     id: "tab-1",
-    title: "工作区",
+    title: "连接组",
     active_pane_id: "pane-1",
     root: {
       kind: "leaf",

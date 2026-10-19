@@ -1,8 +1,10 @@
 // Author: Liz
-import { act, type ReactElement } from "react";
+import { act, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { loadTerminalLayout, saveTerminalLayout } from "../features/terminal-layout/terminalLayoutPersistence";
+import type { TerminalLayoutDefinition } from "../features/terminal-layout/types";
 import { AppShell } from "./AppShell";
 import { closeAgentCodex, openAgentCodex, setActiveAgentTerminal } from "../features/ai/agentCodexApi";
 import { useFileTransferStore } from "../features/files/fileTransferStore";
@@ -25,30 +27,16 @@ const storeMocks = vi.hoisted(() => ({
   selectPaneTab: vi.fn(),
   bindRuntimeToPane: vi.fn(),
   bindRuntimeToPaneTab: vi.fn(),
-  buildActiveWorkspaceDraft: vi.fn(),
+  buildActiveTerminalLayoutDraft: vi.fn(),
   restoreWorkbenchDefinition: vi.fn(),
   clearRuntimeSession: vi.fn(),
   hasPaneTerminalTab: vi.fn(() => true),
-  getWorkspaceRuntimeSessionIds: vi.fn((_workspaceId?: string) => ["runtime-1"]),
   splitActivePane: vi.fn(),
   closeTerminal: vi.fn().mockResolvedValue(undefined),
   updatePaneTerminalTab: vi.fn(),
-  selectTab: vi.fn(),
   setActivePane: vi.fn(),
   writeTerminal: vi.fn().mockResolvedValue(undefined),
   enterSshContainerRuntime: vi.fn().mockResolvedValue(undefined),
-  workspaceList: vi.fn().mockResolvedValue([]),
-  workspaceGet: vi.fn(),
-  workspaceSave: vi.fn(),
-  workspaceSaveDefaultSnapshot: vi.fn().mockResolvedValue(undefined),
-  workspaceRemove: vi.fn().mockResolvedValue(undefined),
-  cacheWorkspaceDefinition: vi.fn(),
-  loadWorkspaceDefinition: vi.fn(),
-  prefetchWorkspaceDefinitions: vi.fn(),
-  removeWorkspace: vi.fn(),
-  workspaceDefinitionState: {
-    definitions: {} as Record<string, Record<string, unknown>>,
-  },
   terminalOutputAccesses: 0,
   tauriEventHandlers: new Map<string, (event: { payload: unknown }) => void>(),
   tauriEventListenCounts: new Map<string, number>(),
@@ -79,7 +67,6 @@ const storeMocks = vi.hoisted(() => ({
       ui_font_size: 13,
       terminal_font_size: 13,
       default_right_tool: "agent",
-      workspace_restore_strategy: "visible_first",
       shortcuts: [],
     },
   },
@@ -152,21 +139,8 @@ const storeMocks = vi.hoisted(() => ({
     cols: 120,
     rows: 32,
   }),
-  workspaceState: {
-    workspaces: [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "running",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ] as Array<Record<string, unknown>>,
-    activeWorkspaceId: "workspace-1",
+  terminalLayoutState: {
+    activeTerminalLayoutId: "terminalLayout-1",
     tabs: [
       {
         id: "tab-1",
@@ -204,7 +178,7 @@ const storeMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./TitleBar", () => ({
-  TitleBar: ({ centerContent }: { centerContent?: string | null }) => <header aria-label="标题栏">{centerContent}</header>,
+  TitleBar: ({ centerContent, navigation }: { centerContent?: string | null; navigation?: ReactNode }) => <header aria-label="标题栏">{navigation}{centerContent}</header>,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -373,7 +347,7 @@ vi.mock("../features/sessions/SessionTree", () => ({
   ),
 }));
 
-vi.mock("../features/workspace/SplitPaneView", () => ({
+vi.mock("../features/terminal-layout/SplitPaneView", () => ({
   SplitPaneView: ({
     root,
     activePaneId,
@@ -382,7 +356,7 @@ vi.mock("../features/workspace/SplitPaneView", () => ({
     onClosePaneTab,
     onClosePane,
     onSplitPane,
-    workspaceActive = true,
+    terminalLayoutActive = true,
     visualMode = "normal",
   }: {
     root: Record<string, unknown>;
@@ -392,18 +366,18 @@ vi.mock("../features/workspace/SplitPaneView", () => ({
     onClosePaneTab: (paneId: string, paneTabId: string) => void;
     onClosePane: (paneId: string) => void;
     onSplitPane: (direction: "horizontal" | "vertical") => void;
-    workspaceActive?: boolean;
+    terminalLayoutActive?: boolean;
     visualMode?: "normal" | "placeholder" | "snapshot";
   }) =>
     visualMode === "placeholder" || visualMode === "snapshot" ? (
       <section
-        aria-label={visualMode === "snapshot" ? "工作区切换快照布局" : "工作区切换轻量布局"}
+        aria-label={visualMode === "snapshot" ? "终端布局切换快照布局" : "终端布局切换轻量布局"}
         data-active-pane-id={activePaneId}
       >
         {collectMockPaneTitles(root).join(" ")}
       </section>
     ) : (
-      <section aria-label="终端分栏" data-workspace-active={String(workspaceActive)}>
+      <section aria-label="终端分栏" data-terminal-layout-active={String(terminalLayoutActive)}>
       <span>{collectMockPaneTitles(root).join(" ")}</span>
       <button type="button" aria-label="创建连接" onClick={() => onAddPaneTab("pane-1")}>
         创建连接
@@ -636,33 +610,17 @@ vi.mock("../features/terminal/terminalStore", () => {
   return { useTerminalStore };
 });
 
-vi.mock("../features/workspace/workspacePersistence", () => ({
-  workspaceList: storeMocks.workspaceList,
-  workspaceGet: storeMocks.workspaceGet,
-  workspaceSave: storeMocks.workspaceSave,
-  workspaceSaveDefaultSnapshot: storeMocks.workspaceSaveDefaultSnapshot,
-  workspaceRemove: storeMocks.workspaceRemove,
-}));
 
-vi.mock("../features/workspace/workspaceStore", () => {
-  const workspaceState = () => ({
-    workspaces: storeMocks.workspaceState.workspaces,
-    workspaceDefinitions: storeMocks.workspaceDefinitionState.definitions,
-    activeWorkspaceId: storeMocks.workspaceState.activeWorkspaceId,
-    tabs: storeMocks.workspaceState.tabs,
-    activeTabId: storeMocks.workspaceState.activeTabId,
-    cacheWorkspaceDefinition: storeMocks.cacheWorkspaceDefinition,
-    loadWorkspaceDefinition: storeMocks.loadWorkspaceDefinition,
-    prefetchWorkspaceDefinitions: storeMocks.prefetchWorkspaceDefinitions,
-    buildActiveWorkspaceDraft: storeMocks.buildActiveWorkspaceDraft,
+vi.mock("../features/terminal-layout/terminalLayoutStore", () => {
+  const terminalLayoutState = () => ({
+    activeTerminalLayoutId: storeMocks.terminalLayoutState.activeTerminalLayoutId,
+    tabs: storeMocks.terminalLayoutState.tabs,
+    activeTabId: storeMocks.terminalLayoutState.activeTabId,
+    buildActiveTerminalLayoutDraft: storeMocks.buildActiveTerminalLayoutDraft,
     restoreWorkbenchDefinition: storeMocks.restoreWorkbenchDefinition,
     clearRuntimeSession: storeMocks.clearRuntimeSession,
     hasPaneTerminalTab: storeMocks.hasPaneTerminalTab,
-    getWorkspaceRuntimeSessionIds: storeMocks.getWorkspaceRuntimeSessionIds,
-    removeWorkspace: storeMocks.removeWorkspace,
     updatePaneTerminalTab: storeMocks.updatePaneTerminalTab,
-    selectTab: storeMocks.selectTab,
-    addTab: storeMocks.noop,
     addPaneTab: storeMocks.addPaneTab,
     addPaneTabAfter: storeMocks.addPaneTabAfter,
     closePaneTab: storeMocks.closePaneTab,
@@ -674,31 +632,25 @@ vi.mock("../features/workspace/workspaceStore", () => {
     resizeSplitPane: storeMocks.noop,
     closePane: storeMocks.closePane,
   });
-  const useWorkspaceStore = (selector?: (state: Record<string, unknown>) => unknown) => {
-    const state = workspaceState();
+  const useTerminalLayoutStore = (selector?: (state: Record<string, unknown>) => unknown) => {
+    const state = terminalLayoutState();
     if (selector) return selector(state);
     return state;
   };
-  useWorkspaceStore.getState = () => ({
-    ...workspaceState(),
-    buildActiveWorkspaceDraft: storeMocks.buildActiveWorkspaceDraft,
+  useTerminalLayoutStore.getState = () => ({
+    ...terminalLayoutState(),
+    buildActiveTerminalLayoutDraft: storeMocks.buildActiveTerminalLayoutDraft,
     restoreWorkbenchDefinition: storeMocks.restoreWorkbenchDefinition,
     clearRuntimeSession: storeMocks.clearRuntimeSession,
     hasPaneTerminalTab: storeMocks.hasPaneTerminalTab,
-    getWorkspaceRuntimeSessionIds: storeMocks.getWorkspaceRuntimeSessionIds,
-    removeWorkspace: storeMocks.removeWorkspace,
     updatePaneTerminalTab: storeMocks.updatePaneTerminalTab,
-    cacheWorkspaceDefinition: storeMocks.cacheWorkspaceDefinition,
-    loadWorkspaceDefinition: storeMocks.loadWorkspaceDefinition,
-    prefetchWorkspaceDefinitions: storeMocks.prefetchWorkspaceDefinitions,
-    selectTab: storeMocks.selectTab,
     setActivePane: storeMocks.setActivePane,
     selectPaneTab: storeMocks.selectPaneTab,
     addPaneTabAfter: storeMocks.addPaneTabAfter,
     bindRuntimeToPane: storeMocks.bindRuntimeToPane,
     bindRuntimeToPaneTab: storeMocks.bindRuntimeToPaneTab,
   });
-  return { useWorkspaceStore };
+  return { useTerminalLayoutStore };
 });
 
 function render(ui: ReactElement) {
@@ -740,13 +692,6 @@ function input(container: ParentNode, label: string) {
   return match as HTMLInputElement;
 }
 
-function textarea(container: ParentNode, label: string) {
-  const match = container.querySelector(`textarea[aria-label="${label}"]`);
-  if (!match) {
-    throw new Error(`Textarea not found: ${label}`);
-  }
-  return match as HTMLTextAreaElement;
-}
 
 function change(element: HTMLInputElement | HTMLTextAreaElement, value: string) {
   act(() => {
@@ -780,129 +725,11 @@ async function clickButton(container: HTMLElement, label: string) {
   });
 }
 
-function openWorkspaceContextMenu(container: HTMLElement, workspaceName: string) {
-  const item = container.querySelector(`[aria-label="工作区 ${workspaceName}"]`);
-  if (!item) {
-    throw new Error(`Workspace item not found: ${workspaceName}`);
-  }
-  item.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 80, clientY: 96 }));
-}
 
-async function clickWorkspaceContextAction(container: HTMLElement, workspaceName: string, actionLabel: string) {
-  await act(async () => {
-    openWorkspaceContextMenu(container, workspaceName);
-    await Promise.resolve();
-    button(container, actionLabel).click();
-    await Promise.resolve();
-  });
-}
 
-async function flushWorkspacePostLayoutWork() {
-  await act(async () => {
-    await new Promise<void>((resolve) => {
-      if (typeof window.requestAnimationFrame === "function") {
-        window.requestAnimationFrame(() => window.setTimeout(resolve, 0));
-        return;
-      }
-      window.setTimeout(resolve, 0);
-    });
-    await new Promise((resolve) => window.setTimeout(resolve, 380));
-    await Promise.resolve();
-    await Promise.resolve();
-  });
-}
 
-function workspaceSplitRoot() {
-  return {
-    kind: "split",
-    id: "split-root",
-    direction: "horizontal",
-    ratio: 0.5,
-    first: {
-      kind: "split",
-      id: "split-left",
-      direction: "vertical",
-      ratio: 0.5,
-      first: {
-        kind: "leaf",
-        id: "pane-1",
-        title: "PowerShell 7",
-        runtime_session_id: null,
-        saved_session_id: null,
-        active_terminal_tab_id: "pane-1-tab-1",
-        terminal_tabs: [
-          {
-            id: "pane-1-tab-1",
-            title: "PowerShell 7",
-            runtime_session_id: null,
-            saved_session_id: null,
-            connection_source: "default_local",
-          },
-        ],
-      },
-      second: {
-        kind: "leaf",
-        id: "pane-5",
-        title: "172.16.41.181",
-        runtime_session_id: null,
-        saved_session_id: "session-1",
-        active_terminal_tab_id: "pane-5-tab-1",
-        terminal_tabs: [
-          {
-            id: "pane-5-tab-1",
-            title: "172.16.41.181",
-            runtime_session_id: null,
-            saved_session_id: "session-1",
-            connection_source: "saved_session",
-            path: "/srv/app",
-          },
-        ],
-      },
-    },
-    second: {
-      kind: "split",
-      id: "split-right",
-      direction: "vertical",
-      ratio: 0.5,
-      first: {
-        kind: "leaf",
-        id: "pane-4",
-        title: "PowerShell 7",
-        runtime_session_id: null,
-        saved_session_id: null,
-        active_terminal_tab_id: "pane-4-tab-1",
-        terminal_tabs: [
-          {
-            id: "pane-4-tab-1",
-            title: "PowerShell 7",
-            runtime_session_id: null,
-            saved_session_id: null,
-            connection_source: "default_local",
-          },
-        ],
-      },
-      second: {
-        kind: "leaf",
-        id: "pane-6",
-        title: "PowerShell 7",
-        runtime_session_id: null,
-        saved_session_id: null,
-        active_terminal_tab_id: "pane-6-tab-1",
-        terminal_tabs: [
-          {
-            id: "pane-6-tab-1",
-            title: "PowerShell 7",
-            runtime_session_id: null,
-            saved_session_id: null,
-            connection_source: "default_local",
-          },
-        ],
-      },
-    },
-  } as const;
-}
 
-function activeTerminalWorkspaceTab() {
+function activeTerminalTerminalLayoutTab() {
   return {
     id: "tab-1",
     title: "开发机 A",
@@ -926,7 +753,7 @@ function activeTerminalWorkspaceTab() {
   };
 }
 
-function sharedSshConnectionWorkspaceTab(activePaneTabId = "pane-1-tab-1") {
+function sharedSshConnectionTerminalLayoutTab(activePaneTabId = "pane-1-tab-1") {
   const terminalTabs = [
     {
       id: "pane-1-tab-1",
@@ -958,9 +785,13 @@ function sharedSshConnectionWorkspaceTab(activePaneTabId = "pane-1-tab-1") {
   };
 }
 
+vi.mock("../features/terminal-layout/terminalLayoutPersistence", () => ({ loadTerminalLayout: vi.fn().mockResolvedValue(null), saveTerminalLayout: vi.fn().mockResolvedValue(undefined) }));
+
 describe("AppShell", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(loadTerminalLayout).mockReset().mockResolvedValue(null);
+    vi.mocked(saveTerminalLayout).mockReset().mockResolvedValue(undefined);
     useFileTransferStore.setState({ prepareForSession: originalPrepareForSession });
     useSyncInputStore.getState().closeChannel();
     storeMocks.mcpAffectedDomainsHandler = null;
@@ -1059,89 +890,18 @@ describe("AppShell", () => {
     ]);
     storeMocks.closeTerminal.mockResolvedValue(undefined);
     storeMocks.updatePaneTerminalTab.mockReset();
-    storeMocks.selectTab.mockReset();
     storeMocks.setActivePane.mockReset();
     storeMocks.splitActivePane.mockReset();
     storeMocks.writeTerminal.mockResolvedValue(undefined);
-    storeMocks.workspaceList.mockResolvedValue([
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "closed",
-        active_tab_id: "tab-1",
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ]);
-    storeMocks.workspaceGet.mockReset();
-    storeMocks.workspaceGet.mockImplementation(async (workspaceId: string) => {
-      const draft = storeMocks.buildActiveWorkspaceDraft();
-      if (!draft) throw new Error(`workspace not found: ${workspaceId}`);
-      if (workspaceId === "default-workspace") {
-        return {
-          ...draft,
-          id: workspaceId,
-          name: "默认工作区",
-          status: "closed",
-          created_at_ms: 1,
-          updated_at_ms: 1,
-          tabs: [],
-        };
-      }
-      return {
-        ...draft,
-        id: workspaceId,
-        name: workspaceId === "workspace-1" ? "运维巡检" : draft.name,
-        status: "closed",
-        created_at_ms: 1,
-        updated_at_ms: 1,
-        tabs: draft.tabs.map((tab: Record<string, unknown>) => ({
-          ...tab,
-          created_at_ms: 1,
-          updated_at_ms: 1,
-        })),
-      };
-    });
-    storeMocks.workspaceSave.mockReset();
-    storeMocks.workspaceSaveDefaultSnapshot.mockReset();
-    storeMocks.workspaceSaveDefaultSnapshot.mockResolvedValue(undefined);
-    storeMocks.workspaceRemove.mockResolvedValue(undefined);
-    storeMocks.removeWorkspace.mockReset();
-    storeMocks.workspaceDefinitionState.definitions = {};
     storeMocks.terminalOutputAccesses = 0;
-    storeMocks.cacheWorkspaceDefinition.mockImplementation((definition: Record<string, unknown>) => {
-      storeMocks.workspaceDefinitionState.definitions[String(definition.id)] = definition;
-    });
-    storeMocks.loadWorkspaceDefinition.mockImplementation(
-      async (workspaceId: string, loader: (workspaceId: string) => Promise<Record<string, unknown>>) => {
-        const cached = storeMocks.workspaceDefinitionState.definitions[workspaceId];
-        if (cached) return cached;
-        const definition = await loader(workspaceId);
-        storeMocks.workspaceDefinitionState.definitions[String(definition.id)] = definition;
-        return definition;
-      },
-    );
-    storeMocks.prefetchWorkspaceDefinitions.mockImplementation(
-      async (workspaceIds: string[], loader: (workspaceId: string) => Promise<Record<string, unknown>>) => {
-        await Promise.all(
-          workspaceIds.map((workspaceId) =>
-            storeMocks.loadWorkspaceDefinition(workspaceId, loader).catch(() => undefined),
-          ),
-        );
-      },
-    );
     storeMocks.settingsState.appSettings = {
       language: "zhCN",
       theme: "dark",
       ui_font_size: 13,
       terminal_font_size: 13,
       default_right_tool: "agent",
-      workspace_restore_strategy: "visible_first",
       shortcuts: [],
     };
-    storeMocks.getWorkspaceRuntimeSessionIds.mockReturnValue([]);
     storeMocks.historyPanelProps = null;
     storeMocks.monitorPanelProps = null;
     storeMocks.transferPanelProps = null;
@@ -1156,21 +916,8 @@ describe("AppShell", () => {
     storeMocks.terminalState.outputTails = {};
     storeMocks.terminalState.inputSerialByRuntime = {};
     storeMocks.terminalState.visualTails = {};
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "default-workspace",
-        name: "默认工作区",
-        status: "running",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.workspaceState.activeWorkspaceId = "default-workspace";
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.activeTerminalLayoutId = "default-terminalLayout";
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "新建终端",
@@ -1193,11 +940,10 @@ describe("AppShell", () => {
         },
       },
     ];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
-    storeMocks.workspaceState.activeTabId = "tab-1";
-    storeMocks.buildActiveWorkspaceDraft.mockReturnValue({
-      id: "default-workspace",
-      name: "默认工作区",
+    storeMocks.terminalLayoutState.activeTabId = "tab-1";
+    storeMocks.buildActiveTerminalLayoutDraft.mockReturnValue({
+      id: "default-terminalLayout",
+      name: "默认终端布局",
       status: "closed",
       active_tab_id: "tab-1",
       sort_order: 0,
@@ -1228,6 +974,41 @@ describe("AppShell", () => {
         },
       ],
     });
+  });
+
+  it("does not overwrite persisted state before loading finishes or after a read failure", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<TerminalLayoutDefinition | null>();
+    vi.mocked(loadTerminalLayout).mockReturnValueOnce(pending.promise);
+    const view = render(<AppShell />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await vi.advanceTimersByTimeAsync(500); });
+    expect(saveTerminalLayout).not.toHaveBeenCalled();
+    await act(async () => { pending.reject(new Error("read failed")); await Promise.resolve(); await vi.advanceTimersByTimeAsync(500); });
+    expect(saveTerminalLayout).not.toHaveBeenCalled();
+    view.unmount(); vi.useRealTimers();
+  });
+  it("does not replace user changes made during startup loading", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<TerminalLayoutDefinition | null>();
+    vi.mocked(loadTerminalLayout).mockReturnValueOnce(pending.promise);
+    const view = render(<AppShell />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    storeMocks.terminalLayoutState.tabs = [...storeMocks.terminalLayoutState.tabs];
+    await act(async () => { pending.resolve({ ...storeMocks.buildActiveTerminalLayoutDraft(), created_at_ms: 1, updated_at_ms: 1 }); await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(350); });
+    expect(storeMocks.restoreWorkbenchDefinition).not.toHaveBeenCalled();
+    expect(saveTerminalLayout).toHaveBeenCalledTimes(1);
+    view.unmount(); vi.useRealTimers();
+  });
+  it("restores the single layout and then autosaves the current layout", async () => {
+    vi.useFakeTimers();
+    vi.mocked(loadTerminalLayout).mockResolvedValueOnce({ ...storeMocks.buildActiveTerminalLayoutDraft(), created_at_ms: 1, updated_at_ms: 1 });
+    const view = render(<AppShell />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(350); });
+    expect(storeMocks.restoreWorkbenchDefinition).toHaveBeenCalledTimes(1);
+    expect(saveTerminalLayout).toHaveBeenCalledTimes(1);
+    view.unmount(); vi.useRealTimers();
   });
 
   it("keeps global tool listeners stable across rerenders", async () => {
@@ -1352,7 +1133,7 @@ describe("AppShell", () => {
         last_used_at_ms: null,
       },
     ];
-    Object.assign(storeMocks.workspaceState.tabs[0].root as Record<string, unknown>, {
+    Object.assign(storeMocks.terminalLayoutState.tabs[0].root as Record<string, unknown>, {
       runtime_session_id: "runtime-ssh",
       saved_session_id: "ssh-1",
       terminal_tabs: [
@@ -1388,7 +1169,7 @@ describe("AppShell", () => {
       "runtime-1": { runtime_session_id: "runtime-1", kind: "ssh", title: "生产机 A" },
       "runtime-2": { runtime_session_id: "runtime-2", kind: "ssh", title: "生产机 B" },
     };
-    Object.assign(storeMocks.workspaceState.tabs[0].root as Record<string, unknown>, {
+    Object.assign(storeMocks.terminalLayoutState.tabs[0].root as Record<string, unknown>, {
       runtime_session_id: "runtime-1",
       saved_session_id: "ssh-1",
       active_terminal_tab_id: "pane-1-tab-1",
@@ -1428,10 +1209,10 @@ describe("AppShell", () => {
         created_at_ms: 1,
         updated_at_ms: 1,
         last_used_at_ms: null,
-        local_options: { working_directory: "D:\\workspace\\zterm" },
+        local_options: { working_directory: "D:\\terminalLayout\\zterm" },
       },
     ];
-    Object.assign(storeMocks.workspaceState.tabs[0].root as Record<string, unknown>, {
+    Object.assign(storeMocks.terminalLayoutState.tabs[0].root as Record<string, unknown>, {
       runtime_session_id: "runtime-local",
       saved_session_id: "local-1",
       terminal_tabs: [
@@ -1446,7 +1227,7 @@ describe("AppShell", () => {
 
     const view = render(<AppShell />);
 
-    expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("D:\\workspace\\zterm");
+    expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("D:\\terminalLayout\\zterm");
     view.unmount();
   });
 
@@ -1483,7 +1264,7 @@ describe("AppShell", () => {
     });
 
     expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "default-workspace",
+      "default-terminalLayout",
       "tab-1",
       "pane-1",
       "pane-1-tab-1",
@@ -1496,7 +1277,7 @@ describe("AppShell", () => {
     );
     expect(storeMocks.openTerminal).toHaveBeenCalledWith("external:launch-1", "pane-1");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "default-workspace",
+      "default-terminalLayout",
       "tab-1",
       "pane-1",
       "pane-1-tab-1",
@@ -1525,7 +1306,7 @@ describe("AppShell", () => {
         channel_policy: "multi_channel",
       },
     ];
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "ops@cloud.example.test:2200",
@@ -1620,7 +1401,7 @@ describe("AppShell", () => {
         channel_policy: "single_channel",
       },
     ];
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "bhost",
@@ -1673,7 +1454,7 @@ describe("AppShell", () => {
         channel_policy: "multi_channel",
       },
     ];
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "ops@cloud.example.test:2200",
@@ -1755,17 +1536,16 @@ describe("AppShell", () => {
     await flushDomI18n();
 
     expect(view.container.querySelector('[aria-label="Title Bar"]')).not.toBe(null);
-    expect(view.container.querySelector('.zt-left-rail [aria-label="Workspace"]')).not.toBe(null);
-    expect(view.container.querySelector('.zt-left-rail [aria-label="Sessions"]')).not.toBe(null);
-    expect(view.container.querySelector('.zt-left-rail [aria-label="File Transfer"]')).not.toBe(null);
-    expect(view.container.querySelector('.zt-left-rail [aria-label="Models"]')).toBe(null);
-    expect(view.container.querySelector('.zt-left-rail [aria-label="Open Settings"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-titlebar-navigation [aria-label="Sessions"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-titlebar-navigation [aria-label="File Transfer"]')).not.toBe(null);
+    expect(view.container.querySelector('.zt-titlebar-navigation [aria-label="Models"]')).toBe(null);
+    expect(view.container.querySelector('.zt-titlebar-navigation [aria-label="Open Settings"]')).not.toBe(null);
     expect(view.container.querySelector('[aria-label="Terminal Panes"]')).not.toBe(null);
     expect(view.container.textContent).toContain("New Terminal");
 
     const dynamicButton = document.createElement("button");
-    dynamicButton.setAttribute("aria-label", "删除工作区 运维巡检");
-    dynamicButton.textContent = "确认删除工作区";
+    dynamicButton.setAttribute("aria-label", "打开设置");
+    dynamicButton.textContent = "确认删除";
     view.container.appendChild(dynamicButton);
 
     const skipped = document.createElement("div");
@@ -1783,8 +1563,8 @@ describe("AppShell", () => {
 
     await flushDomI18n();
 
-    expect(dynamicButton.getAttribute("aria-label")).toBe("Delete Workspace 运维巡检");
-    expect(dynamicButton.textContent).toBe("Confirm Delete Workspace");
+    expect(dynamicButton.getAttribute("aria-label")).toBe("Open Settings");
+    expect(dynamicButton.textContent).toBe("Confirm Delete");
     expect(skipped.textContent).toBe("新建终端");
     expect(ftpText.getAttribute("aria-label")).toBe("New FTP Session");
     expect(ftpText.textContent).toContain("Initial Remote Directory");
@@ -1795,9 +1575,9 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("opens settings page from the bottom left rail settings icon without mounting removed bottom dock", async () => {
+  it("opens settings page from the titlebar settings icon without mounting removed bottom dock", async () => {
     const view = render(<AppShell />);
-    const settingsButton = view.container.querySelector('.zt-left-rail [aria-label="打开设置"]') as HTMLButtonElement;
+    const settingsButton = view.container.querySelector('.zt-titlebar-navigation [aria-label="打开设置"]') as HTMLButtonElement;
 
     expect(settingsButton).not.toBe(null);
     expect(view.container.querySelector('.zt-tool-rail [aria-label="打开设置"]')).toBe(null);
@@ -1813,7 +1593,7 @@ describe("AppShell", () => {
     expect(view.container.querySelector(".zt-statusbar")).toBe(null);
     expect(view.container.textContent).not.toContain("Sender");
     expect(view.container.textContent).not.toContain("UTF-8");
-    expect(view.container.querySelector('[aria-label="标题栏"]')?.querySelector('[aria-label="打开设置"]')).toBe(null);
+    expect(view.container.querySelector('[aria-label="标题栏"]')?.querySelector('[aria-label="打开设置"]')?.getAttribute("aria-pressed")).toBe("true");
 
     await act(async () => {
       (view.container.querySelector('[aria-label="关闭设置"]') as HTMLButtonElement).click();
@@ -1842,79 +1622,10 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("keeps the left rail visible while workspace and session panels start collapsed", async () => {
+  it("keeps the session rail available without a layout manager", async () => {
     const view = render(<AppShell />);
-    const workbench = view.container.querySelector(".zt-workbench");
-    const workspaceButton = button(view.container, "工作区");
-    const sessionButton = button(view.container, "会话");
-    const fileTransferButton = button(view.container, "文件传输");
-    const leftRailLabels = Array.from(view.container.querySelectorAll(".zt-left-rail button")).map((item) =>
-      item.getAttribute("aria-label"),
-    );
-
-    expect(view.container.querySelector('[aria-label="左侧管理"]')).not.toBe(null);
-    expect(view.container.querySelector('[aria-label="左侧管理切换"]')).not.toBe(null);
-    expect(leftRailLabels).toEqual(["会话", "工作区", "文件传输", "打开设置"]);
-    expect(view.container.querySelector('[aria-label="工作区管理"]')).toBe(null);
-    expect(view.container.querySelector('[aria-label="会话管理"]')).toBe(null);
-    expect(view.container.querySelector('[aria-label="会话树"]')).toBe(null);
-    expect(workbench?.classList.contains("zt-workbench-left-collapsed")).toBe(true);
-    expect(view.container.querySelector('[aria-label="展开左侧栏"]')).toBe(null);
-    expect(view.container.querySelector('[aria-label="折叠左侧栏"]')).toBe(null);
-    expect(workspaceButton.getAttribute("aria-pressed")).toBe("false");
-    expect(workspaceButton.getAttribute("aria-expanded")).toBe("false");
-    expect(workspaceButton.querySelector("svg")?.classList.contains("lucide-panels-top-left")).toBe(true);
-    expect(sessionButton.getAttribute("aria-pressed")).toBe("false");
-    expect(sessionButton.getAttribute("aria-expanded")).toBe("false");
-    expect(fileTransferButton.getAttribute("aria-pressed")).toBe("false");
-    expect(fileTransferButton.getAttribute("aria-expanded")).toBe("false");
-    expect(view.container.querySelector('.zt-left-rail [aria-label="模型"]')).toBe(null);
-
-    view.unmount();
-  });
-
-  it("toggles workspace and session panels from the left rail", async () => {
-    const view = render(<AppShell />);
-    const workbench = view.container.querySelector(".zt-workbench");
-
-    await clickButton(view.container, "工作区");
-
-    expect(view.container.querySelector('[aria-label="工作区管理"]')).not.toBe(null);
-    expect(view.container.querySelector('[aria-label="会话管理"]')).toBe(null);
-    expect(workbench?.classList.contains("zt-workbench-left-collapsed")).toBe(false);
-    expect(button(view.container, "工作区").getAttribute("aria-pressed")).toBe("true");
-    expect(button(view.container, "工作区").getAttribute("aria-expanded")).toBe("true");
-
-    await clickButton(view.container, "工作区");
-
-    expect(view.container.querySelector('[aria-label="工作区管理"]')).toBe(null);
-    expect(workbench?.classList.contains("zt-workbench-left-collapsed")).toBe(true);
-    expect(button(view.container, "工作区").getAttribute("aria-pressed")).toBe("false");
-    expect(button(view.container, "工作区").getAttribute("aria-expanded")).toBe("false");
-
-    await clickButton(view.container, "会话");
-
-    expect(view.container.querySelector('[aria-label="会话树"]')).not.toBe(null);
-    expect(view.container.querySelector('[aria-label="会话管理"]')).not.toBe(null);
-    expect(button(view.container, "添加文件夹").classList.contains("zt-panel-action-button")).toBe(true);
-    expect(view.container.querySelector('[aria-label="工作区管理"]')).toBe(null);
-    expect(workbench?.classList.contains("zt-workbench-left-collapsed")).toBe(false);
-    expect(button(view.container, "会话").getAttribute("aria-pressed")).toBe("true");
-    expect(button(view.container, "会话").getAttribute("aria-expanded")).toBe("true");
-
-    await clickButton(view.container, "工作区");
-
-    expect(view.container.querySelector('[aria-label="工作区管理"]')).not.toBe(null);
-    expect(view.container.querySelector('[aria-label="会话管理"]')).toBe(null);
-    expect(button(view.container, "工作区").getAttribute("aria-pressed")).toBe("true");
-    expect(button(view.container, "会话").getAttribute("aria-pressed")).toBe("false");
-
-    await clickButton(view.container, "工作区");
-
-    expect(view.container.querySelector('[aria-label="工作区管理"]')).toBe(null);
-    expect(view.container.querySelector('[aria-label="会话管理"]')).toBe(null);
-    expect(workbench?.classList.contains("zt-workbench-left-collapsed")).toBe(true);
-
+    expect(view.container.querySelector('[aria-label="会话"]')).not.toBeNull();
+    expect(view.container.querySelector('[aria-label="终端布局管理"]')).toBeNull();
     view.unmount();
   });
 
@@ -1928,285 +1639,11 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("renders workspace management from the left workspace rail button", async () => {
-    const view = render(<AppShell />);
 
-    await clickButton(view.container, "工作区");
 
-    const workspacePanel = view.container.querySelector('[aria-label="工作区管理"]');
-    const sessionPanel = view.container.querySelector('[aria-label="会话管理"]');
 
-    expect(workspacePanel).not.toBe(null);
-    expect(sessionPanel).toBe(null);
-    expect(workspacePanel?.querySelector(".zt-panel-header")?.textContent).toContain("Workspace");
-    expect(workspacePanel?.querySelector(".zt-panel-header > svg")).toBe(null);
-    expect(workspacePanel?.textContent).toContain("运维巡检");
-    expect(workspacePanel?.querySelector(".zt-workspace-dot")).toBe(null);
-    expect(workspacePanel?.querySelector('[aria-label="新建工作区"]')).not.toBeNull();
 
-    view.unmount();
-  });
 
-  it("loads closed workspace definitions once for sidebar layout thumbnails", async () => {
-    storeMocks.workspaceList.mockResolvedValue([
-      {
-        id: "workspace-closed",
-        name: "发布窗口",
-        status: "closed",
-        active_tab_id: "tab-closed",
-        tab_count: 1,
-        sort_order: 2,
-        created_at_ms: 1,
-        updated_at_ms: 2,
-      },
-    ]);
-    storeMocks.workspaceGet.mockResolvedValue({
-      id: "workspace-closed",
-      name: "发布窗口",
-      status: "closed",
-      active_tab_id: "tab-closed",
-      sort_order: 2,
-      created_at_ms: 1,
-      updated_at_ms: 2,
-      tabs: [
-        {
-          id: "tab-closed",
-          title: "发布",
-          active_pane_id: "pane-1",
-          sort_order: 0,
-          created_at_ms: 1,
-          updated_at_ms: 2,
-          root: workspaceSplitRoot(),
-        },
-      ],
-    });
-    const view = render(<AppShell />);
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.workspaceGet).toHaveBeenCalledTimes(2);
-    expect(storeMocks.workspaceGet).toHaveBeenCalledWith("default-workspace");
-    expect(storeMocks.workspaceGet).toHaveBeenCalledWith("workspace-closed");
-    expect(view.container.querySelector('.zt-workspace-thumbnail.placeholder')).not.toBeNull();
-
-    await clickButton(view.container, "会话");
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.workspaceGet).toHaveBeenCalledTimes(2);
-    view.unmount();
-  });
-
-  it("does not render live running workspace roots as sidebar thumbnails", async () => {
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "running",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tabs: [
-          {
-            id: "tab-1",
-            title: "主工作台",
-            active_pane_id: "pane-4",
-            sort_order: 0,
-            created_at_ms: 1,
-            updated_at_ms: 1,
-            root: workspaceSplitRoot(),
-          },
-        ],
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-
-    expect(view.container.querySelector(".zt-workspace-layout-preview.thumbnail")).toBe(null);
-    expect(view.container.querySelector(".zt-workspace-thumbnail.placeholder")).not.toBe(null);
-
-    view.unmount();
-  });
-
-  it("opens a workspace preview dialog for editing tab connection and path metadata", async () => {
-    storeMocks.sessionState.sessions = [
-      {
-        id: "session-1",
-        name: "生产机",
-        host: "10.0.0.10",
-        port: 22,
-        username: "ops",
-        type: "ssh",
-        auth_mode: "none",
-        group_id: null,
-        tags: [],
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await clickWorkspaceContextAction(view.container, "运维巡检", "编辑工作区 运维巡检");
-
-    const dialog = view.container.querySelector('.zt-workspace-preview-dialog[aria-label="编辑工作区 运维巡检"]');
-    expect(dialog).not.toBe(null);
-    expect(dialog?.querySelector('[aria-label="编辑工作区名称"]')).toHaveProperty("value", "运维巡检");
-    expect(dialog?.textContent).not.toContain("主工作台");
-    expect(dialog?.textContent).toContain("生产机");
-    expect(dialog?.querySelector('[aria-label="编辑标签路径"]')).toHaveProperty("value", "/srv/app");
-    expect(dialog?.querySelector('[aria-label="编辑标签连接"]')).toHaveProperty("value", "session-1");
-
-    view.unmount();
-  });
-
-  it("shows a faithful four-pane workspace preview with a right-side terminal tab editor", async () => {
-    storeMocks.sessionState.sessions = [
-      {
-        id: "session-1",
-        name: "172.16.41.181",
-        host: "172.16.41.181",
-        port: 22,
-        username: "ops",
-        type: "ssh",
-        auth_mode: "none",
-        group_id: null,
-        tags: [],
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.buildActiveWorkspaceDraft.mockReturnValue({
-      id: "workspace-1",
-      name: "运维巡检",
-      status: "running",
-      active_tab_id: "tab-1",
-      sort_order: 0,
-      tabs: [
-        {
-          id: "tab-1",
-          title: "主工作台",
-          active_pane_id: "pane-4",
-          sort_order: 0,
-          root: workspaceSplitRoot(),
-        },
-        {
-          id: "tab-2",
-          title: "备用",
-          active_pane_id: "pane-extra",
-          sort_order: 1,
-          root: {
-            kind: "leaf",
-            id: "pane-extra",
-            title: "备用终端",
-            runtime_session_id: null,
-            saved_session_id: null,
-            active_terminal_tab_id: "pane-extra-tab-1",
-            terminal_tabs: [
-              {
-                id: "pane-extra-tab-1",
-                title: "备用终端",
-                runtime_session_id: null,
-                saved_session_id: null,
-              },
-            ],
-          },
-        },
-      ],
-    });
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await clickWorkspaceContextAction(view.container, "运维巡检", "编辑工作区 运维巡检");
-
-    const dialog = view.container.querySelector('.zt-workspace-preview-dialog[aria-label="编辑工作区 运维巡检"]');
-    expect(dialog?.querySelectorAll(".zt-workspace-layout-pane")).toHaveLength(4);
-    expect(dialog?.querySelector(".zt-workspace-layout-pane.selected")?.getAttribute("data-pane-id")).toBe("pane-4");
-    expect(dialog?.querySelector('[aria-label="切换工作区标签 备用"]')).not.toBe(null);
-    expect(dialog?.querySelector('[aria-label="终端标签 pane-4-tab-1"]')).not.toBe(null);
-    expect(dialog?.querySelector('[aria-label="启动目录来源"]')).toHaveProperty("value", "inherit");
-
-    await act(async () => {
-      (dialog?.querySelector('[data-pane-id="pane-5"]') as HTMLButtonElement).click();
-    });
-
-    expect(dialog?.querySelector(".zt-workspace-preview-inspector")?.textContent).not.toContain("pane-5");
-    expect(dialog?.querySelector('[aria-label="终端标签 pane-5-tab-1"]')).not.toBe(null);
-    expect(dialog?.querySelector('[aria-label="编辑标签连接"]')).toHaveProperty("value", "session-1");
-    expect(dialog?.querySelector('[aria-label="编辑标签路径"]')).toHaveProperty("value", "/srv/app");
-
-    await act(async () => {
-      (dialog?.querySelector('[aria-label="切换工作区标签 备用"]') as HTMLButtonElement).click();
-    });
-
-    expect(dialog?.querySelectorAll(".zt-workspace-layout-pane")).toHaveLength(1);
-    expect(dialog?.textContent).toContain("备用终端");
-
-    view.unmount();
-  });
-
-  it("creates a workspace from the current runtime layout through the workspace editor", async () => {
-    const promptSpy = vi.spyOn(window, "prompt");
-    storeMocks.workspaceSave.mockResolvedValue({
-      id: "workspace-new",
-      name: "发布窗口",
-      status: "closed",
-      active_tab_id: "tab-1",
-      sort_order: 1,
-      created_at_ms: 2,
-      updated_at_ms: 2,
-      tabs: [],
-    });
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      (view.container.querySelector('[aria-label="新建工作区"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
-
-    const dialog = view.container.querySelector('.zt-workspace-preview-dialog[aria-label="新建工作区"]');
-    expect(dialog).not.toBe(null);
-    expect(dialog?.textContent).not.toContain("127.0.0.1");
-    expect(dialog?.textContent).not.toContain("localhost");
-    expect(promptSpy).not.toHaveBeenCalled();
-    expect(input(dialog!, "编辑工作区名称")).toHaveProperty("value", "新建工作区");
-
-    change(input(dialog!, "编辑工作区名称"), "发布窗口");
-
-    await act(async () => {
-      button(dialog as HTMLElement, "保存工作区").click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.workspaceSave).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: null,
-        name: "发布窗口",
-        status: "closed",
-        sort_order: 1,
-      }),
-    );
-    expect(view.container.querySelector('[aria-label="保存工作区"]')).not.toBeNull();
-
-    promptSpy.mockRestore();
-    view.unmount();
-  });
 
   it("opens a FileZilla-format SFTP launch in the file transfer dialog with the remote endpoint on the right", async () => {
     const prepareForSession = vi.fn().mockResolvedValue(undefined);
@@ -2262,7 +1699,7 @@ describe("AppShell", () => {
   });
 
   it("opens a second-instance external SSH launch in a new pane tab", async () => {
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "Existing SSH",
@@ -2312,7 +1749,7 @@ describe("AppShell", () => {
     expect(storeMocks.takePendingExternalLaunches).toHaveBeenCalledTimes(2);
     expect(storeMocks.addPaneTab).toHaveBeenCalledWith("pane-1");
     expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "default-workspace",
+      "default-terminalLayout",
       "tab-1",
       "pane-1",
       "pane-1-tab-2",
@@ -2326,1002 +1763,18 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("opens manual save from the live workbench snapshot for the selected workspace", async () => {
-    storeMocks.workspaceSave.mockResolvedValue({
-      id: "workspace-1",
-      name: "运维巡检",
-      status: "closed",
-      active_tab_id: "tab-1",
-      sort_order: 0,
-      created_at_ms: 1,
-      updated_at_ms: 2,
-      tabs: [],
-    });
-    const view = render(<AppShell />);
 
-    await clickButton(view.container, "工作区");
-    await clickButton(view.container, "选择工作区 运维巡检");
-    await clickButton(view.container, "保存工作区");
 
-    const dialog = view.container.querySelector('.zt-workspace-preview-dialog[aria-label="编辑工作区 运维巡检"]');
-    expect(dialog).not.toBeNull();
-    expect(input(dialog!, "编辑工作区名称")).toHaveProperty("value", "运维巡检");
-    expect(dialog?.textContent).toContain("生产机");
 
-    await act(async () => {
-      button(dialog as HTMLElement, "保存工作区").click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
 
-    expect(storeMocks.workspaceSave).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "workspace-1", name: "运维巡检", active_tab_id: "tab-1" }),
-    );
-    expect(storeMocks.restoreWorkbenchDefinition).not.toHaveBeenCalled();
-    view.unmount();
-  });
 
-  it("does not probe terminal cwd when saving workspace metadata from the editor", async () => {
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "running",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tabs: [
-          {
-            id: "tab-1",
-            title: "主工作台",
-            active_pane_id: "pane-1",
-            sort_order: 0,
-            created_at_ms: 1,
-            updated_at_ms: 1,
-            root: {
-              kind: "leaf",
-              id: "pane-1",
-              title: "PowerShell 7",
-              runtime_session_id: "runtime-local",
-              saved_session_id: null,
-              active_terminal_tab_id: "pane-1-tab-1",
-              terminal_tabs: [
-                {
-                  id: "pane-1-tab-1",
-                  title: "PowerShell 7",
-                  runtime_session_id: "runtime-local",
-                  saved_session_id: null,
-                  connection_source: "default_local",
-                  path: "C:\\existing",
-                },
-              ],
-            },
-          },
-        ],
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.workspaceState.tabs = storeMocks.workspaceState.workspaces[0].tabs as Array<Record<string, unknown>>;
-    storeMocks.buildActiveWorkspaceDraft.mockReturnValue({
-      id: "workspace-1",
-      name: "运维巡检",
-      status: "closed",
-      active_tab_id: "tab-1",
-      sort_order: 0,
-      tabs: [
-        {
-          id: "tab-1",
-          title: "主工作台",
-          active_pane_id: "pane-1",
-          sort_order: 0,
-          root: {
-            kind: "leaf",
-            id: "pane-1",
-            title: "PowerShell 7",
-            runtime_session_id: null,
-            saved_session_id: null,
-            active_terminal_tab_id: "pane-1-tab-1",
-            terminal_tabs: [
-              {
-                id: "pane-1-tab-1",
-                title: "PowerShell 7",
-                runtime_session_id: null,
-                saved_session_id: null,
-                connection_source: "default_local",
-                path: "C:\\existing",
-              },
-            ],
-          },
-        },
-      ],
-    });
-    storeMocks.terminalState.runtimes = {
-      "runtime-local": {
-        runtime_session_id: "runtime-local",
-        saved_session_id: null,
-        history_scope_kind: "local_profile",
-        history_scope_id: "pwsh",
-        pane_id: "pane-1",
-        title: "PowerShell 7",
-        kind: "local",
-        cols: 120,
-        rows: 32,
-      },
-    };
-    storeMocks.workspaceSave.mockResolvedValue({
-      id: "workspace-1",
-      name: "运维巡检",
-      status: "closed",
-      active_tab_id: "tab-1",
-      sort_order: 0,
-      created_at_ms: 1,
-      updated_at_ms: 2,
-      tabs: [],
-    });
-    const view = render(<AppShell />);
 
-    await clickButton(view.container, "工作区");
-    await clickWorkspaceContextAction(view.container, "运维巡检", "编辑工作区 运维巡检");
 
-    const dialog = view.container.querySelector('.zt-workspace-preview-dialog[aria-label="编辑工作区 运维巡检"]');
-    expect(dialog).not.toBe(null);
-    expect(input(dialog!, "编辑启动目录")).toHaveProperty("value", "C:\\existing");
-    change(textarea(dialog!, "编辑启动命令"), "npm run dev");
 
-    await act(async () => {
-      button(dialog as HTMLElement, "保存工作区").click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
 
-    expect(storeMocks.updatePaneTerminalTab).not.toHaveBeenCalledWith(
-      "workspace-1",
-      "tab-1",
-      "pane-1",
-      "pane-1-tab-1",
-      expect.objectContaining({ path: expect.any(String) }),
-    );
-    expect(storeMocks.workspaceSave).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "workspace-1",
-        tabs: expect.arrayContaining([
-          expect.objectContaining({
-            root: expect.objectContaining({
-              terminal_tabs: expect.arrayContaining([
-                expect.objectContaining({
-                  id: "pane-1-tab-1",
-                  path: "C:\\existing",
-                  startup_command: "npm run dev",
-                }),
-              ]),
-            }),
-          }),
-        ]),
-      }),
-    );
 
-    view.unmount();
-  });
 
-  it("deletes a saved workspace without touching the live workbench runtime", async () => {
-    const view = render(<AppShell />);
 
-    await clickButton(view.container, "工作区");
-    await clickWorkspaceContextAction(view.container, "运维巡检", "删除工作区 运维巡检");
-
-    const dialog = view.container.querySelector('[role="dialog"][aria-label="删除工作区"]');
-    expect(dialog?.textContent).toContain("确认删除工作区“运维巡检”");
-
-    await act(async () => {
-      (dialog?.querySelector('button[type="submit"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.closeTerminal).not.toHaveBeenCalled();
-    expect(storeMocks.workspaceRemove).toHaveBeenCalledWith("workspace-1");
-    expect(storeMocks.removeWorkspace).toHaveBeenCalledWith("workspace-1");
-    expect(view.container.querySelector('[aria-label="新建工作区"]')).not.toBeNull();
-
-    view.unmount();
-  });
-
-  it("confirms before restore and aborts after partially failing to close live runtimes", async () => {
-    storeMocks.getWorkspaceRuntimeSessionIds.mockReturnValue(["runtime-ok", "runtime-failed"]);
-    storeMocks.closeTerminal.mockImplementation(async (runtimeSessionId: string) => {
-      if (runtimeSessionId === "runtime-failed") throw new Error("close failed");
-    });
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      await Promise.resolve();
-    });
-    storeMocks.workspaceGet.mockClear();
-    await clickWorkspaceContextAction(view.container, "运维巡检", "恢复工作区 运维巡检");
-
-    const dialog = view.container.querySelector('[role="dialog"][aria-label="恢复工作区"]');
-    expect(dialog?.textContent).toContain("将关闭当前工作台中的全部终端");
-    expect(storeMocks.workspaceGet).not.toHaveBeenCalled();
-
-    await act(async () => {
-      (dialog?.querySelector('button[type="submit"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.clearRuntimeSession).toHaveBeenCalledWith("runtime-ok");
-    expect(storeMocks.clearRuntimeSession).not.toHaveBeenCalledWith("runtime-failed");
-    expect(storeMocks.restoreWorkbenchDefinition).not.toHaveBeenCalled();
-    expect(view.container.textContent).toContain("close failed");
-    view.unmount();
-  });
-
-  it("does not show a thumbnail error when a deleted workspace's in-flight preview request fails", async () => {
-    const deletedPreview = deferred<Record<string, unknown>>();
-    const deletedWorkspace = {
-      id: "workspace-deleted",
-      name: "待删除工作区",
-      status: "closed" as const,
-      active_tab_id: "deleted-tab",
-      tab_count: 1,
-      sort_order: 0,
-      created_at_ms: 1,
-      updated_at_ms: 1,
-    };
-    const remainingWorkspace = {
-      id: "workspace-remaining",
-      name: "保留工作区",
-      status: "closed" as const,
-      active_tab_id: "remaining-tab",
-      tab_count: 1,
-      sort_order: 1,
-      created_at_ms: 1,
-      updated_at_ms: 2,
-    };
-    const refreshedSummaries = deferred<(typeof remainingWorkspace)[]>();
-    storeMocks.workspaceState.workspaces = [];
-    storeMocks.workspaceState.activeWorkspaceId = "default-workspace";
-    storeMocks.workspaceList
-      .mockResolvedValueOnce([deletedWorkspace, remainingWorkspace])
-      .mockImplementationOnce(() => refreshedSummaries.promise);
-    storeMocks.prefetchWorkspaceDefinitions.mockResolvedValue(undefined);
-    storeMocks.workspaceGet.mockImplementation((workspaceId: string) => {
-      if (workspaceId === deletedWorkspace.id) return deletedPreview.promise;
-      return Promise.resolve({
-        ...remainingWorkspace,
-        tabs: [
-          {
-            id: "remaining-tab",
-            title: "保留",
-            active_pane_id: "pane-1",
-            sort_order: 0,
-            created_at_ms: 1,
-            updated_at_ms: 2,
-            root: workspaceSplitRoot(),
-          },
-        ],
-      });
-    });
-    const view = render(<AppShell />);
-
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    expect(storeMocks.workspaceGet).toHaveBeenCalledWith("workspace-deleted");
-
-    await clickWorkspaceContextAction(view.container, "待删除工作区", "删除工作区 待删除工作区");
-    const dialog = view.container.querySelector('[role="dialog"][aria-label="删除工作区"]');
-    await act(async () => {
-      (dialog?.querySelector('button[type="submit"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    await act(async () => {
-      deletedPreview.reject(new Error("workspace has been deleted"));
-      await Promise.resolve();
-      await Promise.resolve();
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-    });
-
-    expect(view.container.textContent).not.toContain("加载工作区缩略图失败");
-    expect(view.container.querySelector('[aria-label="工作区 待删除工作区"]')).toBeNull();
-
-    await act(async () => {
-      refreshedSummaries.resolve([remainingWorkspace]);
-      await Promise.resolve();
-    });
-    expect(view.container.querySelector('[aria-label="工作区 保留工作区"]')).not.toBeNull();
-
-    view.unmount();
-  });
-
-  it("hides the default workspace from workspace management", async () => {
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "default-workspace",
-        name: "默认工作区",
-        status: "running",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.workspaceState.activeWorkspaceId = "default-workspace";
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-
-    expect(view.container.querySelector('[aria-label="工作区 默认工作区"]')).toBeNull();
-    expect(view.container.querySelector('[aria-label="切换工作区 默认工作区"]')).toBeNull();
-    expect(view.container.querySelector('[role="dialog"][aria-label="删除工作区"]')).toBe(null);
-    expect(storeMocks.workspaceRemove).not.toHaveBeenCalled();
-
-    view.unmount();
-  });
-
-  it("does not auto-open a default local terminal while a workspace tab is restoring", async () => {
-    storeMocks.workspaceState.tabs = [
-      {
-        id: "tab-1",
-        title: "主工作台",
-        active_pane_id: "pane-1",
-        root: {
-          kind: "leaf",
-          id: "pane-1",
-          title: "生产机",
-          runtime_session_id: null,
-          saved_session_id: "session-1",
-          active_terminal_tab_id: "pane-1-tab-1",
-          terminal_tabs: [
-            {
-              id: "pane-1-tab-1",
-              title: "生产机",
-              runtime_session_id: null,
-              saved_session_id: "session-1",
-              connection_source: "saved_session",
-              restore_status: "pending",
-            },
-          ],
-        },
-      },
-    ];
-
-    const view = render(<AppShell />);
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
-
-    view.unmount();
-  });
-
-  it("restores the previous default workspace layout and connections on startup", async () => {
-    storeMocks.sessionState.sessions = [
-      {
-        id: "session-1",
-        name: "生产机",
-        host: "10.0.0.10",
-        port: 22,
-        username: "ops",
-        type: "ssh",
-        auth_mode: "none",
-        group_id: null,
-        tags: [],
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.workspaceGet.mockResolvedValue({
-      id: "default-workspace",
-      name: "默认工作区",
-      status: "closed",
-      active_tab_id: "tab-1",
-      sort_order: 0,
-      created_at_ms: 1,
-      updated_at_ms: 1,
-      tabs: [
-        {
-          id: "tab-1",
-          title: "主工作台",
-          active_pane_id: "pane-1",
-          sort_order: 0,
-          created_at_ms: 1,
-          updated_at_ms: 1,
-          root: {
-            kind: "leaf",
-            id: "pane-1",
-            title: "生产机",
-            runtime_session_id: null,
-            saved_session_id: "session-1",
-            active_terminal_tab_id: "pane-1-tab-1",
-            terminal_tabs: [
-              {
-                id: "pane-1-tab-1",
-                title: "生产机",
-                runtime_session_id: null,
-                saved_session_id: "session-1",
-                connection_source: "saved_session",
-              },
-            ],
-          },
-        },
-      ],
-    });
-    storeMocks.openTerminal.mockResolvedValue({
-      runtime_session_id: "runtime-restored",
-      saved_session_id: "session-1",
-      history_scope_kind: "saved_session",
-      history_scope_id: "session-1",
-      pane_id: "pane-1",
-      title: "生产机",
-      kind: "ssh",
-      cols: 120,
-      rows: 32,
-    });
-
-    const view = render(<AppShell />);
-    await flushWorkspacePostLayoutWork();
-
-    expect(storeMocks.workspaceGet).toHaveBeenCalledWith("default-workspace");
-    expect(storeMocks.restoreWorkbenchDefinition).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "default-workspace", status: "running" }),
-    );
-    expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1", null);
-    expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "default-workspace",
-      "tab-1",
-      "pane-1",
-      "pane-1-tab-1",
-      expect.objectContaining({ runtime_session_id: "runtime-restored", restore_status: "connected" }),
-    );
-
-    view.unmount();
-  });
-
-  it("restores workspace terminals and sends the configured startup command after connect", async () => {
-    storeMocks.sessionState.sessions = [
-      {
-        id: "session-1",
-        name: "生产机",
-        host: "10.0.0.10",
-        port: 22,
-        username: "ops",
-        type: "ssh",
-        auth_mode: "none",
-        group_id: null,
-        tags: [],
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "closed",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.buildActiveWorkspaceDraft.mockReturnValueOnce(null);
-    storeMocks.workspaceGet.mockResolvedValue({
-      id: "workspace-1",
-      name: "运维巡检",
-      status: "closed",
-      active_tab_id: "tab-1",
-      sort_order: 0,
-      created_at_ms: 1,
-      updated_at_ms: 1,
-      tabs: [
-        {
-          id: "tab-1",
-          title: "主工作台",
-          active_pane_id: "pane-1",
-          sort_order: 0,
-          created_at_ms: 1,
-          updated_at_ms: 1,
-          root: {
-            kind: "leaf",
-            id: "pane-1",
-            title: "生产机",
-            runtime_session_id: null,
-            saved_session_id: "session-1",
-            active_terminal_tab_id: "pane-1-tab-1",
-            terminal_tabs: [
-              {
-                id: "pane-1-tab-1",
-                title: "生产机",
-                runtime_session_id: null,
-                saved_session_id: "session-1",
-                connection_source: "saved_session",
-                path: "/srv/app",
-                startup_command: "source ./env.sh",
-              },
-            ],
-          },
-        },
-      ],
-    });
-    storeMocks.openTerminal.mockResolvedValue({
-      runtime_session_id: "runtime-ssh",
-      saved_session_id: "session-1",
-      history_scope_kind: "saved_session",
-      history_scope_id: "session-1",
-      pane_id: "pane-1",
-      title: "生产机",
-      kind: "ssh",
-      cols: 120,
-      rows: 32,
-    });
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      openWorkspaceContextMenu(view.container, "运维巡检");
-      await Promise.resolve();
-      button(view.container, "恢复工作区 运维巡检").click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await flushWorkspacePostLayoutWork();
-
-    expect(storeMocks.workspaceGet).toHaveBeenCalledWith("workspace-1");
-    expect(storeMocks.restoreWorkbenchDefinition).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "default-workspace", status: "running" }),
-    );
-    expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1", "/srv/app");
-    expect(storeMocks.writeTerminal).toHaveBeenCalledWith("runtime-ssh", "source ./env.sh\r");
-    expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "default-workspace",
-      "tab-1",
-      "pane-1",
-      "pane-1-tab-1",
-      expect.objectContaining({ restore_status: "connected", runtime_session_id: "runtime-ssh" }),
-    );
-
-    view.unmount();
-  });
-
-  it("selects the restored workspace before the first terminal connection finishes", async () => {
-    storeMocks.sessionState.sessions = [
-      {
-        id: "session-1",
-        name: "生产机",
-        host: "10.0.0.10",
-        port: 22,
-        username: "ops",
-        type: "ssh",
-        auth_mode: "none",
-        group_id: null,
-        tags: [],
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "closed",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.buildActiveWorkspaceDraft.mockReturnValueOnce(null);
-    storeMocks.workspaceGet.mockResolvedValue({
-      id: "workspace-1",
-      name: "运维巡检",
-      status: "closed",
-      active_tab_id: "tab-1",
-      sort_order: 0,
-      created_at_ms: 1,
-      updated_at_ms: 1,
-      tabs: [
-        {
-          id: "tab-1",
-          title: "主工作台",
-          active_pane_id: "pane-1",
-          sort_order: 0,
-          created_at_ms: 1,
-          updated_at_ms: 1,
-          root: {
-            kind: "leaf",
-            id: "pane-1",
-            title: "生产机",
-            runtime_session_id: null,
-            saved_session_id: "session-1",
-            active_terminal_tab_id: "pane-1-tab-1",
-            terminal_tabs: [
-              {
-                id: "pane-1-tab-1",
-                title: "生产机",
-                runtime_session_id: null,
-                saved_session_id: "session-1",
-                connection_source: "saved_session",
-              },
-            ],
-          },
-        },
-      ],
-    });
-    const opened = deferred<{
-      runtime_session_id: string;
-      saved_session_id: string;
-      history_scope_kind: string;
-      history_scope_id: string;
-      pane_id: string;
-      title: string;
-      kind: string;
-      cols: number;
-      rows: number;
-    }>();
-    storeMocks.openTerminal.mockReturnValueOnce(opened.promise);
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      openWorkspaceContextMenu(view.container, "运维巡检");
-      await Promise.resolve();
-      button(view.container, "恢复工作区 运维巡检").click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(storeMocks.restoreWorkbenchDefinition).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "default-workspace",
-        status: "running",
-        tabs: [
-          expect.objectContaining({
-            root: expect.objectContaining({
-              terminal_tabs: [expect.objectContaining({ restore_status: "queued", restore_error: null })],
-            }),
-          }),
-        ],
-      }),
-    );
-    expect(view.container.querySelector('[aria-label="保存工作区"]')).not.toBeNull();
-    expect(storeMocks.openTerminal).toHaveBeenCalledTimes(1);
-    expect(storeMocks.updatePaneTerminalTab).not.toHaveBeenCalledWith(
-      "workspace-1",
-      "tab-1",
-      "pane-1",
-      "pane-1-tab-1",
-      expect.objectContaining({ restore_status: "connected" }),
-    );
-
-    await act(async () => {
-      opened.resolve({
-        runtime_session_id: "runtime-ssh",
-        saved_session_id: "session-1",
-        history_scope_kind: "saved_session",
-        history_scope_id: "session-1",
-        pane_id: "pane-1",
-        title: "生产机",
-        kind: "ssh",
-        cols: 120,
-        rows: 32,
-      });
-      await opened.promise;
-      await Promise.resolve();
-    });
-
-    view.unmount();
-  });
-
-  it("restores only the saved layout without opening terminals when the restore strategy is layout_only", async () => {
-    storeMocks.settingsState.appSettings = {
-      ...storeMocks.settingsState.appSettings,
-      workspace_restore_strategy: "layout_only",
-    };
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "closed",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.buildActiveWorkspaceDraft.mockReturnValueOnce(null);
-    storeMocks.workspaceGet.mockResolvedValue({
-      id: "workspace-1",
-      name: "运维巡检",
-      status: "closed",
-      active_tab_id: "tab-1",
-      sort_order: 0,
-      created_at_ms: 1,
-      updated_at_ms: 1,
-      tabs: [
-        {
-          id: "tab-1",
-          title: "主工作台",
-          active_pane_id: "pane-1",
-          sort_order: 0,
-          created_at_ms: 1,
-          updated_at_ms: 1,
-          root: {
-            kind: "leaf",
-            id: "pane-1",
-            title: "PowerShell 7",
-            runtime_session_id: null,
-            saved_session_id: null,
-            active_terminal_tab_id: "pane-1-tab-1",
-            terminal_tabs: [
-              {
-                id: "pane-1-tab-1",
-                title: "PowerShell 7",
-                runtime_session_id: null,
-                saved_session_id: null,
-                connection_source: "default_local",
-              },
-            ],
-          },
-        },
-      ],
-    });
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      openWorkspaceContextMenu(view.container, "运维巡检");
-      await Promise.resolve();
-      button(view.container, "恢复工作区 运维巡检").click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await flushWorkspacePostLayoutWork();
-
-    expect(storeMocks.restoreWorkbenchDefinition).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "default-workspace",
-        status: "running",
-        tabs: [
-          expect.objectContaining({
-            root: expect.objectContaining({
-              terminal_tabs: [expect.objectContaining({ restore_status: "queued", restore_error: null })],
-            }),
-          }),
-        ],
-      }),
-    );
-    expect(storeMocks.openTerminal).not.toHaveBeenCalled();
-    expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
-    expect(storeMocks.updatePaneTerminalTab).not.toHaveBeenCalled();
-
-    view.unmount();
-  });
-
-  it("does not generate an SSH cd command from recorded workspace paths", async () => {
-    storeMocks.sessionState.sessions = [
-      {
-        id: "session-1",
-        name: "生产机",
-        host: "10.0.0.10",
-        port: 22,
-        username: "ops",
-        type: "ssh",
-        auth_mode: "none",
-        group_id: null,
-        tags: [],
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "closed",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.buildActiveWorkspaceDraft.mockReturnValueOnce(null);
-    storeMocks.workspaceGet.mockResolvedValue({
-      id: "workspace-1",
-      name: "运维巡检",
-      status: "closed",
-      active_tab_id: "tab-1",
-      sort_order: 0,
-      created_at_ms: 1,
-      updated_at_ms: 1,
-      tabs: [
-        {
-          id: "tab-1",
-          title: "主工作台",
-          active_pane_id: "pane-1",
-          sort_order: 0,
-          created_at_ms: 1,
-          updated_at_ms: 1,
-          root: {
-            kind: "leaf",
-            id: "pane-1",
-            title: "生产机",
-            runtime_session_id: null,
-            saved_session_id: "session-1",
-            active_terminal_tab_id: "pane-1-tab-1",
-            terminal_tabs: [
-              {
-                id: "pane-1-tab-1",
-                title: "生产机",
-                runtime_session_id: null,
-                saved_session_id: "session-1",
-                connection_source: "saved_session",
-                path: "/srv/app\nrm -rf /",
-              },
-            ],
-          },
-        },
-      ],
-    });
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      openWorkspaceContextMenu(view.container, "运维巡检");
-      await Promise.resolve();
-      button(view.container, "恢复工作区 运维巡检").click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await flushWorkspacePostLayoutWork();
-
-    expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1", "/srv/app\nrm -rf /");
-    expect(storeMocks.writeTerminal).not.toHaveBeenCalled();
-    expect(storeMocks.closeTerminal).not.toHaveBeenCalled();
-    expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "default-workspace",
-      "tab-1",
-      "pane-1",
-      "pane-1-tab-1",
-      expect.objectContaining({ restore_status: "connected", restore_error: null }),
-    );
-
-    view.unmount();
-  });
-
-  it("closes a restored runtime when sending the startup command fails", async () => {
-    storeMocks.sessionState.sessions = [
-      {
-        id: "session-1",
-        name: "生产机",
-        host: "10.0.0.10",
-        port: 22,
-        username: "ops",
-        type: "ssh",
-        auth_mode: "none",
-        group_id: null,
-        tags: [],
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.workspaceState.workspaces = [
-      {
-        id: "workspace-1",
-        name: "运维巡检",
-        status: "closed",
-        active_tab_id: "tab-1",
-        activeTabId: "tab-1",
-        tab_count: 1,
-        sort_order: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-      },
-    ];
-    storeMocks.buildActiveWorkspaceDraft.mockReturnValueOnce(null);
-    storeMocks.workspaceGet.mockResolvedValue({
-      id: "workspace-1",
-      name: "运维巡检",
-      status: "closed",
-      active_tab_id: "tab-1",
-      sort_order: 0,
-      created_at_ms: 1,
-      updated_at_ms: 1,
-      tabs: [
-        {
-          id: "tab-1",
-          title: "主工作台",
-          active_pane_id: "pane-1",
-          sort_order: 0,
-          created_at_ms: 1,
-          updated_at_ms: 1,
-          root: {
-            kind: "leaf",
-            id: "pane-1",
-            title: "生产机",
-            runtime_session_id: null,
-            saved_session_id: "session-1",
-            active_terminal_tab_id: "pane-1-tab-1",
-            terminal_tabs: [
-              {
-                id: "pane-1-tab-1",
-                title: "生产机",
-                runtime_session_id: null,
-                saved_session_id: "session-1",
-                connection_source: "saved_session",
-                path: "/srv/app",
-                startup_command: "source ./env.sh",
-              },
-            ],
-          },
-        },
-      ],
-    });
-    storeMocks.openTerminal.mockResolvedValue({
-      runtime_session_id: "runtime-ssh",
-      saved_session_id: "session-1",
-      history_scope_kind: "saved_session",
-      history_scope_id: "session-1",
-      pane_id: "pane-1",
-      title: "生产机",
-      kind: "ssh",
-      cols: 120,
-      rows: 32,
-    });
-    storeMocks.writeTerminal.mockRejectedValueOnce(new Error("write failed"));
-    const view = render(<AppShell />);
-
-    await clickButton(view.container, "工作区");
-    await act(async () => {
-      openWorkspaceContextMenu(view.container, "运维巡检");
-      await Promise.resolve();
-      button(view.container, "恢复工作区 运维巡检").click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await flushWorkspacePostLayoutWork();
-
-    expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1", "/srv/app");
-    expect(storeMocks.writeTerminal).toHaveBeenCalledWith("runtime-ssh", "source ./env.sh\r");
-    expect(storeMocks.closeTerminal).toHaveBeenCalledWith("runtime-ssh");
-    expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "default-workspace",
-      "tab-1",
-      "pane-1",
-      "pane-1-tab-1",
-      expect.objectContaining({ restore_status: "failed", restore_error: "write failed" }),
-    );
-
-    view.unmount();
-  });
 
   it("keeps the right tool panel collapsed on startup even when settings define a default right tool", async () => {
     const view = render(<AppShell />);
@@ -3360,7 +1813,7 @@ describe("AppShell", () => {
   });
 
   it("starts a bound Codex session without capturing target output in the React agent layer", async () => {
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机 A",
@@ -3383,7 +1836,6 @@ describe("AppShell", () => {
         },
       },
     ];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
     storeMocks.terminalState.outputTails = { "runtime-1": "line\n".repeat(1200) };
     const view = render(<AppShell />);
 
@@ -3414,11 +1866,10 @@ describe("AppShell", () => {
     const opening = deferred<Awaited<ReturnType<typeof openAgentCodex>>>();
     vi.mocked(openAgentCodex).mockImplementationOnce(() => opening.promise);
     storeMocks.sessionState.sessions = [{ id: "session-1", name: "生产 SSH", type: "ssh", host: "10.0.0.1" }];
-    const tab = activeTerminalWorkspaceTab();
+    const tab = activeTerminalTerminalLayoutTab();
     tab.root.title = "临时巡检标签";
     tab.root.terminal_tabs[0].title = "临时巡检标签";
-    storeMocks.workspaceState.tabs = [tab];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [tab];
     storeMocks.terminalState.runtimes = {
       "runtime-1": { runtime_session_id: "runtime-1", kind: "ssh", title: "临时巡检标签" },
     };
@@ -3441,8 +1892,7 @@ describe("AppShell", () => {
 
   it("syncs the active SSH runtime and clears it when switching to local", async () => {
     storeMocks.sessionState.sessions = [{ id: "session-1", name: "开发机 A", type: "ssh", host: "10.0.0.1" }];
-    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     storeMocks.terminalState.runtimes = {
       "runtime-1": { runtime_session_id: "runtime-1", kind: "ssh", title: "开发机 A" },
       "runtime-local": { runtime_session_id: "runtime-local", kind: "local", title: "PowerShell" },
@@ -3453,10 +1903,10 @@ describe("AppShell", () => {
     });
     expect(vi.mocked(setActiveAgentTerminal)).toHaveBeenLastCalledWith("runtime-1");
 
-    storeMocks.workspaceState.tabs = [{
-      ...activeTerminalWorkspaceTab(),
+    storeMocks.terminalLayoutState.tabs = [{
+      ...activeTerminalTerminalLayoutTab(),
       root: {
-        ...activeTerminalWorkspaceTab().root,
+        ...activeTerminalTerminalLayoutTab().root,
         title: "PowerShell",
         runtime_session_id: "runtime-local",
         saved_session_id: null,
@@ -3469,7 +1919,6 @@ describe("AppShell", () => {
         }],
       },
     }];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
     view.rerender(<AppShell />);
     await act(async () => {
       await Promise.resolve();
@@ -3480,8 +1929,7 @@ describe("AppShell", () => {
 
   it("serializes active runtime sync when switching tabs quickly", async () => {
     storeMocks.sessionState.sessions = [{ id: "session-1", name: "开发机 A", type: "ssh", host: "10.0.0.1" }];
-    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     storeMocks.terminalState.runtimes = {
       "runtime-1": { runtime_session_id: "runtime-1", kind: "ssh", title: "开发机 A" },
       "runtime-2": { runtime_session_id: "runtime-2", kind: "ssh", title: "开发机 A" },
@@ -3493,10 +1941,10 @@ describe("AppShell", () => {
       .mockImplementationOnce(() => second.promise);
     const view = render(<AppShell />);
 
-    storeMocks.workspaceState.tabs = [{
-      ...activeTerminalWorkspaceTab(),
+    storeMocks.terminalLayoutState.tabs = [{
+      ...activeTerminalTerminalLayoutTab(),
       root: {
-        ...activeTerminalWorkspaceTab().root,
+        ...activeTerminalTerminalLayoutTab().root,
         runtime_session_id: "runtime-2",
         terminal_tabs: [{
           id: "pane-1-tab-1",
@@ -3506,7 +1954,6 @@ describe("AppShell", () => {
         }],
       },
     }];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
     view.rerender(<AppShell />);
     await act(async () => {
       await Promise.resolve();
@@ -3532,8 +1979,7 @@ describe("AppShell", () => {
   });
 
   it("shares one Codex session between terminal tabs opened from the same SSH connection", async () => {
-    storeMocks.workspaceState.tabs = [sharedSshConnectionWorkspaceTab()];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [sharedSshConnectionTerminalLayoutTab()];
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -3544,8 +1990,7 @@ describe("AppShell", () => {
     expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(1);
     expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }));
 
-    storeMocks.workspaceState.tabs = [sharedSshConnectionWorkspaceTab("pane-1-tab-2")];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [sharedSshConnectionTerminalLayoutTab("pane-1-tab-2")];
     view.rerender(<AppShell />);
     await act(async () => {
       await Promise.resolve();
@@ -3554,7 +1999,7 @@ describe("AppShell", () => {
     expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(1);
     expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }));
 
-    const secondConnectionTab = sharedSshConnectionWorkspaceTab("pane-1-tab-2");
+    const secondConnectionTab = sharedSshConnectionTerminalLayoutTab("pane-1-tab-2");
     secondConnectionTab.root.terminal_tabs = [
       {
         id: "pane-1-tab-2",
@@ -3565,26 +2010,24 @@ describe("AppShell", () => {
     ];
     secondConnectionTab.root.active_terminal_tab_id = "pane-1-tab-2";
     secondConnectionTab.root.runtime_session_id = "runtime-2";
-    storeMocks.workspaceState.tabs = [secondConnectionTab];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [secondConnectionTab];
     view.rerender(<AppShell />);
     await act(async () => {
       await Promise.resolve();
     });
     expect(vi.mocked(closeAgentCodex)).not.toHaveBeenCalled();
 
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
-        ...activeTerminalWorkspaceTab(),
+        ...activeTerminalTerminalLayoutTab(),
         root: {
-          ...activeTerminalWorkspaceTab().root,
+          ...activeTerminalTerminalLayoutTab().root,
           runtime_session_id: null,
           saved_session_id: null,
           terminal_tabs: [{ id: "pane-1-tab-empty", title: "新建终端", runtime_session_id: null, saved_session_id: null }],
         },
       },
     ];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
     view.rerender(<AppShell />);
     await act(async () => {
       await Promise.resolve();
@@ -3613,8 +2056,7 @@ describe("AppShell", () => {
         updated_at_ms: 1,
       },
     ];
-    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -3634,8 +2076,7 @@ describe("AppShell", () => {
   it("closes an opening Codex session when its last connection tab disappears", async () => {
     const opening = deferred<Awaited<ReturnType<typeof openAgentCodex>>>();
     vi.mocked(openAgentCodex).mockImplementationOnce(() => opening.promise);
-    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -3644,18 +2085,17 @@ describe("AppShell", () => {
     });
     expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(1);
 
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
-        ...activeTerminalWorkspaceTab(),
+        ...activeTerminalTerminalLayoutTab(),
         root: {
-          ...activeTerminalWorkspaceTab().root,
+          ...activeTerminalTerminalLayoutTab().root,
           runtime_session_id: null,
           saved_session_id: null,
           terminal_tabs: [{ id: "pane-1-tab-empty", title: "新建终端", runtime_session_id: null, saved_session_id: null }],
         },
       },
     ];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
     view.rerender(<AppShell />);
 
     opening.resolve({
@@ -3689,8 +2129,7 @@ describe("AppShell", () => {
   it("keeps an opening Codex session when the same SSH connection is reopened before launch resolves", async () => {
     const opening = deferred<Awaited<ReturnType<typeof openAgentCodex>>>();
     vi.mocked(openAgentCodex).mockImplementationOnce(() => opening.promise);
-    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -3698,24 +2137,22 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
-        ...activeTerminalWorkspaceTab(),
+        ...activeTerminalTerminalLayoutTab(),
         root: {
-          ...activeTerminalWorkspaceTab().root,
+          ...activeTerminalTerminalLayoutTab().root,
           runtime_session_id: null,
           saved_session_id: null,
           terminal_tabs: [{ id: "pane-1-tab-empty", title: "新建终端", runtime_session_id: null, saved_session_id: null }],
         },
       },
     ];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
     view.rerender(<AppShell />);
 
-    const reopened = sharedSshConnectionWorkspaceTab("pane-1-tab-2");
+    const reopened = sharedSshConnectionTerminalLayoutTab("pane-1-tab-2");
     reopened.root.terminal_tabs = [reopened.root.terminal_tabs[1]];
-    storeMocks.workspaceState.tabs = [reopened];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [reopened];
     view.rerender(<AppShell />);
 
     opening.resolve({
@@ -3749,8 +2186,7 @@ describe("AppShell", () => {
   });
 
   it("does not let a concurrent close callback remove the restarted shared Codex session", async () => {
-    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -3807,8 +2243,7 @@ describe("AppShell", () => {
   });
 
   it("does not collapse a newly selected Agent panel when an earlier connection closes asynchronously", async () => {
-    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -3823,7 +2258,7 @@ describe("AppShell", () => {
       closingFirstConnection = closeFirstConnection();
     });
 
-    const secondConnection = activeTerminalWorkspaceTab();
+    const secondConnection = activeTerminalTerminalLayoutTab();
     secondConnection.root = {
       ...secondConnection.root,
       title: "开发机 B",
@@ -3832,8 +2267,7 @@ describe("AppShell", () => {
       active_terminal_tab_id: "pane-1-tab-2",
       terminal_tabs: [{ id: "pane-1-tab-2", title: "开发机 B", runtime_session_id: "runtime-2", saved_session_id: "session-2" }],
     };
-    storeMocks.workspaceState.tabs = [secondConnection];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [secondConnection];
     view.rerender(<AppShell />);
     await act(async () => {
       await Promise.resolve();
@@ -3852,8 +2286,7 @@ describe("AppShell", () => {
   });
 
   it("clears the shared Agent binding after its Codex PTY exits naturally", async () => {
-    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -3876,8 +2309,7 @@ describe("AppShell", () => {
   });
 
   it("restarts the active Codex CLI after closing its PTY and revoking its MCP binding", async () => {
-    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -3910,8 +2342,7 @@ describe("AppShell", () => {
   });
 
   it("closes the active Codex CLI, revokes its MCP binding, and collapses the Agent panel", async () => {
-    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -3933,8 +2364,7 @@ describe("AppShell", () => {
   });
 
   it("keeps the Agent panel open when backend Codex cleanup fails", async () => {
-    storeMocks.workspaceState.tabs = [activeTerminalWorkspaceTab()];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     vi.mocked(closeAgentCodex).mockRejectedValueOnce(new Error("close failed"));
     const view = render(<AppShell />);
 
@@ -3956,20 +2386,6 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("refreshes affected workspace domains after MCP tool completion", async () => {
-    const view = render(<AppShell />);
-    await act(async () => {
-      await Promise.resolve();
-    });
-    storeMocks.workspaceList.mockClear();
-
-    await act(async () => {
-      await storeMocks.mcpAffectedDomainsHandler?.(["workspace"]);
-    });
-
-    expect(storeMocks.workspaceList).toHaveBeenCalledTimes(1);
-    view.unmount();
-  });
 
   it("leaves the startup pane empty instead of opening the default local terminal", async () => {
     const view = render(<AppShell />);
@@ -4046,7 +2462,7 @@ describe("AppShell", () => {
         updated_at_ms: 1,
       },
     ];
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "172.16.41.180",
@@ -4069,7 +2485,6 @@ describe("AppShell", () => {
         },
       },
     ];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -4083,7 +2498,7 @@ describe("AppShell", () => {
     expect(storeMocks.addPaneTab).toHaveBeenCalledWith("pane-1");
     expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "default-workspace",
+      "default-terminalLayout",
       "tab-1",
       "pane-1",
       "pane-1-tab-created",
@@ -4108,7 +2523,7 @@ describe("AppShell", () => {
   });
 
   it("keeps an empty pane after the last pane tab is closed", async () => {
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "172.16.41.180",
@@ -4144,7 +2559,7 @@ describe("AppShell", () => {
   });
 
   it("keeps an empty pane after the only pane is closed", async () => {
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "172.16.41.180",
@@ -4191,7 +2606,7 @@ describe("AppShell", () => {
     expect(storeMocks.addPaneTab).not.toHaveBeenCalled();
     expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "default-workspace",
+      "default-terminalLayout",
       "tab-1",
       "pane-1",
       "pane-1-tab-1",
@@ -4217,7 +2632,7 @@ describe("AppShell", () => {
         updated_at_ms: 1,
       },
     ];
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机 A",
@@ -4281,7 +2696,7 @@ describe("AppShell", () => {
         updated_at_ms: 1,
       },
     ];
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机 A",
@@ -4305,7 +2720,7 @@ describe("AppShell", () => {
       },
     ];
     const view = render(<AppShell />);
-    const transferButton = view.container.querySelector('.zt-left-rail [aria-label="文件传输"]') as HTMLButtonElement;
+    const transferButton = view.container.querySelector('.zt-titlebar-navigation [aria-label="文件传输"]') as HTMLButtonElement;
 
     expect(view.container.querySelector('.zt-tool-rail [aria-label="文件传输"]')).toBe(null);
     expect(transferButton).not.toBe(null);
@@ -4339,7 +2754,7 @@ describe("AppShell", () => {
         kind: "ssh",
       },
     };
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机 A",
@@ -4380,7 +2795,7 @@ describe("AppShell", () => {
     expect(storeMocks.historyPanelProps?.historyScopeKind).toBe("saved_session");
     expect(storeMocks.historyPanelProps?.historyScopeId).toBe("session-1");
 
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机 B",
@@ -4432,7 +2847,7 @@ describe("AppShell", () => {
         kind: "ssh",
       },
     };
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机 A",
@@ -4518,7 +2933,7 @@ describe("AppShell", () => {
         kind,
       },
     };
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机",
@@ -4562,7 +2977,7 @@ describe("AppShell", () => {
       deduplicate: true,
     });
 
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机",
@@ -4611,7 +3026,7 @@ describe("AppShell", () => {
   });
 
   it("refreshes history and command groups for the active local terminal profile", async () => {
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "PowerShell 7",
@@ -4685,7 +3100,7 @@ describe("AppShell", () => {
         updated_at_ms: 1,
       },
     ];
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "Windows",
@@ -4745,7 +3160,7 @@ describe("AppShell", () => {
         updated_at_ms: 1,
       },
     ];
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机 A",
@@ -4790,7 +3205,7 @@ describe("AppShell", () => {
   });
 
   it("duplicates the clicked saved connection into a new adjacent pane tab", async () => {
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "生产机",
@@ -4815,7 +3230,6 @@ describe("AppShell", () => {
         },
       },
     ];
-    storeMocks.workspaceState.workspaces[0].tabs = storeMocks.workspaceState.tabs;
     const view = render(<AppShell />);
 
     await act(async () => {
@@ -4825,7 +3239,7 @@ describe("AppShell", () => {
 
     expect(storeMocks.addPaneTabAfter).toHaveBeenCalledWith("pane-1", "pane-1-tab-1");
     expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "default-workspace",
+      "default-terminalLayout",
       "tab-1",
       "pane-1",
       "pane-1-tab-created",
@@ -4838,7 +3252,7 @@ describe("AppShell", () => {
     );
     expect(storeMocks.openTerminal).toHaveBeenCalledWith("session-1", "pane-1", "/srv/app");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "default-workspace",
+      "default-terminalLayout",
       "tab-1",
       "pane-1",
       "pane-1-tab-created",
@@ -4900,7 +3314,7 @@ describe("AppShell", () => {
         rows: 32,
       },
     };
-    storeMocks.workspaceState.tabs[0].root = {
+    storeMocks.terminalLayoutState.tabs[0].root = {
       kind: "leaf",
       id: "pane-1",
       title: "PowerShell",
@@ -4988,7 +3402,7 @@ describe("AppShell", () => {
         ssh_options: { tunnels: [] },
       },
     ];
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机 A",
@@ -5034,7 +3448,7 @@ describe("AppShell", () => {
     expect(view.container.textContent).toContain("127.0.0.1:8080");
     expect(view.container.textContent).toContain("手动打开");
 
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机 B",
@@ -5089,7 +3503,7 @@ describe("AppShell", () => {
         ssh_options: { tunnels: [] },
       },
     ];
-    storeMocks.workspaceState.tabs[0].root = {
+    storeMocks.terminalLayoutState.tabs[0].root = {
       kind: "leaf",
       id: "pane-1",
       title: "开发机 A",
@@ -5175,7 +3589,7 @@ describe("AppShell", () => {
         },
       },
     ];
-    storeMocks.workspaceState.tabs[0].root = {
+    storeMocks.terminalLayoutState.tabs[0].root = {
       kind: "leaf",
       id: "pane-1",
       title: "开发机 A",
@@ -5281,7 +3695,7 @@ describe("AppShell", () => {
         },
       },
     ];
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机 A",
@@ -5343,7 +3757,7 @@ describe("AppShell", () => {
     expect(storeMocks.addPaneTabAfter).toHaveBeenCalledTimes(1);
     expect(storeMocks.addPaneTabAfter).toHaveBeenCalledWith("pane-1", "pane-1-tab-1");
     expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith(
-      "default-workspace",
+      "default-terminalLayout",
       "tab-1",
       "pane-1",
       "pane-1-tab-created",
@@ -5358,7 +3772,7 @@ describe("AppShell", () => {
     expect(storeMocks.openSshContainerTerminal).toHaveBeenCalledTimes(1);
     expect(storeMocks.openSshContainerTerminal).toHaveBeenCalledWith("session-1", "pane-1", "abc123", "api");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "default-workspace",
+      "default-terminalLayout",
       "tab-1",
       "pane-1",
       "pane-1-tab-created",
@@ -5395,7 +3809,7 @@ describe("AppShell", () => {
         },
       },
     ];
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "开发机 A",
@@ -5427,7 +3841,7 @@ describe("AppShell", () => {
   });
 
   it("adds a terminal tab in the active pane before opening a session when the current tab is connected", async () => {
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "172.16.41.180",
@@ -5467,7 +3881,7 @@ describe("AppShell", () => {
   });
 
   it("binds an asynchronously opened SSH session to the pane tab chosen before focus changes", async () => {
-    storeMocks.workspaceState.tabs = [
+    storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
         title: "172.16.41.180",
@@ -5516,8 +3930,8 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    storeMocks.workspaceState.activeWorkspaceId = "workspace-other";
-    storeMocks.workspaceState.activeTabId = "tab-other";
+    storeMocks.terminalLayoutState.activeTerminalLayoutId = "terminalLayout-other";
+    storeMocks.terminalLayoutState.activeTabId = "tab-other";
 
     await act(async () => {
       opened.resolve({
@@ -5537,7 +3951,7 @@ describe("AppShell", () => {
 
     expect(storeMocks.addPaneTab).toHaveBeenCalledWith("pane-1");
     expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledWith(
-      "default-workspace",
+      "default-terminalLayout",
       "tab-1",
       "pane-1",
       "pane-1-tab-2",

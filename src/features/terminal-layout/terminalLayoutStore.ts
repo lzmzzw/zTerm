@@ -8,62 +8,48 @@ import {
   firstLeafPaneId,
   getActiveTerminalTab,
   getLeafTerminalTabs,
-  normalizeWorkspaceTabsPaneIds,
+  normalizeTerminalLayoutTabsPaneIds,
   removePane,
   splitPane,
   updateLeafPane,
   updateSplitRatio,
   updateTerminalTabInRoot,
-} from "./workspaceLayout";
+} from "./terminalLayoutLayout";
 import type {
   PaneNode,
   PaneSplitDirection,
   PaneTerminalTab,
-  WorkspaceDefinition,
-  WorkspaceDefinitionDraft,
-  WorkspaceRuntime,
-  WorkspaceTab,
+  TerminalLayoutDefinition,
+  TerminalLayoutDefinitionDraft,
+  TerminalLayoutRuntime,
+  TerminalLayoutTab,
 } from "./types";
-import { DEFAULT_WORKSPACE_ID } from "./workspaceConstants";
+import { DEFAULT_TERMINAL_LAYOUT_ID } from "./terminalLayoutConstants";
 
 type LeafPane = Extract<PaneNode, { kind: "leaf" }>;
 
-interface WorkspaceStore {
-  workspaces: WorkspaceRuntime[];
-  workspaceDefinitions: Record<string, WorkspaceDefinition>;
-  activeWorkspaceId: string;
-  tabs: WorkspaceTab[];
+interface TerminalLayoutStore {
+  runtime: TerminalLayoutRuntime;
+  activeTerminalLayoutId: string;
+  tabs: TerminalLayoutTab[];
   activeTabId: string;
-  cacheWorkspaceDefinition: (workspace: WorkspaceDefinition) => void;
-  loadWorkspaceDefinition: (
-    workspaceId: string,
-    loader: (workspaceId: string) => Promise<WorkspaceDefinition>,
-  ) => Promise<WorkspaceDefinition>;
-  prefetchWorkspaceDefinitions: (
-    workspaceIds: string[],
-    loader: (workspaceId: string) => Promise<WorkspaceDefinition>,
-  ) => Promise<void>;
-  buildActiveWorkspaceDraft: () => WorkspaceDefinitionDraft | null;
-  restoreWorkbenchDefinition: (workspace: WorkspaceDefinition) => void;
+  buildActiveTerminalLayoutDraft: () => TerminalLayoutDefinitionDraft | null;
+  restoreWorkbenchDefinition: (terminalLayout: TerminalLayoutDefinition) => void;
   clearRuntimeSession: (runtimeSessionId: string) => void;
   markRuntimeExited: (runtimeSessionId: string, message: string, snapshotText?: string | null) => void;
   hasPaneTerminalTab: (
-    workspaceId: string,
-    workspaceTabId: string,
+    terminalLayoutId: string,
+    terminalLayoutTabId: string,
     paneId: string,
     paneTabId: string,
   ) => boolean;
-  getWorkspaceRuntimeSessionIds: (workspaceId: string) => string[];
-  removeWorkspace: (workspaceId: string) => void;
   updatePaneTerminalTab: (
-    workspaceId: string,
-    workspaceTabId: string,
+    terminalLayoutId: string,
+    terminalLayoutTabId: string,
     paneId: string,
     paneTabId: string,
     patch: Partial<PaneTerminalTab>,
   ) => void;
-  selectTab: (tabId: string) => void;
-  addTab: () => void;
   addPaneTab: (paneId: string) => PaneTerminalTab;
   addPaneTabAfter: (paneId: string, afterPaneTabId: string) => PaneTerminalTab;
   closePaneTab: (paneId: string, paneTabId: string) => void;
@@ -72,8 +58,8 @@ interface WorkspaceStore {
   setActivePane: (paneId: string) => void;
   bindRuntimeToPane: (runtime: RuntimeSessionInfo) => void;
   bindRuntimeToPaneTab: (
-    workspaceId: string,
-    workspaceTabId: string,
+    terminalLayoutId: string,
+    terminalLayoutTabId: string,
     paneId: string,
     paneTabId: string,
     runtime: RuntimeSessionInfo,
@@ -84,80 +70,44 @@ interface WorkspaceStore {
 }
 
 let nextPaneCounter = 2;
-let nextTabCounter = 2;
 let nextPaneTabCounter = 2;
-const workspaceDefinitionRequests: Record<string, Promise<WorkspaceDefinition>> = {};
 
 const now = Date.now();
-const initialWorkspace = createDefaultWorkspace(now);
+const initialTerminalLayout = createDefaultTerminalLayout(now);
 
-export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
-  workspaces: [initialWorkspace],
-  workspaceDefinitions: {},
-  activeWorkspaceId: initialWorkspace.id,
-  tabs: initialWorkspace.tabs,
-  activeTabId: initialWorkspace.activeTabId,
-  cacheWorkspaceDefinition: (workspace) =>
-    set((state) => ({
-      workspaceDefinitions: {
-        ...state.workspaceDefinitions,
-        [workspace.id]: workspace,
-      },
-    })),
-  loadWorkspaceDefinition: async (workspaceId, loader) => {
-    const cached = get().workspaceDefinitions[workspaceId];
-    if (cached) return cached;
-    const existing = workspaceDefinitionRequests[workspaceId];
-    if (existing) return existing;
-
-    const request = loader(workspaceId)
-      .then((definition) => {
-        get().cacheWorkspaceDefinition(definition);
-        return definition;
-      })
-      .finally(() => {
-        delete workspaceDefinitionRequests[workspaceId];
-      });
-    workspaceDefinitionRequests[workspaceId] = request;
-    return request;
+export const useTerminalLayoutStore = create<TerminalLayoutStore>((set, get) => ({
+  runtime: initialTerminalLayout,
+  activeTerminalLayoutId: initialTerminalLayout.id,
+  tabs: initialTerminalLayout.tabs,
+  activeTabId: initialTerminalLayout.activeTabId,
+  buildActiveTerminalLayoutDraft: () => {
+    const terminalLayout = activeTerminalLayoutFromState(get());
+    if (!terminalLayout) return null;
+    return terminalLayoutDraftFromRuntime(terminalLayout);
   },
-  prefetchWorkspaceDefinitions: async (workspaceIds, loader) => {
-    await Promise.all(
-      workspaceIds.map((workspaceId) =>
-        get()
-          .loadWorkspaceDefinition(workspaceId, loader)
-          .catch(() => undefined),
-      ),
-    );
-  },
-  buildActiveWorkspaceDraft: () => {
-    const workspace = activeWorkspaceFromState(get());
-    if (!workspace) return null;
-    return workspaceDraftFromRuntime(workspace);
-  },
-  restoreWorkbenchDefinition: (workspace) =>
+  restoreWorkbenchDefinition: (terminalLayout) =>
     set((state) => {
-      const current = activeWorkspaceFromState(state) ?? createDefaultWorkspace();
-      const restored = normalizeWorkspaceRuntime({
+      const current = activeTerminalLayoutFromState(state) ?? createDefaultTerminalLayout();
+      const restored = normalizeTerminalLayoutRuntime({
         ...current,
-        id: DEFAULT_WORKSPACE_ID,
-        name: "默认工作区",
+        id: DEFAULT_TERMINAL_LAYOUT_ID,
+        name: "终端布局",
         status: "running",
-        active_tab_id: workspace.active_tab_id,
-        activeTabId: workspace.active_tab_id,
-        tabs: workspace.tabs,
+        active_tab_id: terminalLayout.active_tab_id,
+        activeTabId: terminalLayout.active_tab_id,
+        tabs: terminalLayout.tabs,
         updated_at_ms: Date.now(),
       });
       return {
-        workspaces: [restored],
-        ...mirrorWorkspace(restored),
+        runtime: restored,
+        ...mirrorTerminalLayout(restored),
       };
     }),
   clearRuntimeSession: (runtimeSessionId) =>
     set((state) =>
-      updateActiveWorkspace(state, (workspace) => ({
-        ...workspace,
-        tabs: workspace.tabs.map((tab) => ({
+      updateActiveTerminalLayout(state, (terminalLayout) => ({
+        ...terminalLayout,
+        tabs: terminalLayout.tabs.map((tab) => ({
           ...tab,
           root: clearRuntimeSessionFromRoot(tab.root, runtimeSessionId),
           updated_at_ms: Date.now(),
@@ -167,9 +117,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     ),
   markRuntimeExited: (runtimeSessionId, message, snapshotText) =>
     set((state) =>
-      updateActiveWorkspace(state, (workspace) => ({
-        ...workspace,
-        tabs: workspace.tabs.map((tab) => ({
+      updateActiveTerminalLayout(state, (terminalLayout) => ({
+        ...terminalLayout,
+        tabs: terminalLayout.tabs.map((tab) => ({
           ...tab,
           root: markRuntimeExitedInRoot(tab.root, runtimeSessionId, message, snapshotText),
           updated_at_ms: Date.now(),
@@ -177,47 +127,27 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         updated_at_ms: Date.now(),
       })),
     ),
-  hasPaneTerminalTab: (workspaceId, workspaceTabId, paneId, paneTabId) => {
+  hasPaneTerminalTab: (terminalLayoutId, terminalLayoutTabId, paneId, paneTabId) => {
     const state = get();
-    const workspace = state.workspaces.find((item) => item.id === workspaceId);
-    const workspaceTab = workspace?.tabs.find((item) => item.id === workspaceTabId);
-    const pane = workspaceTab ? findLeafPane(workspaceTab.root, paneId) : null;
+    const terminalLayout = (state.runtime.id === terminalLayoutId ? state.runtime : null);
+    const terminalLayoutTab = terminalLayout?.tabs.find((item) => item.id === terminalLayoutTabId);
+    const pane = terminalLayoutTab ? findLeafPane(terminalLayoutTab.root, paneId) : null;
     return Boolean(pane && getLeafTerminalTabs(pane).some((item) => item.id === paneTabId));
   },
-  getWorkspaceRuntimeSessionIds: (workspaceId) => {
-    const workspace = get().workspaces.find((item) => item.id === workspaceId);
-    return workspace ? collectRuntimeSessionIds(workspace.tabs) : [];
-  },
-  removeWorkspace: (workspaceId) =>
+  updatePaneTerminalTab: (terminalLayoutId, terminalLayoutTabId, paneId, paneTabId, patch) =>
     set((state) => {
-      const workspaces = state.workspaces.filter((workspace) => workspace.id !== workspaceId);
-      const { [workspaceId]: _removedDefinition, ...workspaceDefinitions } = state.workspaceDefinitions;
-      if (state.activeWorkspaceId !== workspaceId) {
-        return { workspaces, workspaceDefinitions };
-      }
-
-      const nextWorkspaces = workspaces.length > 0 ? workspaces : [createDefaultWorkspace()];
-      const nextActive =
-        nextWorkspaces.find((workspace) => workspace.id === DEFAULT_WORKSPACE_ID) ?? nextWorkspaces[0];
-      return {
-        workspaces: nextWorkspaces,
-        workspaceDefinitions,
-        ...mirrorWorkspace(nextActive),
-      };
-    }),
-  updatePaneTerminalTab: (workspaceId, workspaceTabId, paneId, paneTabId, patch) =>
-    set((state) => {
-      const workspaces = state.workspaces.map((workspace) => {
-        if (workspace.id !== workspaceId) return workspace;
+      const next = ((terminalLayout: TerminalLayoutRuntime) => {
+        if (terminalLayout.id !== terminalLayoutId) return terminalLayout;
         return {
-          ...workspace,
-          tabs: workspace.tabs.map((tab) =>
-            tab.id === workspaceTabId
+          ...terminalLayout,
+          tabs: terminalLayout.tabs.map((tab) =>
+            tab.id === terminalLayoutTabId
               ? {
                   ...tab,
                   root: updateTerminalTabInRoot(tab.root, paneId, paneTabId, (terminalTab) => ({
                     ...terminalTab,
                     ...patch,
+                    ...(patch.restore_status === "pending" && !("restore_token" in patch) ? { restore_token: null } : {}),
                   })),
                   updated_at_ms: Date.now(),
                 }
@@ -225,35 +155,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           ),
           updated_at_ms: Date.now(),
         };
-      });
-      const active = workspaces.find((workspace) => workspace.id === state.activeWorkspaceId);
-      return {
-        workspaces,
-        ...(active ? mirrorWorkspace(active) : {}),
-      };
+      })(state.runtime);
+      return { runtime: next, ...mirrorTerminalLayout(next) };
     }),
-  selectTab: (tabId) =>
-    set((state) => updateActiveWorkspace(state, (workspace) => ({ ...workspace, activeTabId: tabId, active_tab_id: tabId }))),
-  addTab: () =>
-    set((state) => updateActiveWorkspace(state, (workspace) => {
-      const pane = createPane();
-      const tab: WorkspaceTab = {
-        id: `tab-${nextTabCounter++}`,
-        title: pane.title,
-        active_pane_id: pane.id,
-        root: pane,
-        sort_order: workspace.tabs.length,
-        created_at_ms: Date.now(),
-        updated_at_ms: Date.now(),
-      };
-      return { ...workspace, tabs: [...workspace.tabs, tab], activeTabId: tab.id, active_tab_id: tab.id };
-    })),
   addPaneTab: (paneId) => {
-    const paneTab = createAvailablePaneTab(activeWorkspaceFromState(get())?.tabs ?? get().tabs);
-    set((state) => updateActiveWorkspace(state, (workspace) => ({
-      ...workspace,
-      tabs: workspace.tabs.map((tab) => {
-        if (tab.id !== workspace.activeTabId) return tab;
+    const paneTab = createAvailablePaneTab(activeTerminalLayoutFromState(get())?.tabs ?? get().tabs);
+    set((state) => updateActiveTerminalLayout(state, (terminalLayout) => ({
+      ...terminalLayout,
+      tabs: terminalLayout.tabs.map((tab) => {
+        if (tab.id !== terminalLayout.activeTabId) return tab;
         return {
           ...tab,
           active_pane_id: paneId,
@@ -266,11 +176,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     return paneTab;
   },
   addPaneTabAfter: (paneId, afterPaneTabId) => {
-    const paneTab = createAvailablePaneTab(activeWorkspaceFromState(get())?.tabs ?? get().tabs);
-    set((state) => updateActiveWorkspace(state, (workspace) => ({
-      ...workspace,
-      tabs: workspace.tabs.map((tab) => {
-        if (tab.id !== workspace.activeTabId) return tab;
+    const paneTab = createAvailablePaneTab(activeTerminalLayoutFromState(get())?.tabs ?? get().tabs);
+    set((state) => updateActiveTerminalLayout(state, (terminalLayout) => ({
+      ...terminalLayout,
+      tabs: terminalLayout.tabs.map((tab) => {
+        if (tab.id !== terminalLayout.activeTabId) return tab;
         return {
           ...tab,
           active_pane_id: paneId,
@@ -283,10 +193,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     return paneTab;
   },
   closePaneTab: (paneId, paneTabId) =>
-    set((state) => updateActiveWorkspace(state, (workspace) => ({
-      ...workspace,
-      tabs: workspace.tabs.map((tab) => {
-        if (tab.id !== workspace.activeTabId) return tab;
+    set((state) => updateActiveTerminalLayout(state, (terminalLayout) => ({
+      ...terminalLayout,
+      tabs: terminalLayout.tabs.map((tab) => {
+        if (tab.id !== terminalLayout.activeTabId) return tab;
         return {
           ...tab,
           active_pane_id: paneId,
@@ -297,10 +207,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       updated_at_ms: Date.now(),
     }))),
   selectPaneTab: (paneId, paneTabId) =>
-    set((state) => updateActiveWorkspace(state, (workspace) => ({
-      ...workspace,
-      tabs: workspace.tabs.map((tab) => {
-        if (tab.id !== workspace.activeTabId) return tab;
+    set((state) => updateActiveTerminalLayout(state, (terminalLayout) => ({
+      ...terminalLayout,
+      tabs: terminalLayout.tabs.map((tab) => {
+        if (tab.id !== terminalLayout.activeTabId) return tab;
         const pane = findLeafPane(tab.root, paneId);
         if (!pane) return tab;
         const selectedPaneTab = getLeafTerminalTabs(pane).find((item) => item.id === paneTabId);
@@ -320,10 +230,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       updated_at_ms: Date.now(),
     }))),
   movePaneTab: (sourcePaneId, paneTabId, targetPaneId, beforePaneTabId) =>
-    set((state) => updateActiveWorkspace(state, (workspace) => ({
-      ...workspace,
-      tabs: workspace.tabs.map((tab) => {
-        if (tab.id !== workspace.activeTabId) return tab;
+    set((state) => updateActiveTerminalLayout(state, (terminalLayout) => ({
+      ...terminalLayout,
+      tabs: terminalLayout.tabs.map((tab) => {
+        if (tab.id !== terminalLayout.activeTabId) return tab;
         const root = movePaneTabInRoot(tab.root, sourcePaneId, paneTabId, targetPaneId, beforePaneTabId);
         return root === tab.root
           ? tab
@@ -332,32 +242,32 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       updated_at_ms: Date.now(),
     }))),
   setActivePane: (paneId) =>
-    set((state) => updateActiveWorkspace(state, (workspace) => ({
-      ...workspace,
-      tabs: workspace.tabs.map((tab) =>
-        tab.id === workspace.activeTabId ? { ...tab, active_pane_id: paneId, updated_at_ms: Date.now() } : tab,
+    set((state) => updateActiveTerminalLayout(state, (terminalLayout) => ({
+      ...terminalLayout,
+      tabs: terminalLayout.tabs.map((tab) =>
+        tab.id === terminalLayout.activeTabId ? { ...tab, active_pane_id: paneId, updated_at_ms: Date.now() } : tab,
       ),
       updated_at_ms: Date.now(),
     }))),
   bindRuntimeToPane: (runtime) => {
     const state = get();
-    const workspace = activeWorkspaceFromState(state);
-    const tab = workspace?.tabs.find((item) => item.id === workspace.activeTabId);
+    const terminalLayout = activeTerminalLayoutFromState(state);
+    const tab = terminalLayout?.tabs.find((item) => item.id === terminalLayout.activeTabId);
     const pane = tab ? findLeafPane(tab.root, runtime.pane_id) : null;
     const paneTab = pane ? getActiveTerminalTab(pane) : null;
-    if (!workspace || !tab || !paneTab) return;
-    get().bindRuntimeToPaneTab(workspace.id, tab.id, runtime.pane_id, paneTab.id, runtime);
+    if (!terminalLayout || !tab || !paneTab) return;
+    get().bindRuntimeToPaneTab(terminalLayout.id, tab.id, runtime.pane_id, paneTab.id, runtime);
   },
-  bindRuntimeToPaneTab: (workspaceId, workspaceTabId, paneId, paneTabId, runtime) =>
+  bindRuntimeToPaneTab: (terminalLayoutId, terminalLayoutTabId, paneId, paneTabId, runtime) =>
     set((state) => {
-      const activeMirror = workspaceId === state.activeWorkspaceId ? activeWorkspaceFromState(state) : null;
-      const workspaces = state.workspaces.map((workspace) => {
-        const sourceWorkspace = activeMirror?.id === workspace.id ? activeMirror : workspace;
-        if (sourceWorkspace.id !== workspaceId) return workspace;
+      const activeMirror = terminalLayoutId === state.activeTerminalLayoutId ? activeTerminalLayoutFromState(state) : null;
+      const next = ((terminalLayout: TerminalLayoutRuntime) => {
+        const sourceTerminalLayout = activeMirror?.id === terminalLayout.id ? activeMirror : terminalLayout;
+        if (sourceTerminalLayout.id !== terminalLayoutId) return terminalLayout;
         return {
-          ...sourceWorkspace,
-          tabs: sourceWorkspace.tabs.map((tab) => {
-            if (tab.id !== workspaceTabId) return tab;
+          ...sourceTerminalLayout,
+          tabs: sourceTerminalLayout.tabs.map((tab) => {
+            if (tab.id !== terminalLayoutTabId) return tab;
             const root = numberDuplicateSessionTabs(
               updateTerminalTabInRoot(tab.root, paneId, paneTabId, (terminalTab) => ({
                 ...terminalTab,
@@ -382,22 +292,18 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           status: "running" as const,
           updated_at_ms: Date.now(),
         };
-      });
-      const active = workspaces.find((workspace) => workspace.id === state.activeWorkspaceId);
-      return {
-        workspaces,
-        ...(active ? mirrorWorkspace(active) : {}),
-      };
+      })(state.runtime);
+      return { runtime: next, ...mirrorTerminalLayout(next) };
     }),
   splitActivePane: (direction) =>
-    set((state) => updateActiveWorkspace(state, (workspace) => {
-      const activeTab = workspace.tabs.find((tab) => tab.id === workspace.activeTabId);
-      if (!activeTab || !canSplitPane(activeTab.root, activeTab.active_pane_id, direction)) return workspace;
+    set((state) => updateActiveTerminalLayout(state, (terminalLayout) => {
+      const activeTab = terminalLayout.tabs.find((tab) => tab.id === terminalLayout.activeTabId);
+      if (!activeTab || !canSplitPane(activeTab.root, activeTab.active_pane_id, direction)) return terminalLayout;
 
       const newPane = createPane(activeTab.root);
       return {
-        ...workspace,
-        tabs: workspace.tabs.map((tab) =>
+        ...terminalLayout,
+        tabs: terminalLayout.tabs.map((tab) =>
           tab.id === activeTab.id
             ? {
                 ...tab,
@@ -411,10 +317,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       };
     })),
   resizeSplitPane: (splitId, ratio) =>
-    set((state) => updateActiveWorkspace(state, (workspace) => ({
-      ...workspace,
-      tabs: workspace.tabs.map((tab) =>
-        tab.id === workspace.activeTabId
+    set((state) => updateActiveTerminalLayout(state, (terminalLayout) => ({
+      ...terminalLayout,
+      tabs: terminalLayout.tabs.map((tab) =>
+        tab.id === terminalLayout.activeTabId
           ? { ...tab, root: updateSplitRatio(tab.root, splitId, ratio), updated_at_ms: Date.now() }
           : tab,
       ),
@@ -422,9 +328,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }))),
   closePane: (paneId) =>
     set((state) => {
-      const workspace = activeWorkspaceFromState(state);
-      const sourceTabs = workspace?.tabs ?? state.tabs;
-      const sourceActiveTabId = workspace?.activeTabId ?? state.activeTabId;
+      const terminalLayout = activeTerminalLayoutFromState(state);
+      const sourceTabs = terminalLayout?.tabs ?? state.tabs;
+      const sourceActiveTabId = terminalLayout?.activeTabId ?? state.activeTabId;
       const tabs = sourceTabs
         .map((tab) => {
           if (tab.id !== sourceActiveTabId) return tab;
@@ -439,12 +345,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
             updated_at_ms: Date.now(),
           };
         })
-        .filter((tab): tab is WorkspaceTab => Boolean(tab));
+        .filter((tab): tab is TerminalLayoutTab => Boolean(tab));
 
-      const fallbackDefault = createDefaultWorkspace();
+      const fallbackDefault = createDefaultTerminalLayout(Date.now(), true);
       const nextTabs = tabs.length > 0 ? tabs : fallbackDefault.tabs;
       const nextActiveTabId = nextTabs[0]?.id ?? fallbackDefault.activeTabId;
-      return updateActiveWorkspace(state, (current) => ({
+      return updateActiveTerminalLayout(state, (current) => ({
         ...current,
         tabs: nextTabs,
         activeTabId: nextActiveTabId,
@@ -454,21 +360,21 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }),
 }));
 
-function updateActiveWorkspace(
-  state: WorkspaceStore,
-  updater: (workspace: WorkspaceRuntime) => WorkspaceRuntime,
-): Partial<WorkspaceStore> {
-  const current = normalizeWorkspaceRuntime(activeWorkspaceFromState(state) ?? createDefaultWorkspace());
-  const next = normalizeWorkspaceRuntime(updater(current));
-  const workspaces = upsertWorkspace(state.workspaces, next);
+function updateActiveTerminalLayout(
+  state: TerminalLayoutStore,
+  updater: (terminalLayout: TerminalLayoutRuntime) => TerminalLayoutRuntime,
+): Partial<TerminalLayoutStore> {
+  const current = normalizeTerminalLayoutRuntime(activeTerminalLayoutFromState(state) ?? createDefaultTerminalLayout());
+  const next = normalizeTerminalLayoutRuntime(updater(current));
+
   return {
-    workspaces,
-    ...mirrorWorkspace(next),
+    runtime: next,
+    ...mirrorTerminalLayout(next),
   };
 }
 
-function activeWorkspaceFromState(state: WorkspaceStore): WorkspaceRuntime | null {
-  const existing = state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId);
+function activeTerminalLayoutFromState(state: TerminalLayoutStore): TerminalLayoutRuntime | null {
+  const existing = state.runtime;
   if (!existing) {
     return null;
   }
@@ -483,17 +389,12 @@ function activeWorkspaceFromState(state: WorkspaceStore): WorkspaceRuntime | nul
   return existing;
 }
 
-function mirrorWorkspace(workspace: WorkspaceRuntime): Partial<WorkspaceStore> {
+function mirrorTerminalLayout(terminalLayout: TerminalLayoutRuntime): Partial<TerminalLayoutStore> {
   return {
-    activeWorkspaceId: workspace.id,
-    tabs: workspace.tabs,
-    activeTabId: workspace.activeTabId,
+    activeTerminalLayoutId: terminalLayout.id,
+    tabs: terminalLayout.tabs,
+    activeTabId: terminalLayout.activeTabId,
   };
-}
-
-function upsertWorkspace(workspaces: WorkspaceRuntime[], workspace: WorkspaceRuntime): WorkspaceRuntime[] {
-  const exists = workspaces.some((item) => item.id === workspace.id);
-  return exists ? workspaces.map((item) => (item.id === workspace.id ? workspace : item)) : [...workspaces, workspace];
 }
 
 function createInitialPane(): PaneNode {
@@ -515,9 +416,15 @@ function createInitialPane(): PaneNode {
   };
 }
 
-function createDefaultWorkspace(timestamp = Date.now()): WorkspaceRuntime {
+function createDefaultTerminalLayout(timestamp = Date.now(), freshPane = false): TerminalLayoutRuntime {
   const pane = createInitialPane();
-  const tab: WorkspaceTab = {
+  if (freshPane && pane.kind === "leaf") {
+    const suffix = crypto.randomUUID();
+    pane.id = `pane-${suffix}`;
+    pane.active_terminal_tab_id = `pane-tab-${suffix}`;
+    pane.terminal_tabs = [{ id: pane.active_terminal_tab_id, title: pane.title, runtime_session_id: null, saved_session_id: null }];
+  }
+  const tab: TerminalLayoutTab = {
     id: "tab-1",
     title: "新建终端",
     active_pane_id: pane.id,
@@ -527,8 +434,8 @@ function createDefaultWorkspace(timestamp = Date.now()): WorkspaceRuntime {
     updated_at_ms: timestamp,
   };
   return {
-    id: DEFAULT_WORKSPACE_ID,
-    name: "默认工作区",
+    id: DEFAULT_TERMINAL_LAYOUT_ID,
+    name: "终端布局",
     status: "running",
     active_tab_id: tab.id,
     activeTabId: tab.id,
@@ -539,24 +446,24 @@ function createDefaultWorkspace(timestamp = Date.now()): WorkspaceRuntime {
   };
 }
 
-function normalizeWorkspaceRuntime(workspace: WorkspaceRuntime): WorkspaceRuntime {
-  const activeTabId = workspace.activeTabId ?? workspace.active_tab_id;
+function normalizeTerminalLayoutRuntime(terminalLayout: TerminalLayoutRuntime): TerminalLayoutRuntime {
+  const activeTabId = terminalLayout.activeTabId ?? terminalLayout.active_tab_id;
   return {
-    ...workspace,
+    ...terminalLayout,
     active_tab_id: activeTabId,
     activeTabId,
-    tabs: normalizeWorkspaceTabsPaneIds(workspace.tabs),
+    tabs: normalizeTerminalLayoutTabsPaneIds(terminalLayout.tabs),
   };
 }
 
-function workspaceDraftFromRuntime(workspace: WorkspaceRuntime): WorkspaceDefinitionDraft {
-  const tabs = normalizeWorkspaceTabsPaneIds(workspace.tabs);
+function terminalLayoutDraftFromRuntime(terminalLayout: TerminalLayoutRuntime): TerminalLayoutDefinitionDraft {
+  const tabs = normalizeTerminalLayoutTabsPaneIds(terminalLayout.tabs);
   return {
-    id: workspace.id,
-    name: workspace.name,
+    id: terminalLayout.id,
+    name: terminalLayout.name,
     status: "closed",
-    active_tab_id: workspace.activeTabId,
-    sort_order: workspace.sort_order,
+    active_tab_id: terminalLayout.activeTabId,
+    sort_order: terminalLayout.sort_order,
     tabs: tabs.map((tab) => ({
       id: tab.id,
       title: tab.title,
@@ -581,7 +488,7 @@ function stripRuntimeState(root: PaneNode): PaneNode {
   const terminalTabs = sourceTabs.map((tab) => ({
     ...stripTerminalVisualSnapshot(tab),
     runtime_session_id: null,
-    connection_source: tab.connection_source ?? (tab.saved_session_id ? "saved_session" : "default_local"),
+    connection_source: tab.connection_source ?? (tab.saved_session_id ? "saved_session" : tab.runtime_session_id ? "default_local" : "empty"),
     restore_status: null,
     restore_error: null,
   }));
@@ -606,7 +513,7 @@ function emptyPersistedTerminalTab(paneId: string): PaneTerminalTab {
     title: "新建终端",
     runtime_session_id: null,
     saved_session_id: null,
-    connection_source: "default_local",
+    connection_source: "empty",
     restore_status: null,
     restore_error: null,
   };
@@ -683,27 +590,6 @@ function markRuntimeExitedInRoot(
   };
 }
 
-function collectRuntimeSessionIds(tabs: WorkspaceTab[]): string[] {
-  const ids = new Set<string>();
-  for (const tab of tabs) {
-    collectRuntimeSessionIdsFromRoot(tab.root, ids);
-  }
-  return [...ids];
-}
-
-function collectRuntimeSessionIdsFromRoot(root: PaneNode, ids: Set<string>) {
-  if (root.kind === "split") {
-    collectRuntimeSessionIdsFromRoot(root.first, ids);
-    collectRuntimeSessionIdsFromRoot(root.second, ids);
-    return;
-  }
-
-  if (root.runtime_session_id) ids.add(root.runtime_session_id);
-  for (const terminalTab of getLeafTerminalTabs(root)) {
-    if (terminalTab.runtime_session_id) ids.add(terminalTab.runtime_session_id);
-  }
-}
-
 function createPane(existingRoot?: PaneNode): LeafPane {
   const id = nextPaneId(existingRoot);
   const paneTab = createPaneTab(`${id}-tab-1`);
@@ -750,7 +636,7 @@ function createPaneTab(id = `pane-tab-${nextPaneTabCounter++}`): PaneTerminalTab
   };
 }
 
-function createAvailablePaneTab(tabs: WorkspaceTab[]): PaneTerminalTab {
+function createAvailablePaneTab(tabs: TerminalLayoutTab[]): PaneTerminalTab {
   const reservedIds = new Set<string>();
   tabs.forEach((tab) => collectPaneTerminalTabIds(tab.root, reservedIds));
   let counter = 1;
@@ -830,7 +716,7 @@ function closePaneTabInRoot(root: PaneNode, paneId: string, paneTabId: string): 
   if (closedIndex < 0) return root;
 
   const remainingTabs = terminalTabs.filter((tab) => tab.id !== paneTabId);
-  const nextTerminalTabs = remainingTabs.length > 0 ? remainingTabs : [createPaneTab(`${paneId}-tab-${nextPaneTabCounter++}`)];
+  const nextTerminalTabs = remainingTabs.length > 0 ? remainingTabs : [createPaneTab(`${paneId}-tab-${crypto.randomUUID()}`)];
   const currentActiveTabId = getActiveTerminalTab(root).id;
   const nextActiveTerminalTab =
     nextTerminalTabs.find((tab) => tab.id === currentActiveTabId) ??

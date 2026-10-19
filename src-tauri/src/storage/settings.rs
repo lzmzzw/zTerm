@@ -82,10 +82,7 @@ fn validate_settings(settings: &AppSettings) -> AppResult<()> {
 mod tests {
     use super::*;
     use crate::{
-        models::settings::{
-            AppLanguage, AppTheme, McpSettings, ShortcutBinding, ShortcutScope,
-            WorkspaceRestoreStrategy,
-        },
+        models::settings::{AppLanguage, AppTheme, McpSettings, ShortcutBinding, ShortcutScope},
         storage::sqlite::SqliteStore,
     };
 
@@ -96,7 +93,6 @@ mod tests {
             ui_font_size: 17,
             terminal_font_size: 21,
             default_right_tool: Some("history".to_string()),
-            workspace_restore_strategy: WorkspaceRestoreStrategy::ConnectAll,
             mcp: McpSettings {
                 enabled: true,
                 port: Some(39001),
@@ -122,10 +118,6 @@ mod tests {
         assert_eq!(reset.ui_font_size, 13);
         assert_eq!(reset.terminal_font_size, 13);
         assert_eq!(reset.default_right_tool, Some("agent".to_string()));
-        assert_eq!(
-            reset.workspace_restore_strategy,
-            WorkspaceRestoreStrategy::VisibleFirst
-        );
         assert_eq!(reset.mcp, McpSettings::default());
         assert_eq!(reset.shortcuts, current.shortcuts);
         assert_eq!(
@@ -146,32 +138,11 @@ mod tests {
         assert_eq!(reset.ui_font_size, current.ui_font_size);
         assert_eq!(reset.terminal_font_size, current.terminal_font_size);
         assert_eq!(reset.default_right_tool, current.default_right_tool);
-        assert_eq!(
-            reset.workspace_restore_strategy,
-            current.workspace_restore_strategy
-        );
         assert_eq!(reset.mcp, current.mcp);
         assert_eq!(reset.shortcuts, AppSettings::default().shortcuts);
         assert_eq!(
             get_app_settings(&store).expect("settings should load"),
             reset
         );
-    }
-
-    #[test]
-    fn unknown_workspace_restore_strategy_is_rejected_by_deserialization() {
-        let result = serde_json::from_str::<AppSettings>(
-            r#"{
-              "language": "zhCN",
-              "theme": "dark",
-              "ui_font_size": 13,
-              "terminal_font_size": 13,
-              "default_right_tool": "agent",
-              "workspace_restore_strategy": "eager_everything",
-              "shortcuts": []
-            }"#,
-        );
-
-        assert!(result.is_err());
     }
 }

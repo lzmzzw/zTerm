@@ -1,7 +1,7 @@
 // Author: Liz
 import { CircleX, LogOut, SquareSplitHorizontal, SquareSplitVertical, X } from "lucide-react";
 
-import type { PaneSplitDirection } from "../workspace/types";
+import type { PaneSplitDirection } from "../terminal-layout/types";
 
 interface TerminalToolbarProps {
   onSplitPane: (direction: PaneSplitDirection) => void;

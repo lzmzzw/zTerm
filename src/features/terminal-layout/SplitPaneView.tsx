@@ -19,7 +19,7 @@ import {
   getLeafTerminalTabs,
   getLeafPaneIdsInVisualOrder,
   isVisibleTerminalTab,
-} from "./workspaceLayout";
+} from "./terminalLayoutLayout";
 import type { PaneNode, PaneSplitDirection } from "./types";
 
 const ACTIVE_XTERM_MOUNT_DELAY_MS = 48;
@@ -50,7 +50,7 @@ interface SplitPaneViewProps {
   onClosePane: (paneId: string) => void;
   onDisconnectTerminal?: (paneId: string, paneTabId: string, runtimeSessionId: string) => void;
   onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string | null) => void;
-  workspaceActive?: boolean;
+  terminalLayoutActive?: boolean;
   visualMode?: "normal" | "placeholder" | "snapshot";
   dragState?: PaneTabDragState | null;
   dragStateRef?: MutableRefObject<PaneTabDragState | null>;
@@ -96,7 +96,7 @@ export function SplitPaneView({
   onClosePane,
   onDisconnectTerminal,
   onReconnectTerminal,
-  workspaceActive = true,
+  terminalLayoutActive = true,
   visualMode = "normal",
   dragState: inheritedDragState,
   dragStateRef: inheritedDragStateRef,
@@ -207,7 +207,7 @@ export function SplitPaneView({
           onClosePane={onClosePane}
           onDisconnectTerminal={onDisconnectTerminal}
           onReconnectTerminal={onReconnectTerminal}
-          workspaceActive={workspaceActive}
+          terminalLayoutActive={terminalLayoutActive}
           visualMode={visualMode}
           dragState={dragState}
           dragStateRef={dragStateRef}
@@ -234,7 +234,7 @@ export function SplitPaneView({
           onClosePane={onClosePane}
           onDisconnectTerminal={onDisconnectTerminal}
           onReconnectTerminal={onReconnectTerminal}
-          workspaceActive={workspaceActive}
+          terminalLayoutActive={terminalLayoutActive}
           visualMode={visualMode}
           dragState={dragState}
           dragStateRef={dragStateRef}
@@ -259,7 +259,7 @@ export function SplitPaneView({
       onClosePane={onClosePane}
       onDisconnectTerminal={onDisconnectTerminal}
       onReconnectTerminal={onReconnectTerminal}
-      workspaceActive={workspaceActive}
+      terminalLayoutActive={terminalLayoutActive}
       visualMode={visualMode}
       dragState={dragState}
       dragStateRef={dragStateRef}
@@ -282,7 +282,7 @@ function LeafPane({
   onClosePane,
   onDisconnectTerminal,
   onReconnectTerminal,
-  workspaceActive,
+  terminalLayoutActive,
   visualMode,
   dragState,
   dragStateRef,
@@ -301,7 +301,7 @@ function LeafPane({
   onClosePane: (paneId: string) => void;
   onDisconnectTerminal?: (paneId: string, paneTabId: string, runtimeSessionId: string) => void;
   onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string | null) => void;
-  workspaceActive: boolean;
+  terminalLayoutActive: boolean;
   visualMode: "normal" | "placeholder" | "snapshot";
   dragState: PaneTabDragState | null;
   dragStateRef: MutableRefObject<PaneTabDragState | null>;
@@ -324,7 +324,7 @@ function LeafPane({
     runtimeSessionId: null,
   });
   const scheduledRuntimeSessionIdRef = useRef<string | null>(null);
-  const allowXterm = visualMode === "normal" && workspaceActive;
+  const allowXterm = visualMode === "normal" && terminalLayoutActive;
   const runtime = useTerminalStore((state) =>
     activeRuntimeSessionId ? state.runtimes[activeRuntimeSessionId] : null,
   );
@@ -334,7 +334,7 @@ function LeafPane({
       xtermRuntimeSessionId === activeRuntimeSessionId &&
       isInteractiveTerminalRuntime(runtime.kind),
   );
-  const xtermLive = Boolean(workspaceActive && xtermMounted);
+  const xtermLive = Boolean(terminalLayoutActive && xtermMounted);
   const beginLiveOutput = useTerminalStore((state) => state.beginLiveOutput);
   const outputChunks = useTerminalStore((state) =>
     xtermLive && activeRuntimeSessionId
@@ -343,7 +343,7 @@ function LeafPane({
   );
   const discardLiveOutputChunks = useTerminalStore((state) => state.discardLiveOutputChunks);
   const visualOutputTail =
-    workspaceActive && !xtermMounted && activeRuntimeSessionId
+    terminalLayoutActive && !xtermMounted && activeRuntimeSessionId
       ? useTerminalStore.getState().getVisualOutputTail(activeRuntimeSessionId)
       : "";
   const snapshotText = activeTerminalTab.visual_snapshot?.text ?? visualOutputTail;
@@ -783,10 +783,10 @@ function LeafPane({
           variant="tab"
         />
       ) : null}
-      {xtermMounted && visualMode === "normal" && workspaceActive && runtime && isInteractiveTerminalRuntime(runtime.kind) ? (
+      {xtermMounted && visualMode === "normal" && terminalLayoutActive && runtime && isInteractiveTerminalRuntime(runtime.kind) ? (
         <XtermPane
           autoFocus={active}
-          contextMenuEnabled={workspaceActive && isInteractiveTerminalRuntime(runtime.kind)}
+          contextMenuEnabled={terminalLayoutActive && isInteractiveTerminalRuntime(runtime.kind)}
           data={xtermReplay.data}
           initialCwd={runtime.kind === "local" ? runtime.initial_cwd : null}
           liveChunks={outputChunks}

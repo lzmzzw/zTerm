@@ -93,7 +93,7 @@ describe("fileTransferStore", () => {
 
   it("restores and saves the latest left and right endpoint paths", async () => {
     const restored = {
-      left: { kind: "local" as const, saved_session_id: null, path: "F:/Workspace/Deliverables" },
+      left: { kind: "local" as const, saved_session_id: null, path: "F:/TerminalLayout/Deliverables" },
       right: { kind: "saved_session" as const, saved_session_id: "ssh-prod", path: "/srv/releases" },
     };
     invokeMock.mockResolvedValueOnce(restored).mockResolvedValueOnce(restored);

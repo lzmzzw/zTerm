@@ -44,12 +44,11 @@ fn migrations_create_all_phase_two_tables() {
 
     for table_name in [
         "app_settings",
+        "terminal_layout",
         "file_transfer_view_state",
         "terminal_profiles",
         "session_groups",
         "saved_sessions",
-        "workspaces",
-        "workspace_tabs",
         "command_history",
         "transfer_tasks",
         "credential_records",
@@ -78,12 +77,11 @@ fn migrations_are_idempotent() {
         .query_row(
             "select count(*) from sqlite_master where type = 'table' and name in (
                 'app_settings',
+                'terminal_layout',
                 'file_transfer_view_state',
                 'terminal_profiles',
                 'session_groups',
                 'saved_sessions',
-                'workspaces',
-                'workspace_tabs',
                 'command_history',
                 'transfer_tasks',
                 'credential_records',
@@ -98,12 +96,7 @@ fn migrations_are_idempotent() {
         )
         .expect("table count query should run");
 
-    assert_eq!(table_count, 15);
-    assert!(index_exists(&connection, "idx_workspaces_sort"));
-    assert!(index_exists(
-        &connection,
-        "idx_workspace_tabs_workspace_sort"
-    ));
+    assert_eq!(table_count, 14);
     assert!(index_exists(
         &connection,
         "idx_session_command_groups_session_sort"
@@ -120,7 +113,7 @@ fn migrations_are_idempotent() {
 }
 
 #[test]
-fn migrations_add_history_scope_columns_and_reset_workspace_status() {
+fn migrations_add_history_scope_columns() {
     let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
 
     run_migrations(&mut connection).expect("migrations should run on an empty database");
@@ -137,14 +130,6 @@ fn migrations_add_history_scope_columns_and_reset_workspace_status() {
         "session_command_groups",
         "scope_id"
     ));
-    let default_status: String = connection
-        .query_row(
-            "select status from workspaces where id = 'default-workspace'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("default workspace status should read");
-    assert_eq!(default_status, "closed");
 }
 
 #[test]
@@ -314,36 +299,6 @@ fn command_history_schema_uses_scope_without_saved_session_column() {
 }
 
 #[test]
-fn migrations_reset_existing_running_workspaces_to_closed() {
-    let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
-
-    run_migrations(&mut connection).expect("migrations should run on an empty database");
-    connection
-        .execute(
-            "
-            insert into workspaces (
-              id, name, active_tab_id, status, sort_order, created_at_ms, updated_at_ms
-            ) values (
-              'running-workspace', '运行中工作区', 'tab-1', 'running', 1, 1, 2
-            )
-            ",
-            [],
-        )
-        .expect("running workspace fixture should insert");
-
-    run_migrations(&mut connection).expect("migrations should reset runtime-only state");
-
-    let status: String = connection
-        .query_row(
-            "select status from workspaces where id = 'running-workspace'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("workspace status should read");
-    assert_eq!(status, "closed");
-}
-
-#[test]
 fn migrations_drop_legacy_agent_runs_without_model_tables() {
     let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
     connection
@@ -485,132 +440,6 @@ fn migrations_drop_source_reuse_records() {
 
     assert!(!table_exists(&connection, "source_reuse_records"));
     assert!(!index_exists(&connection, "idx_source_reuse_target_path"));
-}
-
-#[test]
-fn workspace_tabs_belong_to_a_workspace_after_migration() {
-    let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
-
-    run_migrations(&mut connection).expect("migrations should run on an empty database");
-
-    let workspace_id: String = connection
-        .query_row(
-            "select id from workspaces order by sort_order limit 1",
-            [],
-            |row| row.get(0),
-        )
-        .expect("default workspace should exist");
-    connection
-        .execute(
-            "
-            insert into workspace_tabs (
-              id, workspace_id, title, active_pane_id, root_json,
-              sort_order, created_at_ms, updated_at_ms
-            ) values (
-              'tab-1', ?1, '主工作台', 'pane-1',
-              '{\"kind\":\"leaf\",\"id\":\"pane-1\",\"title\":\"PowerShell\",\"runtime_session_id\":\"runtime-should-not-persist\",\"saved_session_id\":null}',
-              0, 1, 1
-            )
-            ",
-            [&workspace_id],
-        )
-        .expect("workspace tab should require and accept workspace_id");
-
-    let tab_count: i64 = connection
-        .query_row(
-            "select count(*) from workspace_tabs where workspace_id = ?1",
-            [&workspace_id],
-            |row| row.get(0),
-        )
-        .expect("workspace tab count should query");
-
-    assert_eq!(tab_count, 1);
-}
-
-#[test]
-fn migrations_keep_default_workspace_tabs_for_session_restore() {
-    let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
-
-    run_migrations(&mut connection).expect("migrations should run on an empty database");
-    connection
-        .execute(
-            "
-            insert into workspace_tabs (
-              id, workspace_id, title, active_pane_id, root_json,
-              sort_order, created_at_ms, updated_at_ms
-            ) values (
-              'tab-1', 'default-workspace', '默认草稿', 'pane-1',
-              '{\"kind\":\"leaf\",\"id\":\"pane-1\",\"title\":\"PowerShell\",\"runtime_session_id\":null,\"saved_session_id\":null}',
-              0, 1, 1
-            )
-            ",
-            [],
-        )
-        .expect("legacy default workspace tab should insert");
-
-    run_migrations(&mut connection).expect("migrations should preserve default workspace tabs");
-
-    let default_count: i64 = connection
-        .query_row(
-            "select count(*) from workspaces where id = 'default-workspace'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("default workspace count should read");
-    let tab_count: i64 = connection
-        .query_row(
-            "select count(*) from workspace_tabs where workspace_id = 'default-workspace'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("default workspace tab count should read");
-    assert_eq!(default_count, 1);
-    assert_eq!(tab_count, 1);
-}
-
-#[test]
-fn workspace_tabs_allow_same_tab_id_in_different_workspaces() {
-    let mut connection = Connection::open_in_memory().expect("in-memory sqlite should open");
-
-    run_migrations(&mut connection).expect("migrations should run on an empty database");
-    connection
-        .execute(
-            "
-            insert into workspaces (
-              id, name, active_tab_id, status, sort_order, created_at_ms, updated_at_ms
-            ) values (
-              'workspace-2', '第二工作区', 'tab-1', 'running', 1, 1, 1
-            )
-            ",
-            [],
-        )
-        .expect("second workspace should insert");
-    for workspace_id in ["default-workspace", "workspace-2"] {
-        connection
-            .execute(
-                "
-                insert into workspace_tabs (
-                  id, workspace_id, title, active_pane_id, root_json,
-                  sort_order, created_at_ms, updated_at_ms
-                ) values (
-                  'tab-1', ?1, '主工作台', 'pane-1',
-                  '{\"kind\":\"leaf\",\"id\":\"pane-1\",\"title\":\"PowerShell\",\"runtime_session_id\":null,\"saved_session_id\":null}',
-                  0, 1, 1
-                )
-                ",
-                [workspace_id],
-            )
-            .expect("same tab id should be allowed per workspace");
-    }
-
-    let tab_count: i64 = connection
-        .query_row(
-            "select count(*) from workspace_tabs where id = 'tab-1'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("tab count should read");
-    assert_eq!(tab_count, 2);
 }
 
 #[test]
@@ -780,4 +609,110 @@ fn migrations_upgrade_existing_saved_sessions_without_losing_data() {
          ) values ('ftp-new', 'FTP', 'ftp', 'ftp.test', 21, 'ops', 'password', '[]', 0, 2, 2, '{}')",
         [],
     ).expect("migrated schema should accept FTP sessions");
+}
+
+#[test]
+fn migrations_remove_workspace_data_and_preserve_unrelated_data() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    run_migrations(&mut connection).unwrap();
+    connection.execute_batch(r#"
+        create table workspaces (id text primary key, name text);
+        create table workspace_tabs (id text primary key,
+          workspace_id text references workspaces(id), root_json text);
+        insert into workspaces values ('legacy', 'Legacy');
+        insert into workspace_tabs values ('tab', 'legacy', '{"panes":[]}');
+        insert into app_settings values (1,
+          '{"theme":"light","workspace_restore_strategy":"connect_all","shortcuts":[{"action_id":"workspace.save","accelerator":"Ctrl+S"},{"action_id":"settings.open","accelerator":"Alt+S"}]}', 1, 2);
+        insert into saved_sessions (id, name, type, host, port, username, auth_mode, created_at_ms, updated_at_ms)
+          values ('ssh-retained', 'SSH', 'ssh', 'server.test', 22, 'ops', 'agent', 1, 2);
+        insert into command_history (id, runtime_session_id, command, started_at_ms)
+          values ('history-retained', 'runtime', 'pwd', 1);
+    "#).unwrap();
+    for (id, tool_id) in [("legacy", "workspace.save"), ("retained", "sessions.list")] {
+        connection
+            .execute(
+                "insert into ai_tool_pending
+            (id, tool_id, tool_title, risk_level, arguments_summary, arguments_json,
+             requires_confirmation, status, created_at_ms)
+            values (?1, ?2, 'Tool', 'low', '{}', '{}', 0, 'pending', 1)",
+                [id, tool_id],
+            )
+            .unwrap();
+        connection.execute(r#"insert into ai_tool_audits
+            (id, invocation_id, tool_id, tool_title, risk_level, arguments_summary,
+             status, affected_domains_json, created_at_ms, completed_at_ms)
+            values (?1, ?1, ?2, 'Tool', 'low', '{}', 'succeeded', '["sessions","workspace"]', 1, 2)"#,
+            [id, tool_id]).unwrap();
+    }
+    connection
+        .execute(
+            "insert into ai_tool_audits
+        (id, invocation_id, tool_id, tool_title, risk_level, arguments_summary,
+         status, result_summary, created_at_ms, completed_at_ms)
+        values ('context-old', 'context-old', 'zterm.context', 'Context', 'low', '{}',
+          'succeeded', 'zTerm 上下文：1 个工作区', 1, 2)",
+            [],
+        )
+        .unwrap();
+    for _ in 0..2 {
+        run_migrations(&mut connection).unwrap();
+        assert!(!table_exists(&connection, "workspaces"));
+        assert!(!table_exists(&connection, "workspace_tabs"));
+        let layout_count: i64 = connection
+            .query_row("select count(*) from terminal_layout", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(layout_count, 0, "legacy named layouts must not be imported");
+        let settings: String = connection
+            .query_row(
+                "select settings_json from app_settings where id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let settings: serde_json::Value = serde_json::from_str(&settings).unwrap();
+        assert!(settings.get("workspace_restore_strategy").is_none());
+        assert_eq!(settings["theme"], "light");
+        assert_eq!(settings["shortcuts"].as_array().unwrap().len(), 1);
+        assert_eq!(settings["shortcuts"][0]["action_id"], "settings.open");
+        for table in ["ai_tool_pending", "ai_tool_audits"] {
+            let ids: String = connection
+                .query_row(
+                    &format!("select group_concat(id) from {table}"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(ids, "retained");
+        }
+        let domains: String = connection
+            .query_row(
+                "select affected_domains_json from ai_tool_audits where id = 'retained'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&domains).unwrap(),
+            serde_json::json!(["sessions"])
+        );
+        for (table, id) in [
+            ("saved_sessions", "ssh-retained"),
+            ("command_history", "history-retained"),
+        ] {
+            let count: i64 = connection
+                .query_row(
+                    &format!("select count(*) from {table} where id = ?1"),
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1);
+        }
+        let errors: i64 = connection
+            .query_row("select count(*) from pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(errors, 0);
+    }
 }

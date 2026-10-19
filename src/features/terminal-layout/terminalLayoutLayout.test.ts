@@ -12,7 +12,7 @@ import {
   updateLeafPane,
   updateSplitRatio,
   updateTerminalTabInRoot,
-} from "./workspaceLayout";
+} from "./terminalLayoutLayout";
 import type { PaneNode } from "./types";
 
 function leaf(id: string): PaneNode {
@@ -25,8 +25,8 @@ function leaf(id: string): PaneNode {
   };
 }
 
-describe("workspaceLayout", () => {
-  it("clamps split ratios to stable workspace bounds through public layout operations", () => {
+describe("terminalLayoutLayout", () => {
+  it("clamps split ratios to stable terminalLayout bounds through public layout operations", () => {
     const low = splitPane(leaf("pane-a"), "pane-a", "vertical", leaf("pane-b"), -1);
     const middle = splitPane(leaf("pane-a"), "pane-a", "vertical", leaf("pane-b"), 0.5);
     const high = splitPane(leaf("pane-a"), "pane-a", "vertical", leaf("pane-b"), 2);

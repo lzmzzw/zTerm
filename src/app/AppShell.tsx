@@ -1,7 +1,9 @@
 // Author: Liz
-import { ArrowLeftRight, FolderPlus, LayoutGrid, PanelsTopLeft, Terminal } from "lucide-react";
+import { ArrowLeftRight, FolderPlus, LayoutGrid } from "lucide-react";
+import zTermLogoUrl from "../assets/zterm-logo.svg";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { save } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import {
@@ -15,7 +17,9 @@ import { ExternalSshTunnelEditorDialog, SshTunnelEditorDialog } from "./SshTunne
 import { RightToolsPanel } from "./RightToolsPanel";
 import { PanelHeader, ToolButton } from "./ShellControls";
 import { TitleBar } from "./TitleBar";
-import { WorkspaceStage } from "./WorkspaceStage";
+import { loadTerminalLayout, saveTerminalLayout } from "../features/terminal-layout/terminalLayoutPersistence";
+import { markTerminalLayoutRestoreQueued, runTerminalLayoutRestoreQueue } from "../features/terminal-layout/terminalLayoutRestoreScheduler";
+import { TerminalLayoutStage } from "./TerminalLayoutStage";
 import { createRemoteFileActions } from "./remoteFileActions";
 import { createTerminalActions } from "./terminalActions";
 import { closeTerminalRuntimes } from "./terminalLifecycle";
@@ -30,7 +34,6 @@ import {
   EMPTY_HISTORY_PANEL_STATE,
   EMPTY_MCP_PANEL_STATE,
   EMPTY_TRANSFER_PANEL_STATE,
-  EMPTY_WORKSPACE_SIDEBAR_STATE,
   readString,
   rightToolFromValue,
   savedSessionDraftWithSshOptions,
@@ -41,7 +44,6 @@ import {
   type PendingSshTunnelDelete,
   type SshTunnelEditorState,
   type TransferConflictDialogState,
-  type WorkspaceEditorState,
   type ZtermToolActionEvent,
 } from "./appShellModel";
 import { ZtCenteredPageLayout, ZtConfirmDialog, ZtInlineError } from "../components/ZtUi";
@@ -81,32 +83,14 @@ import {
 } from "../features/terminal/externalLaunchApi";
 import { useTerminalStore, type RuntimeSessionInfo } from "../features/terminal/terminalStore";
 import { collectSyncChannelCandidates, useSyncInputStore } from "../features/terminal/syncInputStore";
-import { WorkspaceManagerPanel } from "../features/workspace/WorkspaceManagerPanel";
-import { WorkspacePreviewDialog } from "../features/workspace/WorkspacePreviewDialog";
-import { definitionFromDraft } from "../features/workspace/workspacePreviewModel";
-import {
-  workspaceGet,
-  workspaceList,
-  workspaceRemove,
-  workspaceSave,
-  workspaceSaveDefaultSnapshot,
-} from "../features/workspace/workspacePersistence";
 import {
   findPane,
   getActiveTerminalTab,
   getLeafTerminalTabs,
-} from "../features/workspace/workspaceLayout";
-import { markWorkspaceRestoreQueued, runWorkspaceRestoreQueue } from "../features/workspace/workspaceRestoreScheduler";
-import { DEFAULT_WORKSPACE_ID } from "../features/workspace/workspaceConstants";
-import {
-  isReusableConnectionTab,
-  mergeWorkspaceSidebarItems,
-  nextWorkspaceSortOrder,
-  type WorkspaceSidebarItem,
-} from "../features/workspace/workspaceShellModel";
-import { useWorkspaceStore } from "../features/workspace/workspaceStore";
-import type { PaneNode, WorkspaceDefinition, WorkspaceDefinitionDraft, WorkspaceSummary, WorkspaceTab } from "../features/workspace/types";
-import { scheduleIdleTask } from "../lib/renderScheduling";
+} from "../features/terminal-layout/terminalLayoutLayout";
+import { isReusableConnectionTab } from "../features/terminal-layout/terminalLayoutShellModel";
+import { useTerminalLayoutStore } from "../features/terminal-layout/terminalLayoutStore";
+import type { PaneNode, TerminalLayoutTab } from "../features/terminal-layout/types";
 import { listenTauri } from "../lib/tauriClient";
 import { fallbackOnlyErrorMessage, unknownErrorMessage } from "../lib/unknownErrorMessage";
 
@@ -123,7 +107,7 @@ function agentConnectionKey(
   return runtimeSessionId ? `runtime:${runtimeSessionId}` : null;
 }
 
-function collectLiveAgentConnectionKeys(tabs: WorkspaceTab[]) {
+function collectLiveAgentConnectionKeys(tabs: TerminalLayoutTab[]) {
   const keys = new Set<string>();
   const visit = (node: PaneNode) => {
     if (node.kind === "split") {
@@ -212,11 +196,13 @@ export function AppShell() {
     })),
   );
   const [terminalError, setTerminalError] = useState<string | null>(null);
-  const [initialSessionsLoaded, setInitialSessionsLoaded] = useState(false);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
   const [sessionFolderDialogOpen, setSessionFolderDialogOpen] = useState(false);
   const [fileTransferDialogOpen, setFileTransferDialogOpen] = useState(false);
   const [syncChannelDialogOpen, setSyncChannelDialogOpen] = useState(false);
+  const initialLayoutTabsRef = useRef(useTerminalLayoutStore.getState().tabs);
+  const [layoutReady, setLayoutReady] = useState(false);
+  const [sessionsReady, setSessionsReady] = useState(false);
   const [viewMode, setViewMode] = useState<"workbench" | "settings">("workbench");
   const [activeLeftTool, setActiveLeftTool] = useState<LeftTool | null>(null);
   const [activeTool, setActiveTool] = useState<RightTool | null>(null);
@@ -228,12 +214,6 @@ export function AppShell() {
   const [agentOpenError, setAgentOpenError] = useState<string | null>(null);
   const previousAgentConnectionKeyRef = useRef<string | null>(null);
   const [containerPanelState, setContainerPanelState] = useState(EMPTY_CONTAINER_PANEL_STATE);
-  const [workspaceSummaries, setWorkspaceSummaries] = useState<WorkspaceSummary[]>([]);
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
-  const [workspaceActionError, setWorkspaceActionError] = useState<string | null>(null);
-  const [workspaceEditor, setWorkspaceEditor] = useState<WorkspaceEditorState | null>(null);
-  const [pendingRestoreWorkspace, setPendingRestoreWorkspace] = useState<WorkspaceSidebarItem | null>(null);
-  const [pendingDeleteWorkspace, setPendingDeleteWorkspace] = useState<WorkspaceSidebarItem | null>(null);
   const [externalSshSessions, setExternalSshSessions] = useState<Record<string, ExternalSshLaunchEvent>>({});
   const { textInputDialog, requestTextInput, resolveTextInputDialog } = useAppTextInputDialog();
   const [transferConflictDialog, setTransferConflictDialog] = useState<TransferConflictDialogState | null>(null);
@@ -248,10 +228,7 @@ export function AppShell() {
   const syncChannel = useSyncInputStore((state) => state.channel);
   const createSyncChannel = useSyncInputStore((state) => state.createChannel);
   const retainSyncChannelMembers = useSyncInputStore((state) => state.retainMembers);
-  const restoringWorkspaceIdsRef = useRef<Set<string>>(new Set());
-  const workspaceRestoreEpochRef = useRef(0);
   const processedExternalLaunchIdsRef = useRef<Set<string>>(new Set());
-  const workspaceSummaryIdsRef = useRef<Set<string>>(new Set());
   const [historyView, setHistoryView] = useState<CommandHistoryView>("history");
   const [deduplicateHistory, setDeduplicateHistory] = useState(true);
   const [historyQuery, setHistoryQuery] = useState("");
@@ -389,34 +366,18 @@ export function AppShell() {
     ),
   );
   const {
-    activeWorkspaceId,
+    activeTerminalLayoutId,
     tabs,
     activeTabId,
-  } = useWorkspaceStore(
+  } = useTerminalLayoutStore(
     useShallow((state) => ({
-      activeWorkspaceId: state.activeWorkspaceId,
+      activeTerminalLayoutId: state.activeTerminalLayoutId,
       tabs: state.tabs,
       activeTabId: state.activeTabId,
     })),
   );
-  const { workspaceDefinitions } = useWorkspaceStore(
-    useShallow((state) =>
-      activeLeftTool === "workspace"
-        ? {
-            workspaceDefinitions: state.workspaceDefinitions,
-          }
-        : EMPTY_WORKSPACE_SIDEBAR_STATE,
-    ),
-  );
   const {
-    cacheWorkspaceDefinition,
-    loadCachedWorkspaceDefinition,
-    prefetchWorkspaceDefinitions,
-    buildActiveWorkspaceDraft,
-    restoreWorkbenchDefinition,
     clearRuntimeSession,
-    getWorkspaceRuntimeSessionIds,
-    removeWorkspace,
     updatePaneTerminalTab,
     addPaneTab,
     addPaneTabAfter,
@@ -428,16 +389,9 @@ export function AppShell() {
     splitActivePane,
     resizeSplitPane,
     closePane,
-  } = useWorkspaceStore(
+  } = useTerminalLayoutStore(
     useShallow((state) => ({
-      cacheWorkspaceDefinition: state.cacheWorkspaceDefinition,
-      loadCachedWorkspaceDefinition: state.loadWorkspaceDefinition,
-      prefetchWorkspaceDefinitions: state.prefetchWorkspaceDefinitions,
-      buildActiveWorkspaceDraft: state.buildActiveWorkspaceDraft,
-      restoreWorkbenchDefinition: state.restoreWorkbenchDefinition,
       clearRuntimeSession: state.clearRuntimeSession,
-      getWorkspaceRuntimeSessionIds: state.getWorkspaceRuntimeSessionIds,
-      removeWorkspace: state.removeWorkspace,
       updatePaneTerminalTab: state.updatePaneTerminalTab,
       addPaneTab: state.addPaneTab,
       addPaneTabAfter: state.addPaneTabAfter,
@@ -556,17 +510,17 @@ export function AppShell() {
 
   const bindOpenedTerminalRuntime = useCallback(
     async (
-      workspaceId: string,
-      workspaceTabId: string,
+      terminalLayoutId: string,
+      terminalLayoutTabId: string,
       paneId: string,
       paneTabId: string,
       runtime: RuntimeSessionInfo,
     ) => {
-      if (!useWorkspaceStore.getState().hasPaneTerminalTab(workspaceId, workspaceTabId, paneId, paneTabId)) {
+      if (!useTerminalLayoutStore.getState().hasPaneTerminalTab(terminalLayoutId, terminalLayoutTabId, paneId, paneTabId)) {
         await closeTerminal(runtime.runtime_session_id);
         return false;
       }
-      bindRuntimeToPaneTab(workspaceId, workspaceTabId, paneId, paneTabId, runtime);
+      bindRuntimeToPaneTab(terminalLayoutId, terminalLayoutTabId, paneId, paneTabId, runtime);
       return true;
     },
     [bindRuntimeToPaneTab, closeTerminal],
@@ -590,9 +544,6 @@ export function AppShell() {
   const activeHistoryScopeKind = activeHistoryScope.scopeKind;
   const activeHistoryScopeId = activeHistoryScope.scopeId;
   const language = appSettings?.language ?? "zhCN";
-  const workspaceRestoreStrategy = appSettings?.workspace_restore_strategy ?? "visible_first";
-  const defaultWorkspaceRestoreStartedRef = useRef(false);
-  const defaultWorkspaceRestoreReadyRef = useRef(false);
   useDomI18n(language);
 
   useEffect(() => {
@@ -643,69 +594,73 @@ export function AppShell() {
   }, [retainSyncChannelMembers, syncChannelCandidateKey]);
 
   useEffect(() => {
-    void loadSessions().finally(() => setInitialSessionsLoaded(true));
+    void loadSessions().finally(() => setSessionsReady(true));
     void loadSettings();
     void loadPendingInvocations();
-    void refreshWorkspaceSummaries();
   }, [loadPendingInvocations, loadSessions, loadSettings]);
+
+  useEffect(() => {
+    if (!sessionsReady) return;
+    let disposed = false;
+    let loaded = false;
+    const initialTabs = initialLayoutTabsRef.current;
+    void loadTerminalLayout().then(async (saved) => {
+      loaded = true;
+      if (disposed || !saved || useTerminalLayoutStore.getState().tabs !== initialTabs) return;
+      const queued = markTerminalLayoutRestoreQueued(saved);
+      useTerminalLayoutStore.getState().restoreWorkbenchDefinition(queued);
+      await runTerminalLayoutRestoreQueue({ terminalLayout: queued, sessions, strategy: "visible_first",
+        openTerminal, openDefaultLocalTerminal, openSshContainerTerminal, writeTerminal, closeTerminal,
+        updatePaneTerminalTab, isCancelled: () => disposed,
+        isTargetAvailable: (layoutId, tabId, paneId, paneTabId) => {
+          const state = useTerminalLayoutStore.getState();
+          if (!state.hasPaneTerminalTab(layoutId, tabId, paneId, paneTabId)) return false;
+          const tab = state.tabs.find(item => item.id === tabId);
+          const leaf = tab ? findPane(tab.root, paneId) : null;
+          const target = leaf?.kind === "leaf" ? getLeafTerminalTabs(leaf).find(item => item.id === paneTabId) : null;
+          const originalTab = queued.tabs.find(item => item.id === tabId);
+          const originalLeaf = originalTab ? findPane(originalTab.root, paneId) : null;
+          const originalTarget = originalLeaf?.kind === "leaf" ? getLeafTerminalTabs(originalLeaf).find(item => item.id === paneTabId) : null;
+          return Boolean(target && target.restore_token === originalTarget?.restore_token && !target.runtime_session_id && (target.restore_status === "queued" || target.restore_status === "pending"));
+        } });
+    }).catch(error => { if (!disposed) setTerminalError(fallbackOnlyErrorMessage(error, "恢复终端布局失败")); })
+      .finally(() => { if (!disposed && loaded) setLayoutReady(true); });
+    return () => { disposed = true; };
+  }, [sessionsReady]);
+
+  useEffect(() => {
+    if (!layoutReady) return;
+    const timer = window.setTimeout(() => {
+      const draft = useTerminalLayoutStore.getState().buildActiveTerminalLayoutDraft();
+      if (draft) void saveTerminalLayout(draft).catch(error => setTerminalError(fallbackOnlyErrorMessage(error, "保存终端布局失败")));
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [layoutReady, tabs, activeTabId]);
+
+  useEffect(() => {
+    if (!layoutReady || !("__TAURI_INTERNALS__" in globalThis)) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const appWindow = getCurrentWindow();
+    void appWindow.onCloseRequested(async event => {
+      event.preventDefault();
+      try {
+        const draft = useTerminalLayoutStore.getState().buildActiveTerminalLayoutDraft();
+        if (draft) await saveTerminalLayout(draft);
+        unlisten?.();
+        await appWindow.close();
+      } catch (error) {
+        setTerminalError(fallbackOnlyErrorMessage(error, "保存终端布局失败"));
+      }
+    }).then(stop => { if (disposed) stop(); else unlisten = stop; });
+    return () => { disposed = true; unlisten?.(); };
+  }, [layoutReady]);
 
   useEffect(() => {
     if (!appSettings) return;
     applyAppSettings(appSettings);
   }, [appSettings]);
 
-  useEffect(() => {
-    if (
-      !appSettings ||
-      !initialSessionsLoaded ||
-      activeWorkspaceId !== DEFAULT_WORKSPACE_ID ||
-      defaultWorkspaceRestoreStartedRef.current
-    ) {
-      return;
-    }
-    defaultWorkspaceRestoreStartedRef.current = true;
-    let disposed = false;
-    const epoch = workspaceRestoreEpochRef.current + 1;
-    workspaceRestoreEpochRef.current = epoch;
-
-    void workspaceGet(DEFAULT_WORKSPACE_ID)
-      .then(async (snapshot) => {
-        if (
-          disposed ||
-          workspaceRestoreEpochRef.current !== epoch ||
-          snapshot.id !== DEFAULT_WORKSPACE_ID ||
-          snapshot.tabs.length === 0
-        ) return;
-        const queuedSnapshot = markWorkspaceRestoreQueued({ ...snapshot, status: "running" });
-        restoreWorkbenchDefinition(queuedSnapshot);
-        await restoreWorkspaceTerminals(queuedSnapshot, epoch);
-      })
-      .catch((error) => {
-        if (!disposed) setWorkspaceActionError(fallbackOnlyErrorMessage(error, "恢复上次终端失败"));
-      })
-      .finally(() => {
-        if (!disposed) defaultWorkspaceRestoreReadyRef.current = true;
-      });
-
-    return () => {
-      disposed = true;
-      if (workspaceRestoreEpochRef.current === epoch) {
-        workspaceRestoreEpochRef.current += 1;
-      }
-    };
-  }, [activeWorkspaceId, appSettings, initialSessionsLoaded, restoreWorkbenchDefinition]);
-
-  useEffect(() => {
-    if (!defaultWorkspaceRestoreReadyRef.current || activeWorkspaceId !== DEFAULT_WORKSPACE_ID) return;
-    const draft = buildActiveWorkspaceDraft();
-    if (!draft) return;
-    const timer = window.setTimeout(() => {
-      void workspaceSaveDefaultSnapshot(draft).catch((error) => {
-        setWorkspaceActionError(fallbackOnlyErrorMessage(error, "保存终端布局失败"));
-      });
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [activeTabId, activeWorkspaceId, buildActiveWorkspaceDraft, tabs]);
 
   useEffect(() => {
     let mounted = true;
@@ -868,20 +823,20 @@ export function AppShell() {
       setExternalSshOptionsById((current) => ({ ...current, [launch.id]: current[launch.id] ?? DEFAULT_EXTERNAL_SSH_OPTIONS }));
       setActiveTool(null);
 
-      const workspaceState = useWorkspaceStore.getState();
-      const targetWorkspaceId = workspaceState.activeWorkspaceId;
-      const targetWorkspaceTab = workspaceState.tabs.find((tab) => tab.id === workspaceState.activeTabId) ?? workspaceState.tabs[0];
-      const targetPane = targetWorkspaceTab ? findPane(targetWorkspaceTab.root, targetWorkspaceTab.active_pane_id) : null;
+      const terminalLayoutState = useTerminalLayoutStore.getState();
+      const targetTerminalLayoutId = terminalLayoutState.activeTerminalLayoutId;
+      const targetTerminalLayoutTab = terminalLayoutState.tabs.find((tab) => tab.id === terminalLayoutState.activeTabId) ?? terminalLayoutState.tabs[0];
+      const targetPane = targetTerminalLayoutTab ? findPane(targetTerminalLayoutTab.root, targetTerminalLayoutTab.active_pane_id) : null;
       const targetLeaf = targetPane?.kind === "leaf" ? targetPane : null;
       const activeTargetPaneTab = targetLeaf ? getActiveTerminalTab(targetLeaf) : null;
-      if (!targetWorkspaceTab || !targetLeaf || !activeTargetPaneTab) {
+      if (!targetTerminalLayoutTab || !targetLeaf || !activeTargetPaneTab) {
         setTerminalError("外部 SSH 连接无法定位目标分栏");
         return;
       }
 
-      const targetPaneId = targetWorkspaceTab.active_pane_id;
+      const targetPaneId = targetTerminalLayoutTab.active_pane_id;
       const targetPaneTab = isReusableConnectionTab(activeTargetPaneTab) ? activeTargetPaneTab : addPaneTab(targetPaneId);
-      updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTab.id, targetPaneId, targetPaneTab.id, {
+      updatePaneTerminalTab(targetTerminalLayoutId, targetTerminalLayoutTab.id, targetPaneId, targetPaneTab.id, {
         title: launch.name,
         saved_session_id: launch.id,
         connection_source: "external_ssh",
@@ -893,15 +848,15 @@ export function AppShell() {
       try {
         const runtime = await openTerminal(launch.id, targetPaneId);
         await bindOpenedTerminalRuntime(
-          targetWorkspaceId,
-          targetWorkspaceTab.id,
+          targetTerminalLayoutId,
+          targetTerminalLayoutTab.id,
           targetPaneId,
           targetPaneTab.id,
           runtime,
         );
       } catch (error) {
         const message = fallbackOnlyErrorMessage(error, "打开外部 SSH 连接失败");
-        updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTab.id, targetPaneId, targetPaneTab.id, {
+        updatePaneTerminalTab(targetTerminalLayoutId, targetTerminalLayoutTab.id, targetPaneId, targetPaneTab.id, {
           restore_status: "failed",
           restore_error: message,
         });
@@ -964,16 +919,6 @@ export function AppShell() {
     };
   }, [handleZtermToolActionRef]);
 
-  async function refreshWorkspaceSummaries() {
-    try {
-      const summaries = await workspaceList();
-      workspaceSummaryIdsRef.current = new Set(summaries.map((workspace) => workspace.id));
-      setWorkspaceSummaries(summaries);
-    } catch (error) {
-      setWorkspaceActionError(fallbackOnlyErrorMessage(error, "加载工作区失败"));
-    }
-  }
-
   async function refreshAffectedDomains(domains: string[]) {
     const domainSet = new Set(domains);
     if (domainSet.has("sessions")) {
@@ -981,9 +926,6 @@ export function AppShell() {
     }
     if (domainSet.has("settings") || domainSet.has("terminal")) {
       await loadSettings();
-    }
-    if (domainSet.has("workspace")) {
-      await refreshWorkspaceSummaries();
     }
     if (domainSet.has("transfer")) {
       await loadTransfers(activeSshSessionId);
@@ -1001,7 +943,7 @@ export function AppShell() {
   async function handleZtermToolAction(event: ZtermToolActionEvent) {
     const args = event.arguments ?? {};
     switch (event.action) {
-      case "workspace.open_tool": {
+      case "tool.open": {
         const tool = rightToolFromValue(readString(args, "tool") ?? readString(args, "right_tool"));
         if (tool) setActiveTool(tool);
         break;
@@ -1031,11 +973,6 @@ export function AppShell() {
           }
           await openSavedSessionRef.current(session);
         }
-        break;
-      }
-      case "workspace.restore": {
-        const workspaceId = readString(args, "workspace_id");
-        if (workspaceId) await handleRestoreWorkspace(workspaceId);
         break;
       }
       case "terminal.close": {
@@ -1073,205 +1010,12 @@ export function AppShell() {
     }
   }
 
-  function handleCreateWorkspace() {
-    const initialDraft = buildActiveWorkspaceDraft();
-    if (!initialDraft) {
-      setWorkspaceActionError("当前没有可保存的工作区");
-      return;
-    }
-
-    setWorkspaceActionError(null);
-    setWorkspaceEditor({
-      mode: "create",
-      workspace: definitionFromDraft({
-        ...initialDraft,
-        id: null,
-        name: "新建工作区",
-        status: "closed",
-        sort_order: nextWorkspaceSortOrder(workspaceSidebarItems),
-      }),
-    });
-  }
-
-  function handleSaveWorkspace(workspaceId: string) {
-    const target = workspaceSidebarItems.find((workspace) => workspace.id === workspaceId);
-    const currentDraft = buildActiveWorkspaceDraft();
-    if (!target || !currentDraft) {
-      setWorkspaceActionError("当前工作台或目标工作区不存在");
-      return;
-    }
-
-    setWorkspaceActionError(null);
-    setWorkspaceEditor({
-      mode: "edit",
-      workspace: definitionFromDraft({
-        ...currentDraft,
-        id: target.id,
-        name: target.name,
-        status: "closed",
-        sort_order: target.sort_order,
-      }),
-    });
-  }
-
-  async function handleEditWorkspace(workspaceId: string) {
-    setWorkspaceActionError(null);
-    try {
-      const definition = await resolveWorkspaceDefinition(workspaceId);
-      setWorkspaceEditor({
-        mode: "edit",
-        workspace: definition,
-      });
-    } catch (error) {
-      setWorkspaceActionError(fallbackOnlyErrorMessage(error, "加载工作区编辑失败"));
-    }
-  }
-
-  async function handleWorkspaceEditorSave(draft: WorkspaceDefinitionDraft) {
-    setWorkspaceActionError(null);
-    try {
-      const mode = workspaceEditor?.mode ?? "edit";
-      const saved = await workspaceSave(mode === "create" ? { ...draft, id: null } : draft);
-      cacheWorkspaceDefinition(saved);
-      if (mode === "create") {
-        setSelectedWorkspaceId(saved.id);
-      }
-      setWorkspaceEditor(null);
-      await refreshWorkspaceSummaries();
-    } catch (error) {
-      setWorkspaceActionError(fallbackOnlyErrorMessage(error, "保存工作区失败"));
-    }
-  }
-
-  function handleDeleteWorkspace(workspaceId: string) {
-    setWorkspaceActionError(null);
-    if (workspaceId === DEFAULT_WORKSPACE_ID) {
-      setWorkspaceActionError("默认工作区不能删除");
-      return;
-    }
-    const workspace = workspaceSidebarItems.find((item) => item.id === workspaceId);
-    if (!workspace) {
-      setWorkspaceActionError("工作区不存在或已删除");
-      return;
-    }
-    setPendingDeleteWorkspace(workspace);
-  }
-
-  async function confirmDeleteWorkspace() {
-    const workspace = pendingDeleteWorkspace;
-    if (!workspace) return;
-    setWorkspaceActionError(null);
-    if (workspace.id === DEFAULT_WORKSPACE_ID) {
-      setWorkspaceActionError("默认工作区不能删除");
-      setPendingDeleteWorkspace(null);
-      return;
-    }
-
-    try {
-      await workspaceRemove(workspace.id);
-      setWorkspaceSummaries((summaries) => {
-        const nextSummaries = summaries.filter((summary) => summary.id !== workspace.id);
-        workspaceSummaryIdsRef.current = new Set(nextSummaries.map((summary) => summary.id));
-        return nextSummaries;
-      });
-      removeWorkspace(workspace.id);
-      if (selectedWorkspaceId === workspace.id) setSelectedWorkspaceId(null);
-      setPendingDeleteWorkspace(null);
-      await refreshWorkspaceSummaries();
-    } catch (error) {
-      setWorkspaceActionError(fallbackOnlyErrorMessage(error, "删除工作区失败"));
-    }
-  }
-
-  async function handleRestoreWorkspace(workspaceId: string) {
-    setWorkspaceActionError(null);
-    setSelectedWorkspaceId(workspaceId);
-    if (restoringWorkspaceIdsRef.current.has(workspaceId)) return;
-    const runtimeSessionIds = getWorkspaceRuntimeSessionIds(DEFAULT_WORKSPACE_ID);
-    if (runtimeSessionIds.length > 0) {
-      const workspace = workspaceSidebarItems.find((item) => item.id === workspaceId);
-      if (!workspace) {
-        setWorkspaceActionError("工作区不存在或已删除");
-        return;
-      }
-      setPendingRestoreWorkspace(workspace);
-      return;
-    }
-    await executeWorkspaceRestore(workspaceId);
-  }
-
-  async function confirmRestoreWorkspace() {
-    const workspaceId = pendingRestoreWorkspace?.id;
-    if (!workspaceId) return;
-    setPendingRestoreWorkspace(null);
-    await executeWorkspaceRestore(workspaceId);
-  }
-
-  async function closeCurrentWorkbenchRuntimes(): Promise<boolean> {
-    const runtimeSessionIds = getWorkspaceRuntimeSessionIds(DEFAULT_WORKSPACE_ID);
-    const { closedRuntimeSessionIds, failedReason } = await closeTerminalRuntimes(runtimeSessionIds, closeTerminal);
-    closedRuntimeSessionIds.forEach((runtimeSessionId) => clearRuntimeSession(runtimeSessionId));
-    if (failedReason !== null) {
-      setWorkspaceActionError(fallbackOnlyErrorMessage(failedReason, "关闭当前工作台终端失败"));
-      return false;
-    }
-    return true;
-  }
-
-  async function executeWorkspaceRestore(workspaceId: string) {
-    if (restoringWorkspaceIdsRef.current.has(workspaceId)) return;
-    const epoch = workspaceRestoreEpochRef.current + 1;
-    workspaceRestoreEpochRef.current = epoch;
-    restoringWorkspaceIdsRef.current.add(workspaceId);
-    try {
-      if (!(await closeCurrentWorkbenchRuntimes())) return;
-      const definition = await resolveWorkspaceDefinition(workspaceId);
-      if (workspaceRestoreEpochRef.current !== epoch) return;
-      const queuedDefinition = markWorkspaceRestoreQueued({ ...definition, status: "running" as const });
-      const workbenchDefinition: WorkspaceDefinition = {
-        ...queuedDefinition,
-        id: DEFAULT_WORKSPACE_ID,
-        name: "默认工作区",
-      };
-      restoreWorkbenchDefinition(workbenchDefinition);
-      await restoreWorkspaceTerminals(workbenchDefinition, epoch);
-      if (workspaceRestoreEpochRef.current === epoch) await refreshWorkspaceSummaries();
-    } catch (error) {
-      if (workspaceRestoreEpochRef.current === epoch) {
-        setWorkspaceActionError(fallbackOnlyErrorMessage(error, "恢复工作区失败"));
-      }
-    } finally {
-      restoringWorkspaceIdsRef.current.delete(workspaceId);
-    }
-  }
-
-  async function resolveWorkspaceDefinition(workspaceId: string): Promise<WorkspaceDefinition> {
-    return loadCachedWorkspaceDefinition(workspaceId, workspaceGet);
-  }
-
-  async function restoreWorkspaceTerminals(workspace: WorkspaceDefinition, switchEpoch?: number) {
-    await runWorkspaceRestoreQueue({
-      workspace,
-      sessions,
-      strategy: workspaceRestoreStrategy,
-      isCancelled: () => switchEpoch !== undefined && workspaceRestoreEpochRef.current !== switchEpoch,
-      isTargetAvailable: (workspaceId, workspaceTabId, paneId, paneTabId) =>
-        useWorkspaceStore.getState().hasPaneTerminalTab(workspaceId, workspaceTabId, paneId, paneTabId),
-      openTerminal,
-      openDefaultLocalTerminal,
-      openSshContainerTerminal,
-      writeTerminal,
-      closeTerminal,
-      updatePaneTerminalTab,
-    });
-  }
-
   function handleRequestPaneConnection(paneId: string) {
     if (!activeTab) return;
     setActivePane(paneId);
     setConnectionDialogTarget({
-      workspaceId: activeWorkspaceId,
-      workspaceTabId: activeTab.id,
+      terminalLayoutId: activeTerminalLayoutId,
+      terminalLayoutTabId: activeTab.id,
       paneId,
     });
     setConnectionDialogError(null);
@@ -1286,10 +1030,10 @@ export function AppShell() {
     const source = sourceTab?.connection_source ?? (sourceTab?.saved_session_id ? "saved_session" : null);
     if (!sourceTab || !source || source === "missing" || (source !== "default_local" && !sourceTab.saved_session_id)) return;
 
-    const targetWorkspaceId = activeWorkspaceId;
-    const targetWorkspaceTabId = activeTab.id;
+    const targetTerminalLayoutId = activeTerminalLayoutId;
+    const targetTerminalLayoutTabId = activeTab.id;
     const targetPaneTab = addPaneTabAfter(paneId, paneTabId);
-    updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTabId, paneId, targetPaneTab.id, {
+    updatePaneTerminalTab(targetTerminalLayoutId, targetTerminalLayoutTabId, paneId, targetPaneTab.id, {
       title: sourceTab.title,
       saved_session_id: sourceTab.saved_session_id,
       connection_source: source,
@@ -1312,10 +1056,10 @@ export function AppShell() {
               sourceTab.container_target.name ?? null,
             )
           : await openTerminal(sourceTab.saved_session_id!, paneId, workingDirectory);
-      await bindOpenedTerminalRuntime(targetWorkspaceId, targetWorkspaceTabId, paneId, targetPaneTab.id, runtime);
+      await bindOpenedTerminalRuntime(targetTerminalLayoutId, targetTerminalLayoutTabId, paneId, targetPaneTab.id, runtime);
     } catch (error) {
       const message = fallbackOnlyErrorMessage(error, "复制当前连接失败");
-      updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTabId, paneId, targetPaneTab.id, {
+      updatePaneTerminalTab(targetTerminalLayoutId, targetTerminalLayoutTabId, paneId, targetPaneTab.id, {
         restore_status: "failed",
         restore_error: message,
       });
@@ -1326,13 +1070,11 @@ export function AppShell() {
   async function handleCreatePaneConnection(choice: ConnectionChoice) {
     if (!connectionDialogTarget || connectionOpening) return;
     const target = connectionDialogTarget;
-    const state = useWorkspaceStore.getState();
+    const state = useTerminalLayoutStore.getState();
     const targetTab =
-      state.activeWorkspaceId === target.workspaceId
-        ? state.tabs.find((tab) => tab.id === target.workspaceTabId)
-        : state.workspaces
-            .find((workspace) => workspace.id === target.workspaceId)
-            ?.tabs.find((tab) => tab.id === target.workspaceTabId);
+      state.activeTerminalLayoutId === target.terminalLayoutId
+        ? state.tabs.find((tab) => tab.id === target.terminalLayoutTabId)
+        : undefined;
     const targetPane = targetTab ? findPane(targetTab.root, target.paneId) : null;
     const activeTargetPaneTab = targetPane?.kind === "leaf" ? getActiveTerminalTab(targetPane) : null;
     if (!targetTab || !activeTargetPaneTab) {
@@ -1349,8 +1091,8 @@ export function AppShell() {
         : addPaneTab(target.paneId);
       const runtime = await openTerminal(choice.session.id, target.paneId);
       const bound = await bindOpenedTerminalRuntime(
-        target.workspaceId,
-        target.workspaceTabId,
+        target.terminalLayoutId,
+        target.terminalLayoutTabId,
         target.paneId,
         targetPaneTab.id,
         runtime,
@@ -1366,8 +1108,8 @@ export function AppShell() {
   }
 
   async function handleClosePaneTab(paneId: string, paneTabId: string) {
-    const workspaceState = useWorkspaceStore.getState();
-    const targetTab = workspaceState.tabs.find((tab) => tab.id === workspaceState.activeTabId);
+    const terminalLayoutState = useTerminalLayoutStore.getState();
+    const targetTab = terminalLayoutState.tabs.find((tab) => tab.id === terminalLayoutState.activeTabId);
     const targetPane = targetTab ? findPane(targetTab.root, paneId) : null;
     const terminalTab = targetPane?.kind === "leaf"
       ? getLeafTerminalTabs(targetPane).find((tab) => tab.id === paneTabId)
@@ -1386,8 +1128,8 @@ export function AppShell() {
   }
 
   async function handleClosePane(paneId: string) {
-    const workspaceState = useWorkspaceStore.getState();
-    const targetTab = workspaceState.tabs.find((tab) => tab.id === workspaceState.activeTabId);
+    const terminalLayoutState = useTerminalLayoutStore.getState();
+    const targetTab = terminalLayoutState.tabs.find((tab) => tab.id === terminalLayoutState.activeTabId);
     const targetPane = targetTab ? findPane(targetTab.root, paneId) : null;
     if (targetPane?.kind !== "leaf") return;
 
@@ -1457,7 +1199,7 @@ export function AppShell() {
   }
 
   function isAgentConnectionLive(connectionKey: string) {
-    return collectLiveAgentConnectionKeys(useWorkspaceStore.getState().tabs).has(connectionKey);
+    return collectLiveAgentConnectionKeys(useTerminalLayoutStore.getState().tabs).has(connectionKey);
   }
 
   function openAgentCodexForConnection(
@@ -1729,8 +1471,8 @@ export function AppShell() {
   }
 
   async function enterSshContainer(container: SshContainerInfo) {
-    const workspaceState = useWorkspaceStore.getState();
-    const latestActiveTab = workspaceState.tabs.find((tab) => tab.id === workspaceState.activeTabId) ?? workspaceState.tabs[0];
+    const terminalLayoutState = useTerminalLayoutStore.getState();
+    const latestActiveTab = terminalLayoutState.tabs.find((tab) => tab.id === terminalLayoutState.activeTabId) ?? terminalLayoutState.tabs[0];
     const latestActivePane = latestActiveTab ? findPane(latestActiveTab.root, latestActiveTab.active_pane_id) : null;
     const latestActiveLeaf = latestActivePane?.kind === "leaf" ? latestActivePane : null;
     const latestActivePaneTab = latestActiveLeaf ? getActiveTerminalTab(latestActiveLeaf) : null;
@@ -1748,8 +1490,8 @@ export function AppShell() {
         : latestExternalOptions?.container?.enabled === true;
     if (!latestActiveTab || !latestActivePaneTab || !latestContainerEnabled || !latestSavedSessionId) return;
 
-    const targetWorkspaceId = workspaceState.activeWorkspaceId;
-    const targetWorkspaceTabId = latestActiveTab.id;
+    const targetTerminalLayoutId = terminalLayoutState.activeTerminalLayoutId;
+    const targetTerminalLayoutTabId = latestActiveTab.id;
     const targetPaneId = latestActiveTab.active_pane_id;
     const afterPaneTabId = latestActivePaneTab.id;
     const targetSavedSessionId = latestSavedSessionId;
@@ -1766,7 +1508,7 @@ export function AppShell() {
     const title = container.name?.trim() || container.id.slice(0, 12);
     const targetPaneTab = addPaneTabAfter(targetPaneId, afterPaneTabId);
     setTerminalError(null);
-    updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, {
+    updatePaneTerminalTab(targetTerminalLayoutId, targetTerminalLayoutTabId, targetPaneId, targetPaneTab.id, {
       title: `容器: ${title}`,
       saved_session_id: targetSavedSessionId,
       connection_source: "ssh_container",
@@ -1779,10 +1521,10 @@ export function AppShell() {
     });
     try {
       const runtime = await openSshContainerTerminal(targetSavedSessionId, targetPaneId, container.id, container.name);
-      await bindOpenedTerminalRuntime(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, runtime);
+      await bindOpenedTerminalRuntime(targetTerminalLayoutId, targetTerminalLayoutTabId, targetPaneId, targetPaneTab.id, runtime);
     } catch (error) {
       const message = fallbackOnlyErrorMessage(error, "进入容器失败");
-      updatePaneTerminalTab(targetWorkspaceId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, {
+      updatePaneTerminalTab(targetTerminalLayoutId, targetTerminalLayoutTabId, targetPaneId, targetPaneTab.id, {
         restore_status: "failed",
         restore_error: message,
       });
@@ -1806,7 +1548,7 @@ export function AppShell() {
   }
 
   const terminalActions = createTerminalActions({
-    workbenchId: activeWorkspaceId,
+    workbenchId: activeTerminalLayoutId,
     workbenchTabId: activeTabId,
     activePaneTab,
     activeTab,
@@ -1817,8 +1559,8 @@ export function AppShell() {
     openTerminal,
     openSshContainerTerminal,
     closeTerminal,
-    hasPaneTerminalTab: (workspaceId, workspaceTabId, paneId, paneTabId) =>
-      useWorkspaceStore.getState().hasPaneTerminalTab(workspaceId, workspaceTabId, paneId, paneTabId),
+    hasPaneTerminalTab: (terminalLayoutId, terminalLayoutTabId, paneId, paneTabId) =>
+      useTerminalLayoutStore.getState().hasPaneTerminalTab(terminalLayoutId, terminalLayoutTabId, paneId, paneTabId),
     writeTerminal,
     activeRuntimeSessionId,
   });
@@ -1890,40 +1632,35 @@ export function AppShell() {
     checkTransferConflicts,
   });
 
-  const workspaceSidebarItems = useMemo(
-    () => mergeWorkspaceSidebarItems(workspaceSummaries, workspaceDefinitions),
-    [workspaceDefinitions, workspaceSummaries],
+  const headerNavigation = (
+    <nav className="zt-titlebar-navigation" aria-label="主导航">
+      <ToolButton
+        label="会话"
+        active={viewMode === "workbench" && activeLeftTool === "sessions"}
+        icon={<img className="zt-titlebar-logo" src={zTermLogoUrl} alt="" aria-hidden="true" />}
+        onClick={() => {
+          setViewMode("workbench");
+          if (viewMode === "settings") setActiveLeftTool("sessions");
+          else toggleLeftTool("sessions");
+        }}
+      />
+      <ToolButton
+        label="文件传输"
+        active={viewMode === "workbench" && fileTransferDialogOpen}
+        icon={<ArrowLeftRight size={20} aria-hidden="true" />}
+        onClick={() => {
+          setViewMode("workbench");
+          setFileTransferDialogOpen((current) => viewMode === "settings" || !current);
+        }}
+      />
+      <ToolButton
+        label="打开设置"
+        active={viewMode === "settings"}
+        icon={<LayoutGrid size={20} aria-hidden="true" />}
+        onClick={() => setViewMode("settings")}
+      />
+    </nav>
   );
-
-  useEffect(() => {
-    if (activeLeftTool !== "workspace") return;
-
-    for (const workspace of workspaceSidebarItems) {
-      if (workspace.preview_root) continue;
-      void loadCachedWorkspaceDefinition(workspace.id, workspaceGet)
-        .catch((error) => {
-          if (!workspaceSummaryIdsRef.current.has(workspace.id)) return;
-          setWorkspaceActionError(fallbackOnlyErrorMessage(error, "加载工作区缩略图失败"));
-        });
-    }
-  }, [activeLeftTool, loadCachedWorkspaceDefinition, workspaceSidebarItems]);
-
-  useEffect(() => {
-    const recentClosedWorkspaceIds = [...workspaceSummaries]
-      .filter(
-        (workspace) =>
-          workspace.id !== DEFAULT_WORKSPACE_ID &&
-          workspace.status === "closed" &&
-          !workspaceDefinitions[workspace.id],
-      )
-      .sort((left, right) => right.updated_at_ms - left.updated_at_ms)
-      .slice(0, 3)
-      .map((workspace) => workspace.id);
-    if (recentClosedWorkspaceIds.length === 0) return undefined;
-    return scheduleIdleTask(() => {
-      void prefetchWorkspaceDefinitions(recentClosedWorkspaceIds, workspaceGet);
-    });
-  }, [prefetchWorkspaceDefinitions, workspaceDefinitions, workspaceSummaries]);
 
   if (viewMode === "settings") {
     return (
@@ -1931,7 +1668,7 @@ export function AppShell() {
         className="zt-workbench zt-workbench-settings"
         onContextMenu={(event) => event.preventDefault()}
       >
-        <TitleBar />
+        <TitleBar navigation={headerNavigation} />
         <SettingsPage
           settings={appSettings}
           terminalProfiles={terminalProfiles}
@@ -1961,62 +1698,14 @@ export function AppShell() {
 
   return (
     <div className={workbenchClassName} onContextMenu={(event) => event.preventDefault()}>
-      <TitleBar centerContent={titleBarCenterContent} />
+      <TitleBar centerContent={titleBarCenterContent} navigation={headerNavigation} />
 
-      <aside
-        className={
-          activeLeftTool
-            ? "zt-sidebar zt-sidebar-left zt-left-tools"
-            : "zt-sidebar zt-sidebar-left zt-left-tools zt-left-tools-collapsed"
-        }
+      {activeLeftTool ? <aside
+        className="zt-sidebar zt-sidebar-left zt-left-tools"
         aria-label="左侧管理"
       >
-        <nav className="zt-left-rail" aria-label="左侧管理切换">
-          <ToolButton
-            label="会话"
-            active={activeLeftTool === "sessions"}
-            icon={<Terminal size={16} aria-hidden="true" />}
-            onClick={() => toggleLeftTool("sessions")}
-          />
-          <ToolButton
-            label="工作区"
-            active={activeLeftTool === "workspace"}
-            icon={<PanelsTopLeft size={16} aria-hidden="true" />}
-            onClick={() => toggleLeftTool("workspace")}
-          />
-          <ToolButton
-            label="文件传输"
-            active={fileTransferDialogOpen}
-            className="zt-left-rail-transfer"
-            icon={<ArrowLeftRight size={16} aria-hidden="true" />}
-            onClick={() => setFileTransferDialogOpen((current) => !current)}
-          />
-          <ToolButton
-            label="打开设置"
-            active={false}
-            className="zt-left-rail-settings"
-            icon={<LayoutGrid size={16} aria-hidden="true" />}
-            onClick={() => setViewMode("settings")}
-          />
-        </nav>
-
         {activeLeftTool ? (
           <div className="zt-left-tool-panel">
-            {activeLeftTool === "workspace" ? (
-              <WorkspaceManagerPanel
-                workspaces={workspaceSidebarItems}
-                sessions={sessions}
-                selectedWorkspaceId={selectedWorkspaceId}
-                error={workspaceActionError}
-                onCreateWorkspace={handleCreateWorkspace}
-                onSaveWorkspace={handleSaveWorkspace}
-                onSelectWorkspace={setSelectedWorkspaceId}
-                onClearWorkspaceSelection={() => setSelectedWorkspaceId(null)}
-                onEditWorkspace={(workspaceId) => void handleEditWorkspace(workspaceId)}
-                onRestoreWorkspace={(workspaceId) => void handleRestoreWorkspace(workspaceId)}
-                onDeleteWorkspace={handleDeleteWorkspace}
-              />
-            ) : null}
 
             {activeLeftTool === "sessions" ? (
               <section className="zt-session-panel" aria-label="会话管理">
@@ -2060,7 +1749,7 @@ export function AppShell() {
 
           </div>
         ) : null}
-      </aside>
+      </aside> : null}
 
       {sessionFolderDialogOpen ? (
         <SessionGroupDialog
@@ -2073,37 +1762,6 @@ export function AppShell() {
 
       {fileTransferDialogOpen ? (
         <FileTransferDialog language={language} onClose={() => setFileTransferDialogOpen(false)} />
-      ) : null}
-
-      {workspaceEditor ? (
-        <WorkspacePreviewDialog
-          mode={workspaceEditor.mode}
-          workspace={workspaceEditor.workspace}
-          sessions={sessions}
-          onCancel={() => setWorkspaceEditor(null)}
-          onSave={(draft) => void handleWorkspaceEditorSave(draft)}
-        />
-      ) : null}
-
-      {pendingDeleteWorkspace ? (
-        <ZtConfirmDialog
-          title="删除工作区"
-          message={`确认删除工作区“${pendingDeleteWorkspace.name}”？删除后该工作区定义和布局快照将无法恢复。`}
-          confirmLabel="确认删除"
-          danger
-          onCancel={() => setPendingDeleteWorkspace(null)}
-          onConfirm={() => void confirmDeleteWorkspace()}
-        />
-      ) : null}
-
-      {pendingRestoreWorkspace ? (
-        <ZtConfirmDialog
-          title="恢复工作区"
-          message={`恢复工作区“${pendingRestoreWorkspace.name}”将关闭当前工作台中的全部终端，是否继续？`}
-          confirmLabel="确认恢复"
-          onCancel={() => setPendingRestoreWorkspace(null)}
-          onConfirm={() => void confirmRestoreWorkspace()}
-        />
       ) : null}
 
       {textInputDialog ? (
@@ -2204,7 +1862,7 @@ export function AppShell() {
             {terminalError}
           </ZtInlineError>
         ) : null}
-        <WorkspaceStage
+        <TerminalLayoutStage
           onActivatePane={setActivePane}
           onAddPaneTab={handleRequestPaneConnection}
           onDuplicatePaneTab={(paneId, paneTabId) => void handleDuplicatePaneConnection(paneId, paneTabId)}

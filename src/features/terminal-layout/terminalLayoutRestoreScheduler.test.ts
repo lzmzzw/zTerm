@@ -2,12 +2,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  collectWorkspaceRestoreTargets,
-  markWorkspaceRestoreQueued,
-  runWorkspaceRestoreQueue,
-  sortWorkspaceRestoreTargets,
-} from "./workspaceRestoreScheduler";
-import type { WorkspaceDefinition } from "./types";
+  collectTerminalLayoutRestoreTargets,
+  markTerminalLayoutRestoreQueued,
+  runTerminalLayoutRestoreQueue,
+  sortTerminalLayoutRestoreTargets,
+} from "./terminalLayoutRestoreScheduler";
+import type { TerminalLayoutDefinition } from "./types";
 import type { SavedSession } from "../sessions/types";
 import type { RuntimeSessionInfo } from "../terminal/terminalStore";
 
@@ -53,9 +53,9 @@ function session(id: string, name: string, sortOrder: number): SavedSession {
   };
 }
 
-function workspace(): WorkspaceDefinition {
+function terminalLayout(): TerminalLayoutDefinition {
   return {
-    id: "workspace-1",
+    id: "terminalLayout-1",
     name: "运维巡检",
     status: "running",
     active_tab_id: "tab-active",
@@ -128,14 +128,14 @@ function workspace(): WorkspaceDefinition {
         root: {
           kind: "leaf",
           id: "pane-c",
-          title: "Background workspace tab",
+          title: "Background terminalLayout tab",
           runtime_session_id: null,
           saved_session_id: null,
           active_terminal_tab_id: "pane-c-tab-1",
           terminal_tabs: [
             {
               id: "pane-c-tab-1",
-              title: "Background workspace tab",
+              title: "Background terminalLayout tab",
               runtime_session_id: null,
               saved_session_id: null,
               connection_source: "default_local",
@@ -147,9 +147,9 @@ function workspace(): WorkspaceDefinition {
   };
 }
 
-describe("workspaceRestoreScheduler", () => {
-  it("prioritizes the active pane tab before visible leaves, same-pane background tabs, and inactive workspace tabs", () => {
-    const targets = sortWorkspaceRestoreTargets(collectWorkspaceRestoreTargets(workspace()), workspace());
+describe("terminalLayoutRestoreScheduler", () => {
+  it("prioritizes the active pane tab before visible leaves, same-pane background tabs, and inactive terminalLayout tabs", () => {
+    const targets = sortTerminalLayoutRestoreTargets(collectTerminalLayoutRestoreTargets(terminalLayout()), terminalLayout());
 
     expect(targets.map((target) => target.paneTabId)).toEqual([
       "pane-a-tab-2",
@@ -160,14 +160,14 @@ describe("workspaceRestoreScheduler", () => {
   });
 
   it("normalizes duplicate pane ids before collecting restore targets", () => {
-    const duplicated = workspace();
+    const duplicated = terminalLayout();
     const activeRoot = duplicated.tabs[0].root;
     if (activeRoot.kind !== "split" || activeRoot.second.kind !== "leaf") {
-      throw new Error("test workspace shape changed");
+      throw new Error("test terminalLayout shape changed");
     }
     activeRoot.second.id = "pane-a";
 
-    const targets = collectWorkspaceRestoreTargets(duplicated);
+    const targets = collectTerminalLayoutRestoreTargets(duplicated);
     const localTarget = targets.find((target) => target.terminalTab.title === "Visible Local");
 
     expect(targets.filter((target) => target.paneId === "pane-a")).toHaveLength(2);
@@ -176,10 +176,10 @@ describe("workspaceRestoreScheduler", () => {
   });
 
   it("normalizes duplicate pane terminal tab ids before queuing restored connections", () => {
-    const duplicated = workspace();
+    const duplicated = terminalLayout();
     const activeRoot = duplicated.tabs[0].root;
     if (activeRoot.kind !== "split" || activeRoot.first.kind !== "leaf") {
-      throw new Error("test workspace shape changed");
+      throw new Error("test terminalLayout shape changed");
     }
     activeRoot.first.terminal_tabs?.push({
       id: "pane-a-tab-2",
@@ -189,8 +189,8 @@ describe("workspaceRestoreScheduler", () => {
       connection_source: "saved_session",
     });
 
-    const queued = markWorkspaceRestoreQueued(duplicated);
-    const targets = collectWorkspaceRestoreTargets(queued).filter((target) => target.paneId === "pane-a");
+    const queued = markTerminalLayoutRestoreQueued(duplicated);
+    const targets = collectTerminalLayoutRestoreTargets(queued).filter((target) => target.paneId === "pane-a");
 
     expect(new Set(targets.map((target) => target.paneTabId)).size).toBe(targets.length);
     expect(targets.every((target) => target.terminalTab.restore_status === "queued")).toBe(true);
@@ -229,8 +229,8 @@ describe("workspaceRestoreScheduler", () => {
       return runtime(`runtime-${paneId}`, paneId, "local", null);
     });
 
-    const run = runWorkspaceRestoreQueue({
-      workspace: workspace(),
+    const run = runTerminalLayoutRestoreQueue({
+      terminalLayout: terminalLayout(),
       sessions,
       strategy: "visible_first",
       openTerminal,
@@ -238,7 +238,7 @@ describe("workspaceRestoreScheduler", () => {
       openSshContainerTerminal: vi.fn(),
       writeTerminal: vi.fn().mockResolvedValue(undefined),
       closeTerminal: vi.fn().mockResolvedValue(undefined),
-      updatePaneTerminalTab: (_workspaceId, _workspaceTabId, _paneId, paneTabId, patch) => {
+      updatePaneTerminalTab: (_terminalLayoutId, _terminalLayoutTabId, _paneId, paneTabId, patch) => {
         updates.push({ paneTabId, status: patch.restore_status });
       },
     });
@@ -261,11 +261,11 @@ describe("workspaceRestoreScheduler", () => {
     expect(updates).toContainEqual({ paneTabId: "pane-c-tab-1", status: "connected" });
   });
 
-  it("keeps updates bound to the captured workspace, workspace tab, pane, and pane tab ids", async () => {
+  it("keeps updates bound to the captured terminalLayout, terminalLayout tab, pane, and pane tab ids", async () => {
     const updates: string[] = [];
 
-    await runWorkspaceRestoreQueue({
-      workspace: workspace(),
+    await runTerminalLayoutRestoreQueue({
+      terminalLayout: terminalLayout(),
       sessions,
       strategy: "connect_all",
       openTerminal: vi.fn(async (savedSessionId: string, paneId: string) => runtime(`runtime-${savedSessionId}`, paneId, "ssh", savedSessionId)),
@@ -273,21 +273,21 @@ describe("workspaceRestoreScheduler", () => {
       openSshContainerTerminal: vi.fn(),
       writeTerminal: vi.fn().mockResolvedValue(undefined),
       closeTerminal: vi.fn().mockResolvedValue(undefined),
-      updatePaneTerminalTab: (workspaceId, workspaceTabId, paneId, paneTabId, patch) => {
-        updates.push(`${workspaceId}/${workspaceTabId}/${paneId}/${paneTabId}/${patch.restore_status}`);
+      updatePaneTerminalTab: (terminalLayoutId, terminalLayoutTabId, paneId, paneTabId, patch) => {
+        updates.push(`${terminalLayoutId}/${terminalLayoutTabId}/${paneId}/${paneTabId}/${patch.restore_status}`);
       },
     });
 
-    expect(updates).toContain("workspace-1/tab-active/pane-a/pane-a-tab-2/pending");
-    expect(updates).toContain("workspace-1/tab-active/pane-b/pane-b-tab-1/connected");
-    expect(updates).toContain("workspace-1/tab-background/pane-c/pane-c-tab-1/connected");
+    expect(updates).toContain("terminalLayout-1/tab-active/pane-a/pane-a-tab-2/pending");
+    expect(updates).toContain("terminalLayout-1/tab-active/pane-b/pane-b-tab-1/connected");
+    expect(updates).toContain("terminalLayout-1/tab-background/pane-c/pane-c-tab-1/connected");
   });
 
-  it("only writes an explicit startup command after opening a workspace terminal", async () => {
-    const workspaceWithStartupCommand = workspace();
-    const activeRoot = workspaceWithStartupCommand.tabs[0].root;
+  it("only writes an explicit startup command after opening a terminalLayout terminal", async () => {
+    const terminalLayoutWithStartupCommand = terminalLayout();
+    const activeRoot = terminalLayoutWithStartupCommand.tabs[0].root;
     if (activeRoot.kind !== "split" || activeRoot.first.kind !== "leaf") {
-      throw new Error("test workspace shape changed");
+      throw new Error("test terminalLayout shape changed");
     }
     const activeTab = (activeRoot.first.terminal_tabs ?? []).find((tab) => tab.id === "pane-a-tab-2");
     if (!activeTab) {
@@ -301,8 +301,8 @@ describe("workspaceRestoreScheduler", () => {
       runtime(`runtime-${savedSessionId}`, paneId, "ssh", savedSessionId),
     );
 
-    await runWorkspaceRestoreQueue({
-      workspace: workspaceWithStartupCommand,
+    await runTerminalLayoutRestoreQueue({
+      terminalLayout: terminalLayoutWithStartupCommand,
       sessions,
       strategy: "layout_only",
       openTerminal,
@@ -315,8 +315,8 @@ describe("workspaceRestoreScheduler", () => {
 
     expect(writeTerminal).not.toHaveBeenCalled();
 
-    await runWorkspaceRestoreQueue({
-      workspace: workspaceWithStartupCommand,
+    await runTerminalLayoutRestoreQueue({
+      terminalLayout: terminalLayoutWithStartupCommand,
       sessions,
       strategy: "visible_first",
       openTerminal,
@@ -333,10 +333,10 @@ describe("workspaceRestoreScheduler", () => {
   });
 
   it("restores ssh_container tabs with the saved container target instead of host SSH", async () => {
-    const workspaceWithContainer = workspace();
-    const activeRoot = workspaceWithContainer.tabs[0].root;
+    const terminalLayoutWithContainer = terminalLayout();
+    const activeRoot = terminalLayoutWithContainer.tabs[0].root;
     if (activeRoot.kind !== "split" || activeRoot.first.kind !== "leaf") {
-      throw new Error("test workspace shape changed");
+      throw new Error("test terminalLayout shape changed");
     }
     const activeTab = (activeRoot.first.terminal_tabs ?? []).find((tab) => tab.id === "pane-a-tab-2");
     if (!activeTab) {
@@ -352,8 +352,8 @@ describe("workspaceRestoreScheduler", () => {
       runtime(`runtime-container-${savedSessionId}`, paneId, "ssh_container", savedSessionId),
     );
 
-    await runWorkspaceRestoreQueue({
-      workspace: workspaceWithContainer,
+    await runTerminalLayoutRestoreQueue({
+      terminalLayout: terminalLayoutWithContainer,
       sessions,
       strategy: "visible_first",
       openTerminal,
@@ -371,8 +371,8 @@ describe("workspaceRestoreScheduler", () => {
   it("keeps fixed fallback text when restoring a tab fails with a non-Error value", async () => {
     const updates: Array<{ paneTabId: string; status: string | null | undefined; error: string | null | undefined }> = [];
 
-    await runWorkspaceRestoreQueue({
-      workspace: workspace(),
+    await runTerminalLayoutRestoreQueue({
+      terminalLayout: terminalLayout(),
       sessions,
       strategy: "visible_first",
       openTerminal: vi.fn(async (savedSessionId: string, paneId: string) => {
@@ -385,7 +385,7 @@ describe("workspaceRestoreScheduler", () => {
       openSshContainerTerminal: vi.fn(),
       writeTerminal: vi.fn().mockResolvedValue(undefined),
       closeTerminal: vi.fn().mockResolvedValue(undefined),
-      updatePaneTerminalTab: (_workspaceId, _workspaceTabId, _paneId, paneTabId, patch) => {
+      updatePaneTerminalTab: (_terminalLayoutId, _terminalLayoutTabId, _paneId, paneTabId, patch) => {
         updates.push({ paneTabId, status: patch.restore_status, error: patch.restore_error });
       },
     });
@@ -403,8 +403,8 @@ describe("workspaceRestoreScheduler", () => {
     const openTerminal = vi.fn();
     const openDefaultLocalTerminal = vi.fn();
 
-    await runWorkspaceRestoreQueue({
-      workspace: workspace(),
+    await runTerminalLayoutRestoreQueue({
+      terminalLayout: terminalLayout(),
       sessions,
       strategy: "layout_only",
       openTerminal,
@@ -421,10 +421,10 @@ describe("workspaceRestoreScheduler", () => {
   });
 
   it("closes a runtime when its restore target disappears while opening", async () => {
-    const source = workspace();
+    const source = terminalLayout();
     const sourceRoot = source.tabs[0].root;
-    if (sourceRoot.kind !== "split") throw new Error("test workspace shape changed");
-    const singleTargetWorkspace: WorkspaceDefinition = {
+    if (sourceRoot.kind !== "split") throw new Error("test terminalLayout shape changed");
+    const singleTargetTerminalLayout: TerminalLayoutDefinition = {
       ...source,
       tabs: [{
         ...source.tabs[0],
@@ -436,8 +436,8 @@ describe("workspaceRestoreScheduler", () => {
     let targetAvailable = true;
     const closeTerminal = vi.fn().mockResolvedValue(undefined);
 
-    const restoring = runWorkspaceRestoreQueue({
-      workspace: singleTargetWorkspace,
+    const restoring = runTerminalLayoutRestoreQueue({
+      terminalLayout: singleTargetTerminalLayout,
       sessions,
       strategy: "visible_first",
       openTerminal: vi.fn(() => new Promise<RuntimeSessionInfo>((resolve) => {

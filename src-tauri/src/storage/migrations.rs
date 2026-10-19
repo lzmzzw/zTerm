@@ -7,11 +7,17 @@ const SSH_CONTAINER_DEFAULT_MIGRATION_VERSION: i64 = 1;
 
 pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
     upgrade_saved_sessions_schema(connection)?;
-    connection.execute_batch("pragma foreign_keys = on;")?;
+    connection.execute_batch("pragma foreign_keys = on; pragma secure_delete = on;")?;
 
     let transaction = connection.transaction()?;
     transaction.execute_batch(
         "
+        create table if not exists terminal_layout (
+            id integer primary key check (id = 1),
+            snapshot_json text not null,
+            updated_at_ms integer not null
+        );
+
         create table if not exists app_settings (
             id integer primary key check (id = 1),
             settings_json text not null,
@@ -67,34 +73,6 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
             rdp_options_json text null,
             local_options_json text null,
             ftp_options_json text null
-        );
-
-        create table if not exists workspaces (
-            id text primary key,
-            name text not null check (length(trim(name)) > 0),
-            active_tab_id text not null,
-            status text not null default 'closed' check (status in ('running', 'closed')),
-            sort_order integer not null default 0,
-            created_at_ms integer not null,
-            updated_at_ms integer not null
-        );
-
-        insert or ignore into workspaces (
-            id, name, active_tab_id, status, sort_order, created_at_ms, updated_at_ms
-        ) values (
-            'default-workspace', '默认工作区', 'tab-1', 'closed', 0, 0, 0
-        );
-
-        create table if not exists workspace_tabs (
-            id text not null,
-            workspace_id text not null references workspaces(id) on delete cascade,
-            title text not null check (length(trim(title)) > 0),
-            active_pane_id text not null,
-            root_json text not null,
-            sort_order integer not null default 0,
-            created_at_ms integer not null,
-            updated_at_ms integer not null,
-            primary key (workspace_id, id)
         );
 
         create table if not exists command_history (
@@ -210,9 +188,6 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
         create index if not exists idx_terminal_profiles_default on terminal_profiles(is_default desc, name);
         create index if not exists idx_saved_sessions_group_sort on saved_sessions(group_id, sort_order);
         create index if not exists idx_saved_sessions_type on saved_sessions(type);
-        create index if not exists idx_workspaces_sort on workspaces(sort_order, updated_at_ms desc);
-        create index if not exists idx_workspace_tabs_sort on workspace_tabs(sort_order);
-        create index if not exists idx_workspace_tabs_workspace_sort on workspace_tabs(workspace_id, sort_order);
         create index if not exists idx_command_history_runtime_time on command_history(runtime_session_id, started_at_ms desc);
         create index if not exists idx_command_history_scope_time on command_history(scope_kind, scope_id, started_at_ms desc);
         create index if not exists idx_transfer_tasks_session_status on transfer_tasks(saved_session_id, status);
@@ -229,7 +204,7 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
     ensure_ai_tool_pending_columns(&transaction)?;
     purge_legacy_model_data(&transaction)?;
     enable_existing_ssh_container_entries(&transaction)?;
-    reset_workspace_runtime_status(&transaction)?;
+    remove_workspace_data(&transaction)?;
     drop_legacy_agent_runs(&transaction)?;
     drop_source_reuse_records(&transaction)?;
     transaction.commit()?;
@@ -333,7 +308,7 @@ fn upgrade_saved_sessions_schema(connection: &mut Connection) -> AppResult<()> {
         transaction.commit()?;
         Ok(())
     })();
-    connection.execute_batch("pragma foreign_keys = on;")?;
+    connection.execute_batch("pragma foreign_keys = on; pragma secure_delete = on;")?;
     migration_result
 }
 
@@ -568,10 +543,31 @@ fn sqlite_column_exists(
     Ok(false)
 }
 
-fn reset_workspace_runtime_status(transaction: &rusqlite::Transaction<'_>) -> AppResult<()> {
-    transaction.execute(
-        "update workspaces set status = 'closed' where status = 'running'",
-        [],
+fn remove_workspace_data(transaction: &rusqlite::Transaction<'_>) -> AppResult<()> {
+    transaction.execute_batch(
+        "drop table if exists workspace_tabs;
+         drop table if exists workspaces;
+         update app_settings
+         set settings_json = json_remove(settings_json, '$.workspace_restore_strategy')
+         where json_valid(settings_json) and json_type(settings_json) = 'object'
+           and json_type(settings_json, '$.workspace_restore_strategy') is not null;
+         update app_settings set settings_json = json_set(settings_json, '$.shortcuts',
+           json(coalesce((select json_group_array(json(value)) from json_each(settings_json, '$.shortcuts')
+             where coalesce(json_extract(value, '$.action_id'), '') not glob 'workspace.*'), '[]')))
+         where json_valid(settings_json) and json_type(settings_json, '$.shortcuts') = 'array'
+           and exists(select 1 from json_each(settings_json, '$.shortcuts')
+             where json_extract(value, '$.action_id') glob 'workspace.*');
+         delete from ai_tool_audits where tool_id glob 'workspace.*'
+           or (tool_id in ('zterm.context', 'zterm.search')
+             and (result_summary like '%工作区%'
+               or (json_valid(affected_domains_json) and exists(
+                 select 1 from json_each(affected_domains_json) where value = 'workspace'))));
+         delete from ai_tool_pending where tool_id glob 'workspace.*';
+         update ai_tool_audits set affected_domains_json =
+           coalesce((select json_group_array(value) from json_each(affected_domains_json)
+             where value <> 'workspace'), '[]')
+         where json_valid(affected_domains_json)
+           and exists(select 1 from json_each(affected_domains_json) where value = 'workspace');",
     )?;
     Ok(())
 }

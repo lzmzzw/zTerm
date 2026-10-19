@@ -31,7 +31,7 @@ describe("syncInputStore", () => {
     const candidates = collectSyncChannelCandidates(
       [
         {
-          id: "workspace-tab",
+          id: "terminalLayout-tab",
           title: "Ops",
           active_pane_id: "pane-1",
           sort_order: 0,

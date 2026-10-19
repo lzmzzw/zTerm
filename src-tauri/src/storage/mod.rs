@@ -7,6 +7,6 @@ pub mod migrations;
 pub mod sessions;
 pub mod settings;
 pub mod sqlite;
+pub mod terminal_layout;
 pub mod terminal_profiles;
 pub mod transfers;
-pub mod workspace;

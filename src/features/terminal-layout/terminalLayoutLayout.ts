@@ -1,6 +1,6 @@
 // Author: Liz
 import type { PaneNode, PaneSplitDirection, PaneTerminalTab } from "./types";
-import { MIN_PANE_FRACTION } from "./workspaceConstants";
+import { MIN_PANE_FRACTION } from "./terminalLayoutConstants";
 
 type LeafPane = Extract<PaneNode, { kind: "leaf" }>;
 
@@ -58,7 +58,7 @@ export function isVisibleTerminalTab(terminalTab: PaneTerminalTab): boolean {
 
 /**
  * The default split is 50/50.  Permit it only when both resulting panes retain
- * at least a quarter of the full workspace along the split axis.
+ * at least a quarter of the full terminalLayout along the split axis.
  */
 export function canSplitPane(root: PaneNode, targetPaneId: string, direction: PaneSplitDirection): boolean {
   const panes = collectPaneGeometry(root);
@@ -94,13 +94,13 @@ function collectPaneGeometry(root: PaneNode): PaneGeometry[] {
   return panes;
 }
 
-export function normalizeWorkspaceTabsPaneIds<T extends { active_pane_id: string; root: PaneNode }>(
+export function normalizeTerminalLayoutTabsPaneIds<T extends { active_pane_id: string; root: PaneNode }>(
   tabs: T[],
 ): T[] {
-  return tabs.map((tab) => normalizeWorkspaceTabPaneIds(tab));
+  return tabs.map((tab) => normalizeTerminalLayoutTabPaneIds(tab));
 }
 
-function normalizeWorkspaceTabPaneIds<T extends { active_pane_id: string; root: PaneNode }>(tab: T): T {
+function normalizeTerminalLayoutTabPaneIds<T extends { active_pane_id: string; root: PaneNode }>(tab: T): T {
   const reservedPaneIds = new Set<string>();
   collectPaneIds(tab.root, reservedPaneIds);
   const seenPaneIds = new Set<string>();

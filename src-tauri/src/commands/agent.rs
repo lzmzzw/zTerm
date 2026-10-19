@@ -123,13 +123,13 @@ pub async fn agent_codex_open(
             target_label: target_label.clone(),
         })?;
     let session_root = agent_session_root(&agent_session_id)?;
-    let prepare_workspace = fs::create_dir_all(&session_root).and_then(|_| {
+    let prepare_session_dir = fs::create_dir_all(&session_root).and_then(|_| {
         fs::write(
             session_root.join("AGENTS.md"),
             agent_instructions(&target_label, saved_session_id.as_deref(), approval_mode),
         )
     });
-    if let Err(error) = prepare_workspace {
+    if let Err(error) = prepare_session_dir {
         cleanup_agent_artifacts(&state, &agent_session_id, &session_root);
         return Err(error.into());
     }
@@ -764,9 +764,9 @@ mod tests {
     #[test]
     fn sidebar_uses_self_contained_policy_without_external_skill_dependencies() {
         let policy = sidebar_instructions();
-        let workspace = agent_instructions("prod", Some("ssh-1"), AiApprovalMode::Safe);
+        let instructions = agent_instructions("prod", Some("ssh-1"), AiApprovalMode::Safe);
         let (_, args) = codex_launch_command("http://127.0.0.1:9419/mcp", &[]);
-        assert!(workspace.contains(&policy));
+        assert!(instructions.contains(&policy));
         assert!(args.contains(&format!(
             "developer_instructions={}",
             super::toml_string(&policy)

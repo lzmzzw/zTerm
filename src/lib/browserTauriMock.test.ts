@@ -15,13 +15,8 @@ describe("browser Tauri development mock", () => {
     await expect(invokeBrowserTauri("settings_get")).resolves.toMatchObject({
       language: "zhCN",
       theme: "dark",
-      workspace_restore_strategy: "visible_first",
     });
     await expect(invokeBrowserTauri("sessions_list")).resolves.toEqual({ groups: [], sessions: [] });
-    await expect(invokeBrowserTauri("workspace_get", { workspaceId: "default" })).resolves.toMatchObject({
-      id: "default",
-      tabs: [],
-    });
   });
 
   it("fails visibly when a browser-only flow reaches an unsupported native command", async () => {

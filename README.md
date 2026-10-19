@@ -2,7 +2,7 @@
 
 [中文](README.zh-CN.md)
 
-zTerm is a Tauri desktop terminal workspace for SSH, SFTP, command history,
+zTerm is a Tauri desktop terminal application for SSH, SFTP, command history,
 server monitoring, and Codex-assisted operations. It is designed for a dense,
 keyboard-friendly workstation layout: sessions on the left, split terminal
 panes in the center, and files/history/monitor/Codex tools on the right.
@@ -13,7 +13,7 @@ panes in the center, and files/history/monitor/Codex tools on the right.
 
 - Save, search, group, and open SSH/RDP/local terminal sessions plus FTP/SFTP file-transfer sessions.
 - Run SSH sessions through the system OpenSSH client and render them with xterm.
-- Use split terminal panes with tabs and workspace restore.
+- Use split terminal panes with tabs. The current unnamed layout is saved automatically and restored on the next launch.
 - Browse SFTP directories, create folders, upload, download, rename, delete, and retry transfers.
 - Capture command history by session or local profile, search it, copy commands, and send commands back to the active terminal.
 - Store connection credentials in the operating system keyring instead of plain SQLite rows.
@@ -24,7 +24,7 @@ panes in the center, and files/history/monitor/Codex tools on the right.
 - Use Full Automation for trusted personal environments: writes, deletes, and critical commands run without approval and remain audited; only operations that require local secret input still wait for the user.
 - Monitor SSH server CPU, memory, disk, load, uptime, and network traffic snapshots.
 
-RDP sessions open in the Windows system Remote Desktop client. The workspace
+RDP sessions open in the Windows system Remote Desktop client. The app
 keeps the session tab for navigation but does not embed or render the remote
 desktop. Model management and built-in model invocation are intentionally
 outside zTerm; the Agent sidebar is implemented entirely by the locally
@@ -32,7 +32,7 @@ authenticated Codex CLI.
 
 ## Screenshots
 
-![Split terminal workspace](assets/screenshots/split-terminals.png)
+![Split terminals](assets/screenshots/split-terminals.png)
 
 ![File transfer](assets/screenshots/file-transfer.png)
 

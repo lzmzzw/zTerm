@@ -6,7 +6,7 @@ export interface PaneTerminalTab {
   title: string;
   runtime_session_id: string | null;
   saved_session_id: string | null;
-  connection_source?: "saved_session" | "ssh_container" | "default_local" | "external_ssh" | "missing" | null;
+  connection_source?: "saved_session" | "ssh_container" | "default_local" | "empty" | "external_ssh" | "missing" | null;
   container_target?: {
     id: string;
     name?: string | null;
@@ -15,6 +15,7 @@ export interface PaneTerminalTab {
   startup_command?: string | null;
   restore_status?: "queued" | "pending" | "connected" | "failed" | null;
   restore_error?: string | null;
+  restore_token?: string | null;
   visual_snapshot?: PaneTerminalVisualSnapshot | null;
 }
 
@@ -25,7 +26,7 @@ interface PaneTerminalVisualSnapshot {
   runtime_session_id?: string | null;
 }
 
-export interface WorkspaceTab {
+export interface TerminalLayoutTab {
   id: string;
   title: string;
   active_pane_id: string;
@@ -54,39 +55,28 @@ export type PaneNode =
       second: PaneNode;
     };
 
-type WorkspaceStatus = "running" | "closed";
+type TerminalLayoutStatus = "running" | "closed";
 
-export interface WorkspaceSummary {
+export interface TerminalLayoutDefinition {
   id: string;
   name: string;
-  status: WorkspaceStatus;
+  status: TerminalLayoutStatus;
   active_tab_id: string;
-  tab_count: number;
+  tabs: TerminalLayoutTab[];
   sort_order: number;
   created_at_ms: number;
   updated_at_ms: number;
 }
 
-export interface WorkspaceDefinition {
-  id: string;
-  name: string;
-  status: WorkspaceStatus;
-  active_tab_id: string;
-  tabs: WorkspaceTab[];
-  sort_order: number;
-  created_at_ms: number;
-  updated_at_ms: number;
-}
-
-export interface WorkspaceDefinitionDraft {
+export interface TerminalLayoutDefinitionDraft {
   id?: string | null;
   name: string;
-  status: WorkspaceStatus;
+  status: TerminalLayoutStatus;
   active_tab_id: string;
-  tabs: Array<Omit<WorkspaceTab, "created_at_ms" | "updated_at_ms">>;
+  tabs: Array<Omit<TerminalLayoutTab, "created_at_ms" | "updated_at_ms">>;
   sort_order: number;
 }
 
-export interface WorkspaceRuntime extends WorkspaceDefinition {
+export interface TerminalLayoutRuntime extends TerminalLayoutDefinition {
   activeTabId: string;
 }

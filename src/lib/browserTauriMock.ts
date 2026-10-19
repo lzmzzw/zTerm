@@ -15,7 +15,6 @@ const DEFAULT_SETTINGS = {
   ui_font_size: 13,
   terminal_font_size: 13,
   default_right_tool: null,
-  workspace_restore_strategy: "visible_first",
   mcp: { enabled: false, port: null },
   shortcuts: [],
 };
@@ -40,10 +39,9 @@ const startupHandlers: Record<string, (args: BrowserMockArgs) => unknown> = {
     approval_mode: "safe",
     updated_at_ms: 0,
   }),
+  terminal_layout_get: () => null,
+  terminal_layout_save: () => null,
   sessions_list: () => ({ groups: [], sessions: [] }),
-  workspace_list: () => [],
-  workspace_get: (args) => emptyWorkspaceDefinition(stringArg(args, "workspaceId") || "default"),
-  workspace_save_default_snapshot: (args) => workspaceFromDraft(args?.draft),
   external_launch_take_pending: () => [],
   transfer_list: () => [],
   file_transfer_list: () => [],
@@ -95,27 +93,4 @@ function markBrowserMockRuntime() {
 function stringArg(args: BrowserMockArgs, key: string) {
   const value = args?.[key];
   return typeof value === "string" ? value : "";
-}
-
-function emptyWorkspaceDefinition(id: string) {
-  return {
-    id,
-    name: id === "default" ? "默认工作区" : id,
-    status: "running",
-    active_tab_id: "",
-    tabs: [],
-    sort_order: 0,
-    created_at_ms: 0,
-    updated_at_ms: 0,
-  };
-}
-
-function workspaceFromDraft(value: unknown) {
-  if (!value || typeof value !== "object") return emptyWorkspaceDefinition("default");
-  return {
-    ...value,
-    id: "id" in value && typeof value.id === "string" ? value.id : "default",
-    created_at_ms: 0,
-    updated_at_ms: 0,
-  };
 }

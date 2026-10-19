@@ -49,7 +49,7 @@ export function LocalSessionForm({ section, options, terminalProfiles, onOptions
               }
               placeholder="留空使用 zTerm 启动时的默认目录"
             />
-            <small>独立打开连接时使用，工作区可为单个标签覆盖此目录。</small>
+            <small>打开连接时使用的默认目录。</small>
           </label>
         </>
       ) : null}

@@ -20,15 +20,15 @@ describe("useAppTextInputDialog", () => {
 
     act(() => {
       result = api.current.requestTextInput({
-        title: "新建工作区",
-        label: "工作区名称",
+        title: "新建连接组",
+        label: "连接组名称",
         initialValue: "默认名称",
-        requiredMessage: "请填写工作区名称",
+        requiredMessage: "请填写连接组名称",
       });
     });
 
     expect(rootElement.dataset.id).toBe("1");
-    expect(rootElement.dataset.title).toBe("新建工作区");
+    expect(rootElement.dataset.title).toBe("新建连接组");
     expect(rootElement.dataset.initialValue).toBe("默认名称");
 
     act(() => {

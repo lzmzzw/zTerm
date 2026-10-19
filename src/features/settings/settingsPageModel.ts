@@ -5,7 +5,6 @@ import type {
   AppSettings,
   AppTheme,
   ShortcutBinding,
-  WorkspaceRestoreStrategy,
 } from "./settingsStore";
 
 export type SettingsTab = "general" | "shortcuts" | "terminal" | "mcp" | "about";
@@ -16,7 +15,6 @@ export const fallbackSettings: AppSettings = {
   ui_font_size: 13,
   terminal_font_size: 13,
   default_right_tool: null,
-  workspace_restore_strategy: "visible_first",
   mcp: { enabled: false, port: null },
   shortcuts: [],
 };
@@ -34,14 +32,6 @@ export const themeOptions: Array<{ value: AppTheme; label: string }> = [
   { value: "system", label: "System" },
 ];
 
-export const workspaceRestoreStrategyOptions: Array<{
-  value: WorkspaceRestoreStrategy;
-  labelKey: I18nKey;
-}> = [
-  { value: "visible_first", labelKey: "restoreVisibleFirst" },
-  { value: "connect_all", labelKey: "restoreConnectAll" },
-  { value: "layout_only", labelKey: "restoreLayoutOnly" },
-];
 
 export function settingsShortcutPatchFor(
   actionId: string,

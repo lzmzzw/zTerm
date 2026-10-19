@@ -1,8 +1,8 @@
 // Author: Liz
 import { create } from "zustand";
 
-import { getLeafTerminalTabs } from "../workspace/workspaceLayout";
-import type { PaneNode, WorkspaceTab } from "../workspace/types";
+import { getLeafTerminalTabs } from "../terminal-layout/terminalLayoutLayout";
+import type { PaneNode, TerminalLayoutTab } from "../terminal-layout/types";
 
 export type TerminalInputSource = "user" | "terminal_response";
 
@@ -66,13 +66,13 @@ export const useSyncInputStore = create<SyncInputState>((set) => ({
 }));
 
 export function collectSyncChannelCandidates(
-  tabs: WorkspaceTab[],
+  tabs: TerminalLayoutTab[],
   runtimes: Record<string, RuntimeCandidate>,
   resolveHost: (savedSessionId: string | null, runtime: RuntimeCandidate) => string,
 ): SyncChannelMember[] {
   const candidates: SyncChannelMember[] = [];
-  for (const workspaceTab of tabs) {
-    visitLeaves(workspaceTab.root, (leaf) => {
+  for (const terminalLayoutTab of tabs) {
+    visitLeaves(terminalLayoutTab.root, (leaf) => {
       for (const terminalTab of getLeafTerminalTabs(leaf)) {
         const runtimeSessionId = terminalTab.runtime_session_id;
         if (!runtimeSessionId) continue;

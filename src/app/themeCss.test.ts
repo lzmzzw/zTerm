@@ -68,8 +68,8 @@ describe("global dark theme colors", () => {
     );
     expect(ruleBodiesForSelector(".zt-titlebar")).toContain("height: var(--zt-titlebar-height)");
     expect(ruleBodiesForSelector(".zt-titlebar-logo-slot")).toContain("width: var(--zt-rail-width)");
-    expect(ruleBodiesForSelector(".zt-left-rail button")).toContain("width: var(--zt-rail-button-size)");
-    expect(ruleBodiesForSelector(".zt-left-rail button")).toContain("height: var(--zt-rail-button-size)");
+    expect(ruleBodiesForSelector(".zt-titlebar-navigation button")).toContain("width: 36px");
+    expect(ruleBodiesForSelector(".zt-titlebar-navigation button")).toContain("height: 36px");
     expect(ruleBodiesForSelector(".zt-tool-rail button")).toContain("width: var(--zt-rail-button-size)");
     expect(ruleBodiesForSelector(".zt-tool-rail button")).toContain("height: var(--zt-rail-button-size)");
 
@@ -162,18 +162,18 @@ describe("global dark theme colors", () => {
     expect(ruleBodiesForSelector(".zt-settings-action-bar")).toContain("justify-self: center");
   });
 
-  it("keeps the left rail visible and preserves left panel content width", () => {
+  it("removes the collapsed left column and preserves the expanded session panel", () => {
     expect(ruleBodiesForSelector(".zt-workbench")).toContain(
       "grid-template-columns: var(--zt-left-sidebar-width) minmax(420px, 1fr) var(--zt-right-sidebar-width)",
     );
     expect(ruleBodiesForSelector(".zt-workbench-left-collapsed")).toContain(
-      "grid-template-columns: var(--zt-rail-width) minmax(420px, 1fr) var(--zt-right-sidebar-width)",
+      "grid-template-columns: 0 minmax(420px, 1fr) var(--zt-right-sidebar-width)",
     );
     expect(ruleBodiesForSelector(".zt-workbench-right-collapsed")).toContain(
       "grid-template-columns: var(--zt-left-sidebar-width) minmax(420px, 1fr) var(--zt-rail-width)",
     );
     expect(ruleBodiesForSelector(".zt-workbench-left-collapsed.zt-workbench-right-collapsed")).toContain(
-      "grid-template-columns: var(--zt-rail-width) minmax(420px, 1fr) var(--zt-rail-width)",
+      "grid-template-columns: 0 minmax(420px, 1fr) var(--zt-rail-width)",
     );
   });
 
@@ -210,13 +210,6 @@ describe("global dark theme colors", () => {
     expect(css).not.toContain("box-shadow: inset 2px 0 0 var(--zt-accent)");
     expect(css).not.toContain("box-shadow: inset 0 -2px 0 var(--zt-accent)");
     expect(css).not.toContain("box-shadow: inset 0 1px 0 var(--zt-accent)");
-    expect(ruleBodiesForSelector(".zt-workspace-layout-pane:hover")).toContain(
-      "border-color: var(--zt-border-strong)",
-    );
-    const selectedPane = ruleBodiesForSelector(".zt-workspace-layout-pane.selected");
-    expect(selectedPane).toContain("border-color: var(--zt-pane-active-border)");
-    expect(selectedPane).toContain("box-shadow: inset 0 0 0 1px var(--zt-pane-active-outline)");
-    expect(selectedPane).not.toContain("var(--zt-accent)");
   });
 
   it("uses one high-contrast non-blue focus-visible ring across interactive elements", () => {
@@ -248,7 +241,6 @@ describe("global dark theme colors", () => {
 
   it("keeps expanded left tool panels full height so blank areas receive context menu events", () => {
     expect(ruleBodiesForSelector(".zt-left-tool-panel")).toContain("height: 100%");
-    expect(ruleBodiesForSelector(".zt-workspace-panel")).toContain("height: 100%");
   });
 
   it("uses one compact action style for panel headers and contextual toolbars", () => {
@@ -369,9 +361,6 @@ describe("global dark theme colors", () => {
     expect(ruleBodiesForSelector(".zt-transient-tunnel-dialog .zt-transient-tunnel-fields")).toContain(
       "padding: 16px var(--zt-dialog-inline-inset)",
     );
-    expect(ruleBodiesForSelector(".zt-workspace-preview-body")).toContain(
-      "padding: 14px var(--zt-dialog-inline-inset)",
-    );
     expect(ruleBodiesForSelector(".zt-session-confirm-body")).toContain(
       "padding: 18px var(--zt-dialog-inline-inset)",
     );
@@ -401,7 +390,6 @@ describe("global dark theme colors", () => {
       ".zt-select-list",
       ".zt-sidebar",
       ".zt-session-tree",
-      ".zt-workspace-list",
       ".zt-file-list",
       ".zt-transfer-list",
       ".zt-history-list",

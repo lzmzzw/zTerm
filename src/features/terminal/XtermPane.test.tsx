@@ -999,17 +999,17 @@ describe("XtermPane", () => {
 
   it("does not mark a live chunk as processed before delayed replay data writes", () => {
     const view = render(
-      <XtermPane data="" liveData={"PS C:\\workspace> "} liveSerial={1} replayKey={0} streamId="runtime-1" />,
+      <XtermPane data="" liveData={"PS C:\\terminalLayout> "} liveSerial={1} replayKey={0} streamId="runtime-1" />,
     );
     const terminal = terminalMock.instances[0];
 
     expect(terminal.write).toHaveBeenCalledTimes(1);
-    expect(terminal.write.mock.calls[0][0]).toBe("PS C:\\workspace> ");
+    expect(terminal.write.mock.calls[0][0]).toBe("PS C:\\terminalLayout> ");
 
     view.rerender(
       <XtermPane
-        data={"PS C:\\workspace> "}
-        liveData={"PS C:\\workspace> "}
+        data={"PS C:\\terminalLayout> "}
+        liveData={"PS C:\\terminalLayout> "}
         liveSerial={1}
         replayKey={1}
         streamId="runtime-1"

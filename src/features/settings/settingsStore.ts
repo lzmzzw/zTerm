@@ -7,7 +7,6 @@ import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 type CredentialKind = "ssh_password" | "ssh_key_passphrase" | "rdp_password";
 export type AppLanguage = "zhCN" | "enUS";
 export type AppTheme = "dark" | "light" | "system";
-export type WorkspaceRestoreStrategy = "visible_first" | "connect_all" | "layout_only";
 export type SettingsSection = "general" | "shortcuts";
 type ShortcutScope = "app";
 
@@ -55,7 +54,6 @@ export interface AppSettings {
   ui_font_size: number;
   terminal_font_size: number;
   default_right_tool: string | null;
-  workspace_restore_strategy: WorkspaceRestoreStrategy;
   mcp: McpSettings;
   shortcuts: ShortcutBinding[];
 }

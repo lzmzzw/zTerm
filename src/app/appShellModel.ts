@@ -2,21 +2,16 @@
 import type { TransferConflict, TransferConflictPolicy } from "../features/files/fileTypes";
 import type { SavedSession, SavedSessionDraft, SshOptions, SshTunnel } from "../features/sessions/types";
 import type { SshContainerInfo } from "../features/terminal/sshContainerApi";
-import type { WorkspaceDefinition } from "../features/workspace/types";
 import type { RightTool } from "./rightTools";
 
-export type LeftTool = "workspace" | "sessions";
+export type LeftTool = "sessions";
 
 export type ConnectionDialogTarget = {
-  workspaceId: string;
-  workspaceTabId: string;
+  terminalLayoutId: string;
+  terminalLayoutTabId: string;
   paneId: string;
 };
 
-export type WorkspaceEditorState = {
-  mode: "create" | "edit";
-  workspace: WorkspaceDefinition;
-};
 
 export type TransferConflictDialogState = {
   conflicts: TransferConflict[];
@@ -80,9 +75,6 @@ export const EMPTY_HISTORY_PANEL_STATE = {
   historyGroupError: null,
 };
 
-export const EMPTY_WORKSPACE_SIDEBAR_STATE = {
-  workspaceDefinitions: {} as Record<string, WorkspaceDefinition>,
-};
 
 export type ActiveSshTunnelTarget = {
   sessionId: string;

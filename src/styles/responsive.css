@@ -28,11 +28,11 @@
 
   .zt-workbench-left-collapsed {
     grid-template-columns:
-      var(--zt-rail-width) minmax(0, 1fr) minmax(var(--zt-rail-width), 32vw);
+      0 minmax(0, 1fr) minmax(var(--zt-rail-width), 32vw);
   }
 
   .zt-workbench-left-collapsed.zt-workbench-right-collapsed {
-    grid-template-columns: var(--zt-rail-width) minmax(0, 1fr) var(--zt-rail-width);
+    grid-template-columns: 0 minmax(0, 1fr) var(--zt-rail-width);
   }
 
   .zt-workbench-settings {
@@ -75,25 +75,6 @@
     width: min(920px, calc(100vw - 32px));
     height: min(720px, calc(100vh - 48px));
     grid-template-rows: 52px minmax(0, 1fr) auto auto;
-  }
-
-  .zt-workspace-preview-dialog {
-    width: min(var(--zt-dialog-width-large), calc(100vw - 32px));
-    height: min(var(--zt-dialog-height-large), calc(100vh - 48px));
-  }
-
-  .zt-workspace-preview-layout-editor {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(260px, 1fr) auto;
-  }
-
-  .zt-workspace-preview-canvas > .zt-workspace-layout-preview {
-    min-width: 420px;
-    min-height: 300px;
-  }
-
-  .zt-workspace-preview-inspector {
-    max-height: 240px;
   }
 
   .zt-session-editor-dialog form {

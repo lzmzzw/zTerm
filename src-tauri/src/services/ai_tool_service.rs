@@ -44,10 +44,6 @@ use crate::{
         },
         terminal::{RuntimeSessionInfo, RuntimeSessionKind},
         terminal_profile::TerminalProfileDraft,
-        workspace::{
-            PaneNode, WorkspaceDefinitionDraft, WorkspaceStatus, WorkspaceTabDraft,
-            WorkspaceTerminalTab,
-        },
     },
     security::redaction::redact_sensitive,
     storage::{
@@ -64,7 +60,6 @@ use crate::{
         settings::get_app_settings,
         sqlite::SqliteStore,
         transfers::list_transfer_tasks,
-        workspace::{get_workspace, list_workspaces, remove_workspace, save_workspace},
     },
     time::now_ms,
     validation::required_text,
@@ -857,7 +852,7 @@ impl AiToolService {
             "terminal.close" => {
                 self.emit_frontend_action(tool_id, arguments, affected_domains_for_tool(tool_id))
             }
-            "terminal.open" | "terminal.split" | "terminal.focus" | "workspace.open_tool" => {
+            "terminal.open" | "terminal.split" | "terminal.focus" | "tool.open" => {
                 self.emit_frontend_action(tool_id, arguments, affected_domains_for_tool(tool_id))
             }
             "history.search" => {
@@ -940,14 +935,14 @@ impl AiToolService {
                 let session = save_session(store, draft)?;
                 Ok(structured_execution_result(
                     format!("会话已保存：{}。", session.name),
-                    ["sessions", "workspace"],
+                    ["sessions"],
                     json!({ "session": sanitized_session_value(&session) }),
                 ))
             }
             "sessions.delete" => {
                 let id = string_arg(arguments, "id")?;
                 delete_session(store, &id)?;
-                Ok(execution_result("会话已删除。", ["sessions", "workspace"]))
+                Ok(execution_result("会话已删除。", ["sessions"]))
             }
             "sessions.open" => {
                 self.emit_frontend_action(tool_id, arguments, affected_domains_for_tool(tool_id))
@@ -967,41 +962,7 @@ impl AiToolService {
                     ["settings"],
                 ))
             }
-            "workspace.list" => {
-                let workspaces = list_workspaces(store)?;
-                Ok(execution_result(
-                    format!("工作区已读取：{} 个。", workspaces.len()),
-                    ["workspace"],
-                ))
-            }
-            "workspace.get" => {
-                let workspace_id = string_arg(arguments, "workspace_id")?;
-                let workspace = get_workspace(store, &workspace_id)?;
-                Ok(execution_result(
-                    format!(
-                        "工作区已读取：{}，{} 个标签。",
-                        workspace.name,
-                        workspace.tabs.len()
-                    ),
-                    ["workspace"],
-                ))
-            }
-            "workspace.save" => {
-                let draft = workspace_draft_arg(arguments)?;
-                let workspace = save_workspace(store, draft)?;
-                Ok(execution_result(
-                    format!("工作区已保存：{}。", workspace.name),
-                    ["workspace"],
-                ))
-            }
-            "workspace.delete" => {
-                let workspace_id = string_arg(arguments, "workspace_id")?;
-                remove_workspace(store, &workspace_id)?;
-                Ok(execution_result("工作区定义已删除。", ["workspace"]))
-            }
-            "workspace.restore" => {
-                self.emit_frontend_action(tool_id, arguments, vec!["workspace".to_string()])
-            }
+
             "terminal_profile.list" => {
                 let profiles =
                     crate::services::terminal_profile_service::list_or_detect_terminal_profiles(
@@ -1627,17 +1588,15 @@ impl AiToolService {
 
     fn zterm_context(&self, store: &SqliteStore) -> AppResult<AiToolExecutionResult> {
         let sessions = list_sessions(store)?;
-        let workspaces = list_workspaces(store)?;
         let terminals = self.writer.list_terminals()?;
         Ok(execution_result(
             format!(
-                "zTerm 上下文：{} 个分组，{} 个会话，{} 个工作区，{} 个运行终端。",
+                "zTerm 上下文：{} 个分组，{} 个会话，{} 个运行终端。",
                 sessions.groups.len(),
                 sessions.sessions.len(),
-                workspaces.len(),
                 terminals.len()
             ),
-            ["sessions", "workspace", "terminal"],
+            ["sessions", "terminal"],
         ))
     }
 
@@ -1648,7 +1607,6 @@ impl AiToolService {
     ) -> AppResult<AiToolExecutionResult> {
         let query = string_arg(arguments, "query")?.to_ascii_lowercase();
         let sessions = list_sessions(store)?;
-        let workspaces = list_workspaces(store)?;
         let session_matches = sessions
             .sessions
             .iter()
@@ -1658,19 +1616,9 @@ impl AiToolService {
                     || session.id.to_ascii_lowercase().contains(&query)
             })
             .count();
-        let workspace_matches = workspaces
-            .iter()
-            .filter(|workspace| {
-                workspace.name.to_ascii_lowercase().contains(&query)
-                    || workspace.id.to_ascii_lowercase().contains(&query)
-            })
-            .count();
         Ok(execution_result(
-            format!(
-                "搜索完成：会话 {} 个，工作区 {} 个。",
-                session_matches, workspace_matches
-            ),
-            ["sessions", "workspace"],
+            format!("搜索完成：会话 {} 个。", session_matches),
+            ["sessions"],
         ))
     }
 }
@@ -1730,12 +1678,6 @@ fn validate_arguments(tool_id: &str, arguments: &Value) -> AppResult<()> {
         }
         "sessions.save" | "sessions.test" => {
             let _ = object_arg::<SavedSessionDraft>(arguments, "draft")?;
-        }
-        "workspace.get" | "workspace.delete" | "workspace.restore" => {
-            let _ = string_arg(arguments, "workspace_id")?;
-        }
-        "workspace.save" => {
-            let _ = workspace_draft_arg(arguments)?;
         }
         "terminal_profile.set_default" => {
             let _ = object_arg::<TerminalProfileDraft>(arguments, "draft")?;
@@ -1873,7 +1815,6 @@ fn force_confirmation_tool(tool_id: &str) -> bool {
         || matches!(
             tool_id,
             "session_groups.delete"
-                | "workspace.delete"
                 | "history.clear"
                 | "sftp.delete"
                 | "transfer.cancel"
@@ -2330,7 +2271,7 @@ fn affected_domains_for_tool(tool_id: &str) -> Vec<String> {
     let domains: &[&str] = match tool_id {
         "terminal.list" | "terminal.read" | "terminal.write" | "terminal.open"
         | "terminal.close" | "terminal.split" | "terminal.focus" | "ssh.execute" => &["terminal"],
-        "workspace.open_tool" => &["workspace"],
+        "tool.open" => &["tools"],
         "settings.get" => &["settings"],
         "sessions.list"
         | "sessions.open"
@@ -2342,12 +2283,11 @@ fn affected_domains_for_tool(tool_id: &str) -> Vec<String> {
         tool if tool.starts_with("ssh.") && tool != "ssh.execute" => &["files", "transfer"],
         tool if tool.starts_with("sftp.") || tool.starts_with("ftp.") => &["files", "transfer"],
         tool if tool.starts_with("history.") => &["history"],
-        tool if tool.starts_with("workspace.") => &["workspace"],
         tool if tool.starts_with("terminal_profile.") => &["terminal", "settings"],
         tool if tool.starts_with("transfer.") => &["transfer"],
         "server_info.snapshot" => &["monitor"],
         "ssh_container.list" => &["terminal"],
-        "zterm.context" | "zterm.search" => &["sessions", "workspace", "terminal"],
+        "zterm.context" | "zterm.search" => &["sessions", "terminal"],
         _ => &[],
     };
     domains.iter().map(|value| (*value).to_string()).collect()
@@ -2406,189 +2346,6 @@ fn preview_session_from_draft(draft: SavedSessionDraft) -> crate::models::sessio
         rdp_options: draft.rdp_options,
         local_options: draft.local_options,
         ftp_options: draft.ftp_options,
-    }
-}
-
-fn workspace_draft_arg(arguments: &Value) -> AppResult<WorkspaceDefinitionDraft> {
-    if arguments.get("draft").is_some() {
-        return object_arg::<WorkspaceDefinitionDraft>(arguments, "draft");
-    }
-    simplified_workspace_draft(arguments)
-}
-
-fn simplified_workspace_draft(arguments: &Value) -> AppResult<WorkspaceDefinitionDraft> {
-    let name = string_arg(arguments, "name")?;
-    let layout = optional_string_arg(arguments, "layout").unwrap_or_else(|| "single".to_string());
-    let connections = arguments
-        .get("connections")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let terminal_tabs = workspace_terminal_tabs(&connections)?;
-    let root = workspace_root_for_layout(&layout, &terminal_tabs)?;
-    Ok(WorkspaceDefinitionDraft {
-        id: optional_string_arg(arguments, "id"),
-        name,
-        status: WorkspaceStatus::Closed,
-        active_tab_id: "tab-1".to_string(),
-        tabs: vec![WorkspaceTabDraft {
-            id: "tab-1".to_string(),
-            title: "默认标签".to_string(),
-            active_pane_id: first_leaf_id(&root).unwrap_or_else(|| "pane-1".to_string()),
-            root,
-            sort_order: 0,
-        }],
-        sort_order: optional_usize_arg(arguments, "sort_order")
-            .and_then(|value| i64::try_from(value).ok())
-            .unwrap_or(0),
-    })
-}
-
-fn workspace_terminal_tabs(items: &[Value]) -> AppResult<Vec<WorkspaceTerminalTab>> {
-    if items.is_empty() {
-        return Ok(vec![WorkspaceTerminalTab {
-            id: "terminal-1".to_string(),
-            title: "本地终端".to_string(),
-            runtime_session_id: None,
-            saved_session_id: None,
-            connection_source: Some("default_local".to_string()),
-            container_target: None,
-            path: None,
-            startup_command: None,
-            restore_status: None,
-            restore_error: None,
-        }]);
-    }
-    items
-        .iter()
-        .enumerate()
-        .map(|(index, item)| workspace_terminal_tab(index + 1, item))
-        .collect()
-}
-
-fn workspace_terminal_tab(index: usize, item: &Value) -> AppResult<WorkspaceTerminalTab> {
-    let object = item.as_object();
-    let saved_session_id = item.as_str().map(ToOwned::to_owned).or_else(|| {
-        object
-            .and_then(|object| object.get("saved_session_id"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-    });
-    let connection_source = object
-        .and_then(|object| object.get("connection_source"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            if saved_session_id.is_some() {
-                Some("saved_session".to_string())
-            } else {
-                Some("default_local".to_string())
-            }
-        });
-    let title = object
-        .and_then(|object| object.get("title"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| saved_session_id.clone())
-        .unwrap_or_else(|| "本地终端".to_string());
-    Ok(WorkspaceTerminalTab {
-        id: format!("terminal-{index}"),
-        title,
-        runtime_session_id: None,
-        saved_session_id,
-        connection_source,
-        container_target: None,
-        path: object
-            .and_then(|object| object.get("path"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned),
-        startup_command: object
-            .and_then(|object| object.get("startup_command"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned),
-        restore_status: None,
-        restore_error: None,
-    })
-}
-
-fn workspace_root_for_layout(
-    layout: &str,
-    terminal_tabs: &[WorkspaceTerminalTab],
-) -> AppResult<PaneNode> {
-    let layout = layout.trim().to_ascii_lowercase();
-    let leaf = |index: usize, tabs: Vec<WorkspaceTerminalTab>| PaneNode::Leaf {
-        id: format!("pane-{index}"),
-        runtime_session_id: None,
-        saved_session_id: tabs.first().and_then(|tab| tab.saved_session_id.clone()),
-        title: tabs
-            .first()
-            .map(|tab| tab.title.clone())
-            .unwrap_or_else(|| format!("Pane {index}")),
-        active_terminal_tab_id: tabs.first().map(|tab| tab.id.clone()),
-        terminal_tabs: tabs,
-    };
-    let mut tabs = terminal_tabs.to_vec();
-    if tabs.is_empty() {
-        tabs = workspace_terminal_tabs(&[])?;
-    }
-    let take_tab = |tabs: &[WorkspaceTerminalTab], index: usize| {
-        vec![tabs.get(index).cloned().unwrap_or_else(|| tabs[0].clone())]
-    };
-    match layout.as_str() {
-        "single" => Ok(leaf(1, tabs)),
-        "two_columns" => Ok(PaneNode::Split {
-            id: "split-1".to_string(),
-            direction: "horizontal".to_string(),
-            ratio: 0.5,
-            first: Box::new(leaf(1, take_tab(&tabs, 0))),
-            second: Box::new(leaf(2, take_tab(&tabs, 1))),
-        }),
-        "two_rows" => Ok(PaneNode::Split {
-            id: "split-1".to_string(),
-            direction: "vertical".to_string(),
-            ratio: 0.5,
-            first: Box::new(leaf(1, take_tab(&tabs, 0))),
-            second: Box::new(leaf(2, take_tab(&tabs, 1))),
-        }),
-        "grid_2x2" => Ok(PaneNode::Split {
-            id: "split-1".to_string(),
-            direction: "vertical".to_string(),
-            ratio: 0.5,
-            first: Box::new(PaneNode::Split {
-                id: "split-2".to_string(),
-                direction: "horizontal".to_string(),
-                ratio: 0.5,
-                first: Box::new(leaf(1, take_tab(&tabs, 0))),
-                second: Box::new(leaf(2, take_tab(&tabs, 1))),
-            }),
-            second: Box::new(PaneNode::Split {
-                id: "split-3".to_string(),
-                direction: "horizontal".to_string(),
-                ratio: 0.5,
-                first: Box::new(leaf(3, take_tab(&tabs, 2))),
-                second: Box::new(leaf(4, take_tab(&tabs, 3))),
-            }),
-        }),
-        _ => Err(AppError::validation(
-            "工作区布局必须是 single、two_columns、two_rows 或 grid_2x2",
-        )),
-    }
-}
-
-fn first_leaf_id(node: &PaneNode) -> Option<String> {
-    match node {
-        PaneNode::Leaf { id, .. } => Some(id.clone()),
-        PaneNode::Split { first, .. } => first_leaf_id(first),
     }
 }
 

@@ -29,7 +29,7 @@
 
 | Command | 入参 | 返回 | 说明 |
 | --- | --- | --- | --- |
-| `settings_get` | 无 | `AppSettings` | 读取语言、主题、字号、默认右侧工具、工作区恢复策略和快捷键 |
+| `settings_get` | 无 | `AppSettings` | 读取语言、主题、字号、默认右侧工具和快捷键 |
 | `settings_save` | `AppSettings` | `AppSettings` | 保存应用设置 |
 | `settings_reset` | `{ section: "general" \| "shortcuts" }` | `AppSettings` | 立即恢复并保存指定设置页默认值；`general` 保留快捷键，`shortcuts` 保留通用设置 |
 | `shortcut_registry_list` | 无 | `ShortcutDefinition[]` | 返回应用内可配置快捷键动作 |
@@ -42,7 +42,7 @@
 | `agent_codex_unbind` | `{ agentSessionId }` | `null` | 兼容清理接口；活动共享会话拒绝单独解绑，须调用 `agent_codex_close` 一并关闭 PTY 与撤销绑定 |
 | `agent_codex_close` | `{ agentSessionId, runtimeSessionId }` | `null` | 校验 Agent 与 PTY 配对后关闭共享会话并撤销绑定；前端仅在最后一个关联标签关闭或用户关闭/重启 Agent 时调用。临时目录出现 Windows sharing/lock violation（32/33）时后台每 100ms 重试，最多 5 秒，不阻塞关闭；超时保留目录至下次启动清理并记录诊断。路径校验及其他清理错误仍返回错误 |
 
-`AppSettings.workspace_restore_strategy` 支持 `visible_first`、`connect_all`、`layout_only`，旧设置 JSON 缺字段时默认 `visible_first`。`visible_first` 先显示布局，再优先恢复当前可见 pane/tab；`connect_all` 显示布局后尽快低并发连接全部标签；`layout_only` 只恢复布局和 queued 状态，不自动打开终端。`settings_get` 和 `settings_reset` 返回的 `AppSettings.shortcuts` 会合并当前 `shortcut_registry_list` 中缺失的动作，调用方应以返回值作为 UI 展示和后续保存的有效配置。
+`settings_get` 和 `settings_reset` 返回的 `AppSettings.shortcuts` 会合并当前 `shortcut_registry_list` 中缺失的动作，调用方应以返回值作为 UI 展示和后续保存的有效配置。
 
 `AppSettings.mcp` 为 `{ enabled, port? }`，旧设置缺字段时默认 `{ enabled: false, port: null }`；`port=null` 优先使用稳定默认端口 `9419`。启用状态会在 zTerm 启动时恢复监听，不依赖打开设置页；启动请求单飞，停止会等待监听任务退出并 drain 已接收连接，监听退出会清理运行态；单连接 HTTP 请求读取有 10 秒超时，避免半开连接永久占用。多开实例发现目标端口已占用时自动监听系统分配的本机可用端口，实际地址以该实例返回的 `McpServerStatus.endpoint` 为准，保存的首选端口不被覆盖。MCP token 只写入 OS keyring，不写入 SQLite settings JSON；首次升级且 keyring 尚无 MCP token 时可从 `ZTERM_MCP_TOKEN` 环境变量迁移，之后以 keyring 为准。token 只通过 `McpServerStatus.token` 返回给本地设置页复制或轮换。`McpServerStatus` 为 `{ enabled, endpoint?, token? }`，关闭时 `endpoint/token=null`。
 
@@ -69,23 +69,17 @@ zTerm 仅在开发调试构建中允许多开，便于与安装版并行测试�
 
 FileZilla 格式文件传输可直接使用 `zTerm.exe "sftp://user:password@host:22/path"` 或 `zTerm.exe "ftp://user:password@host:21/path"`。省略端口时分别使用 22/21；URL 用户名、密码和路径按 percent-encoding 解码；FTP 缺少用户名时按 anonymous 连接。前端收到这类请求后直接打开文件传输窗，将默认本地目录放在左侧、临时 FTP/SFTP 会话与 URL 路径放在右侧，不创建终端标签。事件增加可选 `file_transfer_protocol: "ftp" | "sftp"`；普通外部 SSH 省略该字段。password 只保存在进程内临时会话，但仍会在本机进程命令行中短暂可见。
 
-外部启动推荐命令为 `zTerm.exe --external-ssh --host <host> --port <port> --user <user> --password <password> --sftp auto --remote-path /`。兼容 PuTTY 常见参数子集：`-ssh`、`-P`、`-l`、`-pw`、`-i`、`user@host`；兼容 SecureCRT 一次性 SSH 子集：`/SSH2`、`/L`、`/P`、`/PASSWORD`、`/I`、`host`；兼容 Xshell `-url ssh://user:password@host:port`、`-newwin ssh://user@host:port`、`-i <identity_file>`，以及云平台常见 `ssh://b64%3E%3E<base64>@gateway:port` 包装，内层 payload 形如 `<caller>:<password>@<ssh_user>@<ssh_host>:<ssh_port>:SSH2` 且 URL 未携带 password 时按内层目标创建一次性连接；当 Xshell URL 为 `ssh://"b64>>...":"en::..."@gateway:port` 这类 BHost 网关格式时，保留网关 host/port、解码后的 `b64>>...` username 和 URL password 作为 SSH 凭据，并标记 `channel_policy="single_channel"`。兼容 MobaXterm `-newtab "ssh -p <port> -l <user> <host>"` / `-exec "ssh ..."` 的内层 OpenSSH 子集，也兼容 `ssh`、`-p`、`user@host` 被拆成多个 argv 的形态；当平台把 zTerm 作为 MobaXterm 路径并传入 `.moba` session 文件时，按文件内 `#109#` SSH session 字段解析 host/port/username，文件内 username 为空时从 session 名前缀推断；若父进程是 BHost `bhmultauth.exe`，再从父进程命令行合并网关 host/port、`b64>>...` username 和 `en::...` password。通用目标接受 `ssh://user:password@host:port` 形式。解析后后端创建 `external:<uuid>` transient SSH session，password 只保存在进程内 secret resolver，不写入 SQLite、OS keyring、日志、事件 payload 或工作区定义。命令行传 password 会在本机进程列表中短暂可见；MobaXterm `.moba` 文件和父进程命令行都不含 password 时无法补出 transient password，SecureCRT `/ENCRYPTEDPASSWORD` 私有密文和更高安全级别场景应改用后续 `--password-stdin`、临时票据或云平台 token 换取模式。`ExternalSshLaunchEvent` 为 `{ id, name, host, port, username, auto_open_sftp, remote_path, channel_policy }`，其中 `channel_policy` 为 `unknown`、`multi_channel` 或 `single_channel`，`id` 即可传入 Terminal/SFTP/Transfer 当前会话相关 command 的 `savedSessionId` 参数。前端对旧事件缺少 `channel_policy` 时会基于有效 `b64>>` username 兜底识别单通道临时 SSH。
+外部启动推荐命令为 `zTerm.exe --external-ssh --host <host> --port <port> --user <user> --password <password> --sftp auto --remote-path /`。兼容 PuTTY 常见参数子集：`-ssh`、`-P`、`-l`、`-pw`、`-i`、`user@host`；兼容 SecureCRT 一次性 SSH 子集：`/SSH2`、`/L`、`/P`、`/PASSWORD`、`/I`、`host`；兼容 Xshell `-url ssh://user:password@host:port`、`-newwin ssh://user@host:port`、`-i <identity_file>`，以及云平台常见 `ssh://b64%3E%3E<base64>@gateway:port` 包装，内层 payload 形如 `<caller>:<password>@<ssh_user>@<ssh_host>:<ssh_port>:SSH2` 且 URL 未携带 password 时按内层目标创建一次性连接；当 Xshell URL 为 `ssh://"b64>>...":"en::..."@gateway:port` 这类 BHost 网关格式时，保留网关 host/port、解码后的 `b64>>...` username 和 URL password 作为 SSH 凭据，并标记 `channel_policy="single_channel"`。兼容 MobaXterm `-newtab "ssh -p <port> -l <user> <host>"` / `-exec "ssh ..."` 的内层 OpenSSH 子集，也兼容 `ssh`、`-p`、`user@host` 被拆成多个 argv 的形态；当平台把 zTerm 作为 MobaXterm 路径并传入 `.moba` session 文件时，按文件内 `#109#` SSH session 字段解析 host/port/username，文件内 username 为空时从 session 名前缀推断；若父进程是 BHost `bhmultauth.exe`，再从父进程命令行合并网关 host/port、`b64>>...` username 和 `en::...` password。通用目标接受 `ssh://user:password@host:port` 形式。解析后后端创建 `external:<uuid>` transient SSH session，password 只保存在进程内 secret resolver，不写入 SQLite、OS keyring、日志、事件 payload。命令行传 password 会在本机进程列表中短暂可见；MobaXterm `.moba` 文件和父进程命令行都不含 password 时无法补出 transient password，SecureCRT `/ENCRYPTEDPASSWORD` 私有密文和更高安全级别场景应改用后续 `--password-stdin`、临时票据或云平台 token 换取模式。`ExternalSshLaunchEvent` 为 `{ id, name, host, port, username, auto_open_sftp, remote_path, channel_policy }`，其中 `channel_policy` 为 `unknown`、`multi_channel` 或 `single_channel`，`id` 即可传入 Terminal/SFTP/Transfer 当前会话相关 command 的 `savedSessionId` 参数。前端对旧事件缺少 `channel_policy` 时会基于有效 `b64>>` username 兜底识别单通道临时 SSH。
 
 新注册的普通临时 SSH 标记为 `channel_policy="multi_channel"`，有效 `b64>>` 网关身份标记为 `single_channel`；旧事件缺少字段且无法识别时保持 `unknown`。单通道临时 SSH 的右侧 SFTP、容器和隧道入口不渲染，后端拒绝通过 `external_launch_update_ssh_options` 保存任何隧道；多通道临时 SSH 展示三个入口，但连接建立后默认保持右侧栏折叠，用户主动点击后才加载对应工具。`external_launch_update_ssh_options` 只允许更新当前进程内 transient session 的 `tunnels` 和 `container` 运行期配置，不改变 host、port、username、auth 或 identity file。
 
 SSH 终端保活：未配置 `keepalive_interval_ms` 时使用 30 秒，正值保留自定义间隔，显式 `0` 关闭保活。临时连接默认同样为 30 秒。系统 SSH 使用 `ServerAliveInterval` 与 `ServerAliveCountMax=3`，native SSH 使用相同间隔与 `keepalive_max=3`，不设置任务执行时长上限。保活用于减少空闲链路超时，不能保证网络中断或远端主动关闭后继续运行。
 
-## Workspaces
+## 终端布局与旧数据清理
 
-| Command | 入参 | 返回 | 说明 |
-| --- | --- | --- | --- |
-| `workspace_list` | 无 | `WorkspaceSummary[]` | 列出已保存工作区定义和标签数量 |
-| `workspace_get` | `{ workspaceId }` | `WorkspaceDefinition` | 读取单个工作区布局快照；若引用的保存会话已删除，终端标签返回 `connection_source="missing"` 且清空 `saved_session_id`；历史快照中的 `external:` 临时标签直接移除，叶节点无其他标签时回退为空白标签 |
-| `workspace_save` | `{ draft: WorkspaceDefinitionDraft }` | `WorkspaceDefinition` | 新增或更新显式工作区定义；后端保存前清除 runtime id、恢复状态、恢复错误和 `external:` 临时标签，并统一保存为 `closed`；显式传入 `id="default-workspace"` 返回 `Validation` |
-| `workspace_delete` | `{ workspaceId }` | `{ deleted: true }` | 关闭工作区定义，将 `status` 标为 `closed`；不物理删除布局快照 |
-| `workspace_remove` | `{ workspaceId }` | `{ deleted: true }` | 物理删除非默认工作区定义和布局快照；`default-workspace` 返回 `Validation` |
+`terminal_layout_get()` 返回 `{ active_tab_id, tabs } | null`；`terminal_layout_save({ snapshot })` 接收并返回同形快照。`tabs[]` 包含 `id`、`title`、`active_pane_id`、`root` 和 `sort_order`。当前终端分栏布局通过这两个接口读取与覆盖保存。快照仅保留当前分栏树（外层 `tabs` 最多一项，pane 内仍可有多个终端标签）。数据库仅保存一份布局，启动自动恢复，无名称、列表或命名快照管理。运行时 ID、输出和一次性临时连接不持久化。普通工具面板导航使用 `tool.open`。
 
-`WorkspaceDefinition` 包含 `id`、`name`、`status`（持久化兼容字段，保存和读取定义时始终为 `closed`）、`active_tab_id`、`tabs[]`、`sort_order`、`created_at_ms`、`updated_at_ms`。前端仅维护一个以 `default-workspace` 标识的独立实时工作台；已保存定义不会进入运行态，列表选择也不会改变工作台。`tabs[].root` 为分栏树，终端标签保存连接引用、容器目标、显式路径和连接后指令。SQLite 不保存 `runtime_session_id`、`restore_status`、`restore_error`、终端输出、secret 或 `external:` 临时连接标签；临时标签不会转换为失败占位。顶部手动保存从当前实时工作台构建草稿，右键编辑读取已保存定义；二者都不探测 Local/SSH 当前 cwd。`workspace_delete` 作为兼容 IPC 保留，但当前前端和 AI 工具目录不再提供“关闭工作区”入口。
+升级启动时由应用数据库迁移清理旧工作区表、设置字段与对应工具记录。连接、凭据引用、命令历史及其他业务设置继续保留；迁移可重复执行，不创建默认工作区。
 
 ## Terminal
 
@@ -212,7 +206,7 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 
 审批策略按目标已保存 SSH 连接生效：`request_approval`（每次批准）对每次工具调用创建 pending；默认 `safe`（高效审批）自动执行 low/medium 的巡检、传输和常规运维，high/critical 与显式不可逆工具创建 pending；`full_access`（完全自动）免除所有非 secret 输入审批，包括 critical、删除和其他写操作。需要本地 secret 的调用在任何模式下都保持 pending，因为 secret 只能由 zTerm 本地输入。命令型 `terminal.write`/`ssh.execute` 使用脚本内容动态风险分类；`service`、`firewall-cmd`、`iptables` 仅在真实变更子命令出现时提升为 high，只读状态查询不因命令名或输出标题误判。zTerm 仍是最终审批和审计拥有者；侧栏启动参数把 scoped zTerm MCP 设为客户端直接批准，外部 Codex App 也应信任本机 zTerm MCP，避免客户端自身再审批一次。
 
-自动或人工批准执行后写入 `ai_tool_audits`，记录 `affected_domains` 供前端按域刷新 Session、Workspace、Terminal、History、Transfer 等状态。人工 pending 创建后会唤起 zTerm 主窗口并自动打开 Agent 审批面板；批准、拒绝或执行失败都通过进程内 completion broker 唤醒原 `tools/call`，结构化结果只在内存中短期保留，不写入审计表。表名作为既有 MCP 审计存储继续保留。`terminal.write` 会等待终端输出短暂稳定并返回回读摘要；会话/分组、工作区定义、终端 profile、传输控制、历史、服务器资源快照、SSH 容器列表和 SFTP/FTP 文件操作复用现有 storage/service 入口。
+自动或人工批准执行后写入 `ai_tool_audits`，记录 `affected_domains` 供前端按域刷新 Session、Terminal、History、Transfer 等状态。人工 pending 创建后会唤起 zTerm 主窗口并自动打开 Agent 审批面板；批准、拒绝或执行失败都通过进程内 completion broker 唤醒原 `tools/call`，结构化结果只在内存中短期保留，不写入审计表。表名作为既有 MCP 审计存储继续保留。`terminal.write` 会等待终端输出短暂稳定并返回回读摘要；会话/分组、终端 profile、传输控制、历史、服务器资源快照、SSH 容器列表和 SFTP/FTP 文件操作复用现有 storage/service 入口。
 
 本机 MCP v1 采用 MCP 2025-11-25 Streamable HTTP，endpoint 固定为 `http://127.0.0.1:<port>/mcp`，默认端口为 `9419`，默认关闭，不提供 stdio sidecar；用户启用后会随 zTerm 启动自动监听。服务验证 `Authorization: Bearer <token>` 和 `Origin`，仅允许无 Origin 或 localhost/127.0.0.1/::1/`tauri://localhost`。当前 JSON-RPC 支持 `initialize`、`tools/list`、`tools/call`；客户端 notification（包括 `notifications/initialized`）返回 HTTP `202 Accepted` 空响应。外部 Headless Profile allowlist 开放 `approval.wait`、`sessions.list/save`、`ssh.execute`、`ssh.upload/download`、`sftp.upload/download`、`ftp.upload/download`、`transfer.list`；对 `terminal.*` 和目录外工具均返回 `-32601`。默认 `tools/call` 最多等待本地审批 10 分钟并直接返回结果；客户端发送 `Prefer: respond-async` 时立即取得 pending receipt，随后以 `approval.wait(invocation_id)` 等待或领取同一次完成结果，不得重放原副作用工具。审批未完成前，相同 MCP 主体、工具和标准化参数的重试复用原 invocation，不新建审批单。所有工具提供非空 input schema，未知参数返回 `-32602`。调用参数包含 `saved_session_id` 时按该连接读取审批策略；Visible Terminal Profile 的 runtime 目标先回溯其 `saved_session_id`。读取和保存操作通过 `structuredContent.result` 返回脱敏结构，不返回 `credential_ref` 或 secret。
 

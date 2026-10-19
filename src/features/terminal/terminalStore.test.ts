@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { resetTerminalOutputCachesForTest, useTerminalStore } from "./terminalStore";
-import { useWorkspaceStore } from "../workspace/workspaceStore";
+import { useTerminalLayoutStore } from "../terminal-layout/terminalLayoutStore";
 
 const invokeMock = vi.hoisted(() => vi.fn());
 const eventMock = vi.hoisted(() => ({
@@ -667,9 +667,9 @@ describe("terminalStore", () => {
     unlisten();
   });
 
-  it("removes a naturally exited runtime and marks its workspace tab as disconnected", async () => {
-    const workspace = useWorkspaceStore.getState().workspaces[0];
-    const workspaceTab = {
+  it("removes a naturally exited runtime and marks its terminalLayout tab as disconnected", async () => {
+    const terminalLayout = useTerminalLayoutStore.getState().runtime;
+    const terminalLayoutTab = {
       id: "tab-exit",
       title: "SSH",
       active_pane_id: "pane-exit",
@@ -692,17 +692,17 @@ describe("terminalStore", () => {
       created_at_ms: 1,
       updated_at_ms: 1,
     };
-    const activeWorkspace = {
-      ...workspace,
-      tabs: [workspaceTab],
-      activeTabId: workspaceTab.id,
-      active_tab_id: workspaceTab.id,
+    const activeTerminalLayout = {
+      ...terminalLayout,
+      tabs: [terminalLayoutTab],
+      activeTabId: terminalLayoutTab.id,
+      active_tab_id: terminalLayoutTab.id,
     };
-    useWorkspaceStore.setState({
-      workspaces: [activeWorkspace],
-      activeWorkspaceId: activeWorkspace.id,
-      tabs: activeWorkspace.tabs,
-      activeTabId: activeWorkspace.activeTabId,
+    useTerminalLayoutStore.setState({
+      runtime: activeTerminalLayout,
+      activeTerminalLayoutId: activeTerminalLayout.id,
+      tabs: activeTerminalLayout.tabs,
+      activeTabId: activeTerminalLayout.activeTabId,
     });
     useTerminalStore.setState({
       runtimes: {
@@ -727,7 +727,7 @@ describe("terminalStore", () => {
     });
 
     expect(useTerminalStore.getState().runtimes["runtime-1"]).toBeUndefined();
-    const root = useWorkspaceStore.getState().tabs[0].root;
+    const root = useTerminalLayoutStore.getState().tabs[0].root;
     expect(root.kind).toBe("leaf");
     if (root.kind === "leaf") {
       expect(root.runtime_session_id).toBeNull();
@@ -741,7 +741,7 @@ describe("terminalStore", () => {
     unlisten();
   });
 
-  it("trims accumulated terminal output so workspace switches do not replay large histories", () => {
+  it("trims accumulated terminal output so terminalLayout switches do not replay large histories", () => {
     const chunk = "a".repeat(50_010);
 
     useTerminalStore.getState().appendOutput("runtime-1", `prefix-${chunk}`);
@@ -809,7 +809,7 @@ describe("terminalStore", () => {
     stopNewOutput();
   });
 
-  it("keeps a shorter visual output tail for workspace switch snapshots", () => {
+  it("keeps a shorter visual output tail for terminalLayout switch snapshots", () => {
     const chunk = "b".repeat(12_000);
 
     useTerminalStore.getState().appendOutput("runtime-1", `prefix-${chunk}`);

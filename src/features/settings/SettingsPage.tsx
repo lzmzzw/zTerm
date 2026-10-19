@@ -21,7 +21,6 @@ import {
   settingsTabs,
   themeOptions,
   type SettingsTab,
-  workspaceRestoreStrategyOptions,
 } from "./settingsPageModel";
 import { ZtNumberInput } from "../../components/ZtNumberInput";
 import { ZtSelect } from "../../components/ZtSelect";
@@ -37,7 +36,6 @@ import type {
   ShortcutDefinition,
   TerminalProfile,
   TerminalProfileDraft,
-  WorkspaceRestoreStrategy,
 } from "./settingsStore";
 
 interface SettingsPageProps {
@@ -371,7 +369,7 @@ function mcpToolGroupLabel(language: AppLanguage, key: string) {
   const labelKeys = {
     terminal: "mcpToolGroupTerminal",
     terminal_profile: "mcpToolGroupTerminal",
-    workspace: "mcpToolGroupWorkspace",
+    tool: "mcpToolGroupTools",
     settings: "mcpToolGroupSettings",
     sessions: "mcpToolGroupSessions",
     session_groups: "mcpToolGroupSessions",
@@ -404,10 +402,6 @@ function GeneralSettings({
   onSave: () => void;
 }) {
   const localizedLanguageOptions = languageOptions.map((option) => ({ value: option.value, label: t(language, option.labelKey) }));
-  const localizedWorkspaceRestoreStrategyOptions = workspaceRestoreStrategyOptions.map((option) => ({
-    value: option.value,
-    label: t(language, option.labelKey),
-  }));
   return (
     <section className="zt-settings-section zt-settings-section-with-actions" aria-label={t(language, "general")}>
       <div className="zt-settings-section-body">
@@ -468,17 +462,6 @@ function GeneralSettings({
                 step={1}
                 value={draft.terminal_font_size}
                 onChange={(value) => onDraftChange({ ...draft, terminal_font_size: value })}
-              />
-            </label>
-            <label>
-              <span>{t(language, "workspaceRestoreStrategy")}</span>
-              <ZtSelect
-                ariaLabel={t(language, "workspaceRestoreStrategy")}
-                value={draft.workspace_restore_strategy ?? "visible_first"}
-                options={localizedWorkspaceRestoreStrategyOptions}
-                onChange={(nextValue) =>
-                  onDraftChange({ ...draft, workspace_restore_strategy: nextValue as WorkspaceRestoreStrategy })
-                }
               />
             </label>
           </div>

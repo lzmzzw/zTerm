@@ -99,24 +99,24 @@ describe("AppShellDialogs", () => {
     const onSubmit = vi.fn();
     const view = render(
       <AppTextInputDialog
-        title="新建工作区"
-        label="工作区名称"
+        title="新建终端布局"
+        label="终端布局名称"
         initialValue="运维巡检 副本"
-        requiredMessage="请输入工作区名称"
-        confirmLabel="确认新建工作区"
+        requiredMessage="请输入终端布局名称"
+        confirmLabel="确认新建终端布局"
         onCancel={vi.fn()}
         onSubmit={onSubmit}
       />,
     );
 
-    change(input(view.container, "工作区名称"), "   ");
-    click(button(view.container, "确认新建工作区"));
+    change(input(view.container, "终端布局名称"), "   ");
+    click(button(view.container, "确认新建终端布局"));
 
     expect(onSubmit).not.toHaveBeenCalled();
-    expect(view.container.textContent).toContain("请输入工作区名称");
+    expect(view.container.textContent).toContain("请输入终端布局名称");
 
-    change(input(view.container, "工作区名称"), "  发布窗口  ");
-    click(button(view.container, "确认新建工作区"));
+    change(input(view.container, "终端布局名称"), "  发布窗口  ");
+    click(button(view.container, "确认新建终端布局"));
 
     expect(onSubmit).toHaveBeenCalledWith("发布窗口");
     view.unmount();

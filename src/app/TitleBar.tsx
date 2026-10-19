@@ -2,11 +2,11 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy, Minus, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { MouseEvent } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import zTermLogoUrl from "../assets/zterm-logo.svg";
 import { isMacOS } from "../lib/platform";
 
-export function TitleBar({ centerContent = null }: { centerContent?: string | null }) {
+export function TitleBar({ centerContent = null, navigation }: { centerContent?: string | null; navigation?: ReactNode }) {
   const [maximized, setMaximized] = useState(false);
   const macOS = isMacOS();
 
@@ -42,7 +42,7 @@ export function TitleBar({ centerContent = null }: { centerContent?: string | nu
   }
 
   return (
-    <header className={`zt-titlebar ${macOS ? "zt-titlebar-macos" : ""}`}>
+    <header className={`zt-titlebar ${macOS ? "zt-titlebar-macos" : ""} ${navigation ? "zt-titlebar-with-navigation" : ""}`}>
       {macOS ? (
         <div className="zt-window-actions zt-window-actions-macos" aria-label="窗口操作">
           <button type="button" aria-label="关闭" title="关闭" className="danger" data-window-action="close" onClick={() => void getAppWindow()?.close()} />
@@ -56,11 +56,11 @@ export function TitleBar({ centerContent = null }: { centerContent?: string | nu
           />
         </div>
       ) : null}
-      {!macOS ? (
+      {navigation ?? (!macOS ? (
         <div className="zt-titlebar-logo-slot" aria-hidden="true">
           <img className="zt-titlebar-logo" src={zTermLogoUrl} alt="zTerm" />
         </div>
-      ) : null}
+      ) : null)}
       <div className="zt-titlebar-drag-region" data-tauri-drag-region onMouseDown={startWindowDrag} />
       {centerContent ? (
         <div className="zt-titlebar-center" title={centerContent}>

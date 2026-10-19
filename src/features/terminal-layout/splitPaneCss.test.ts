@@ -47,18 +47,18 @@ describe("split pane css direction mapping", () => {
     expect(mainStyles).toContain("padding: 0 0 6px");
   });
 
-  it("reserves a layout row for workspace errors instead of covering terminal content", () => {
+  it("reserves a layout row for terminalLayout errors instead of covering terminal content", () => {
     const mainWithError = ruleBody(".zt-main-with-error");
-    const stageWithError = ruleBody(".zt-main-with-error .zt-workspace-stage");
+    const stageWithError = ruleBody(".zt-main-with-error .zt-terminal-layout-stage");
 
     expect(mainWithError).toContain("grid-template-rows: auto minmax(0, 1fr)");
     expect(stageWithError).toContain("position: relative");
     expect(stageWithError).toContain("grid-row: 2");
   });
 
-  it("removes inactive workspace layers from the compositor while keeping the active layer visible", () => {
-    const layerStyles = ruleBodiesForSelector(".zt-workspace-stage-layer");
-    const activeLayerStyles = ruleBodiesForSelector(".zt-workspace-stage-layer.active");
+  it("removes inactive terminalLayout layers from the compositor while keeping the active layer visible", () => {
+    const layerStyles = ruleBodiesForSelector(".zt-terminal-layout-stage-layer");
+    const activeLayerStyles = ruleBodiesForSelector(".zt-terminal-layout-stage-layer.active");
 
     expect(layerStyles).toContain("display: none");
     expect(layerStyles).toContain("visibility: hidden");
@@ -67,17 +67,14 @@ describe("split pane css direction mapping", () => {
   });
 
   it("keeps rail icons, side panel headers, and compact terminal pane headers consistently sized", () => {
-    const leftRailStyles = ruleBodiesForSelector(".zt-left-rail");
     const toolRailStyles = ruleBodiesForSelector(".zt-tool-rail");
-    const railButtonStyles = ruleBodiesForSelector(".zt-left-rail button");
+    const railButtonStyles = ruleBodiesForSelector(".zt-tool-rail button");
     const panelHeaderStyles = ruleBodiesForSelector(".zt-panel-header");
     const frameStyles = ruleBodiesForSelector(".zt-terminal-frame");
     const paneTabsStyles = ruleBodiesForSelector(".zt-pane-tabs");
     const paneTablistStyles = ruleBodiesForSelector(".zt-pane-tablist");
     const terminalToolbarStyles = ruleBodiesForSelector(".zt-terminal-toolbar");
 
-    expect(leftRailStyles).toContain("var(--zt-rail-block-inset)");
-    expect(leftRailStyles).toContain("var(--zt-rail-inline-inset)");
     expect(toolRailStyles).toContain("var(--zt-rail-block-inset)");
     expect(toolRailStyles).toContain("var(--zt-rail-inline-inset)");
     expect(railButtonStyles).toContain("height: var(--zt-rail-button-size)");
@@ -177,18 +174,6 @@ describe("split pane css direction mapping", () => {
     expect(ruleBodiesForSelector(".zt-split-pane-vertical > .zt-split-divider::before")).toBe("");
   });
 
-  it("keeps workspace preview splits faithful to saved direction and ratio", () => {
-    const horizontalPreviewStyles = ruleBodiesForSelector(".zt-workspace-layout-split-horizontal");
-    const verticalPreviewStyles = ruleBodiesForSelector(".zt-workspace-layout-split-vertical");
-
-    expect(horizontalPreviewStyles).toContain(
-      "grid-template-columns: minmax(0, var(--zt-workspace-preview-ratio)) 4px minmax(0, 1fr)",
-    );
-    expect(verticalPreviewStyles).toContain(
-      "grid-template-rows: minmax(0, var(--zt-workspace-preview-ratio)) 4px minmax(0, 1fr)",
-    );
-    expect(horizontalPreviewStyles).not.toContain("grid-template-columns: 1fr");
-  });
 
   it("keeps split toolbar icon buttons borderless", () => {
     const iconButtonStyles = ruleBodiesForSelector(".zt-terminal-toolbar button");
@@ -207,7 +192,6 @@ describe("split pane css direction mapping", () => {
   });
 
   it("keeps sidebar and tool panel icon buttons borderless", () => {
-    expectBorderlessIconButton(".zt-left-rail button");
     expectBorderlessIconButton(".zt-tool-rail button");
     expectBorderlessIconButton(".zt-panel-action-button");
     expect(ruleBodiesForSelector(".zt-session-node-actions button")).toBe("");

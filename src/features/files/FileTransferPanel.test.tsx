@@ -198,7 +198,7 @@ describe("FileTransferPanel", () => {
   it("restores the latest independent endpoints and paths when the panel opens", async () => {
     useFileTransferStore.setState({ viewStateInitialized: false });
     const restored = {
-      left: { kind: "local" as const, saved_session_id: null, path: "F:/Workspace/Deliverables" },
+      left: { kind: "local" as const, saved_session_id: null, path: "F:/TerminalLayout/Deliverables" },
       right: { kind: "saved_session" as const, saved_session_id: "ssh-remembered", path: "/srv/releases" },
     };
     invokeMock.mockImplementation((command: string, args?: Record<string, unknown>) => {
@@ -221,7 +221,7 @@ describe("FileTransferPanel", () => {
     expect(useFileTransferStore.getState().left.endpoint).toEqual(restored.left);
     expect(useFileTransferStore.getState().right.endpoint).toEqual(restored.right);
     expect((view.container.querySelector('[aria-label="左侧路径"]') as HTMLInputElement).value).toBe(
-      "F:/Workspace/Deliverables",
+      "F:/TerminalLayout/Deliverables",
     );
     expect((view.container.querySelector('[aria-label="右侧路径"]') as HTMLInputElement).value).toBe("/srv/releases");
 

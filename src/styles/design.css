@@ -1,5 +1,7 @@
 /* Shared compact shell and Lucide icon accents. Theme values live in tokens.css. */
-.zt-workspace-stage { inset: 5px 5px 5px 0; }
+.zt-terminal-layout-stage { inset: 5px 5px 5px 0; }
+.zt-main-with-error .zt-terminal-layout-stage { margin: 5px 5px 5px 0; }
+.zt-workbench-left-collapsed .zt-terminal-layout-stage { margin-left: 5px; }
 .zt-terminal-frame { border-color: var(--zt-border-subtle); }
 .zt-split-pane .zt-terminal-frame.active > .zt-pane-tabs { background: var(--zt-bg-selected); }
 .zt-pane-tabs { background: var(--zt-surface-elevated); }

@@ -23,15 +23,6 @@ pub enum AppTheme {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum WorkspaceRestoreStrategy {
-    #[default]
-    VisibleFirst,
-    ConnectAll,
-    LayoutOnly,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ShortcutScope {
     #[default]
     App,
@@ -96,8 +87,6 @@ pub struct AppSettings {
     #[serde(default = "default_right_tool")]
     pub default_right_tool: Option<String>,
     #[serde(default)]
-    pub workspace_restore_strategy: WorkspaceRestoreStrategy,
-    #[serde(default)]
     pub mcp: McpSettings,
     #[serde(default = "default_shortcuts")]
     pub shortcuts: Vec<ShortcutBinding>,
@@ -111,7 +100,6 @@ impl Default for AppSettings {
             ui_font_size: default_ui_font_size(),
             terminal_font_size: default_terminal_font_size(),
             default_right_tool: default_right_tool(),
-            workspace_restore_strategy: WorkspaceRestoreStrategy::default(),
             mcp: McpSettings::default(),
             shortcuts: default_shortcuts(),
         }
@@ -128,7 +116,6 @@ impl AppSettings {
                 self.ui_font_size = defaults.ui_font_size;
                 self.terminal_font_size = defaults.terminal_font_size;
                 self.default_right_tool = defaults.default_right_tool;
-                self.workspace_restore_strategy = defaults.workspace_restore_strategy;
                 self.mcp = defaults.mcp;
             }
             SettingsSection::Shortcuts => {
@@ -254,7 +241,6 @@ mod tests {
             ui_font_size: 17,
             terminal_font_size: 21,
             default_right_tool: Some("history".to_string()),
-            workspace_restore_strategy: WorkspaceRestoreStrategy::LayoutOnly,
             mcp: McpSettings {
                 enabled: true,
                 port: Some(39001),
@@ -278,10 +264,6 @@ mod tests {
         assert_eq!(reset.ui_font_size, 13);
         assert_eq!(reset.terminal_font_size, 13);
         assert_eq!(reset.default_right_tool, Some("agent".to_string()));
-        assert_eq!(
-            reset.workspace_restore_strategy,
-            WorkspaceRestoreStrategy::VisibleFirst
-        );
         assert_eq!(reset.shortcuts, shortcuts);
     }
 
@@ -295,10 +277,6 @@ mod tests {
         assert_eq!(reset.ui_font_size, current.ui_font_size);
         assert_eq!(reset.terminal_font_size, current.terminal_font_size);
         assert_eq!(reset.default_right_tool, current.default_right_tool);
-        assert_eq!(
-            reset.workspace_restore_strategy,
-            current.workspace_restore_strategy
-        );
         assert_eq!(reset.shortcuts, AppSettings::default().shortcuts);
     }
 
@@ -343,11 +321,6 @@ mod tests {
             }"#,
         )
         .expect("old settings json should deserialize");
-
-        assert_eq!(
-            value.workspace_restore_strategy,
-            WorkspaceRestoreStrategy::VisibleFirst
-        );
         assert_eq!(value.mcp, McpSettings::default());
     }
 }

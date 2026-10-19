@@ -13,7 +13,6 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
     ui_font_size: 13,
     terminal_font_size: 14,
     default_right_tool: "agent",
-    workspace_restore_strategy: "visible_first",
     shortcuts: [],
     ...overrides,
     mcp: overrides.mcp ?? { enabled: false, port: null },

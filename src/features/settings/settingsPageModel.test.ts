@@ -7,7 +7,6 @@ import {
   settingsShortcutPatchFor,
   settingsTabs,
   themeOptions,
-  workspaceRestoreStrategyOptions,
 } from "./settingsPageModel";
 
 describe("settingsPageModel", () => {
@@ -18,7 +17,6 @@ describe("settingsPageModel", () => {
       ui_font_size: 13,
       terminal_font_size: 13,
       default_right_tool: null,
-      workspace_restore_strategy: "visible_first",
       mcp: { enabled: false, port: null },
       shortcuts: [],
     });
@@ -34,11 +32,6 @@ describe("settingsPageModel", () => {
       { value: "dark", label: "Dark" },
       { value: "light", label: "Light" },
       { value: "system", label: "System" },
-    ]);
-    expect(workspaceRestoreStrategyOptions).toEqual([
-      { value: "visible_first", labelKey: "restoreVisibleFirst" },
-      { value: "connect_all", labelKey: "restoreConnectAll" },
-      { value: "layout_only", labelKey: "restoreLayoutOnly" },
     ]);
   });
 

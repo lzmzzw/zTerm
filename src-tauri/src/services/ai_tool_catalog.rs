@@ -45,7 +45,7 @@ pub(super) fn tool_definitions() -> Vec<AiToolDefinition> {
         (
             "terminal.split",
             "终端分屏",
-            "在工作区拆分终端 pane",
+            "拆分终端 pane",
             RiskLevel::Medium,
             true,
         ),
@@ -57,7 +57,7 @@ pub(super) fn tool_definitions() -> Vec<AiToolDefinition> {
             false,
         ),
         (
-            "workspace.open_tool",
+            "tool.open",
             "打开工具面板",
             "切换右侧工具面板",
             RiskLevel::Low,
@@ -211,41 +211,6 @@ pub(super) fn tool_definitions() -> Vec<AiToolDefinition> {
             true,
         ),
         (
-            "workspace.list",
-            "列出工作区",
-            "读取已保存工作区列表",
-            RiskLevel::Low,
-            false,
-        ),
-        (
-            "workspace.get",
-            "读取工作区",
-            "读取单个工作区定义",
-            RiskLevel::Low,
-            false,
-        ),
-        (
-            "workspace.save",
-            "保存工作区",
-            "按简化参数新增或更新工作区定义",
-            RiskLevel::Medium,
-            false,
-        ),
-        (
-            "workspace.delete",
-            "删除工作区",
-            "物理删除非默认工作区定义",
-            RiskLevel::Critical,
-            true,
-        ),
-        (
-            "workspace.restore",
-            "恢复工作区",
-            "在前端恢复已保存工作区布局",
-            RiskLevel::Medium,
-            false,
-        ),
-        (
             "terminal_profile.list",
             "列出终端 Profile",
             "读取本机终端 Profile",
@@ -332,7 +297,7 @@ pub(super) fn tool_definitions() -> Vec<AiToolDefinition> {
         (
             "zterm.search",
             "搜索 zTerm 资源",
-            "按关键词搜索会话和工作区",
+            "按关键词搜索会话",
             RiskLevel::Low,
             false,
         ),
@@ -356,4 +321,32 @@ pub(super) fn tool_definition(tool_id: &str) -> AppResult<AiToolDefinition> {
         .into_iter()
         .find(|tool| tool.id == tool_id)
         .ok_or_else(|| AppError::validation(format!("不支持的 AI 工具: {tool_id}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn removed_workspace_tools_are_unavailable_and_tool_panel_remains_supported() {
+        for id in [
+            "workspace.list",
+            "workspace.get",
+            "workspace.save",
+            "workspace.delete",
+            "workspace.restore",
+            "workspace.open_tool",
+        ] {
+            assert!(
+                tool_definition(id).is_err(),
+                "removed tool {id} must be rejected"
+            );
+        }
+        let open_tool = tool_definition("tool.open").unwrap();
+        assert_eq!(open_tool.risk_level, RiskLevel::Low);
+        assert!(!open_tool.requires_confirmation);
+        assert!(tool_definitions()
+            .iter()
+            .all(|tool| !tool.id.starts_with("workspace.")));
+    }
 }

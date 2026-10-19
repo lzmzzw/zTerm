@@ -343,12 +343,12 @@ describe("SplitPaneView", () => {
     expect(view.container.querySelector(".zt-xterm-pane")).toBeNull();
 
     act(() => {
-      useTerminalStore.getState().appendOutput("runtime-local", "PS C:\\workspace> ");
+      useTerminalStore.getState().appendOutput("runtime-local", "PS C:\\terminalLayout> ");
     });
 
     await flushDeferredXtermMount();
 
-    expect(view.container.querySelector(".zt-xterm-pane")?.textContent).toContain("PS C:\\workspace> ");
+    expect(view.container.querySelector(".zt-xterm-pane")?.textContent).toContain("PS C:\\terminalLayout> ");
     view.unmount();
   });
 
@@ -617,7 +617,7 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
-  it("mounts inactive split panes in the active workspace after showing their snapshots first", () => {
+  it("mounts inactive split panes in the active terminalLayout after showing their snapshots first", () => {
     vi.useFakeTimers();
     const restorePaintTimers = installControlledPaintTimers();
     let view: ReturnType<typeof render> | null = null;
@@ -1230,7 +1230,7 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
-  it("unmounts the active xterm and freezes a snapshot while its workspace is hidden", async () => {
+  it("unmounts the active xterm and freezes a snapshot while its terminalLayout is hidden", async () => {
     const root: PaneNode = {
       kind: "leaf",
       id: "pane-a",
@@ -1286,7 +1286,7 @@ describe("SplitPaneView", () => {
     expect(view.container.querySelectorAll(".zt-xterm-pane")).toHaveLength(1);
     expect(view.container.textContent).toContain("before hide");
 
-    view.rerender(<SplitPaneView {...props} workspaceActive={false} />);
+    view.rerender(<SplitPaneView {...props} terminalLayoutActive={false} />);
     act(() => {
       useTerminalStore.getState().appendOutput("runtime-local", "after hide");
     });
@@ -1299,7 +1299,7 @@ describe("SplitPaneView", () => {
     expect(view.container.textContent).toContain("before hide");
     expect(view.container.textContent).not.toContain("after hide");
 
-    view.rerender(<SplitPaneView {...props} workspaceActive />);
+    view.rerender(<SplitPaneView {...props} terminalLayoutActive />);
     await act(async () => {
       await Promise.resolve();
     });

@@ -1,5 +1,5 @@
 // Author: Liz
-import type { PaneSplitDirection } from "../features/workspace/types";
+import type { PaneSplitDirection } from "../features/terminal-layout/types";
 import { rightToolFromShortcutActionId, type RightTool } from "./rightTools";
 
 interface AppShortcutContext {

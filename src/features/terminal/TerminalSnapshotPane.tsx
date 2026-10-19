@@ -1,5 +1,5 @@
 // Author: Liz
-import type { PaneTerminalTab } from "../workspace/types";
+import type { PaneTerminalTab } from "../terminal-layout/types";
 
 interface TerminalSnapshotPaneProps {
   title: string;

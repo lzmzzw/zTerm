@@ -1,4 +1,4 @@
-/* Gallery: settings, shortcuts, profiles, about, workspace/editor, sync and menus. */
+/* Gallery: settings, shortcuts, profiles, about, terminalLayout/editor, sync and menus. */
 .zt-workbench-settings { padding: 0; grid-template-rows: var(--zt-titlebar-height) minmax(0,1fr); background: var(--zt-bg-main); }
 .zt-settings-page { width: 100%; height: 100%; border: 0; border-radius: 0; box-shadow: none; grid-template-rows: 40px minmax(0,1fr); }
 .zt-settings-page-header { border-radius: 0; padding: 0 20px; background: var(--zt-surface-chrome); }
@@ -26,19 +26,6 @@
 .zt-shortcut-row input { background: var(--zt-surface-field); text-align: center; }
 .zt-settings-about-cards { gap: 16px; }
 .zt-settings-about-card { border: 0; background: var(--zt-surface-elevated); border-radius: 10px; padding: 20px; }
-.zt-workspace-panel { margin: 5px; border: 1px solid var(--zt-border); border-radius: 5px; background: var(--zt-surface-elevated); }
-.zt-workspace-list { padding: 8px; gap: 5px; }
-.zt-workspace-item { border-radius: 8px; padding: 10px; }
-.zt-workspace-preview-dialog { border-radius: 12px; }
-.zt-workspace-preview-body { padding: 20px; gap: 16px; }
-.zt-workspace-preview-layout-editor { grid-template-columns: minmax(0,1.4fr) minmax(260px,1fr); gap: 20px; }
-.zt-workspace-preview-canvas { padding: 14px; background: var(--zt-surface-page); border: 1px solid var(--zt-border); border-radius: 10px; }
-.zt-workspace-layout-pane { border-radius: 8px; background: var(--zt-surface-elevated); }
-.zt-workspace-layout-pane.selected { border-color: var(--zt-border-strong); box-shadow: none; }
-.zt-workspace-layout-pane.selected .zt-workspace-layout-pane-tabs { background: var(--zt-bg-selected); }
-.zt-workspace-preview-inspector { padding: 0; border: 0; background: transparent; }
-.zt-workspace-preview-inspector-fields { gap: 16px; }
-.zt-workspace-preview-inspector-fields input, .zt-workspace-preview-inspector-fields textarea { background: var(--zt-surface-field); border-radius: 6px; }
 .zt-context-menu { padding: 5px; min-width: 190px; border: 1px solid var(--zt-border); border-radius: 10px; background: var(--zt-surface-floating); box-shadow: 0 12px 36px #00000030,0 2px 5px #00000012; }
 .zt-context-menu button { height: 32px; min-height: 32px; border: 0; border-radius: 6px; padding: 0 12px; }
 .zt-context-menu button:hover:not(:disabled), .zt-context-menu button:focus-visible { background: var(--zt-bg-selected); }

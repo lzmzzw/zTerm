@@ -2,7 +2,7 @@
   "name": "zterm",
   "private": true,
   "version": "0.5.0",
-  "description": "Windows-first Tauri terminal workspace for SSH, SFTP, command history, and AI-assisted operations.",
+  "description": "Windows-first Tauri terminal application for SSH, SFTP, command history, and AI-assisted operations.",
   "type": "module",
   "license": "GPL-3.0-only",
   "engines": {

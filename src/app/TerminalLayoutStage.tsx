@@ -1,11 +1,11 @@
 // Author: Liz
 import { useShallow } from "zustand/react/shallow";
 
-import { SplitPaneView } from "../features/workspace/SplitPaneView";
-import type { PaneSplitDirection } from "../features/workspace/types";
-import { useWorkspaceStore } from "../features/workspace/workspaceStore";
+import { SplitPaneView } from "../features/terminal-layout/SplitPaneView";
+import type { PaneSplitDirection } from "../features/terminal-layout/types";
+import { useTerminalLayoutStore } from "../features/terminal-layout/terminalLayoutStore";
 
-interface WorkspaceStageProps {
+interface TerminalLayoutStageProps {
   onActivatePane: (paneId: string) => void;
   onAddPaneTab: (paneId: string) => void;
   onDuplicatePaneTab: (paneId: string, paneTabId: string) => void;
@@ -19,7 +19,7 @@ interface WorkspaceStageProps {
   onReconnectTerminal?: (paneId: string, paneTabId: string, savedSessionId: string, runtimeSessionId: string | null) => void;
 }
 
-export function WorkspaceStage({
+export function TerminalLayoutStage({
   onActivatePane,
   onAddPaneTab,
   onDuplicatePaneTab,
@@ -31,17 +31,17 @@ export function WorkspaceStage({
   onClosePane,
   onDisconnectTerminal,
   onReconnectTerminal,
-}: WorkspaceStageProps) {
-  const { tabs, activeTabId } = useWorkspaceStore(
+}: TerminalLayoutStageProps) {
+  const { tabs, activeTabId } = useTerminalLayoutStore(
     useShallow((state) => ({ tabs: state.tabs, activeTabId: state.activeTabId })),
   );
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
 
   return (
-    <div className="zt-workspace-stage" aria-label="工作区舞台">
+    <div className="zt-terminal-layout-stage" aria-label="终端舞台">
       {activeTab ? (
         <section
-          className="zt-workspace-stage-layer active"
+          className="zt-terminal-layout-stage-layer active"
           aria-label="实时工作台视图"
           data-active="true"
         >
@@ -59,7 +59,7 @@ export function WorkspaceStage({
             onClosePane={onClosePane}
             onDisconnectTerminal={onDisconnectTerminal}
             onReconnectTerminal={onReconnectTerminal}
-            workspaceActive
+            terminalLayoutActive
           />
         </section>
       ) : null}

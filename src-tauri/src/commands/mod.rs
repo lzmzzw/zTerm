@@ -11,6 +11,6 @@ pub mod settings;
 pub mod sftp;
 pub mod ssh_container;
 pub mod terminal;
+pub mod terminal_layout;
 pub mod terminal_output_flow;
 pub mod terminal_profile;
-pub mod workspace;

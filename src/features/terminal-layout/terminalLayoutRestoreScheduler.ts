@@ -1,20 +1,20 @@
 // Author: Liz
 import { fallbackOnlyErrorMessage } from "../../lib/unknownErrorMessage";
-import type { WorkspaceRestoreStrategy } from "../settings/settingsStore";
+type TerminalLayoutRestoreStrategy = "visible_first" | "connect_all" | "layout_only";
 import type { SavedSession } from "../sessions/types";
 import type { RuntimeSessionInfo } from "../terminal/terminalStore";
-import { getLeafTerminalTabs, normalizeWorkspaceTabsPaneIds } from "./workspaceLayout";
-import type { PaneNode, PaneTerminalTab, WorkspaceDefinition } from "./types";
+import { getLeafTerminalTabs, normalizeTerminalLayoutTabsPaneIds } from "./terminalLayoutLayout";
+import type { PaneNode, PaneTerminalTab, TerminalLayoutDefinition } from "./types";
 
 const MAX_TOTAL_CONCURRENT = 4;
 const MAX_SSH_CONCURRENT = 2;
 const MAX_LOCAL_CONCURRENT = 4;
 
-interface WorkspaceRestoreTarget {
-  workspaceId: string;
-  workspaceTabId: string;
-  workspaceTabSortOrder: number;
-  workspaceTabActive: boolean;
+interface TerminalLayoutRestoreTarget {
+  terminalLayoutId: string;
+  terminalLayoutTabId: string;
+  terminalLayoutTabSortOrder: number;
+  terminalLayoutTabActive: boolean;
   paneId: string;
   paneOrder: number;
   paneTabId: string;
@@ -25,10 +25,10 @@ interface WorkspaceRestoreTarget {
   terminalTab: PaneTerminalTab;
 }
 
-interface WorkspaceRestoreQueueOptions {
-  workspace: WorkspaceDefinition;
+interface TerminalLayoutRestoreQueueOptions {
+  terminalLayout: TerminalLayoutDefinition;
   sessions: SavedSession[];
-  strategy: WorkspaceRestoreStrategy;
+  strategy: TerminalLayoutRestoreStrategy;
   openTerminal: (
     savedSessionId: string,
     paneId: string,
@@ -47,10 +47,10 @@ interface WorkspaceRestoreQueueOptions {
   writeTerminal: (runtimeSessionId: string, data: string) => Promise<unknown>;
   closeTerminal: (runtimeSessionId: string) => Promise<unknown>;
   isCancelled?: () => boolean;
-  isTargetAvailable?: (workspaceId: string, workspaceTabId: string, paneId: string, paneTabId: string) => boolean;
+  isTargetAvailable?: (terminalLayoutId: string, terminalLayoutTabId: string, paneId: string, paneTabId: string) => boolean;
   updatePaneTerminalTab: (
-    workspaceId: string,
-    workspaceTabId: string,
+    terminalLayoutId: string,
+    terminalLayoutTabId: string,
     paneId: string,
     paneTabId: string,
     patch: Partial<PaneTerminalTab>,
@@ -62,27 +62,27 @@ interface WorkspaceRestoreQueueOptions {
   };
 }
 
-export function markWorkspaceRestoreQueued(workspace: WorkspaceDefinition): WorkspaceDefinition {
+export function markTerminalLayoutRestoreQueued(terminalLayout: TerminalLayoutDefinition): TerminalLayoutDefinition {
   return {
-    ...workspace,
-    tabs: normalizeWorkspaceTabsPaneIds(workspace.tabs).map((tab) => ({
+    ...terminalLayout,
+    tabs: normalizeTerminalLayoutTabsPaneIds(terminalLayout.tabs).map((tab) => ({
       ...tab,
       root: markPaneRestoreQueued(tab.root),
     })),
   };
 }
 
-export function collectWorkspaceRestoreTargets(workspace: WorkspaceDefinition): WorkspaceRestoreTarget[] {
+export function collectTerminalLayoutRestoreTargets(terminalLayout: TerminalLayoutDefinition): TerminalLayoutRestoreTarget[] {
   let paneOrder = 0;
-  return [...normalizeWorkspaceTabsPaneIds(workspace.tabs)]
+  return [...normalizeTerminalLayoutTabsPaneIds(terminalLayout.tabs)]
     .sort((left, right) => left.sort_order - right.sort_order)
     .flatMap((tab) => {
-      const workspaceTabActive = tab.id === workspace.active_tab_id;
+      const terminalLayoutTabActive = tab.id === terminalLayout.active_tab_id;
       return collectPaneTargets({
-        workspace,
-        workspaceTabId: tab.id,
-        workspaceTabSortOrder: tab.sort_order,
-        workspaceTabActive,
+        terminalLayout,
+        terminalLayoutTabId: tab.id,
+        terminalLayoutTabSortOrder: tab.sort_order,
+        terminalLayoutTabActive,
         activePaneId: tab.active_pane_id,
         root: tab.root,
         nextPaneOrder: () => paneOrder++,
@@ -90,28 +90,28 @@ export function collectWorkspaceRestoreTargets(workspace: WorkspaceDefinition): 
     });
 }
 
-export function sortWorkspaceRestoreTargets(
-  targets: WorkspaceRestoreTarget[],
-  _workspace: WorkspaceDefinition,
-): WorkspaceRestoreTarget[] {
+export function sortTerminalLayoutRestoreTargets(
+  targets: TerminalLayoutRestoreTarget[],
+  _terminalLayout: TerminalLayoutDefinition,
+): TerminalLayoutRestoreTarget[] {
   return [...targets].sort((left, right) => {
     const priorityDelta = restorePriority(left) - restorePriority(right);
     if (priorityDelta !== 0) return priorityDelta;
-    const workspaceTabDelta = left.workspaceTabSortOrder - right.workspaceTabSortOrder;
-    if (workspaceTabDelta !== 0) return workspaceTabDelta;
+    const terminalLayoutTabDelta = left.terminalLayoutTabSortOrder - right.terminalLayoutTabSortOrder;
+    if (terminalLayoutTabDelta !== 0) return terminalLayoutTabDelta;
     const paneDelta = left.paneOrder - right.paneOrder;
     if (paneDelta !== 0) return paneDelta;
     return left.paneTabIndex - right.paneTabIndex;
   });
 }
 
-export async function runWorkspaceRestoreQueue(options: WorkspaceRestoreQueueOptions): Promise<void> {
+export async function runTerminalLayoutRestoreQueue(options: TerminalLayoutRestoreQueueOptions): Promise<void> {
   if (options.strategy === "layout_only") {
     options.metrics?.onAllScheduledDone?.();
     return;
   }
 
-  const queue = sortWorkspaceRestoreTargets(collectWorkspaceRestoreTargets(options.workspace), options.workspace);
+  const queue = sortTerminalLayoutRestoreTargets(collectTerminalLayoutRestoreTargets(options.terminalLayout), options.terminalLayout);
   const visibleTargetIds = new Set(queue.filter((target) => target.visible).map(targetKey));
   const visibleConnectedIds = new Set<string>();
   let firstVisibleConnected = false;
@@ -202,7 +202,8 @@ function markPaneRestoreQueued(root: PaneNode): PaneNode {
   const terminalTabs = getLeafTerminalTabs(root).map((tab) => ({
     ...tab,
     runtime_session_id: null,
-    restore_status: "queued" as const,
+    restore_status: tab.connection_source === "empty" ? null : "queued" as const,
+    restore_token: crypto.randomUUID(),
     restore_error: null,
   }));
   const activeTerminalTab = terminalTabs.find((tab) => tab.id === root.active_terminal_tab_id) ?? terminalTabs[0];
@@ -218,38 +219,38 @@ function markPaneRestoreQueued(root: PaneNode): PaneNode {
 }
 
 function collectPaneTargets({
-  workspace,
-  workspaceTabId,
-  workspaceTabSortOrder,
-  workspaceTabActive,
+  terminalLayout,
+  terminalLayoutTabId,
+  terminalLayoutTabSortOrder,
+  terminalLayoutTabActive,
   activePaneId,
   root,
   nextPaneOrder,
 }: {
-  workspace: WorkspaceDefinition;
-  workspaceTabId: string;
-  workspaceTabSortOrder: number;
-  workspaceTabActive: boolean;
+  terminalLayout: TerminalLayoutDefinition;
+  terminalLayoutTabId: string;
+  terminalLayoutTabSortOrder: number;
+  terminalLayoutTabActive: boolean;
   activePaneId: string;
   root: PaneNode;
   nextPaneOrder: () => number;
-}): WorkspaceRestoreTarget[] {
+}): TerminalLayoutRestoreTarget[] {
   if (root.kind === "split") {
     return [
       ...collectPaneTargets({
-        workspace,
-        workspaceTabId,
-        workspaceTabSortOrder,
-        workspaceTabActive,
+        terminalLayout,
+        terminalLayoutTabId,
+        terminalLayoutTabSortOrder,
+        terminalLayoutTabActive,
         activePaneId,
         root: root.first,
         nextPaneOrder,
       }),
       ...collectPaneTargets({
-        workspace,
-        workspaceTabId,
-        workspaceTabSortOrder,
-        workspaceTabActive,
+        terminalLayout,
+        terminalLayoutTabId,
+        terminalLayoutTabSortOrder,
+        terminalLayoutTabActive,
         activePaneId,
         root: root.second,
         nextPaneOrder,
@@ -260,32 +261,32 @@ function collectPaneTargets({
   const paneOrder = nextPaneOrder();
   const terminalTabs = getLeafTerminalTabs(root);
   const activeTerminalTabId = root.active_terminal_tab_id ?? terminalTabs[0]?.id ?? "";
-  return terminalTabs.map((terminalTab, paneTabIndex) => ({
-    workspaceId: workspace.id,
-    workspaceTabId,
-    workspaceTabSortOrder,
-    workspaceTabActive,
+  return terminalTabs.filter(tab => tab.connection_source !== "empty").map((terminalTab, paneTabIndex) => ({
+    terminalLayoutId: terminalLayout.id,
+    terminalLayoutTabId,
+    terminalLayoutTabSortOrder,
+    terminalLayoutTabActive,
     paneId: root.id,
     paneOrder,
     paneTabId: terminalTab.id,
     paneTabIndex,
-    paneActive: workspaceTabActive && root.id === activePaneId,
+    paneActive: terminalLayoutTabActive && root.id === activePaneId,
     paneTabActive: terminalTab.id === activeTerminalTabId,
-    visible: workspaceTabActive && terminalTab.id === activeTerminalTabId,
+    visible: terminalLayoutTabActive && terminalTab.id === activeTerminalTabId,
     terminalTab,
   }));
 }
 
-function restorePriority(target: WorkspaceRestoreTarget): number {
-  if (target.workspaceTabActive && target.paneActive && target.paneTabActive) return 0;
+function restorePriority(target: TerminalLayoutRestoreTarget): number {
+  if (target.terminalLayoutTabActive && target.paneActive && target.paneTabActive) return 0;
   if (target.visible) return 1;
-  if (target.workspaceTabActive) return 2;
+  if (target.terminalLayoutTabActive) return 2;
   if (target.paneTabActive) return 3;
   return 4;
 }
 
 function canStartTarget(
-  target: WorkspaceRestoreTarget,
+  target: TerminalLayoutRestoreTarget,
   sessions: SavedSession[],
   state: { activeSsh: number; activeLocal: number; paneLocks: Set<string> },
 ) {
@@ -296,19 +297,20 @@ function canStartTarget(
 }
 
 async function runSingleTarget(
-  options: WorkspaceRestoreQueueOptions,
-  target: WorkspaceRestoreTarget,
+  options: TerminalLayoutRestoreQueueOptions,
+  target: TerminalLayoutRestoreTarget,
 ): Promise<boolean> {
   let runtime: RuntimeSessionInfo | null = null;
   if (restoreTargetUnavailable(options, target)) return false;
-  options.updatePaneTerminalTab(target.workspaceId, target.workspaceTabId, target.paneId, target.paneTabId, {
+  options.updatePaneTerminalTab(target.terminalLayoutId, target.terminalLayoutTabId, target.paneId, target.paneTabId, {
     restore_status: "pending",
+    restore_token: target.terminalTab.restore_token,
     restore_error: null,
   });
 
   try {
     if (restoreTargetUnavailable(options, target)) return false;
-    runtime = await openWorkspaceTerminal(
+    runtime = await openTerminalLayoutTerminal(
       target,
       options.sessions,
       options.openTerminal,
@@ -329,7 +331,7 @@ async function runSingleTarget(
       return false;
     }
 
-    options.updatePaneTerminalTab(target.workspaceId, target.workspaceTabId, target.paneId, target.paneTabId, {
+    options.updatePaneTerminalTab(target.terminalLayoutId, target.terminalLayoutTabId, target.paneId, target.paneTabId, {
       title: runtime.title,
       runtime_session_id: runtime.runtime_session_id,
       saved_session_id: runtime.saved_session_id,
@@ -344,7 +346,7 @@ async function runSingleTarget(
       }
       return false;
     }
-    options.updatePaneTerminalTab(target.workspaceId, target.workspaceTabId, target.paneId, target.paneTabId, {
+    options.updatePaneTerminalTab(target.terminalLayoutId, target.terminalLayoutTabId, target.paneId, target.paneTabId, {
       restore_status: "failed",
       restore_error: fallbackOnlyErrorMessage(error, "恢复标签失败"),
     });
@@ -355,16 +357,16 @@ async function runSingleTarget(
   }
 }
 
-function restoreTargetUnavailable(options: WorkspaceRestoreQueueOptions, target: WorkspaceRestoreTarget) {
+function restoreTargetUnavailable(options: TerminalLayoutRestoreQueueOptions, target: TerminalLayoutRestoreTarget) {
   return Boolean(
     options.isCancelled?.() ||
       (options.isTargetAvailable &&
-        !options.isTargetAvailable(target.workspaceId, target.workspaceTabId, target.paneId, target.paneTabId)),
+        !options.isTargetAvailable(target.terminalLayoutId, target.terminalLayoutTabId, target.paneId, target.paneTabId)),
   );
 }
 
-async function openWorkspaceTerminal(
-  target: WorkspaceRestoreTarget,
+async function openTerminalLayoutTerminal(
+  target: TerminalLayoutRestoreTarget,
   sessions: SavedSession[],
   openTerminal: (savedSessionId: string, paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>,
   openDefaultLocalTerminal: (paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>,
@@ -377,7 +379,7 @@ async function openWorkspaceTerminal(
 ): Promise<RuntimeSessionInfo> {
   const source =
     target.terminalTab.connection_source ?? (target.terminalTab.saved_session_id ? "saved_session" : "default_local");
-  const path = normalizedWorkspacePath(target.terminalTab.path);
+  const path = normalizedTerminalLayoutPath(target.terminalTab.path);
 
   if (source === "missing") {
     throw new Error("连接已缺失");
@@ -404,7 +406,7 @@ async function openWorkspaceTerminal(
   return openTerminal(session.id, target.paneId, path);
 }
 
-function connectionKindForTarget(target: WorkspaceRestoreTarget, sessions: SavedSession[]): "ssh" | "local" {
+function connectionKindForTarget(target: TerminalLayoutRestoreTarget, sessions: SavedSession[]): "ssh" | "local" {
   const source =
     target.terminalTab.connection_source ?? (target.terminalTab.saved_session_id ? "saved_session" : "default_local");
   if ((source !== "saved_session" && source !== "ssh_container") || !target.terminalTab.saved_session_id) return "local";
@@ -412,7 +414,7 @@ function connectionKindForTarget(target: WorkspaceRestoreTarget, sessions: Saved
   return session?.type === "ssh" ? "ssh" : "local";
 }
 
-function normalizedWorkspacePath(path: string | null | undefined): string | null {
+function normalizedTerminalLayoutPath(path: string | null | undefined): string | null {
   const value = path?.trim();
   return value ? value : null;
 }
@@ -423,10 +425,10 @@ function normalizedStartupCommand(command: string | null | undefined): string | 
   return /[\r\n]$/.test(value) ? value : `${value}\r`;
 }
 
-function restorePaneKey(target: WorkspaceRestoreTarget): string {
-  return `${target.workspaceTabId}/${target.paneId}`;
+function restorePaneKey(target: TerminalLayoutRestoreTarget): string {
+  return `${target.terminalLayoutTabId}/${target.paneId}`;
 }
 
-function targetKey(target: WorkspaceRestoreTarget): string {
-  return `${target.workspaceTabId}/${target.paneId}/${target.paneTabId}`;
+function targetKey(target: TerminalLayoutRestoreTarget): string {
+  return `${target.terminalLayoutTabId}/${target.paneId}/${target.paneTabId}`;
 }

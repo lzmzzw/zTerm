@@ -4,7 +4,7 @@ import { reportZmodemDiagnostic } from "./zmodemDiagnostics";
 import type { HistoryScopeKind } from "../history/types";
 
 import { invokeTauri, invokeTypedTauri, listenTauri, type UnlistenFn } from "../../lib/tauriClient";
-import { useWorkspaceStore } from "../workspace/workspaceStore";
+import { useTerminalLayoutStore } from "../terminal-layout/terminalLayoutStore";
 import { listSshContainers as listSshContainersApi, type SshContainerInfo } from "./sshContainerApi";
 import { parseSimpleCdTarget, trackTerminalInput } from "./terminalCwd";
 import {
@@ -152,7 +152,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         listenTauri<TerminalExitEvent>("terminal:exit", (event) => {
           const message = terminalExitMessage(event.payload);
           get().appendOutput(event.payload.runtime_session_id, `\r\n[已断开] ${message}\r\n`);
-          useWorkspaceStore.getState().markRuntimeExited(
+          useTerminalLayoutStore.getState().markRuntimeExited(
             event.payload.runtime_session_id,
             message,
             get().getVisualOutputTail(event.payload.runtime_session_id),

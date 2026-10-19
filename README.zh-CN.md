@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-zTerm 是一个基于 Tauri 的桌面终端工作台，面向 SSH、SFTP、命令历史、服务器监控和 Codex 辅助运维场景。界面采用高密度工作区布局：左侧管理会话，中间使用分栏终端，右侧提供文件、历史、监控和 Codex CLI。
+zTerm 是一个基于 Tauri 的桌面终端工作台，面向 SSH、SFTP、命令历史、服务器监控和 Codex 辅助运维场景。界面采用高密度终端布局：左侧管理会话，中间使用分栏终端，右侧提供文件、历史、监控和 Codex CLI。
 
 ![zTerm 工作台](assets/screenshots/workbench.png)
 
@@ -10,7 +10,7 @@ zTerm 是一个基于 Tauri 的桌面终端工作台，面向 SSH、SFTP、命�
 
 - 保存、搜索、分组并打开 SSH/RDP/本地终端会话，以及 FTP/SFTP 文件传输会话。
 - SSH 会话通过系统 OpenSSH 客户端运行，并由 xterm 渲染输入输出。
-- 支持终端标签、横向/纵向分栏和工作区恢复。
+- 支持终端标签和横向/纵向分栏；当前分栏布局自动保存，下次启动时恢复，无需命名。
 - 支持 SFTP 目录浏览、新建目录、上传、下载、重命名、删除和失败重试。
 - 按会话或本地终端 profile 捕获命令历史，支持搜索、复制和重新发送。
 - 连接凭据写入操作系统 keyring，避免以明文保存在 SQLite 中。
@@ -21,11 +21,11 @@ zTerm 是一个基于 Tauri 的桌面终端工作台，面向 SSH、SFTP、命�
 - “完全自动”适合可信的个人环境：包括写入、删除和 critical 命令在内的操作均免审批执行并保留审计；只有必须在 zTerm 本地输入 secret 的操作仍会等待用户输入。
 - 支持 SSH 服务器 CPU、内存、磁盘、负载、运行时间和网络流量快照监控。
 
-RDP 会话通过 Windows 系统远程桌面客户端在外部窗口中打开；工作区保留会话标签用于定位，但不内嵌或渲染远程桌面。侧栏 Agent 完全由本机 Codex CLI 实现，使用 Codex CLI 的登录态和模型配置；zTerm 不提供模型管理、内置模型调用，也不保存或代理 Codex 账号凭据。
+RDP 会话通过 Windows 系统远程桌面客户端在外部窗口中打开；应用保留会话标签用于定位，但不内嵌或渲染远程桌面。侧栏 Agent 完全由本机 Codex CLI 实现，使用 Codex CLI 的登录态和模型配置；zTerm 不提供模型管理、内置模型调用，也不保存或代理 Codex 账号凭据。
 
 ## 界面截图
 
-![四分屏终端工作区](assets/screenshots/split-terminals.png)
+![四分屏终端](assets/screenshots/split-terminals.png)
 
 ![文件传输](assets/screenshots/file-transfer.png)
 

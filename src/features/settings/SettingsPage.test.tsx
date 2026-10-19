@@ -35,7 +35,6 @@ const baseSettings: AppSettings = {
   ui_font_size: 13,
   terminal_font_size: 13,
   default_right_tool: "agent",
-  workspace_restore_strategy: "visible_first",
   mcp: { enabled: false, port: null },
   shortcuts: [],
 };
@@ -101,14 +100,6 @@ async function flushAsyncUpdates() {
   });
 }
 
-async function selectOption(container: HTMLElement, label: string, optionText: string) {
-  await click(button(container, label));
-  const option = Array.from(document.querySelectorAll(".zt-select-option")).find(
-    (item) => item.textContent?.trim() === optionText,
-  );
-  if (!option) throw new Error(`Option not found: ${optionText}`);
-  await click(option as HTMLElement);
-}
 
 describe("SettingsPage", () => {
   beforeEach(() => {
@@ -148,7 +139,7 @@ describe("SettingsPage", () => {
     const onResetSettings = vi.fn().mockResolvedValue(baseSettings);
     const view = render(
       <SettingsPage
-        settings={{ ...baseSettings, ui_font_size: 17, workspace_restore_strategy: "layout_only" }}
+        settings={{ ...baseSettings, ui_font_size: 17 }}
         terminalProfiles={[]}
         shortcutDefinitions={shortcuts}
         loading={false}
@@ -166,34 +157,10 @@ describe("SettingsPage", () => {
 
     expect(onResetSettings).toHaveBeenCalledWith("general");
     expect(input(view.container, "UI 字号").value).toBe("13");
-    expect(button(view.container, "可见优先").textContent).toContain("可见优先");
 
     view.unmount();
   });
 
-  it("saves the workspace restore strategy from general settings", async () => {
-    const onSaveSettings = vi.fn().mockResolvedValue({ ...baseSettings, workspace_restore_strategy: "layout_only" });
-    const view = render(
-      <SettingsPage
-        settings={baseSettings}
-        terminalProfiles={[]}
-        shortcutDefinitions={shortcuts}
-        loading={false}
-        error={null}
-        onClose={vi.fn()}
-        onSaveSettings={onSaveSettings}
-        onResetSettings={vi.fn()}
-        onDetectTerminalProfiles={vi.fn()}
-        onSetDefaultTerminalProfile={vi.fn()}
-      />,
-    );
-
-    await selectOption(view.container, "工作区恢复策略", "只恢复布局");
-    await click(button(view.container, "保存"));
-
-    expect(onSaveSettings).toHaveBeenCalledWith(expect.objectContaining({ workspace_restore_strategy: "layout_only" }));
-    view.unmount();
-  });
 
   it("captures shortcut combinations and clears them with delete", async () => {
     const onSaveSettings = vi.fn();
@@ -375,9 +342,9 @@ describe("SettingsPage", () => {
         requires_confirmation: true,
       },
       {
-        id: "workspace.list",
-        title: "列出工作区",
-        description: "读取已保存工作区列表",
+        id: "tool.open",
+        title: "打开工具",
+        description: "打开工具面板",
         risk_level: "low",
         requires_confirmation: false,
       },
@@ -417,11 +384,11 @@ describe("SettingsPage", () => {
     expect(detailsButton.getAttribute("aria-expanded")).toBe("true");
     expect(onLoadMcpTools).toHaveBeenCalledTimes(1);
     expect(view.container.textContent).toContain("终端 (2)");
-    expect(view.container.textContent).toContain("工作区 (1)");
+    expect(view.container.textContent).toContain("工具 (1)");
     expect(view.container.textContent).toContain("SSH (1)");
     expect(view.container.textContent).toContain("terminal.list");
     expect(view.container.textContent).toContain("terminal.write");
-    expect(view.container.textContent).toContain("workspace.list");
+    expect(view.container.textContent).toContain("tool.open");
     expect(view.container.textContent).toContain("ssh.execute");
 
     const search = input(view.container, "搜索 MCP 工具");

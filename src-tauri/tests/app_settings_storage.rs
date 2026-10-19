@@ -2,7 +2,7 @@
 use zterm_lib::{
     models::settings::{
         AppLanguage, AppSettings, AppTheme, McpSettings, ShortcutBinding, ShortcutDefinition,
-        ShortcutScope, WorkspaceRestoreStrategy,
+        ShortcutScope,
     },
     storage::{
         settings::{get_app_settings, save_app_settings},
@@ -21,10 +21,6 @@ fn app_settings_have_expected_defaults() {
     assert_eq!(settings.ui_font_size, 13);
     assert_eq!(settings.terminal_font_size, 13);
     assert_eq!(settings.default_right_tool.as_deref(), Some("agent"));
-    assert_eq!(
-        settings.workspace_restore_strategy,
-        WorkspaceRestoreStrategy::VisibleFirst
-    );
     assert_eq!(settings.mcp, McpSettings::default());
     assert_eq!(
         settings
@@ -54,7 +50,6 @@ fn app_settings_round_trip_custom_shortcuts_and_theme() {
         ui_font_size: 14,
         terminal_font_size: 15,
         default_right_tool: Some("history".to_string()),
-        workspace_restore_strategy: WorkspaceRestoreStrategy::LayoutOnly,
         mcp: McpSettings {
             enabled: true,
             port: Some(39001),
@@ -74,10 +69,6 @@ fn app_settings_round_trip_custom_shortcuts_and_theme() {
     assert_eq!(loaded.ui_font_size, settings.ui_font_size);
     assert_eq!(loaded.terminal_font_size, settings.terminal_font_size);
     assert_eq!(loaded.default_right_tool, settings.default_right_tool);
-    assert_eq!(
-        loaded.workspace_restore_strategy,
-        WorkspaceRestoreStrategy::LayoutOnly
-    );
     assert_eq!(loaded.mcp, settings.mcp);
     assert!(loaded.shortcuts.iter().any(|binding| {
         binding.action_id == "settings.open" && binding.accelerator == "Ctrl+,"

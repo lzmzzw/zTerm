@@ -1,6 +1,6 @@
 // Author: Liz
 import type { RuntimeSessionInfo } from "../features/terminal/terminalStore";
-import type { PaneTerminalTab, WorkspaceTab } from "../features/workspace/types";
+import type { PaneTerminalTab, TerminalLayoutTab } from "../features/terminal-layout/types";
 import type { SavedSession } from "../features/sessions/types";
 import { fallbackOnlyErrorMessage } from "../lib/unknownErrorMessage";
 
@@ -8,19 +8,19 @@ interface TerminalActionDependencies {
   workbenchId: string;
   workbenchTabId: string | null;
   activePaneTab: PaneTerminalTab | null;
-  activeTab: WorkspaceTab | null | undefined;
+  activeTab: TerminalLayoutTab | null | undefined;
   setTerminalError: (message: string | null) => void;
   addPaneTab: (paneId: string) => PaneTerminalTab;
   bindRuntimeToPaneTab: (
-    workspaceId: string,
-    workspaceTabId: string,
+    terminalLayoutId: string,
+    terminalLayoutTabId: string,
     paneId: string,
     paneTabId: string,
     runtime: RuntimeSessionInfo,
   ) => void;
   updatePaneTerminalTab: (
-    workspaceId: string,
-    workspaceTabId: string,
+    terminalLayoutId: string,
+    terminalLayoutTabId: string,
     paneId: string,
     paneTabId: string,
     patch: Partial<PaneTerminalTab>,
@@ -34,8 +34,8 @@ interface TerminalActionDependencies {
   ) => Promise<RuntimeSessionInfo>;
   closeTerminal: (runtimeSessionId: string, options?: { releaseExternalSession?: boolean }) => Promise<void>;
   hasPaneTerminalTab: (
-    workspaceId: string,
-    workspaceTabId: string,
+    terminalLayoutId: string,
+    terminalLayoutTabId: string,
     paneId: string,
     paneTabId: string,
   ) => boolean;
@@ -62,17 +62,17 @@ export function createTerminalActions({
   async function openSession(session: SavedSession) {
     if (!activeTab || !activePaneTab) return;
     const targetWorkbenchId = workbenchId;
-    const targetWorkspaceTabId = activeTab.id;
+    const targetTerminalLayoutTabId = activeTab.id;
     const targetPaneId = activeTab.active_pane_id;
     const targetPaneTab = activePaneTab.runtime_session_id ? addPaneTab(targetPaneId) : activePaneTab;
     setTerminalError(null);
     try {
       const runtime = await openTerminal(session.id, targetPaneId);
-      if (!hasPaneTerminalTab(targetWorkbenchId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id)) {
+      if (!hasPaneTerminalTab(targetWorkbenchId, targetTerminalLayoutTabId, targetPaneId, targetPaneTab.id)) {
         await closeTerminal(runtime.runtime_session_id);
         return;
       }
-      bindRuntimeToPaneTab(targetWorkbenchId, targetWorkspaceTabId, targetPaneId, targetPaneTab.id, runtime);
+      bindRuntimeToPaneTab(targetWorkbenchId, targetTerminalLayoutTabId, targetPaneId, targetPaneTab.id, runtime);
     } catch (openError) {
       setTerminalError(fallbackOnlyErrorMessage(openError, "打开终端失败"));
     }
