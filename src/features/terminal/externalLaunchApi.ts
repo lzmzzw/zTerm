@@ -5,6 +5,15 @@ import type { SshOptions } from "../sessions/types";
 
 type ExternalSshChannelPolicy = "unknown" | "multi_channel" | "single_channel";
 
+interface ExternalLocalLaunchEvent {
+  id: string;
+  working_directory: string;
+}
+
+export async function takePendingExternalLocalLaunches(): Promise<ExternalLocalLaunchEvent[]> {
+  return invokeTauri<ExternalLocalLaunchEvent[]>("external_launch_take_pending_local");
+}
+
 export interface ExternalSshLaunchEvent {
   id: string;
   name: string;

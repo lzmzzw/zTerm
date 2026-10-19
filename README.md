@@ -14,6 +14,9 @@ panes in the center, and files/history/monitor/Codex tools on the right.
 - Save, search, group, and open SSH/RDP/local terminal sessions plus FTP/SFTP file-transfer sessions.
 - Run SSH sessions through the system OpenSSH client and render them with xterm.
 - Use split terminal panes with tabs. The current unnamed layout is saved automatically and restored on the next launch.
+- Automatically open the configured default local terminal on startup or after closing tabs/panes when no connections remain.
+- Use “通过zTerm打开” in Windows Explorer folder, background, and drive context menus to open a temporary local terminal at that directory. Running instances receive a new tab; temporary directory connections are not restored after restart. On Windows 11, the entry may appear under “Show more options”.
+- Type `zterm` in the Windows Explorer address bar to open a temporary default local terminal in that directory. Argument-free launches inherit the caller's working directory, including when forwarding to a running instance or launching from a shortcut. The installer registers `App Paths` without changing the global `PATH`.
 - Browse SFTP directories, create folders, upload, download, rename, delete, and retry transfers.
 - Capture command history by session or local profile, search it, copy commands, and send commands back to the active terminal.
 - Store connection credentials in the operating system keyring instead of plain SQLite rows.

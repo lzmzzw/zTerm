@@ -2,8 +2,10 @@
 use tauri::State;
 
 use crate::{
-    error::AppResult, models::session::SshOptions,
-    services::external_launch_service::ExternalSshLaunchEvent, state::AppState,
+    error::AppResult,
+    models::session::SshOptions,
+    services::external_launch_service::{ExternalLocalLaunchEvent, ExternalSshLaunchEvent},
+    state::AppState,
 };
 
 #[tauri::command]
@@ -11,6 +13,15 @@ pub fn external_launch_take_pending(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ExternalSshLaunchEvent>> {
     state.external_launch_service().take_pending_launches()
+}
+
+#[tauri::command]
+pub fn external_launch_take_pending_local(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ExternalLocalLaunchEvent>> {
+    state
+        .external_launch_service()
+        .take_pending_local_launches()
 }
 
 #[tauri::command]

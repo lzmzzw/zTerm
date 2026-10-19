@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { loadTerminalLayout, saveTerminalLayout } from "../features/terminal-layout/terminalLayoutPersistence";
-import type { TerminalLayoutDefinition } from "../features/terminal-layout/types";
+import type { PaneNode, TerminalLayoutDefinition } from "../features/terminal-layout/types";
 import { AppShell } from "./AppShell";
 import { closeAgentCodex, openAgentCodex, setActiveAgentTerminal } from "../features/ai/agentCodexApi";
 import { useFileTransferStore } from "../features/files/fileTransferStore";
@@ -59,6 +59,7 @@ const storeMocks = vi.hoisted(() => ({
   },
   getExternalSshOptions: vi.fn(),
   takePendingExternalLaunches: vi.fn(),
+  takePendingExternalLocalLaunches: vi.fn().mockResolvedValue([]),
   updateExternalSshOptions: vi.fn(),
   settingsState: {
     appSettings: {
@@ -220,6 +221,7 @@ vi.mock("../features/terminal/externalLaunchApi", () => ({
   getExternalSshOptions: storeMocks.getExternalSshOptions,
   isExternalSessionId: (value: string | null | undefined) => typeof value === "string" && value.startsWith("external:"),
   takePendingExternalLaunches: storeMocks.takePendingExternalLaunches,
+  takePendingExternalLocalLaunches: storeMocks.takePendingExternalLocalLaunches,
   updateExternalSshOptions: storeMocks.updateExternalSshOptions,
 }));
 
@@ -803,6 +805,7 @@ describe("AppShell", () => {
     storeMocks.tauriEventListenCounts.clear();
     storeMocks.loadPendingInvocations.mockResolvedValue([]);
     storeMocks.pendingExternalLaunches = [];
+    storeMocks.takePendingExternalLocalLaunches.mockReset().mockResolvedValue([]);
     storeMocks.takePendingExternalLaunches.mockImplementation(async () =>
       storeMocks.pendingExternalLaunches.splice(0),
     );
@@ -2398,16 +2401,45 @@ describe("AppShell", () => {
   });
 
 
-  it("leaves the startup pane empty instead of opening the default local terminal", async () => {
+  it("opens an Explorer directory with the default terminal before the startup fallback", async () => {
+    storeMocks.takePendingExternalLocalLaunches.mockResolvedValueOnce([{ id: "local:1", working_directory: "F:\\含空格 目录" }]);
+    storeMocks.bindRuntimeToPaneTab.mockImplementationOnce(() => {
+      const root = storeMocks.terminalLayoutState.tabs[0].root as PaneNode;
+      if (root.kind === "leaf" && root.terminal_tabs) root.terminal_tabs[0].runtime_session_id = "runtime-local";
+    });
+    const view = render(<AppShell />);
+    await act(async () => { await Promise.resolve(); });
+    expect(storeMocks.openDefaultLocalTerminal).toHaveBeenCalledExactlyOnceWith("pane-1", "F:\\含空格 目录");
+    expect(storeMocks.updatePaneTerminalTab).toHaveBeenCalledWith("default-terminalLayout", "tab-1", "pane-1", "pane-1-tab-1",
+      expect.objectContaining({ connection_source: "external_local", path: "F:\\含空格 目录" }));
+    view.unmount();
+  });
+
+  it("opens a forwarded Explorer request in a new terminal tab", async () => {
+    const root = storeMocks.terminalLayoutState.tabs[0].root as PaneNode;
+    if (root.kind === "leaf" && root.terminal_tabs) root.terminal_tabs[0].runtime_session_id = "existing-runtime";
+    const view = render(<AppShell />);
+    await act(async () => { await Promise.resolve(); });
+    storeMocks.takePendingExternalLocalLaunches.mockResolvedValueOnce([{ id: "local:2", working_directory: "C:\\" }]);
+    await act(async () => {
+      storeMocks.tauriEventHandlers.get("zterm:external-local-launch")?.({ payload: null });
+      await Promise.resolve();
+    });
+    expect(storeMocks.addPaneTab).toHaveBeenCalledWith("pane-1");
+    expect(storeMocks.openDefaultLocalTerminal).toHaveBeenCalledExactlyOnceWith("pane-1", "C:\\");
+    view.unmount();
+  });
+
+  it("opens the configured default local terminal on empty startup", async () => {
     const view = render(<AppShell />);
 
     await act(async () => {
       await Promise.resolve();
     });
 
-    expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
+    expect(storeMocks.openDefaultLocalTerminal).toHaveBeenCalledTimes(1);
     expect(storeMocks.addPaneTab).not.toHaveBeenCalled();
-    expect(storeMocks.bindRuntimeToPaneTab).not.toHaveBeenCalled();
+    expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledTimes(1);
 
     view.unmount();
   });
@@ -2450,9 +2482,9 @@ describe("AppShell", () => {
     expect(view.container.querySelector('[aria-label="选择默认本地终端"]')).toBe(null);
     expect(view.container.querySelector('[aria-label="选择连接 文件 FTP"]')).toBe(null);
     expect(view.container.querySelector('[aria-label="选择连接 文件 SFTP"]')).toBe(null);
-    expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
+    expect(storeMocks.openDefaultLocalTerminal).toHaveBeenCalledTimes(1);
     expect(storeMocks.addPaneTab).not.toHaveBeenCalled();
-    expect(storeMocks.bindRuntimeToPaneTab).not.toHaveBeenCalled();
+    expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 
@@ -2527,13 +2559,13 @@ describe("AppShell", () => {
     });
 
     expect(storeMocks.splitActivePane).toHaveBeenCalledWith("vertical");
-    expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
-    expect(storeMocks.bindRuntimeToPaneTab).not.toHaveBeenCalled();
+    expect(storeMocks.openDefaultLocalTerminal).toHaveBeenCalledTimes(1);
+    expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledTimes(1);
 
     view.unmount();
   });
 
-  it("keeps an empty pane after the last pane tab is closed", async () => {
+  it("opens the default terminal after the last pane tab is closed", async () => {
     storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
@@ -2557,19 +2589,27 @@ describe("AppShell", () => {
         },
       },
     ];
+    storeMocks.closePaneTab.mockImplementationOnce(() => {
+      storeMocks.terminalLayoutState.tabs[0].root = {
+        kind: "leaf", id: "pane-1", title: "新建终端", runtime_session_id: null,
+        saved_session_id: null, active_terminal_tab_id: "pane-1-tab-empty",
+        terminal_tabs: [{ id: "pane-1-tab-empty", title: "新建终端", runtime_session_id: null, saved_session_id: null }],
+      };
+    });
     const view = render(<AppShell />);
+    await act(async () => { await Promise.resolve(); });
 
     await act(async () => {
       (view.container.querySelector('[aria-label="关闭当前标签"]') as HTMLButtonElement).click();
     });
 
     expect(storeMocks.closePaneTab).toHaveBeenCalledWith("pane-1", "pane-1-tab-1");
-    expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
-    expect(storeMocks.bindRuntimeToPaneTab).not.toHaveBeenCalled();
+    expect(storeMocks.openDefaultLocalTerminal).toHaveBeenCalledTimes(1);
+    expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 
-  it("keeps an empty pane after the only pane is closed", async () => {
+  it("opens the default terminal after the only pane is closed", async () => {
     storeMocks.terminalLayoutState.tabs = [
       {
         id: "tab-1",
@@ -2593,15 +2633,23 @@ describe("AppShell", () => {
         },
       },
     ];
+    storeMocks.closePane.mockImplementationOnce(() => {
+      storeMocks.terminalLayoutState.tabs[0].root = {
+        kind: "leaf", id: "pane-1", title: "新建终端", runtime_session_id: null,
+        saved_session_id: null, active_terminal_tab_id: "pane-1-tab-empty",
+        terminal_tabs: [{ id: "pane-1-tab-empty", title: "新建终端", runtime_session_id: null, saved_session_id: null }],
+      };
+    });
     const view = render(<AppShell />);
+    await act(async () => { await Promise.resolve(); });
 
     await act(async () => {
       (view.container.querySelector('[aria-label="关闭当前分栏"]') as HTMLButtonElement).click();
     });
 
     expect(storeMocks.closePane).toHaveBeenCalledWith("pane-1");
-    expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
-    expect(storeMocks.bindRuntimeToPaneTab).not.toHaveBeenCalled();
+    expect(storeMocks.openDefaultLocalTerminal).toHaveBeenCalledTimes(1);
+    expect(storeMocks.bindRuntimeToPaneTab).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 
@@ -3281,7 +3329,7 @@ describe("AppShell", () => {
     });
 
     expect(storeMocks.addPaneTabAfter).not.toHaveBeenCalled();
-    expect(storeMocks.openDefaultLocalTerminal).not.toHaveBeenCalled();
+    expect(storeMocks.openDefaultLocalTerminal).toHaveBeenCalledTimes(1);
     view.unmount();
   });
 

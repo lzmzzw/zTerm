@@ -77,6 +77,12 @@ pub struct ExternalSshLaunchEvent {
     pub file_transfer_protocol: Option<ExternalFileTransferProtocol>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternalLocalLaunchEvent {
+    pub id: String,
+    pub working_directory: String,
+}
+
 #[derive(Clone, Default)]
 pub struct ExternalLaunchService {
     inner: Arc<ExternalLaunchInner>,
@@ -86,6 +92,7 @@ pub struct ExternalLaunchService {
 struct ExternalLaunchInner {
     sessions: Mutex<HashMap<String, TransientSshSession>>,
     pending_launches: Mutex<VecDeque<ExternalSshLaunchEvent>>,
+    pending_local_launches: Mutex<VecDeque<ExternalLocalLaunchEvent>>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +109,42 @@ pub struct CompositeSshSecretResolver {
 }
 
 impl ExternalLaunchService {
+    pub fn register_local_from_args<I, S>(&self, args: I, cwd: Option<&Path>) -> AppResult<bool>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let args = args.into_iter().map(Into::into).collect::<Vec<String>>();
+        let directory = parse_external_local_launch_args(args.clone())?.or_else(|| {
+            (args.len() == 1)
+                .then(|| cwd.filter(|path| path.is_absolute() && path.is_dir()))
+                .flatten()
+                .map(|path| path.to_string_lossy().into_owned())
+        });
+        let Some(working_directory) = directory else {
+            return Ok(false);
+        };
+        self.inner
+            .pending_local_launches
+            .lock()
+            .map_err(|_| AppError::terminal("external local launch queue lock was poisoned"))?
+            .push_back(ExternalLocalLaunchEvent {
+                id: Uuid::new_v4().to_string(),
+                working_directory,
+            });
+        Ok(true)
+    }
+
+    pub fn take_pending_local_launches(&self) -> AppResult<Vec<ExternalLocalLaunchEvent>> {
+        Ok(self
+            .inner
+            .pending_local_launches
+            .lock()
+            .map_err(|_| AppError::terminal("external local launch queue lock was poisoned"))?
+            .drain(..)
+            .collect())
+    }
+
     pub fn register_request(
         &self,
         request: ExternalSshLaunchRequest,
@@ -465,6 +508,27 @@ impl SshCommandSecretResolver for CompositeSshSecretResolver {
 
 pub fn is_external_session_id(value: &str) -> bool {
     value.starts_with(EXTERNAL_SESSION_PREFIX)
+}
+
+pub fn parse_external_local_launch_args<I, S>(args: I) -> AppResult<Option<String>>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let args = args.into_iter().map(Into::into).collect::<Vec<String>>();
+    let Some(index) = args.iter().skip(1).position(|arg| arg == "--open-local") else {
+        return Ok(None);
+    };
+    let value = args
+        .get(index + 2)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| AppError::validation("--open-local 缺少目录路径"))?;
+    let path = Path::new(value);
+    if !path.is_absolute() || !path.is_dir() {
+        return Err(AppError::validation("本地终端启动路径必须是存在的绝对目录"));
+    }
+    // Keep the shell-facing path in its ordinary spelling (without a Windows verbatim prefix).
+    Ok(Some(value.clone()))
 }
 
 pub fn external_ssh_channel_policy_for_username(username: &str) -> ExternalSshChannelPolicy {
@@ -1272,6 +1336,93 @@ mod tests {
         ExternalSshChannelPolicy,
     };
     use crate::models::session::{SshContainerOptions, SshOptions, SshTunnel, SshTunnelKind};
+    use std::path::Path;
+
+    #[test]
+    fn local_launches_preserve_directory_arguments_and_drain_once() {
+        let directory =
+            std::env::temp_dir().join(format!("zterm local 中文 {}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let target = directory.join(".").to_string_lossy().into_owned();
+        let service = ExternalLaunchService::default();
+        assert!(service
+            .register_local_from_args(["zterm.exe", "--open-local", &target], None)
+            .unwrap());
+        assert!(service
+            .register_local_from_args(["zterm.exe", "--open-local", &target], None)
+            .unwrap());
+        let launches = service.take_pending_local_launches().unwrap();
+        assert_eq!(launches.len(), 2);
+        assert_ne!(launches[0].id, launches[1].id);
+        assert_eq!(launches[0].working_directory, target);
+        assert!(service.take_pending_local_launches().unwrap().is_empty());
+        assert!(service.take_pending_launches().unwrap().is_empty());
+        std::fs::remove_dir(&directory).unwrap();
+    }
+
+    #[test]
+    fn address_bar_launches_use_each_callers_directory() {
+        let service = ExternalLaunchService::default();
+        let first = std::env::temp_dir();
+        let second = std::env::current_dir().unwrap();
+        assert!(service
+            .register_local_from_args(["zterm.exe"], Some(&first))
+            .unwrap());
+        assert!(service
+            .register_local_from_args(["zterm.exe"], Some(&second))
+            .unwrap());
+        let launches = service.take_pending_local_launches().unwrap();
+        assert_eq!(launches.len(), 2);
+        assert_eq!(launches[0].working_directory, first.to_string_lossy());
+        assert_eq!(launches[1].working_directory, second.to_string_lossy());
+        assert_ne!(launches[0].id, launches[1].id);
+        assert!(service.take_pending_local_launches().unwrap().is_empty());
+        assert!(!service
+            .register_local_from_args(["zterm.exe"], None)
+            .unwrap());
+        assert!(!service
+            .register_local_from_args(["zterm.exe"], Some(Path::new(".")))
+            .unwrap());
+        assert!(!service
+            .register_local_from_args(["zterm.exe", "--unrelated"], Some(&first))
+            .unwrap());
+    }
+
+    #[test]
+    fn explicit_local_directory_takes_priority_over_callers_directory() {
+        let service = ExternalLaunchService::default();
+        let directory = std::env::temp_dir();
+        let target = directory.to_string_lossy();
+        assert!(service
+            .register_local_from_args(
+                ["zterm.exe", "--open-local", target.as_ref()],
+                Some(Path::new("."))
+            )
+            .unwrap());
+        assert_eq!(
+            service.take_pending_local_launches().unwrap()[0].working_directory,
+            target
+        );
+        assert!(service
+            .register_local_from_args(["zterm.exe", "--open-local"], Some(&directory))
+            .is_err());
+    }
+
+    #[test]
+    fn local_launches_reject_missing_relative_and_file_paths() {
+        use super::parse_external_local_launch_args;
+        assert_eq!(
+            parse_external_local_launch_args(["zterm.exe"]).unwrap(),
+            None
+        );
+        assert!(parse_external_local_launch_args(["zterm.exe", "--open-local"]).is_err());
+        assert!(parse_external_local_launch_args(["zterm.exe", "--open-local", "."]).is_err());
+        let file = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(parse_external_local_launch_args(["zterm.exe", "--open-local", &file]).is_err());
+    }
 
     #[test]
     fn parses_filezilla_sftp_url_for_the_remote_file_transfer_endpoint() {

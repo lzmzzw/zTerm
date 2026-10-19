@@ -1,10 +1,11 @@
 // Author: Liz
-use std::{env, sync::Mutex};
+use std::{env, path::Path, sync::Mutex};
 
 use tauri::{Emitter, Manager};
 
 const EXTERNAL_SSH_LAUNCH_EVENT: &str = "zterm:external-ssh-launch";
-static EARLY_SECOND_INSTANCE_ARGS: Mutex<Vec<Vec<String>>> = Mutex::new(Vec::new());
+const EXTERNAL_LOCAL_LAUNCH_EVENT: &str = "zterm:external-local-launch";
+static EARLY_SECOND_INSTANCE_ARGS: Mutex<Vec<(Vec<String>, String)>> = Mutex::new(Vec::new());
 
 pub mod commands;
 #[cfg(windows)]
@@ -85,6 +86,7 @@ pub fn run() {
             commands::credential::credentials_delete,
             commands::credential::credentials_test,
             commands::external_launch::external_launch_take_pending,
+            commands::external_launch::external_launch_take_pending_local,
             commands::external_launch::external_launch_get_ssh_options,
             commands::external_launch::external_launch_update_ssh_options,
             commands::sftp::sftp_list,
@@ -146,17 +148,17 @@ pub fn run() {
     });
 }
 
-fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>, _cwd: String) {
+fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>, cwd: String) {
     let Ok(mut early_args) = EARLY_SECOND_INSTANCE_ARGS.lock() else {
         eprintln!("external launch ignored: early launch lock was poisoned");
         return;
     };
     let Some(state) = app.try_state::<state::AppState>() else {
-        early_args.push(args);
+        early_args.push((args, cwd));
         return;
     };
     drop(early_args);
-    register_second_instance_args(app, state.external_launch_service(), args);
+    register_second_instance_args(app, state.external_launch_service(), args, &cwd);
 
     focus_main_window(app);
 }
@@ -169,7 +171,24 @@ fn register_second_instance_args(
     app: &tauri::AppHandle,
     service: services::external_launch_service::ExternalLaunchService,
     args: Vec<String>,
+    cwd: &str,
 ) {
+    match service.register_local_from_args(args.clone(), Some(Path::new(cwd))) {
+        Ok(true) => {
+            if let Err(error) = app.emit(EXTERNAL_LOCAL_LAUNCH_EVENT, ()) {
+                eprintln!("failed to notify external local launch: {error}");
+            }
+            return;
+        }
+        Ok(false) => {}
+        Err(error) => {
+            eprintln!(
+                "external local launch ignored: {}",
+                security::redaction::redact_sensitive(&error.to_string())
+            );
+            return;
+        }
+    }
     let parent_command_line = forwarded_instance_parent_command_line(&args);
     let registration = service.register_from_forwarded_args(args, parent_command_line);
     match registration {
@@ -268,25 +287,30 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     let storage = storage::sqlite::SqliteStore::open(paths.db_path())?;
     let state = state::AppState::new_with_app_handle(storage, app.handle().clone());
     state.transfer_queue().reconcile_interrupted_tasks()?;
-    let _ = state
-        .external_launch_service()
-        .register_from_args(env::args())
+    let startup_cwd = env::current_dir().ok();
+    let _ = register_startup_args(
+        &state.external_launch_service(),
+        env::args().collect(),
+        startup_cwd.as_deref(),
+    )
+    .inspect_err(|error| {
+        eprintln!(
+            "external launch ignored: {}",
+            security::redaction::redact_sensitive(&error.to_string())
+        );
+    });
+    for (args, cwd) in early_args.drain(..) {
+        let _ = register_startup_args(
+            &state.external_launch_service(),
+            args,
+            Some(Path::new(&cwd)),
+        )
         .inspect_err(|error| {
             eprintln!(
                 "external launch ignored: {}",
                 security::redaction::redact_sensitive(&error.to_string())
             );
         });
-    for args in early_args.drain(..) {
-        let _ = state
-            .external_launch_service()
-            .register_from_args(args)
-            .inspect_err(|error| {
-                eprintln!(
-                    "external launch ignored: {}",
-                    security::redaction::redact_sensitive(&error.to_string())
-                );
-            });
     }
     if let Err(error) = tauri::async_runtime::block_on(commands::mcp::start_mcp_if_enabled(
         state.storage(),
@@ -303,9 +327,48 @@ fn setup_app_state(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
+fn register_startup_args(
+    service: &services::external_launch_service::ExternalLaunchService,
+    args: Vec<String>,
+    cwd: Option<&Path>,
+) -> error::AppResult<()> {
+    if !service.register_local_from_args(args.clone(), cwd)? {
+        service.register_from_args(args)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::should_enable_single_instance;
+
+    #[test]
+    fn startup_local_launches_are_queued_without_creating_ssh_sessions() {
+        let service = crate::services::external_launch_service::ExternalLaunchService::default();
+        let directory = std::env::temp_dir().to_string_lossy().into_owned();
+        super::register_startup_args(
+            &service,
+            vec!["zterm.exe".into(), "--open-local".into(), directory.clone()],
+            None,
+        )
+        .unwrap();
+        let launches = service.take_pending_local_launches().unwrap();
+        assert_eq!(launches.len(), 1);
+        assert_eq!(launches[0].working_directory, directory);
+        assert!(service.take_pending_launches().unwrap().is_empty());
+    }
+
+    #[test]
+    fn no_argument_startup_queues_the_inherited_directory() {
+        let service = crate::services::external_launch_service::ExternalLaunchService::default();
+        let directory = std::env::temp_dir();
+        super::register_startup_args(&service, vec!["zterm.exe".into()], Some(&directory)).unwrap();
+        assert_eq!(
+            service.take_pending_local_launches().unwrap()[0].working_directory,
+            directory.to_string_lossy()
+        );
+        assert!(service.take_pending_launches().unwrap().is_empty());
+    }
 
     #[test]
     fn crate_metadata_matches_project() {

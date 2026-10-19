@@ -16,5 +16,7 @@ describe("connection tab model", () => {
     expect(isReusableConnectionTab({ ...baseTab, connection_source: "missing" })).toBe(false);
     expect(isReusableConnectionTab({ ...baseTab, runtime_session_id: "runtime-1" })).toBe(false);
     expect(isReusableConnectionTab({ ...baseTab, saved_session_id: "session-1" })).toBe(false);
+    expect(isReusableConnectionTab({ ...baseTab, connection_source: "external_local", restore_status: "pending" })).toBe(false);
+    expect(isReusableConnectionTab({ ...baseTab, restore_status: "queued" })).toBe(false);
   });
 });

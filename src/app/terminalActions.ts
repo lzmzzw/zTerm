@@ -2,6 +2,7 @@
 import type { RuntimeSessionInfo } from "../features/terminal/terminalStore";
 import type { PaneTerminalTab, TerminalLayoutTab } from "../features/terminal-layout/types";
 import type { SavedSession } from "../features/sessions/types";
+import { isReusableConnectionTab } from "../features/terminal-layout/terminalLayoutShellModel";
 import { fallbackOnlyErrorMessage } from "../lib/unknownErrorMessage";
 
 interface TerminalActionDependencies {
@@ -64,7 +65,7 @@ export function createTerminalActions({
     const targetWorkbenchId = workbenchId;
     const targetTerminalLayoutTabId = activeTab.id;
     const targetPaneId = activeTab.active_pane_id;
-    const targetPaneTab = activePaneTab.runtime_session_id ? addPaneTab(targetPaneId) : activePaneTab;
+    const targetPaneTab = isReusableConnectionTab(activePaneTab) ? activePaneTab : addPaneTab(targetPaneId);
     setTerminalError(null);
     try {
       const runtime = await openTerminal(session.id, targetPaneId);

@@ -43,6 +43,7 @@ const startupHandlers: Record<string, (args: BrowserMockArgs) => unknown> = {
   terminal_layout_save: () => null,
   sessions_list: () => ({ groups: [], sessions: [] }),
   external_launch_take_pending: () => [],
+  external_launch_take_pending_local: () => [],
   transfer_list: () => [],
   file_transfer_list: () => [],
   file_transfer_view_state_get: () => null,

@@ -504,7 +504,7 @@ function stripRuntimeState(root: PaneNode): PaneNode {
 }
 
 function isTransientConnectionTab(tab: PaneTerminalTab): boolean {
-  return tab.connection_source === "external_ssh" || tab.saved_session_id?.startsWith("external:") === true;
+  return tab.connection_source === "external_ssh" || tab.connection_source === "external_local" || tab.saved_session_id?.startsWith("external:") === true;
 }
 
 function emptyPersistedTerminalTab(paneId: string): PaneTerminalTab {

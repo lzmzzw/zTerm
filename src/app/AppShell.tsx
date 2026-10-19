@@ -23,6 +23,7 @@ import { TerminalLayoutStage } from "./TerminalLayoutStage";
 import { createRemoteFileActions } from "./remoteFileActions";
 import { createTerminalActions } from "./terminalActions";
 import { closeTerminalRuntimes } from "./terminalLifecycle";
+import { ensureDefaultLocalTerminal } from "./defaultLocalTerminal";
 import { openSavedSessionTarget } from "./savedSessionActions";
 import { visibleRightTools, type ActiveConnectionKind, type RightTool } from "./rightTools";
 import { useAppShortcutKeys } from "./useAppShortcutKeys";
@@ -79,6 +80,7 @@ import {
   getExternalSshOptions,
   isExternalSessionId,
   takePendingExternalLaunches,
+  takePendingExternalLocalLaunches,
   updateExternalSshOptions,
   type ExternalSshLaunchEvent,
 } from "../features/terminal/externalLaunchApi";
@@ -607,10 +609,8 @@ export function AppShell() {
   useEffect(() => {
     if (!sessionsReady) return;
     let disposed = false;
-    let loaded = false;
     const initialTabs = initialLayoutTabsRef.current;
     void loadTerminalLayout().then(async (saved) => {
-      loaded = true;
       if (disposed || !saved || useTerminalLayoutStore.getState().tabs !== initialTabs) return;
       const queued = markTerminalLayoutRestoreQueued(saved);
       useTerminalLayoutStore.getState().restoreWorkbenchDefinition(queued);
@@ -629,7 +629,7 @@ export function AppShell() {
           return Boolean(target && target.restore_token === originalTarget?.restore_token && !target.runtime_session_id && (target.restore_status === "queued" || target.restore_status === "pending"));
         } });
     }).catch(error => { if (!disposed) setTerminalError(fallbackOnlyErrorMessage(error, "恢复终端布局失败")); })
-      .finally(() => { if (!disposed && loaded) setLayoutReady(true); });
+      .finally(() => { if (!disposed) setLayoutReady(true); });
     return () => { disposed = true; };
   }, [sessionsReady]);
 
@@ -872,39 +872,76 @@ export function AppShell() {
   );
 
   const drainPendingExternalLaunches = useCallback(async () => {
+    const localLaunches = await takePendingExternalLocalLaunches();
+    for (const launch of localLaunches) {
+      if (processedExternalLaunchIdsRef.current.has(launch.id)) continue;
+      processedExternalLaunchIdsRef.current.add(launch.id);
+      const state = useTerminalLayoutStore.getState();
+      const tab = state.tabs.find(item => item.id === state.activeTabId) ?? state.tabs[0];
+      const pane = tab ? findPane(tab.root, tab.active_pane_id) : null;
+      if (!tab || pane?.kind !== "leaf") continue;
+      const current = getActiveTerminalTab(pane);
+      const target = isReusableConnectionTab(current) ? current : state.addPaneTab(pane.id);
+      state.updatePaneTerminalTab(state.activeTerminalLayoutId, tab.id, pane.id, target.id, {
+        connection_source: "external_local", path: launch.working_directory,
+        restore_status: "pending", restore_error: null,
+      });
+      try {
+        const runtime = await openDefaultLocalTerminal(pane.id, launch.working_directory);
+        await bindOpenedTerminalRuntime(state.activeTerminalLayoutId, tab.id, pane.id, target.id, runtime);
+        useTerminalLayoutStore.getState().updatePaneTerminalTab(state.activeTerminalLayoutId, tab.id, pane.id, target.id, {
+          connection_source: "external_local",
+        });
+      } catch (error) {
+        state.updatePaneTerminalTab(state.activeTerminalLayoutId, tab.id, pane.id, target.id, {
+          restore_status: "failed", restore_error: fallbackOnlyErrorMessage(error, "打开本地目录失败"),
+        });
+        setTerminalError(fallbackOnlyErrorMessage(error, "打开本地目录失败"));
+      }
+    }
     const launches = await takePendingExternalLaunches();
     for (const launch of launches) {
       await handleExternalSshLaunch(launch);
     }
-  }, [handleExternalSshLaunch]);
+  }, [handleExternalSshLaunch, openDefaultLocalTerminal, bindOpenedTerminalRuntime]);
 
   useEffect(() => {
+    if (!layoutReady) return;
     let disposed = false;
     let cleanup: (() => void) | null = null;
+    let cleanupLocal: (() => void) | null = null;
     const drain = () =>
       drainPendingExternalLaunches().catch((error) => {
         if (!disposed) setTerminalError(fallbackOnlyErrorMessage(error, "读取外部启动请求失败"));
       });
-    void listenTauri("zterm:external-ssh-launch", () => {
+    const localListener = listenTauri("zterm:external-local-launch", () => { void drain(); }).then(unlisten => {
+      if (disposed) unlisten();
+      else cleanupLocal = unlisten;
+    });
+    const sshListener = listenTauri("zterm:external-ssh-launch", () => {
       void drain();
-    })
-      .then((unlisten) => {
-        if (disposed) {
-          unlisten();
-          return;
-        }
-        cleanup = unlisten;
-        void drain();
-      })
-      .catch((error) => {
-        void drain();
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else cleanup = unlisten;
+    });
+    void Promise.all([localListener, sshListener])
+      .catch(error => {
         if (!disposed) setTerminalError(fallbackOnlyErrorMessage(error, "监听外部启动请求失败"));
+      })
+      .then(async () => {
+        if (disposed) return;
+        await drain();
+        if (!disposed) await ensureDefaultLocalTerminal(openDefaultLocalTerminal, closeTerminal);
+      })
+      .catch(error => {
+        if (!disposed) setTerminalError(fallbackOnlyErrorMessage(error, "打开默认本地终端失败"));
       });
     return () => {
       disposed = true;
       cleanup?.();
+      cleanupLocal?.();
     };
-  }, [drainPendingExternalLaunches]);
+  }, [layoutReady, drainPendingExternalLaunches, openDefaultLocalTerminal, closeTerminal]);
 
   useEffect(() => {
     let disposed = false;
@@ -1033,7 +1070,7 @@ export function AppShell() {
       ? getLeafTerminalTabs(sourcePane).find((tab) => tab.id === paneTabId)
       : null;
     const source = sourceTab?.connection_source ?? (sourceTab?.saved_session_id ? "saved_session" : null);
-    if (!sourceTab || !source || source === "missing" || (source !== "default_local" && !sourceTab.saved_session_id)) return;
+    if (!sourceTab || !source || source === "missing" || (source !== "default_local" && source !== "external_local" && !sourceTab.saved_session_id)) return;
 
     const targetTerminalLayoutId = activeTerminalLayoutId;
     const targetTerminalLayoutTabId = activeTab.id;
@@ -1051,7 +1088,7 @@ export function AppShell() {
 
     try {
       const workingDirectory = sourceTab.path?.trim() || null;
-      const runtime = source === "default_local"
+      const runtime = source === "default_local" || source === "external_local"
         ? await openDefaultLocalTerminal(paneId, workingDirectory)
         : source === "ssh_container" && sourceTab.container_target?.id
           ? await openSshContainerTerminal(
@@ -1127,6 +1164,7 @@ export function AppShell() {
         await closeTerminal(terminalTab.runtime_session_id);
       }
       closePaneTab(paneId, paneTabId);
+      await ensureDefaultLocalTerminal(openDefaultLocalTerminal, closeTerminal);
     } catch (error) {
       setTerminalError(fallbackOnlyErrorMessage(error, "关闭终端标签失败"));
     }
@@ -1149,6 +1187,11 @@ export function AppShell() {
       return;
     }
     closePane(paneId);
+    try {
+      await ensureDefaultLocalTerminal(openDefaultLocalTerminal, closeTerminal);
+    } catch (error) {
+      setTerminalError(fallbackOnlyErrorMessage(error, "打开默认本地终端失败"));
+    }
   }
 
   function handleSplitPane(direction: "horizontal" | "vertical") {

@@ -5,6 +5,7 @@ import {
   externalSshChannelPolicy,
   externalSshHostServiceTarget,
   getExternalSshOptions,
+  takePendingExternalLocalLaunches,
   updateExternalSshOptions,
 } from "./externalLaunchApi";
 import type { SshOptions } from "../sessions/types";
@@ -18,6 +19,13 @@ vi.mock("@tauri-apps/api/core", () => ({
 describe("externalLaunchApi", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("drains local directory launches through their separate IPC queue", async () => {
+    const launches = [{ id: "local-launch", working_directory: "C:\\Work space\\中文" }];
+    invokeMock.mockResolvedValue(launches);
+    await expect(takePendingExternalLocalLaunches()).resolves.toEqual(launches);
+    expect(invokeMock).toHaveBeenCalledWith("external_launch_take_pending_local");
   });
 
   it("loads transient SSH options through the external launch IPC command", async () => {

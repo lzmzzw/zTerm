@@ -86,11 +86,13 @@ fn sanitize_pane(node: &mut PaneNode, valid_ids: &HashSet<String>, depth: usize)
             terminal_tabs,
         } => {
             terminal_tabs.retain(|tab| {
-                tab.connection_source.as_deref() != Some("external_ssh")
-                    && !tab
-                        .saved_session_id
-                        .as_deref()
-                        .is_some_and(|id| id.starts_with("external:"))
+                !matches!(
+                    tab.connection_source.as_deref(),
+                    Some("external_ssh" | "external_local")
+                ) && !tab
+                    .saved_session_id
+                    .as_deref()
+                    .is_some_and(|id| id.starts_with("external:"))
             });
             for tab in terminal_tabs.iter_mut() {
                 if tab
@@ -140,4 +142,34 @@ fn sanitize_pane(node: &mut PaneNode, valid_ids: &HashSet<String>, depth: usize)
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temporary_explorer_connections_are_not_persisted_with_their_paths() {
+        let mut pane = PaneNode::Leaf {
+            id: "pane".into(),
+            saved_session_id: None,
+            title: "临时目录".into(),
+            active_terminal_tab_id: Some("temporary".into()),
+            terminal_tabs: vec![TerminalLayoutConnection {
+                id: "temporary".into(),
+                title: "临时目录".into(),
+                saved_session_id: None,
+                connection_source: Some("external_local".into()),
+                container_target: None,
+                path: Some("C:\\private directory".into()),
+            }],
+        };
+        sanitize_pane(&mut pane, &HashSet::new(), 0).unwrap();
+        let PaneNode::Leaf { terminal_tabs, .. } = pane else {
+            panic!("expected leaf")
+        };
+        assert_eq!(terminal_tabs.len(), 1);
+        assert_eq!(terminal_tabs[0].connection_source.as_deref(), Some("empty"));
+        assert!(terminal_tabs[0].path.is_none());
+    }
 }

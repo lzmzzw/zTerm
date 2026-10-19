@@ -42,6 +42,16 @@ describe("terminalActions", () => {
     );
   });
 
+  it("keeps a pending default terminal intact when a saved connection is opened", async () => {
+    const deps = dependencies({
+      activePaneTab: paneTab({ connection_source: "default_local", restore_status: "pending" }),
+      addedPaneTab: paneTab({ id: "pane-tab-2" }),
+    });
+    await createTerminalActions(deps).openSession(savedSession());
+    expect(deps.addPaneTab).toHaveBeenCalledWith("pane-1");
+    expect(deps.bindRuntimeToPaneTab).toHaveBeenCalledWith("live-workbench", "tab-1", "pane-1", "pane-tab-2", runtimeInfo());
+  });
+
   it("closes a runtime that finishes opening after its target tab was removed", async () => {
     let resolveRuntime!: (runtime: RuntimeSessionInfo) => void;
     let targetAvailable = true;
