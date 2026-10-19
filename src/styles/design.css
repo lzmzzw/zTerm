@@ -39,17 +39,23 @@
 .zt-settings-sidebar svg { display: none; }
 .zt-split-pane-horizontal { grid-template-columns: minmax(0, var(--zt-split-ratio)) 5px minmax(0, 1fr); }
 .zt-split-pane-vertical { grid-template-rows: minmax(0, var(--zt-split-ratio)) 5px minmax(0, 1fr); }
-svg.lucide { color: #879bf5; stroke-width: 1.7; }
-svg.lucide-folder, svg.lucide-folder-open, svg.lucide-folder-plus, svg.lucide-files { color: #e3aa3b; }
-svg.lucide-terminal, svg.lucide-square-terminal, svg.lucide-play, svg.lucide-circle-check, svg.lucide-check { color: #38b78c; }
-svg.lucide-server, svg.lucide-monitor, svg.lucide-upload, svg.lucide-download, svg.lucide-arrow-up-down { color: #419ee7; }
-svg.lucide-bot, svg.lucide-message-square-more, svg.lucide-sparkles, svg.lucide-box, svg.lucide-blocks { color: #b386ed; }
-svg.lucide-clock-3, svg.lucide-history, svg.lucide-key-round, svg.lucide-shield-check { color: #e49a4d; }
-svg.lucide-activity, svg.lucide-cable, svg.lucide-network { color: #2bb8ab; }
-svg.lucide-trash-2, svg.lucide-circle-x, svg.lucide-triangle-alert { color: #e87882; }
+svg.lucide { color: var(--zt-accent); stroke-width: 1.7; }
+svg.lucide-folder, svg.lucide-folder-open, svg.lucide-folder-plus, svg.lucide-files { color: var(--zt-warning); }
+svg.lucide-terminal, svg.lucide-square-terminal, svg.lucide-play, svg.lucide-circle-check, svg.lucide-check { color: var(--zt-success); }
+svg.lucide-server, svg.lucide-monitor, svg.lucide-upload, svg.lucide-download, svg.lucide-arrow-up-down { color: var(--zt-info); }
+svg.lucide-bot, svg.lucide-message-square-more, svg.lucide-sparkles, svg.lucide-box, svg.lucide-blocks { color: var(--zt-icon-violet); }
+svg.lucide-clock-3, svg.lucide-history, svg.lucide-key-round, svg.lucide-shield-check { color: var(--zt-warning); }
+svg.lucide-activity, svg.lucide-cable, svg.lucide-network { color: var(--zt-icon-teal); }
+svg.lucide-trash-2, svg.lucide-circle-x { color: var(--zt-danger); }
 svg.lucide-chevron-down, svg.lucide-chevron-right, svg.lucide-chevron-up, svg.lucide-chevron-left,
 svg.lucide-x, svg.lucide-minus, svg.lucide-square, svg.lucide-copy, svg.lucide-ellipsis,
 svg.lucide-search, svg.lucide-grip-vertical { color: currentColor; }
+svg.lucide-triangle-alert { color: var(--zt-warning); }
+/* Semantic feedback and control icons inherit their component's tone. */
+.zt-alert svg.lucide,
+.zt-button svg.lucide,
+.zt-icon-button svg.lucide,
+.zt-delete-button svg.lucide { color: inherit; }
 .zt-titlebar svg.lucide { width: 16px; height: 16px; color: inherit; }
 /* 操作继承中性色；面板标题与内容中的对象图标保留类别色。 */
 .zt-panel-header button svg.lucide,

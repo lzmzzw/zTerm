@@ -81,14 +81,17 @@
 .zt-mcp-tool-item p { margin: 0; color: var(--zt-text-muted); line-height: 1.6; }
 .zt-mcp-settings-section .zt-mcp-row > div { display: grid; grid-template-columns: minmax(110px,1fr) minmax(0,2fr); align-items: center; gap: 12px; }
 .zt-mcp-settings-section .zt-mcp-row > div span { font-family: var(--zt-font-mono); overflow-wrap: anywhere; }
-.zt-right-tools svg.lucide-cpu { color: #df9a54; }
-.zt-right-tools svg.lucide-memory-stick { color: #aa8ded; }
-.zt-right-tools svg.lucide-hard-drive { color: #58b6b0; }
-.zt-right-tools svg.lucide-network { color: #65a8e8; }
-.zt-right-tools svg.lucide-bot,.zt-right-tools svg.lucide-message-square-more { color: #bd8bef; }
-.zt-right-tools svg.lucide-box { color: #e2aa5e; }
-.zt-right-tools svg.lucide-play,.zt-right-tools svg.lucide-log-in { color: #62bd98; }
-.zt-right-tools svg.lucide-shield-check { color: #e0af66; }
-.zt-mcp-settings-section svg.lucide-power { color: #60b591; }
-.zt-mcp-settings-section svg.lucide-key-round { color: #d9a258; }
+.zt-right-tools svg.lucide-cpu { color: var(--zt-warning); }
+.zt-right-tools svg.lucide-memory-stick { color: var(--zt-icon-violet); }
+.zt-right-tools svg.lucide-hard-drive { color: var(--zt-icon-teal); }
+.zt-right-tools svg.lucide-network { color: var(--zt-info); }
+.zt-right-tools svg.lucide-bot,.zt-right-tools svg.lucide-message-square-more { color: var(--zt-icon-violet); }
+.zt-right-tools svg.lucide-box { color: var(--zt-warning); }
+.zt-right-tools svg.lucide-play,.zt-right-tools svg.lucide-log-in { color: var(--zt-success); }
+.zt-right-tools svg.lucide-shield-check { color: var(--zt-warning); }
+.zt-mcp-settings-section svg.lucide-power { color: var(--zt-success); }
+.zt-mcp-settings-section svg.lucide-key-round { color: var(--zt-warning); }
+.zt-agent-codex-approvals .zt-button-primary { background: var(--zt-accent-bg); border-color: var(--zt-accent-border); color: var(--zt-accent); }
+.zt-agent-codex-approvals .zt-button-primary:hover:not(:disabled) { background: var(--zt-accent-hover); color: color-mix(in srgb, var(--zt-accent) 88%, var(--zt-text-primary)); }
+.zt-agent-codex-approvals .zt-button-danger { background: var(--zt-danger-bg); border-color: var(--zt-danger-border); color: var(--zt-danger); }
 @media(max-width:900px) { .zt-mcp-tools-heading { flex-wrap: wrap; } .zt-mcp-tool-search { width: 100%; } .zt-mcp-tool-item { grid-template-columns: minmax(120px,35%) minmax(0,1fr); } }

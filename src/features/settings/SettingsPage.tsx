@@ -575,7 +575,7 @@ function SettingsActionBar({
         <button type="button" disabled={loading} onClick={onReset}>
           {t(language, "resetDefaults")}
         </button>
-        <button type={onSave ? "button" : "submit"} form={formId} disabled={loading || saveDisabled} onClick={onSave}>
+        <button className="zt-button-primary" type={onSave ? "button" : "submit"} form={formId} disabled={loading || saveDisabled} onClick={onSave}>
           {t(language, "save")}
         </button>
       </div>

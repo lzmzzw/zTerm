@@ -105,16 +105,16 @@ describe("split pane css direction mapping", () => {
   it("uses neutral selected surfaces instead of blue-green highlights", () => {
     expect(css).toContain("--zt-surface-hover: rgb(255 255 255 / 0.07)");
     expect(css).toContain("--zt-surface-selected: #393939");
-    expect(css).toContain("--zt-accent-muted: rgb(255 255 255 / 0.1)");
-    expect(css).toContain("--zt-focus-ring: rgb(255 255 255 / 0.92)");
-    expect(css).toContain("--zt-focus-soft: rgb(255 255 255 / 0.18)");
+    expect(css).toContain("--zt-accent-muted: rgb(164 189 219 / 0.1)");
+    expect(css).toContain("--zt-focus-ring: var(--zt-accent)");
+    expect(css).toContain("--zt-focus-soft: rgb(164 189 219 / 0.18)");
     expect(css).not.toContain("100 210 255");
 
     expect(css).toContain("--zt-surface-hover: rgb(0 0 0 / 0.04)");
     expect(css).toContain("--zt-surface-selected: #dedede");
-    expect(css).toContain("--zt-accent-muted: rgb(0 0 0 / 0.07)");
-    expect(css).toContain("--zt-focus-ring: #444444");
-    expect(css).toContain("--zt-focus-soft: rgb(0 0 0 / 0.13)");
+    expect(css).toContain("--zt-accent-muted: rgb(77 108 148 / 0.07)");
+    expect(css).toContain("--zt-focus-ring: var(--zt-accent)");
+    expect(css).toContain("--zt-focus-soft: rgb(77 108 148 / 0.13)");
     expect(css).not.toContain("10 132 255");
   });
 

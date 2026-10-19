@@ -212,10 +212,10 @@ describe("global dark theme colors", () => {
     expect(css).not.toContain("box-shadow: inset 0 1px 0 var(--zt-accent)");
   });
 
-  it("uses one high-contrast non-blue focus-visible ring across interactive elements", () => {
-    expect(rootVariable("--zt-focus-ring")).toBe("rgb(255 255 255 / 0.92)");
+  it("uses one mist-blue focus-visible ring across interactive elements", () => {
+    expect(rootVariable("--zt-focus-ring")).toBe("var(--zt-accent)");
     expect(variableForSelector(':root[data-zt-theme="light"]', "--zt-focus-ring")).toBe(
-      "#444444",
+      "var(--zt-accent)",
     );
 
     for (const selector of [

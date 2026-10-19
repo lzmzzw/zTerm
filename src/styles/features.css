@@ -668,7 +668,7 @@
   padding: 0 5px;
   border-radius: 10px;
   background: var(--zt-accent);
-  color: #fff;
+  color: var(--zt-on-accent);
   font-size: var(--zt-font-size-caption);
   font-weight: 700;
 }
@@ -2020,7 +2020,7 @@
 }
 
 .zt-ai-tool-card.risk-high {
-  border-color: #b45309;
+  border-color: var(--zt-warning-border);
 }
 
 .zt-ai-tool-card.risk-critical {
