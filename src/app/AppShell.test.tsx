@@ -3803,7 +3803,7 @@ describe("AppShell", () => {
     expect(view.container.querySelector('[aria-label="刷新容器"]')?.getAttribute("title")).toBe("刷新");
     expect(view.container.querySelector('[aria-label="进入容器 api"]')?.getAttribute("title")).toBe("进入容器");
     expect(view.container.querySelector('[aria-label="进入容器 api"] svg')).not.toBe(null);
-    expect((view.container.querySelector('[aria-label="进入容器 old"]') as HTMLButtonElement).disabled).toBe(true);
+    expect((view.container.querySelector('[aria-label="启动容器 old"]') as HTMLButtonElement).disabled).toBe(false);
     const enterApiButton = view.container.querySelector('[aria-label="进入容器 api"]') as HTMLButtonElement;
 
     await act(async () => {

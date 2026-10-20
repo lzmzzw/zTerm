@@ -51,7 +51,7 @@ async function chooseSelect(container: HTMLElement, label: string, value: string
 }
 
 describe("ServerMonitorPanel", () => {
-  it("bounds visual sampling history and clears it when the monitored target changes", () => {
+  it("keeps the overview free of trend graphs across samples and target changes", () => {
     const onRefresh = vi.fn();
     const panel = (id: string, sampleId: string) => (
       <ServerMonitorPanel
@@ -67,11 +67,11 @@ describe("ServerMonitorPanel", () => {
       />
     );
     const view = render(panel("first", "0"));
-    const pointCount = () => view.container.querySelector(".zt-monitor-cpu polyline")?.getAttribute("points")?.split(" ").length;
+    const trendGraph = () => view.container.querySelector(".zt-monitor-card polyline");
     for (let index = 1; index < 30; index += 1) view.rerender(panel("first", String(index)));
-    expect(pointCount()).toBe(20);
+    expect(trendGraph()).toBeNull();
     view.rerender(panel("second", "30"));
-    expect(pointCount()).toBe(1);
+    expect(trendGraph()).toBeNull();
     expect(onRefresh).not.toHaveBeenCalled();
     view.unmount();
   });

@@ -12,8 +12,8 @@ use crate::{
             external_ssh_channel_policy_for_username, ExternalSshChannelPolicy,
         },
         ssh_container_service::{
-            build_container_exec_command, build_container_list_script, enabled_container_options,
-            parse_container_ps_output,
+            build_container_exec_command, build_container_list_script,
+            build_container_start_script, enabled_container_options, parse_container_ps_output,
         },
     },
     state::AppState,
@@ -82,6 +82,58 @@ pub async fn ssh_container_list(
 }
 
 #[tauri::command]
+pub async fn ssh_container_start(
+    state: State<'_, AppState>,
+    saved_session_id: String,
+    runtime_session_id: Option<String>,
+    container_id: String,
+) -> AppResult<()> {
+    let storage = state.storage();
+    let external_launch_service = state.external_launch_service();
+    let session = match external_launch_service.get_session(&saved_session_id)? {
+        Some(session) => session,
+        None => get_session(storage.as_ref(), &saved_session_id)?,
+    };
+    let is_external = crate::services::external_launch_service::is_external_session_id(&session.id);
+    if is_external
+        && external_ssh_channel_policy_for_username(&session.username)
+            == ExternalSshChannelPolicy::SingleChannel
+    {
+        return Err(AppError::unsupported("单通道临时 SSH 不支持启动容器"));
+    }
+    let container = enabled_container_options(&session)?;
+    let script = build_container_start_script(&container.runtime, &container_id)?;
+    if is_external {
+        let runtime_session_id = runtime_session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AppError::validation("临时 SSH 启动容器需要当前 SSH 终端连接"))?;
+        execute_external_container_script(&state, &session.id, runtime_session_id, script).await?;
+        return Ok(());
+    }
+    let all_sessions = list_sessions(storage.as_ref())?.sessions;
+    let secrets = external_launch_service.composite_secret_resolver(state.credential_service());
+    let output = state
+        .ssh_command_service()
+        .execute(&session, &all_sessions, script, &secrets)
+        .await?;
+    if !output.success {
+        let detail = if output.stderr.trim().is_empty() {
+            output.stdout.trim()
+        } else {
+            output.stderr.trim()
+        };
+        return Err(AppError::ssh(if detail.is_empty() {
+            "启动容器失败".to_string()
+        } else {
+            detail.to_string()
+        }));
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn ssh_container_enter_runtime(
     state: State<'_, AppState>,
     saved_session_id: String,
@@ -117,13 +169,25 @@ async fn list_external_containers_through_runtime(
     runtime_session_id: &str,
     script: String,
 ) -> AppResult<Vec<SshContainerInfo>> {
+    let stdout =
+        execute_external_container_script(state, saved_session_id, runtime_session_id, script)
+            .await?;
+    Ok(parse_container_ps_output(&stdout))
+}
+
+async fn execute_external_container_script(
+    state: &State<'_, AppState>,
+    saved_session_id: &str,
+    runtime_session_id: &str,
+    script: String,
+) -> AppResult<String> {
     let manager = state.terminal_manager();
     let info = manager.runtime_info(runtime_session_id)?;
     if info.saved_session_id.as_deref() != Some(saved_session_id)
         || info.kind != RuntimeSessionKind::Ssh
     {
         return Err(AppError::validation(
-            "临时 SSH 容器列表需要当前 SSH 终端连接",
+            "临时 SSH 容器操作需要当前 SSH 终端连接",
         ));
     }
 
@@ -142,12 +206,12 @@ async fn list_external_containers_through_runtime(
     if !output.success {
         let detail = output.stdout.trim();
         return Err(AppError::ssh(if detail.is_empty() {
-            "容器列表获取失败".to_string()
+            "容器操作失败".to_string()
         } else {
             detail.to_string()
         }));
     }
-    Ok(parse_container_ps_output(&output.stdout))
+    Ok(output.stdout)
 }
 
 struct ExternalContainerProbeOutput {
@@ -168,7 +232,7 @@ async fn wait_for_external_container_probe(
             return Ok(parsed);
         }
         if Instant::now() >= deadline {
-            return Err(AppError::ssh("临时 SSH 容器列表获取超时"));
+            return Err(AppError::ssh("临时 SSH 容器操作超时，请刷新列表确认状态"));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

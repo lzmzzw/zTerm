@@ -1,6 +1,6 @@
 // Author: Liz
-import { LogIn, Plus, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { LogIn, Play, Plus, RefreshCw } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import { AgentCodexPanel } from "../features/ai/AgentCodexPanel";
 import type { AgentCodexSession } from "../features/ai/agentCodexApi";
@@ -104,6 +104,7 @@ interface RightToolsPanelProps {
     loading: boolean;
     error: string | null;
     onEnter: (container: SshContainerInfo) => Promise<void> | void;
+    onStart: (container: SshContainerInfo) => Promise<void> | void;
     onRefresh: () => Promise<void> | void;
     onRuntimeChange: (runtime: string) => Promise<void> | void;
   };
@@ -254,6 +255,7 @@ export function RightToolsPanel({
                 loading={containers.loading}
                 error={containers.error}
                 onEnter={containers.onEnter}
+                onStart={containers.onStart}
                 onRefresh={containers.onRefresh}
                 onRuntimeChange={containers.onRuntimeChange}
               />
@@ -360,6 +362,7 @@ function SshContainerListPanel({
   loading,
   error,
   onEnter,
+  onStart,
   onRefresh,
   onRuntimeChange,
 }: {
@@ -371,9 +374,23 @@ function SshContainerListPanel({
   loading: boolean;
   error: string | null;
   onEnter: (container: SshContainerInfo) => Promise<void> | void;
+  onStart: (container: SshContainerInfo) => Promise<void> | void;
   onRefresh: () => Promise<void> | void;
   onRuntimeChange: (runtime: string) => Promise<void> | void;
 }) {
+  const actionPending = useRef(false);
+  const [busy, setBusy] = useState(false);
+  async function activateContainer(container: SshContainerInfo) {
+    if (actionPending.current || loading) return;
+    actionPending.current = true;
+    setBusy(true);
+    try {
+      await (container.running ? onEnter(container) : onStart(container));
+    } finally {
+      actionPending.current = false;
+      setBusy(false);
+    }
+  }
   return (
     <div className="zt-tunnel-panel zt-container-panel">
       <div className="zt-tunnel-target zt-target-summary">
@@ -384,6 +401,7 @@ function SshContainerListPanel({
           className="zt-target-summary-action zt-container-refresh-button"
           aria-label="刷新容器"
           title="刷新"
+          disabled={busy || loading}
           onPointerDown={(event) => {
             if (event.button !== 0) return;
             event.preventDefault();
@@ -437,18 +455,18 @@ function SshContainerListPanel({
                   <button
                     type="button"
                     className="zt-icon-button zt-container-enter-button"
-                    aria-label={`进入容器 ${title}`}
-                    title="进入容器"
-                    disabled={!container.running}
+                    aria-label={`${container.running ? "进入" : "启动"}容器 ${title}`}
+                    title={container.running ? "进入容器" : "启动容器"}
+                    disabled={busy || loading}
                     onPointerDown={(event) => {
-                      if (event.button !== 0 || !container.running) return;
+                      if (event.button !== 0 || busy || loading) return;
                       event.preventDefault();
                       const button = event.currentTarget;
                       button.dataset.pointerActivated = "true";
                       window.setTimeout(() => {
                         delete button.dataset.pointerActivated;
                       }, 350);
-                      void onEnter(container);
+                      void activateContainer(container);
                     }}
                     onClick={(event) => {
                       if (event.currentTarget.dataset.pointerActivated === "true") {
@@ -456,10 +474,10 @@ function SshContainerListPanel({
                         event.preventDefault();
                         return;
                       }
-                      void onEnter(container);
+                      void activateContainer(container);
                     }}
                   >
-                    <LogIn size={14} aria-hidden="true" />
+                    {container.running ? <LogIn size={14} aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
                   </button>
                 </div>
               </section>

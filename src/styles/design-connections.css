@@ -64,9 +64,9 @@
 .zt-session-editor-dialog footer { padding: 0 20px; gap: 9px; background: var(--zt-surface-chrome); border-top: 1px solid var(--zt-border); }
 .zt-session-editor-dialog footer button { height: 32px; min-width: 70px; min-height: 32px; border-radius: 7px; border-color: transparent; background: var(--zt-surface-muted); }
 .zt-session-dialog footer button[type="submit"]:not(.zt-button-danger):not(.danger),
-.zt-session-editor-dialog footer button[type="submit"] { background: var(--zt-accent-bg); border-color: var(--zt-accent-border); color: var(--zt-accent); }
+.zt-session-editor-dialog footer button[type="submit"] { background: var(--zt-action-fill); border-color: var(--zt-action-fill); color: var(--zt-action-text); }
 .zt-session-dialog footer button[type="submit"]:not(.zt-button-danger):not(.danger):hover:not(:disabled),
-.zt-session-editor-dialog footer button[type="submit"]:hover:not(:disabled) { background: var(--zt-accent-hover); color: color-mix(in srgb, var(--zt-accent) 88%, var(--zt-text-primary)); }
+.zt-session-editor-dialog footer button[type="submit"]:hover:not(:disabled) { background: var(--zt-action-hover); color: var(--zt-action-text); }
 .zt-session-editor-messages:not(:empty) { padding: 0 20px 12px 192px; background: var(--zt-surface-elevated); }
 .zt-session-editor-messages > :is(.zt-session-error,.zt-settings-status) { margin: 0; border-radius: 7px; }
 .zt-connection-picker-body { padding: 10px; gap: 4px; }

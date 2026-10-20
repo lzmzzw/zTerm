@@ -45,6 +45,18 @@ pub fn build_container_list_script(runtime: &str) -> AppResult<String> {
     ))
 }
 
+pub fn build_container_start_script(runtime: &str, container_id: &str) -> AppResult<String> {
+    let runtime = normalize_container_runtime(runtime)?;
+    let container_id = container_id.trim();
+    if !container_id_looks_valid(container_id) {
+        return Err(AppError::validation("容器 ID 无效"));
+    }
+    Ok(format!(
+        "{runtime} start {} 2>&1",
+        shell_quote(container_id)
+    ))
+}
+
 pub fn build_container_exec_command(
     container: &SshContainerOptions,
     container_id: &str,

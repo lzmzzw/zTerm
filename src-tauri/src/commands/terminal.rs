@@ -324,7 +324,15 @@ pub fn terminal_open_default_local(
     let profile = crate::services::terminal_profile_service::default_profile(storage.as_ref())?
         .ok_or_else(|| crate::error::AppError::validation("未检测到可用终端工具"))?;
     let manager = state.terminal_manager();
-    let local_options = local_options_with_working_directory(None, working_directory);
+    let working_directory = working_directory
+        .filter(|value| !value.trim().is_empty())
+        .map(Ok)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .map(|path| path.to_string_lossy().into_owned())
+                .ok_or_else(|| AppError::terminal("无法确定当前用户目录"))
+        })?;
+    let local_options = local_options_with_working_directory(None, Some(working_directory));
     let opened = manager.open_local_session(
         &profile,
         local_options.as_ref(),

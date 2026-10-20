@@ -42,7 +42,8 @@
 svg.lucide { color: var(--zt-accent); stroke-width: 1.7; }
 svg.lucide-folder, svg.lucide-folder-open, svg.lucide-folder-plus, svg.lucide-files { color: var(--zt-warning); }
 svg.lucide-terminal, svg.lucide-square-terminal, svg.lucide-play, svg.lucide-circle-check, svg.lucide-check { color: var(--zt-success); }
-svg.lucide-server, svg.lucide-monitor, svg.lucide-upload, svg.lucide-download, svg.lucide-arrow-up-down { color: var(--zt-info); }
+svg.lucide-server, svg.lucide-monitor { color: var(--zt-info); }
+svg.lucide-upload, svg.lucide-download, svg.lucide-arrow-up-down { color: var(--zt-icon-teal); }
 svg.lucide-bot, svg.lucide-message-square-more, svg.lucide-sparkles, svg.lucide-box, svg.lucide-blocks { color: var(--zt-icon-violet); }
 svg.lucide-clock-3, svg.lucide-history, svg.lucide-key-round, svg.lucide-shield-check { color: var(--zt-warning); }
 svg.lucide-activity, svg.lucide-cable, svg.lucide-network { color: var(--zt-icon-teal); }

@@ -19,3 +19,11 @@ export async function listSshContainers(
   }
   return invokeTauri<SshContainerInfo[]>("ssh_container_list", payload);
 }
+
+export async function startSshContainer(
+  savedSessionId: string,
+  containerId: string,
+  runtimeSessionId: string | null = null,
+): Promise<void> {
+  return invokeTauri<void>("ssh_container_start", { savedSessionId, containerId, runtimeSessionId });
+}

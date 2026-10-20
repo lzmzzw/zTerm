@@ -119,6 +119,20 @@ impl ExternalLaunchService {
             (args.len() == 1)
                 .then(|| cwd.filter(|path| path.is_absolute() && path.is_dir()))
                 .flatten()
+                .and_then(|path| {
+                    // A normal shortcut starts in the installation directory. Only an
+                    // actual caller directory should override the default home directory.
+                    let resolved = dunce::canonicalize(path).ok()?;
+                    let install_dir = std::env::current_exe().ok().and_then(|exe| {
+                        exe.parent()
+                            .and_then(|parent| dunce::canonicalize(parent).ok())
+                    });
+                    if install_dir.as_ref() == Some(&resolved) {
+                        dirs::home_dir()
+                    } else {
+                        Some(resolved)
+                    }
+                })
                 .map(|path| path.to_string_lossy().into_owned())
         });
         let Some(working_directory) = directory else {

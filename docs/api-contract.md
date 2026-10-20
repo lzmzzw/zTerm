@@ -63,7 +63,7 @@ MCP 采用统一执行/审批/审计底层上的两个工具 Profile。外部 be
 | Command / Event | 入参 / Payload | 返回 | 说明 |
 | --- | --- | --- | --- |
 | `external_launch_take_pending` | 无 | `ExternalSshLaunchEvent[]` | 取走当前进程启动参数解析出的外部一次性 SSH 或 FileZilla 格式 FTP/SFTP 请求；返回值不包含 password、key passphrase 或任何 secret |
-| `external_launch_take_pending_local` | 无 | `{ id, working_directory }[]` | 取走 `--open-local <绝对目录>` 或无参数启动继承调用方目录的请求；仅接受存在的绝对目录，使用默认本地终端打开临时连接，不保存会话或恢复该目录标签；显式参数优先，无效工作目录不创建目录请求 |
+| `external_launch_take_pending_local` | 无 | `{ id, working_directory }[]` | 取走 `--open-local <绝对目录>` 或无参数启动继承调用方目录的请求；仅接受存在的绝对目录，使用默认本地终端打开临时连接，不保存会话或恢复该目录标签；显式参数优先；无参数且调用方目录为安装目录时使用系统用户目录，无效工作目录不创建目录请求 |
 | `zterm:external-local-launch` | `null` | 事件 | 单实例收到本地目录请求后通知前端重新读取本地启动队列；前端完成布局恢复后处理冷启动队列 |
 | `zterm:external-ssh-launch` | `null` | 事件 | 带外部连接参数的 single-instance 回调完成参数解析和进程内入队后，仅通知已运行前端重新调用 `external_launch_take_pending`；沿用兼容事件名，事件不携带连接信息或 secret |
 
@@ -89,7 +89,7 @@ SSH 终端保活：未配置 `keepalive_interval_ms` 时使用 30 秒，正值�
 | --- | --- | --- | --- |
 | `terminal_open` | `{ savedSessionId, paneId, workingDirectory? }` | `RuntimeSessionInfo` | SSH/Local 创建 PTY runtime；`savedSessionId` 可为已保存会话 ID 或外部启动生成的 `external:<uuid>`；Local 会话可用 `workingDirectory` 覆盖工作目录；RDP 写入 Windows `TERMSRV/<full address>` PasswordCredential，生成临时 `.rdp` 文件启动系统 `mstsc.exe`，并创建持有该外部进程的 placeholder runtime |
 | `terminal_open_ssh_container` | `{ savedSessionId, paneId, containerId, containerName? }` | `RuntimeSessionInfo` | 基于已保存 SSH 会话和所选容器新建 PTY runtime，执行 `docker` / `podman` / `nerdctl exec -it` 进入容器；标题为 `容器: <name>` 或短 ID；外部一次性 SSH 进入容器不走该命令 |
-| `terminal_open_default_local` | `{ paneId, workingDirectory? }` | `RuntimeSessionInfo` | 使用默认终端 profile 打开本机 PTY，可用 `workingDirectory` 覆盖工作目录 |
+| `terminal_open_default_local` | `{ paneId, workingDirectory? }` | `RuntimeSessionInfo` | 使用默认终端 profile 打开本机 PTY；未指定或空白 `workingDirectory` 时使用系统用户目录，可显式覆盖（包括资源管理器传入的目录） |
 | `terminal_write` | `{ runtimeSessionId, data }` | `{ accepted: true }` | 写入终端；普通 shell 同步捕获输入历史，启用 shell integration 的 PowerShell 由后续 PTY 事件捕获最终命令行 |
 | `terminal_output_flow_open` | `{ runtimeSessionId }` | `{ generation }` | 为存在的 runtime 建立输出消费者；活动消费者重复打开保持同一代次 |
 | `terminal_output_flow_ack` | `{ runtimeSessionId, generation, sequence }` | `{ accepted }` | 完成解析及可见渲染后累计确认；拒绝旧代次与超出已发送范围的序列 |

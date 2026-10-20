@@ -10,6 +10,13 @@ import { formatFileModifiedTime, resolveFileIcon } from "./fileExplorerPresentat
 import { ZtContextMenu, ZtInlineError } from "../../components/ZtUi";
 import { formatBytes } from "../../lib/byteFormatters";
 
+function formatListModifiedTime(value: number | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 interface FileExplorerPanelProps {
   savedSessionId: string | null;
   path: string;
@@ -173,6 +180,11 @@ export function FileExplorerPanel({
           onSelectAll(visibleEntries.map((entry) => entry.path));
         }}
       >
+        <div className="zt-file-list-header" role="presentation">
+          <span>名称</span>
+          <span>大小</span>
+          <span>修改时间</span>
+        </div>
         {visibleEntries.map((entry) => (
           <button
             type="button"
@@ -209,8 +221,7 @@ export function FileExplorerPanel({
             </span>
             <strong title={entry.path}>{entry.name}</strong>
             <small>{entry.kind === "directory" ? "-" : formatBytes(entry.size, { maxUnit: "MB" })}</small>
-            <small>{formatFileModifiedTime(entry.modified_at_ms)}</small>
-            <small>{entry.permissions ?? "-"}</small>
+            <small title={formatFileModifiedTime(entry.modified_at_ms)}>{formatListModifiedTime(entry.modified_at_ms)}</small>
           </button>
         ))}
       </div>

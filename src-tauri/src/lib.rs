@@ -117,6 +117,7 @@ pub fn run() {
             commands::server_info::server_info_snapshot,
             commands::ssh_container::ssh_container_enter_runtime,
             commands::ssh_container::ssh_container_list,
+            commands::ssh_container::ssh_container_start,
             commands::terminal::terminal_open,
             commands::terminal::terminal_open_ssh_container,
             commands::terminal::terminal_open_default_local,
@@ -373,7 +374,7 @@ mod tests {
     #[test]
     fn crate_metadata_matches_project() {
         assert_eq!(env!("CARGO_PKG_NAME"), "zterm");
-        assert_eq!(env!("CARGO_PKG_VERSION"), "0.5.2");
+        assert_eq!(env!("CARGO_PKG_VERSION"), "0.5.3");
     }
 
     #[test]

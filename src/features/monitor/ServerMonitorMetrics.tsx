@@ -1,6 +1,6 @@
 // Author: Liz
 import { Activity, ChevronDown, Cpu, Gauge, HardDrive, MemoryStick, Network, Server } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import type { ServerInfoSnapshot } from "./serverInfoApi";
 import {
@@ -39,9 +39,8 @@ export function ServerMetrics({
   return (
     <div className="zt-monitor-card-list">
       <MetricCard
-        trendValue={snapshot.cpu_usage_percent}
+        meterValue={snapshot.cpu_usage_percent}
         metricId="cpu"
-        sampleId={snapshot.captured_at}
         expanded={expandedCards.has("cpu")}
         helper={formatLoadAverage(snapshot.load_average) ? `Load ${formatLoadAverage(snapshot.load_average)}` : `${snapshot.cpu_count ?? "-"} 核`}
         icon={<Cpu size={14} aria-hidden="true" />}
@@ -49,7 +48,6 @@ export function ServerMetrics({
         title="CPU"
         value={formatPercent(snapshot.cpu_usage_percent)}
       >
-        <Meter value={snapshot.cpu_usage_percent} />
         <InfoRows
           rows={[
             ["平均使用", formatPercent(snapshot.cpu_usage_percent)],
@@ -61,7 +59,6 @@ export function ServerMetrics({
       </MetricCard>
       <MetricCard
         metricId="gpu"
-        sampleId={snapshot.captured_at}
         expanded={expandedCards.has("gpu")}
         helper={snapshot.gpus.length > 0 ? `${snapshot.gpus.length} 张显卡` : gpuMissingMessage(snapshot.gpu_probe_status)}
         icon={<Gauge size={14} aria-hidden="true" />}
@@ -73,16 +70,14 @@ export function ServerMetrics({
       </MetricCard>
       <MetricCard
         metricId="memory"
-        sampleId={snapshot.captured_at}
         expanded={expandedCards.has("memory")}
-        trendValue={memoryPercent}
+        meterValue={memoryPercent}
         helper={`${formatBytes(snapshot.memory_used_bytes)} / ${formatBytes(snapshot.memory_total_bytes)}`}
         icon={<MemoryStick size={14} aria-hidden="true" />}
         onToggle={() => onToggleMetric("memory")}
         title="内存"
         value={formatPercent(memoryPercent)}
       >
-        <Meter value={memoryPercent} />
         <InfoRows
           rows={[
             ["已用", formatBytes(snapshot.memory_used_bytes)],
@@ -94,7 +89,6 @@ export function ServerMetrics({
       </MetricCard>
       <MetricCard
         metricId="swap"
-        sampleId={snapshot.captured_at}
         expanded={expandedCards.has("swap")}
         helper={`${formatBytes(snapshot.swap_used_bytes)} / ${formatBytes(snapshot.swap_total_bytes)}`}
         icon={<Server size={14} aria-hidden="true" />}
@@ -107,16 +101,14 @@ export function ServerMetrics({
       </MetricCard>
       <MetricCard
         metricId="disk"
-        sampleId={snapshot.captured_at}
         expanded={expandedCards.has("disk")}
-        trendValue={diskPercent}
+        meterValue={diskPercent}
         helper={`${snapshot.disk_mount ?? "/"} · ${formatBytes(snapshot.disk_used_bytes)} / ${formatBytes(snapshot.disk_total_bytes)}`}
         icon={<HardDrive size={14} aria-hidden="true" />}
         onToggle={() => onToggleMetric("disk")}
         title="磁盘"
         value={formatPercent(diskPercent)}
       >
-        <Meter value={diskPercent} />
         <InfoRows
           rows={[
             ["挂载点", snapshot.disk_mount ?? "/"],
@@ -129,14 +121,12 @@ export function ServerMetrics({
       </MetricCard>
       <MetricCard
         metricId="network"
-        sampleId={snapshot.captured_at}
         expanded={expandedCards.has("network")}
-        trendValue={traffic?.total_rx_bytes_per_second}
         helper={traffic?.top_interface ? `流量排行 ${traffic.top_interface.name}` : "等待网络采样"}
         icon={<Network size={14} aria-hidden="true" />}
         onToggle={() => onToggleMetric("network")}
         title="网络"
-        value={`${formatTrafficRate(traffic?.total_tx_bytes_per_second, "采样中")} / ${formatTrafficRate(traffic?.total_rx_bytes_per_second, "采样中")}`}
+        value={`↑ ${formatTrafficRate(traffic?.total_tx_bytes_per_second, "采样中")}  ↓ ${formatTrafficRate(traffic?.total_rx_bytes_per_second, "采样中")}`}
       >
         <InfoRows
           rows={[
@@ -148,7 +138,6 @@ export function ServerMetrics({
       </MetricCard>
       <MetricCard
         metricId="process"
-        sampleId={snapshot.captured_at}
         expanded={expandedCards.has("process")}
         helper={snapshot.running_process_count == null ? `${snapshot.process_count ?? "-"} 个` : `${snapshot.process_count} 个 / 运行 ${snapshot.running_process_count}`}
         icon={<Activity size={14} aria-hidden="true" />}
@@ -170,9 +159,8 @@ function MetricCard({
   onToggle,
   title,
   value,
-  trendValue,
+  meterValue,
   metricId,
-  sampleId,
 }: {
   children: ReactNode;
   expanded: boolean;
@@ -181,9 +169,8 @@ function MetricCard({
   onToggle: () => void;
   title: string;
   value: ReactNode;
-  trendValue?: number | null;
+  meterValue?: number | null;
   metricId: MetricCardId;
-  sampleId: string;
 }) {
   const primary = ["cpu", "memory", "disk", "network"].includes(metricId);
   return (
@@ -202,38 +189,17 @@ function MetricCard({
           onToggle();
         }}
       >
+        <ChevronDown className="zt-monitor-card-indicator" size={14} aria-hidden="true" />
         <div>
           {icon}
           <span>{title}</span>
-          <small>{helper}</small>
         </div>
         <strong>{value}</strong>
-        <ChevronDown className="zt-monitor-card-indicator" size={14} aria-hidden="true" />
       </header>
-      {primary ? <MetricTrend value={trendValue} label={title} sampleId={sampleId} /> : null}
+      <small className="zt-monitor-row-helper">{helper}</small>
+      <Meter value={meterValue} />
       {expanded ? <div className="zt-monitor-card-body">{children}</div> : null}
     </section>
-  );
-}
-
-function MetricTrend({ value, label, sampleId }: { value?: number | null; label: string; sampleId: string }) {
-  const [samples, setSamples] = useState<Array<{ id: string; value: number }>>([]);
-  useEffect(() => {
-    if (value == null || !Number.isFinite(value)) return;
-    setSamples((current) => {
-      const previous = current.at(-1);
-      if (previous?.id === sampleId && previous.value === value) return current;
-      const retained = previous?.id === sampleId ? current.slice(0, -1) : current.slice(-19);
-      return [...retained, { id: sampleId, value }];
-    });
-  }, [value, sampleId]);
-  const points = samples.map((sample) => sample.value);
-  const maximum = Math.max(1, ...points);
-  const polyline = points.map((point, index) => `${(index / Math.max(1, points.length - 1)) * 160},${32 - (point / maximum) * 26}`).join(" ");
-  return (
-    <svg className="zt-monitor-trend" viewBox="0 0 160 36" role="img" aria-label={`${label}最近采样趋势`}>
-      <polyline points={polyline} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-    </svg>
   );
 }
 

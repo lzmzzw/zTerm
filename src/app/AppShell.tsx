@@ -72,7 +72,7 @@ import { applyAppSettings } from "../features/settings/applyAppSettings";
 import { useDomI18n } from "../features/settings/domI18n";
 import { t } from "../features/settings/i18n";
 import { useSettingsStore } from "../features/settings/settingsStore";
-import { listSshContainers, type SshContainerInfo } from "../features/terminal/sshContainerApi";
+import { listSshContainers, startSshContainer, type SshContainerInfo } from "../features/terminal/sshContainerApi";
 import {
   externalSshChannelPolicy,
   externalSshHostServiceTarget,
@@ -432,6 +432,9 @@ export function AppShell() {
       ? activeSavedSession.ssh_options?.container?.enabled === true
       : activeExternalSshOptions?.container?.enabled === true && activeExternalSshMultiChannel;
   const activeRuntimeSessionId = activePaneTab?.runtime_session_id ?? null;
+  const containerTargetKey = `${activeSshSessionId ?? ""}:${activeRuntimeSessionId ?? ""}:${activePaneTab?.id ?? ""}:${activeExternalSshOptions?.container?.runtime ?? activeSavedSession?.ssh_options?.container?.runtime ?? ""}`;
+  const containerTargetKeyRef = useLatestRef(containerTargetKey);
+  const containerStartPendingRef = useRef(false);
   const activeAgentConnectionKey = agentConnectionKey(
     activeSavedSessionId,
     activeRuntimeSessionId,
@@ -1517,6 +1520,28 @@ export function AppShell() {
     }));
   }
 
+  async function startStoppedSshContainer(container: SshContainerInfo) {
+    if (!activeSshContainersEnabled || !activeSshSessionId || container.running || containerStartPendingRef.current) return;
+    containerStartPendingRef.current = true;
+    const sessionId = activeSshSessionId;
+    const runtimeId = isExternalSessionId(sessionId) ? activeRuntimeSessionId : null;
+    const sourceTargetKey = containerTargetKey;
+    const isCancelled = () => containerTargetKeyRef.current !== sourceTargetKey;
+    setContainerPanelState((current) => ({ ...current, error: null }));
+    try {
+      await startSshContainer(sessionId, container.id, runtimeId);
+      if (!isCancelled()) await loadSshContainers(sessionId, runtimeId, isCancelled);
+    } catch (error) {
+      if (isCancelled()) return;
+      setContainerPanelState((current) => ({
+        ...current,
+        error: unknownErrorMessage(error, "启动容器失败", { blankStringFallback: true, objectMessage: true }),
+      }));
+    } finally {
+      containerStartPendingRef.current = false;
+    }
+  }
+
   async function enterSshContainer(container: SshContainerInfo) {
     const terminalLayoutState = useTerminalLayoutStore.getState();
     const latestActiveTab = terminalLayoutState.tabs.find((tab) => tab.id === terminalLayoutState.activeTabId) ?? terminalLayoutState.tabs[0];
@@ -2041,6 +2066,7 @@ export function AppShell() {
           loading: containerPanelState.loading,
           error: containerPanelState.error,
           onEnter: enterSshContainer,
+          onStart: startStoppedSshContainer,
           onRefresh: refreshActiveSshContainers,
           onRuntimeChange: changeExternalContainerRuntime,
         }}

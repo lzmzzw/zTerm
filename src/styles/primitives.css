@@ -133,14 +133,14 @@ a[href]:focus-visible,
 }
 
 .zt-button-primary {
-  border-color: var(--zt-accent-border);
-  background: var(--zt-accent-bg);
-  color: var(--zt-accent);
+  border-color: var(--zt-action-fill);
+  background: var(--zt-action-fill);
+  color: var(--zt-action-text);
 }
 
 .zt-button-primary:hover:not(:disabled) {
-  border-color: var(--zt-accent-border);
-  background: var(--zt-accent-hover); color: color-mix(in srgb, var(--zt-accent) 88%, var(--zt-text-primary));
+  border-color: var(--zt-action-hover);
+  background: var(--zt-action-hover); color: var(--zt-action-text);
 }
 
 .zt-button-danger:hover:not(:disabled),
