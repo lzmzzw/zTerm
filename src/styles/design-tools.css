@@ -1,8 +1,8 @@
 /* Approved gallery: right-history / quick-groups / right-monitor /
    right-containers / right-tunnels / right-agent / mcp. Neutral surfaces. */
 .zt-right-tools .zt-tool-panel { border: 1px solid var(--zt-border); border-radius: 5px; overflow: hidden; background: var(--zt-bg-surface); }
-.zt-right-tools .zt-panel-header { min-height: var(--zt-workbar-height); height: var(--zt-workbar-height); padding: 0 12px; border-bottom: 1px solid var(--zt-border-subtle); }
-.zt-history-panel { padding: 12px; gap: 10px; }
+.zt-right-tools .zt-panel-header { min-height: var(--zt-workbar-height); height: var(--zt-workbar-height); padding: 0 3px 0 12px; border-bottom: 1px solid var(--zt-border-subtle); }
+.zt-history-panel { padding: 12px 6px 12px 12px; gap: 10px; }
 .zt-history-mode-tabs { border: 0; gap: 4px; padding: 0; }
 .zt-history-mode-tabs button { min-height: 32px; border-radius: 7px; padding: 0 12px; color: var(--zt-text-muted); }
 .zt-history-mode-tabs button[aria-selected="true"] { background: var(--zt-bg-hover); color: var(--zt-text-primary); }
@@ -16,7 +16,7 @@
 .zt-history-group { padding: 10px 0; border: 0; border-bottom: 1px solid var(--zt-border); border-radius: 0; background: transparent; }
 .zt-history-group-items { gap: 2px; padding-top: 8px; }
 .zt-history-group-item { padding: 7px 8px; border: 0; border-radius: 5px; background: var(--zt-bg-input); }
-.zt-monitor-panel { padding: 12px; gap: 16px; }
+.zt-monitor-panel { padding: 12px 6px 12px 12px; gap: 16px; }
 .zt-monitor-overview { padding: 0; border: 0; background: transparent; }
 .zt-monitor-host-details { margin: 10px 0; color: var(--zt-text-muted); font-size: var(--zt-font-size-caption); }
 .zt-monitor-host-details summary { cursor: pointer; padding: 4px 0; }
@@ -26,7 +26,7 @@
 .zt-monitor-overview-grid { margin-top: 8px; }
 .zt-monitor-overview-grid > div { border: 0; }
 .zt-monitor-card-list { grid-template-columns: repeat(2,minmax(0,1fr)); align-items: start; gap: 8px; }
-.zt-monitor-card { border: 0; border-radius: 9px; background: var(--zt-bg-input); padding: 12px; min-width: 0; }
+.zt-monitor-card { border: 0; border-radius: 9px; background: var(--zt-bg-input); padding: 12px 6px 12px 12px; min-width: 0; }
 .zt-monitor-cpu { order: 0; }
 .zt-monitor-memory { order: 1; }
 .zt-monitor-disk { order: 2; }
@@ -47,23 +47,26 @@
 .zt-monitor-card-body { padding-top: 12px; font-size: var(--zt-font-size-caption); }
 .zt-monitor-meter > span { background: var(--zt-text-muted); }
 .zt-monitor-sub-card { padding: 9px 0; border: 0; border-bottom: 1px solid var(--zt-border); background: transparent; border-radius: 0; }
-.zt-container-panel,.zt-tunnel-panel { padding: 12px; gap: 12px; }
+.zt-container-panel,.zt-tunnel-panel { padding: 12px 6px 12px 12px; gap: 12px; }
 .zt-container-panel > .zt-session-form-wide { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .zt-container-panel > .zt-session-form-wide .zt-select { width: 132px; }
 .zt-container-panel .zt-tunnel-list { gap: 0; }
 .zt-container-list-item { border: 0; border-bottom: 1px solid var(--zt-border); border-radius: 0; padding: 16px 0; background: transparent; }
 .zt-container-main { gap: 8px; }
 .zt-container-actions { gap: 12px; align-items: flex-end; }
-.zt-container-actions code { color: var(--zt-text-muted); background: transparent; font-size: var(--zt-font-size-caption); }
-.zt-container-enter-button { width: auto; min-width: 58px; height: 30px; padding: 0 9px; display: flex; gap: 5px; border-radius: 7px; background: var(--zt-bg-input); }
-.zt-tunnel-list-item:not(.zt-container-list-item) { border: 1px solid var(--zt-border); border-radius: 8px; padding: 12px; background: transparent; }
+.zt-container-status { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 2px 8px; border-radius: var(--zt-radius-control); background: var(--zt-bg-input); color: var(--zt-text-secondary); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.zt-container-status::before { content: ""; width: 6px; height: 6px; border: 1px solid currentColor; border-radius: 50%; }
+.zt-container-status.is-running { color: var(--zt-success); background: var(--zt-success-bg); }
+.zt-container-status.is-running::before { background: currentColor; }
+.zt-container-enter-button { width: var(--zt-icon-button-default); min-width: var(--zt-icon-button-default); height: var(--zt-icon-button-default); padding: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--zt-radius-control); background: var(--zt-bg-input); }
+.zt-tunnel-list-item:not(.zt-container-list-item) { border: 1px solid var(--zt-border); border-radius: 8px; padding: 12px 6px 12px 12px; background: transparent; }
 .zt-tunnel-list-item header code { background: var(--zt-bg-input); color: var(--zt-text-primary); padding: 3px 6px; border-radius: 4px; }
 .zt-agent-codex-panel { padding: 10px; gap: 8px; min-height: 0; }
-.zt-agent-codex-header { display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 2px 0 10px; border-bottom: 1px solid var(--zt-border); }
-.zt-agent-codex-target { align-items: flex-start; gap: 7px; }
-.zt-agent-codex-target > div { display: grid; gap: 5px; }
-.zt-agent-codex-header .zt-ai-approval-mode { display: flex; width: 100%; gap: 6px; color: var(--zt-text-primary); }
-.zt-agent-codex-header .zt-ai-approval-mode .zt-select { margin-left: auto; width: 132px; }
+.zt-agent-codex-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 5px 8px; padding: 10px 12px; border: 1px solid var(--zt-border-subtle); border-radius: var(--zt-radius-control); background: var(--zt-bg-input); }
+.zt-agent-codex-target { display: block; grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--zt-text-muted); font-size: var(--zt-font-size-caption); }
+.zt-agent-codex-title { min-width: 0; white-space: nowrap; }
+.zt-agent-codex-header .zt-ai-approval-mode { display: flex; align-items: center; justify-self: end; max-width: none; gap: 6px; white-space: nowrap; }
+.zt-agent-codex-header .zt-ai-approval-select { flex: 0 0 auto; }
 .zt-agent-codex-terminal { border-radius: 5px; overflow: hidden; background: var(--zt-bg-terminal); min-height: 120px; }
 .zt-agent-codex-approvals { border-top: 1px solid var(--zt-border); padding-top: 10px; max-height: 240px; overflow: auto; }
 .zt-agent-codex-approvals .zt-ai-tool-card { border: 0; border-radius: 0; padding: 5px 0; background: transparent; }

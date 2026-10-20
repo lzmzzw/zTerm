@@ -32,6 +32,7 @@ import { rightToolLabelKey, type RightTool } from "./rightTools";
 
 interface RightToolsPanelProps {
   activeTool: RightTool | null;
+  onClose: () => void;
   agent: {
     session: AgentCodexSession | null;
     sessionsByConnectionKey: Record<string, AgentCodexSession>;
@@ -133,6 +134,7 @@ interface RightToolsPanelProps {
 
 export function RightToolsPanel({
   activeTool,
+  onClose,
   agent,
   files,
   history,
@@ -157,7 +159,7 @@ export function RightToolsPanel({
         <section className="zt-tool-panel" aria-label={t(language, rightToolLabelKey(activeTool))}>
           {activeTool === "files" ? (
             <>
-              <PanelHeader title="SFTP" />
+              <PanelHeader onClose={onClose} title="SFTP" />
               <div className="zt-file-transfer-shell">
                 <FileExplorerPanel
                   savedSessionId={files.savedSessionId}
@@ -195,7 +197,7 @@ export function RightToolsPanel({
 
           {activeTool === "history" ? (
             <>
-              <PanelHeader title={t(language, "history")} />
+              <PanelHeader onClose={onClose} title={t(language, "history")} />
               <CommandHistoryPanel
                 activeView={history.activeView}
                 commandGroups={history.commandGroups}
@@ -225,7 +227,7 @@ export function RightToolsPanel({
 
           {activeTool === "monitor" ? (
             <>
-              <PanelHeader title={t(language, "resourceMonitor")} />
+              <PanelHeader onClose={onClose} title={t(language, "resourceMonitor")} />
               <ServerMonitorPanel
                 active={activeTool === "monitor"}
                 target={monitor.target}
@@ -242,7 +244,7 @@ export function RightToolsPanel({
 
           {activeTool === "containers" ? (
             <>
-              <PanelHeader title={t(language, "sshContainers")} />
+              <PanelHeader onClose={onClose} title={t(language, "sshContainers")} />
               <SshContainerListPanel
                 sessionName={containers.sessionName}
                 target={containers.target}
@@ -261,6 +263,7 @@ export function RightToolsPanel({
           {activeTool === "tunnels" ? (
             <>
               <PanelHeader
+                onClose={onClose}
                 title={t(language, "sshTunnels")}
                 action={
                   tunnels.canManage ? (
@@ -301,7 +304,7 @@ export function RightToolsPanel({
           hidden={activeTool !== "agent"}
           style={activeTool === "agent" ? undefined : { display: "none" }}
         >
-          <PanelHeader title={t(language, "agent")} />
+          <PanelHeader onClose={onClose} title={t(language, "agent")} />
           {Object.entries(agent.sessionsByConnectionKey).map(([connectionKey, session]) => {
             const active = connectionKey === agent.activeConnectionKey;
             return (
@@ -428,7 +431,9 @@ function SshContainerListPanel({
                   <span>{container.image || "-"}</span>
                 </div>
                 <div className="zt-container-actions">
-                  <code>{container.running ? "运行中" : "已停止"}</code>
+                  <span className={`zt-container-status${container.running ? " is-running" : " is-stopped"}`}>
+                    {container.running ? "运行中" : "已停止"}
+                  </span>
                   <button
                     type="button"
                     className="zt-icon-button zt-container-enter-button"
@@ -455,7 +460,6 @@ function SshContainerListPanel({
                     }}
                   >
                     <LogIn size={14} aria-hidden="true" />
-                    <span>进入</span>
                   </button>
                 </div>
               </section>

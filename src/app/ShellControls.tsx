@@ -1,11 +1,12 @@
 // Author: Liz
+import { X } from "lucide-react";
 import type { ReactNode } from "react";
 
-export function PanelHeader({ title, action }: { title: string; action?: ReactNode }) {
+export function PanelHeader({ title, action, onClose }: { title: string; action?: ReactNode; onClose?: () => void }) {
   return (
     <div className="zt-panel-header">
       <span>{title}</span>
-      {action ? <div className="zt-panel-header-action">{action}</div> : null}
+      {action || onClose ? <div className="zt-panel-header-action">{action}{onClose ? <button type="button" className="zt-panel-action-button" aria-label={`关闭${title}`} title={`关闭${title}`} onClick={onClose}><X size={16} aria-hidden="true" /></button> : null}</div> : null}
     </div>
   );
 }

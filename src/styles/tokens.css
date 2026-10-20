@@ -74,6 +74,7 @@
   --zt-border-subtle: var(--zt-line-hairline);
   --zt-border-strong: var(--zt-line-strong);
   --zt-scrollbar-size: 8px;
+  --zt-terminal-cursor: #f99d46;
   --zt-scrollbar-thumb: var(--zt-border-strong);
   --zt-scrollbar-thumb-hover: var(--zt-text-muted);
   --zt-pane-divider: var(--zt-line-divider);
@@ -102,6 +103,7 @@
   --zt-icon-teal: #9bc5bf;
   --zt-success: #9ac7af;
   --zt-warning: #d7bc8b;
+  --zt-approval-efficient: #e5a04a;
   --zt-danger: #d6a0a5;
   --zt-danger-bg: color-mix(in srgb, var(--zt-danger) 7%, var(--zt-surface-elevated));
   --zt-danger-border: color-mix(in srgb, var(--zt-danger) 21%, transparent);
@@ -179,6 +181,7 @@
   --zt-focus-soft: rgb(77 108 148 / 0.13);
   --zt-success: #427356;
   --zt-warning: #826325;
+  --zt-approval-efficient: #a65b00;
   --zt-danger: #a0525c;
   --zt-danger-bg: color-mix(in srgb, var(--zt-danger) 7%, var(--zt-surface-elevated));
   --zt-danger-border: color-mix(in srgb, var(--zt-danger) 21%, transparent);

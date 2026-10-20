@@ -1,5 +1,6 @@
 // Author: Liz
-import { ZtDialog } from "../../components/ZtUi";
+import { X } from "lucide-react";
+import { ZtSurfaceFrame } from "../../components/ZtUi";
 import { ZtSelect } from "../../components/ZtSelect";
 import type { AppLanguage } from "../settings/settingsStore";
 import { useFileTransferStore } from "./fileTransferStore";
@@ -16,33 +17,30 @@ export function FileTransferDialog({ language = "zhCN", onClose }: FileTransferD
   const setConflictPolicy = useFileTransferStore((state) => state.setConflictPolicy);
 
   return (
-    <ZtDialog
-      ariaLabel="文件传输"
-      title={
-        <span className="zt-file-transfer-dialog-title">
-          <span className="zt-file-transfer-dialog-heading">文件传输</span>
-          <label className="zt-file-transfer-policy">
-            <span className="zt-file-transfer-policy-label">冲突策略</span>
-            <ZtSelect
-              ariaLabel="文件传输冲突策略"
-              className="zt-file-transfer-policy-select"
-              value={conflictPolicy}
-              options={[
-                { value: "overwrite", label: "覆盖" },
-                { value: "skip", label: "跳过" },
-                { value: "rename", label: "自动重命名" },
-              ]}
-              onChange={(value) => setConflictPolicy(value as TransferConflictPolicy)}
-            />
-          </label>
-        </span>
-      }
-      size="large"
-      className="zt-file-transfer-dialog"
-      bodyClassName="zt-file-transfer-dialog-body"
-      onClose={onClose}
-    >
-      <FileTransferPanel language={language} />
-    </ZtDialog>
+    <ZtSurfaceFrame className="zt-file-transfer-dialog zt-file-transfer-page" role="region" aria-label="文件传输">
+      <header className="zt-settings-page-header">
+        <strong className="zt-dialog-title">
+          <span className="zt-file-transfer-dialog-title">
+            <span className="zt-file-transfer-dialog-heading">文件传输</span>
+            <label className="zt-file-transfer-policy">
+              <span className="zt-file-transfer-policy-label">冲突策略</span>
+              <ZtSelect
+                ariaLabel="文件传输冲突策略"
+                className="zt-file-transfer-policy-select"
+                value={conflictPolicy}
+                options={[
+                  { value: "overwrite", label: "覆盖" },
+                  { value: "skip", label: "跳过" },
+                  { value: "rename", label: "自动重命名" },
+                ]}
+                onChange={(value) => setConflictPolicy(value as TransferConflictPolicy)}
+              />
+            </label>
+          </span>
+        </strong>
+        <button type="button" aria-label="关闭文件传输" onClick={onClose}><X size={16} aria-hidden="true" /></button>
+      </header>
+      <div className="zt-file-transfer-dialog-body"><FileTransferPanel language={language} /></div>
+    </ZtSurfaceFrame>
   );
 }

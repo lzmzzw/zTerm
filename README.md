@@ -8,7 +8,10 @@ keyboard-friendly workstation layout: sessions on the left, split terminal
 panes in the center, and files/history/monitor/Codex tools on the right.
 
 The title bar contains sessions, file transfer, and settings on the left and
-Agent on the right. Connection-specific tools appear inside the active terminal
+Agent on the right. File transfer and settings open as full pages; their close
+buttons return to the workbench. Create groups from the session tree blank-area
+context menu, and close session/tool sidebars from their panel headers.
+Connection-specific tools appear inside the active terminal
 pane. See the [development documentation](docs/README.md) for module ownership
 and verification commands.
 

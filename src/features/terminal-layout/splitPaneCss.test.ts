@@ -84,7 +84,7 @@ describe("split pane css direction mapping", () => {
     expect(paneTablistStyles).toContain("align-items: center");
     expect(paneTablistStyles).toContain("padding: 0 6px");
     expect(terminalToolbarStyles).toContain("height: var(--zt-workbar-height)");
-    expect(terminalToolbarStyles).toContain("padding: 0 var(--zt-space-3) 0 4px");
+    expect(terminalToolbarStyles).toContain("padding: 0 3px 0 4px");
   });
 
   it("keeps compact terminal header controls vertically centered inside the 32px header", () => {
@@ -219,9 +219,11 @@ describe("split pane css direction mapping", () => {
     const toolbarStyles = ruleBodiesForSelector(".zt-session-toolbar");
     const searchStyles = ruleBodiesForSelector(".zt-session-search");
 
-    expect(toolbarStyles).toContain("position: sticky");
-    expect(toolbarStyles).toContain("top: 0");
-    expect(toolbarStyles).toContain("z-index: 1");
+    expect(toolbarStyles).toContain("flex-shrink: 0");
+    const nodeListStyles = ruleBodiesForSelector(".zt-session-nodes");
+    expect(nodeListStyles).toContain("overflow-y: auto");
+    expect(nodeListStyles).toContain("min-height: 0");
+    expect(nodeListStyles).toContain("user-select: none");
     expect(toolbarStyles).toContain("padding-top: 4px");
     expect(toolbarStyles).toContain("background: var(--zt-bg-sidebar)");
     expect(searchStyles).toContain("padding: 0 6px 0 5px");

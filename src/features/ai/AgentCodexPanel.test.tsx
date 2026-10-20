@@ -40,7 +40,7 @@ function render(pendingInvocations: AgentPendingInvocation[] = []) {
 
 it("shows one stable associated connection label before the Agent session is available", () => {
   const view = render();
-  const labels = Array.from(view.container.querySelectorAll(".zt-agent-codex-target span"));
+  const labels = Array.from(view.container.querySelectorAll(".zt-agent-codex-target"));
 
   expect(labels.map((label) => label.textContent)).toEqual(["关联连接：生产 SSH"]);
   expect(view.container.textContent).not.toContain("未连接");

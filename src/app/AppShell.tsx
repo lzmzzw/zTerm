@@ -1,5 +1,5 @@
 // Author: Liz
-import { ArrowLeftRight, FolderPlus, LayoutGrid, MessageSquareMore, Terminal } from "lucide-react";
+import { ArrowLeftRight, Settings, MessageSquareMore, Terminal } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -64,7 +64,6 @@ import { resolveHistoryScope } from "../features/history/historyScopeModel";
 import { useHistoryStore } from "../features/history/historyStore";
 import { LOCAL_SERVER_INFO_TARGET_ID } from "../features/monitor/serverInfoApi";
 import { SessionTree } from "../features/sessions/SessionTree";
-import { SessionGroupDialog } from "../features/sessions/SessionTreeDialogs";
 import { emptySshTunnel } from "../features/sessions/sshSessionModel";
 import { useSessionStore } from "../features/sessions/sessionStore";
 import type { SavedSession, SshOptions, SshTunnel } from "../features/sessions/types";
@@ -200,7 +199,6 @@ export function AppShell() {
   );
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
-  const [sessionFolderDialogOpen, setSessionFolderDialogOpen] = useState(false);
   const [fileTransferDialogOpen, setFileTransferDialogOpen] = useState(false);
   const [syncChannelDialogOpen, setSyncChannelDialogOpen] = useState(false);
   const initialLayoutTabsRef = useRef(useTerminalLayoutStore.getState().tabs);
@@ -818,6 +816,7 @@ export function AppShell() {
         setTerminalError(null);
         try {
           await useFileTransferStore.getState().prepareForSession(launch.id, launch.remote_path || "/");
+          setViewMode("workbench");
           setFileTransferDialogOpen(true);
         } catch (error) {
           setTerminalError(fallbackOnlyErrorMessage(error, "打开外部文件传输连接失败"));
@@ -1634,23 +1633,8 @@ export function AppShell() {
     await openSavedSessionTarget(session, {
       openTerminalSession: terminalActions.openSession,
       prepareFileTransfer: useFileTransferStore.getState().prepareForSession,
-      openFileTransferDialog: () => setFileTransferDialogOpen(true),
+      openFileTransferDialog: () => { setViewMode("workbench"); setFileTransferDialogOpen(true); },
     });
-  }
-
-  async function createSessionFolder(name: string) {
-    setSessionActionError(null);
-    try {
-      await saveGroup({
-        parent_id: null,
-        name,
-        expanded: true,
-        sort_order: groups.length,
-      });
-      setSessionFolderDialogOpen(false);
-    } catch (error) {
-      setSessionActionError(fallbackOnlyErrorMessage(error, "保存文件夹失败"));
-    }
   }
 
   async function exportSessionsCsv() {
@@ -1684,11 +1668,12 @@ export function AppShell() {
     <nav className="zt-titlebar-navigation" aria-label="主导航">
       <ToolButton
         label="会话"
-        active={viewMode === "workbench" && activeLeftTool === "sessions"}
+        active={viewMode === "workbench" && !fileTransferDialogOpen && activeLeftTool === "sessions"}
         icon={<Terminal size={16} aria-hidden="true" />}
         onClick={() => {
           setViewMode("workbench");
-          if (viewMode === "settings") setActiveLeftTool("sessions");
+          setFileTransferDialogOpen(false);
+          if (viewMode === "settings" || fileTransferDialogOpen) setActiveLeftTool("sessions");
           else toggleLeftTool("sessions");
         }}
       />
@@ -1704,8 +1689,8 @@ export function AppShell() {
       <ToolButton
         label="打开设置"
         active={viewMode === "settings"}
-        icon={<LayoutGrid size={16} aria-hidden="true" />}
-        onClick={() => setViewMode("settings")}
+        icon={<Settings size={16} aria-hidden="true" />}
+        onClick={() => { setFileTransferDialogOpen(false); setViewMode("settings"); }}
       />
     </nav>
   );
@@ -1717,7 +1702,8 @@ export function AppShell() {
       icon={<MessageSquareMore size={16} aria-hidden="true" />}
       onClick={() => {
         setViewMode("workbench");
-        if (viewMode === "settings" && activeTool === "agent") return;
+        setFileTransferDialogOpen(false);
+        if ((viewMode === "settings" || fileTransferDialogOpen) && activeTool === "agent") return;
         toggleRightTool("agent");
       }}
     />
@@ -1749,6 +1735,15 @@ export function AppShell() {
     );
   }
 
+  if (fileTransferDialogOpen) {
+    return (
+      <ZtCenteredPageLayout className="zt-workbench zt-workbench-settings" onContextMenu={(event) => event.preventDefault()}>
+        <TitleBar navigation={headerNavigation} actions={headerActions} />
+        <FileTransferDialog language={language} onClose={() => setFileTransferDialogOpen(false)} />
+      </ZtCenteredPageLayout>
+    );
+  }
+
   const workbenchClassName = [
     "zt-workbench",
     activeLeftTool ? "" : "zt-workbench-left-collapsed",
@@ -1772,17 +1767,7 @@ export function AppShell() {
               <section className="zt-session-panel" aria-label="会话管理">
                 <PanelHeader
                   title="Session"
-                  action={
-                    <button
-                      className="zt-panel-action-button"
-                      type="button"
-                      aria-label="添加文件夹"
-                      title="添加文件夹"
-                      onClick={() => setSessionFolderDialogOpen(true)}
-                    >
-                      <FolderPlus size={14} aria-hidden="true" />
-                    </button>
-                  }
+                  onClose={() => setActiveLeftTool(null)}
                 />
                 {sessionActionError ? (
                   <ZtInlineError onDismiss={() => setSessionActionError(null)} dismissLabel="关闭会话操作错误提示">
@@ -1811,19 +1796,6 @@ export function AppShell() {
           </div>
         ) : null}
       </aside> : null}
-
-      {sessionFolderDialogOpen ? (
-        <SessionGroupDialog
-          title="新建组"
-          initialName=""
-          onCancel={() => setSessionFolderDialogOpen(false)}
-          onSave={createSessionFolder}
-        />
-      ) : null}
-
-      {fileTransferDialogOpen ? (
-        <FileTransferDialog language={language} onClose={() => setFileTransferDialogOpen(false)} />
-      ) : null}
 
       {textInputDialog ? (
         <AppTextInputDialog
@@ -1953,6 +1925,7 @@ export function AppShell() {
 
       <RightToolsPanel
         activeTool={activeTool}
+        onClose={() => setActiveTool(null)}
         agent={{
           session: activeAgentSession,
           activeTargetLabel: activeAgentTargetLabel,

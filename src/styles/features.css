@@ -1388,16 +1388,17 @@
 
 .zt-session-tree {
   position: relative;
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
   gap: 2px;
   padding: 0 6px 4px;
 }
 
 .zt-session-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  flex-shrink: 0;
   display: grid;
   grid-template-columns: 1fr;
   gap: 5px;
@@ -1526,6 +1527,15 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.zt-session-nodes {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .zt-session-group ul {
@@ -1771,16 +1781,16 @@
   color: currentColor;
 }
 
-.zt-ai-approval-mode.mode-request_approval {
-  color: var(--zt-text-muted);
+.zt-ai-approval-select.zt-select-trigger.mode-request_approval {
+  color: var(--zt-success);
 }
 
-.zt-ai-approval-mode.mode-safe {
-  color: var(--zt-accent);
+.zt-ai-approval-select.zt-select-trigger.mode-safe {
+  color: var(--zt-approval-efficient);
 }
 
-.zt-ai-approval-mode.mode-full_access {
-  color: var(--zt-warning);
+.zt-ai-approval-select.zt-select-trigger.mode-full_access {
+  color: var(--zt-danger);
 }
 
 .zt-agent-codex-panel {
@@ -3553,19 +3563,9 @@
   border-radius: 0 0 var(--zt-radius-control) 0;
 }
 
-.zt-select-list,
-.zt-sidebar,
-.zt-session-tree,
-.zt-tool-panel > .zt-empty-line,
-.zt-tool-panel > .zt-transfer-list,
-.zt-history-list,
-.zt-history-group-list,
-.zt-monitor-panel,
-.zt-file-list,
-.zt-transfer-list,
-.xterm-viewport  {
-  scrollbar-width: thin;
-  scrollbar-color: var(--zt-scrollbar-thumb) transparent;
+/* Use the same pixel geometry as xterm; native `thin` ignores WebKit sizing. */
+* {
+  scrollbar-width: auto;
 }
 
 ::-webkit-scrollbar {
@@ -3584,7 +3584,7 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: var(--zt-scrollbar-thumb);
   background-clip: padding-box;
@@ -3618,123 +3618,4 @@
   display: none;
   width: 0;
   height: 0;
-}
-
-.zt-settings-about {
-  overflow: auto;
-  padding: 24px;
-}
-
-.zt-settings-about-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-  color: var(--zt-text-primary);
-}
-
-.zt-settings-about-header strong {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.zt-settings-about-version-badge {
-  margin-left: auto;
-  padding: 2px 8px;
-  border: 1px solid var(--zt-border);
-  border-radius: var(--zt-radius-control);
-  background: var(--zt-bg-surface);
-  color: var(--zt-text-secondary);
-  font-size: var(--zt-font-size-caption);
-}
-
-.zt-settings-about-cards {
-  display: grid;
-  gap: 12px;
-}
-
-.zt-settings-about-card {
-  display: grid;
-  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  border: 1px solid var(--zt-border);
-  border-radius: var(--zt-radius-control);
-  background: var(--zt-bg-main);
-  padding: 14px 16px;
-}
-
-.zt-settings-about-card-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  color: var(--zt-text-primary);
-}
-
-.zt-settings-about-card-header strong {
-  font-size: var(--zt-font-size-ui);
-  font-weight: 600;
-}
-
-.zt-settings-about-card-header svg {
-  color: var(--zt-text-secondary);
-}
-
-.zt-settings-about-card-value {
-  min-width: 0;
-  color: var(--zt-text-secondary);
-  font-size: var(--zt-font-size-ui);
-  overflow-wrap: anywhere;
-}
-
-.zt-settings-about-link-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  justify-self: end;
-  gap: 4px;
-  min-width: 72px;
-  padding: 4px 10px;
-  border: 1px solid var(--zt-border);
-  border-radius: var(--zt-radius-control);
-  background: var(--zt-bg-surface);
-  color: var(--zt-text-primary);
-  font-size: var(--zt-font-size-ui);
-  font-weight: 500;
-  white-space: nowrap;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-
-.zt-settings-about-link-btn:hover {
-  border-color: var(--zt-border-strong);
-  background: var(--zt-bg-hover);
-}
-
-.zt-settings-about-check-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  justify-self: end;
-  gap: 4px;
-  min-width: 72px;
-  padding: 4px 10px;
-  border: 1px solid var(--zt-border);
-  border-radius: var(--zt-radius-control);
-  background: var(--zt-bg-surface);
-  color: var(--zt-text-primary);
-  font-size: var(--zt-font-size-ui);
-  font-weight: 500;
-  white-space: nowrap;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-
-.zt-settings-about-check-btn:hover {
-  border-color: var(--zt-border-strong);
-  background: var(--zt-bg-hover);
-}
-
-.zt-settings-about-check-btn:disabled {
-  cursor: default;
-  opacity: 0.72;
 }

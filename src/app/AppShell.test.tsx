@@ -2789,16 +2789,16 @@ describe("AppShell", () => {
       await Promise.resolve();
     });
 
-    expect(view.container.querySelector('[role="dialog"][aria-label="文件传输"]')).not.toBe(null);
+    expect(view.container.querySelector('[role="region"][aria-label="文件传输"]')).not.toBe(null);
     expect(view.container.querySelector('[aria-label="文件传输面板"]')).not.toBe(null);
     expect(storeMocks.fileTransferPanelProps?.language).toBe("zhCN");
-    expect(transferButton.getAttribute("aria-pressed")).toBe("true");
+    expect(view.container.querySelector('.zt-titlebar-navigation [aria-label="文件传输"]')?.getAttribute("aria-pressed")).toBe("true");
     expect(storeMocks.listFiles).not.toHaveBeenCalled();
     expect(storeMocks.loadTransfers).not.toHaveBeenCalled();
 
     await clickButton(view.container, "关闭文件传输");
 
-    expect(view.container.querySelector('[role="dialog"][aria-label="文件传输"]')).toBe(null);
+    expect(view.container.querySelector('[role="region"][aria-label="文件传输"]')).toBe(null);
 
     view.unmount();
   });

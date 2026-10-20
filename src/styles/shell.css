@@ -6,12 +6,13 @@
 
 .zt-workbench {
   display: grid;
-  grid-template-columns: var(--zt-left-sidebar-width) minmax(420px, 1fr) var(--zt-right-sidebar-width);
-  grid-template-rows: var(--zt-titlebar-height) minmax(320px, 1fr);
+  grid-template-columns: var(--zt-left-sidebar-width) minmax(0, 1fr) var(--zt-right-sidebar-width);
+  grid-template-rows: var(--zt-titlebar-height) minmax(0, 1fr);
   width: 100%;
   height: 100%;
-  min-width: 1180px;
-  min-height: 720px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   color: var(--zt-text-primary);
   background: var(--zt-bg-main);
   font-family: var(--zt-font-ui);
@@ -21,15 +22,15 @@
 }
 
 .zt-workbench-right-collapsed {
-  grid-template-columns: var(--zt-left-sidebar-width) minmax(420px, 1fr) 0;
+  grid-template-columns: var(--zt-left-sidebar-width) minmax(0, 1fr) 0;
 }
 
 .zt-workbench-left-collapsed {
-  grid-template-columns: 0 minmax(420px, 1fr) var(--zt-right-sidebar-width);
+  grid-template-columns: 0 minmax(0, 1fr) var(--zt-right-sidebar-width);
 }
 
 .zt-workbench-left-collapsed.zt-workbench-right-collapsed {
-  grid-template-columns: 0 minmax(420px, 1fr) 0;
+  grid-template-columns: 0 minmax(0, 1fr) 0;
 }
 
 .zt-titlebar {
@@ -93,8 +94,9 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 12px;
-  height: 100%;
+  padding: 0 7px;
+  align-self: stretch;
+  height: auto;
 }
 
 .zt-titlebar-navigation button {
@@ -207,7 +209,7 @@
 .zt-sidebar-right {
   grid-column: 3;
   border-right: 0;
-  border-left: 1px solid var(--zt-border-subtle);
+  border-left: 0;
 }
 
 .zt-sidebar-left {
@@ -240,7 +242,7 @@
 
 .zt-session-panel .zt-session-tree {
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .zt-right-tools {
@@ -343,9 +345,14 @@
 .zt-target-summary {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 3px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--zt-border-subtle);
+  border-radius: var(--zt-radius-control);
+  background: var(--zt-bg-input);
+  flex-shrink: 0;
 }
 
 .zt-target-summary strong,
@@ -357,19 +364,24 @@
 }
 
 .zt-target-summary strong {
+  grid-column: 1;
+  grid-row: 1;
   color: var(--zt-text-primary);
   font-size: var(--zt-font-size-ui);
   font-weight: 600;
 }
 
 .zt-target-summary span {
+  grid-column: 1;
+  grid-row: 2;
   color: var(--zt-text-muted);
   font-size: var(--zt-font-size-caption);
-  text-align: right;
+  text-align: left;
 }
 
 .zt-target-summary-action {
-  grid-column: 3;
+  grid-column: 2;
+  grid-row: 1 / 3;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -529,7 +541,7 @@
 .zt-terminal-tools {
   position: absolute;
   top: calc(var(--zt-workbar-height) + 8px);
-  right: var(--zt-space-3);
+  right: 3px;
   z-index: 5;
   display: flex;
   flex-direction: column;
@@ -538,7 +550,7 @@
   max-height: calc(100% - var(--zt-workbar-height) - 24px);
   padding: 0;
   overflow-y: auto;
-  scrollbar-width: thin;
+  scrollbar-width: auto;
 }
 
 .zt-terminal-tools button {
@@ -1084,7 +1096,7 @@
   gap: 4px;
   justify-content: flex-end;
   height: var(--zt-workbar-height);
-  padding: 0 var(--zt-space-3) 0 4px;
+  padding: 0 3px 0 4px;
   background: var(--zt-bg-main);
   color: var(--zt-text-secondary);
   font-size: var(--zt-font-size-ui);
@@ -1233,7 +1245,7 @@
 }
 
 .xterm-viewport::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: var(--zt-scrollbar-thumb);
   background-clip: padding-box;
@@ -1277,7 +1289,7 @@
   width: 7px;
   height: 15px;
   margin-left: 5px;
-  background: #d6f5dd;
+  background: var(--zt-terminal-cursor);
   vertical-align: -2px;
 }
 

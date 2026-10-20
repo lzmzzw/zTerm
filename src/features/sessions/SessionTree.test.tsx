@@ -304,7 +304,7 @@ describe("SessionTree", () => {
   it("shows the connection-name search box without restoring top-level add session buttons", () => {
     const view = render(<SessionTree groups={groups} sessions={sessions} />);
 
-    expect(input(view.container, "搜索会话").placeholder).toBe("搜索连接名");
+    expect(input(view.container, "搜索会话").placeholder).toBe("");
     expect(() => button(view.container, "新增 SSH")).toThrow();
     expect(() => button(view.container, "新增 RDP")).toThrow();
     expect(view.container.textContent).toContain("生产跳板机");

@@ -246,3 +246,15 @@ describe("ZtSelect", () => {
     expect(onChange).toHaveBeenCalledWith("ssh:prod");
   });
 });
+
+
+it("keeps a narrow trigger's popup inside the right viewport edge", async () => {
+  render(<ZtSelect ariaLabel="边缘下拉" value="one" options={[{ value: "one", label: "较长的选项名称" }]} onChange={vi.fn()} />);
+  const button = trigger("边缘下拉");
+  const viewportWidth = window.innerWidth;
+  vi.spyOn(button, "getBoundingClientRect").mockReturnValue({ left: viewportWidth - 80, right: viewportWidth - 10, top: 40, bottom: 62, width: 70, height: 22 } as DOMRect);
+  await click(button);
+  const panel = document.querySelector<HTMLElement>(".zt-select-popover")!;
+  expect(parseFloat(panel.style.width)).toBeGreaterThanOrEqual(160);
+  expect(parseFloat(panel.style.left) + parseFloat(panel.style.width)).toBeLessThanOrEqual(viewportWidth - 8);
+});

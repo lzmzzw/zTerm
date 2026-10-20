@@ -351,7 +351,6 @@ export function SessionTree({
           <input
             type="search"
             aria-label="搜索会话"
-            placeholder="搜索连接名"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.currentTarget.value)}
             onKeyDown={(event) => {

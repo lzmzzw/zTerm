@@ -18,9 +18,10 @@ function rootVariable(name: string) {
 function ruleBodiesForSelector(selector: string) {
   const bodies: string[] = [];
   const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+  const source = css.replace(/\/\*[\s\S]*?\*\//g, "");
   let match: RegExpExecArray | null;
 
-  while ((match = rulePattern.exec(css))) {
+  while ((match = rulePattern.exec(source))) {
     const selectors = match[1].split(",").map((item) => item.trim());
     if (selectors.includes(selector)) {
       bodies.push(match[2]);
@@ -64,7 +65,7 @@ describe("global dark theme colors", () => {
 
   it("drives aligned workbench chrome from the shared geometry tokens", () => {
     expect(ruleBodiesForSelector(".zt-workbench")).toContain(
-      "grid-template-rows: var(--zt-titlebar-height) minmax(320px, 1fr)",
+      "grid-template-rows: var(--zt-titlebar-height) minmax(0, 1fr)",
     );
     expect(ruleBodiesForSelector(".zt-titlebar")).toContain("height: var(--zt-titlebar-height)");
     expect(ruleBodiesForSelector(".zt-titlebar-logo-slot")).toContain("width: var(--zt-rail-width)");
@@ -164,16 +165,16 @@ describe("global dark theme colors", () => {
 
   it("removes the collapsed left column and preserves the expanded session panel", () => {
     expect(ruleBodiesForSelector(".zt-workbench")).toContain(
-      "grid-template-columns: var(--zt-left-sidebar-width) minmax(420px, 1fr) var(--zt-right-sidebar-width)",
+      "grid-template-columns: var(--zt-left-sidebar-width) minmax(0, 1fr) var(--zt-right-sidebar-width)",
     );
     expect(ruleBodiesForSelector(".zt-workbench-left-collapsed")).toContain(
-      "grid-template-columns: 0 minmax(420px, 1fr) var(--zt-right-sidebar-width)",
+      "grid-template-columns: 0 minmax(0, 1fr) var(--zt-right-sidebar-width)",
     );
     expect(ruleBodiesForSelector(".zt-workbench-right-collapsed")).toContain(
-      "grid-template-columns: var(--zt-left-sidebar-width) minmax(420px, 1fr) 0",
+      "grid-template-columns: var(--zt-left-sidebar-width) minmax(0, 1fr) 0",
     );
     expect(ruleBodiesForSelector(".zt-workbench-left-collapsed.zt-workbench-right-collapsed")).toContain(
-      "grid-template-columns: 0 minmax(420px, 1fr) 0",
+      "grid-template-columns: 0 minmax(0, 1fr) 0",
     );
   });
 
@@ -258,10 +259,10 @@ describe("global dark theme colors", () => {
 
   it("uses one target summary layout for right-side connection tools", () => {
     const summary = ruleBodiesForSelector(".zt-target-summary");
-    expect(summary).toContain("grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto");
+    expect(summary).toContain("grid-template-columns: minmax(0, 1fr) auto");
     expect(summary).toContain("align-items: center");
     expect(ruleBodiesForSelector(".zt-target-summary strong")).toContain("text-overflow: ellipsis");
-    expect(ruleBodiesForSelector(".zt-target-summary span")).toContain("text-align: right");
+    expect(ruleBodiesForSelector(".zt-target-summary span")).toContain("text-align: left");
     expect(ruleBodiesForSelector(".zt-target-summary span")).toContain("white-space: nowrap");
     expect(ruleBodiesForSelector(".zt-target-summary-action")).toContain(
       "width: var(--zt-icon-button-default)",
@@ -269,7 +270,7 @@ describe("global dark theme colors", () => {
   });
 
   it("keeps session tree rows compact instead of stretching empty space between groups", () => {
-    expect(ruleBodiesForSelector(".zt-session-tree")).toContain("align-content: start");
+    expect(ruleBodiesForSelector(".zt-session-tree")).toContain("flex-direction: column");
     expect(ruleBodiesForSelector(".zt-session-nodes")).toContain("align-content: start");
     expect(ruleBodiesForSelector(".zt-session-group ul")).toContain("align-content: start");
   });
@@ -385,20 +386,8 @@ describe("global dark theme colors", () => {
       "background: var(--zt-scrollbar-thumb)",
     );
 
-    for (const selector of [
-      ".xterm-viewport",
-      ".zt-select-list",
-      ".zt-sidebar",
-      ".zt-session-tree",
-      ".zt-file-list",
-      ".zt-transfer-list",
-      ".zt-history-list",
-      ".zt-history-group-list",
-      ".zt-monitor-panel",
-    ]) {
-      expect(ruleBodiesForSelector(selector)).toContain("scrollbar-width: thin");
-      expect(ruleBodiesForSelector(selector)).toContain("scrollbar-color: var(--zt-scrollbar-thumb) transparent");
-    }
+    expect(ruleBodiesForSelector("*")).toContain("scrollbar-width: auto");
+    expect(ruleBodiesForSelector("::-webkit-scrollbar-thumb")).toContain("border: 1px solid transparent");
 
     expect(ruleBodiesForSelector(".xterm .xterm-scrollable-element > .scrollbar > .scra")).toContain(
       "display: none",

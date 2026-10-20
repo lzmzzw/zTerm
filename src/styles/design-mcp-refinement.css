@@ -1,0 +1,164 @@
+/* MCP settings share one aligned surface for service facts and a calm catalog. */
+.zt-mcp-settings-section {
+  gap: 14px;
+  grid-template-rows: none;
+  min-width: 0;
+}
+
+.zt-mcp-service-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.zt-mcp-service-heading {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.zt-mcp-service-status,
+.zt-mcp-service-hint,
+.zt-mcp-catalog-hint {
+  color: var(--zt-text-muted);
+  font-size: var(--zt-font-size-caption);
+  line-height: 1.6;
+}
+
+.zt-mcp-service-header .zt-settings-actions {
+  flex-wrap: nowrap;
+  margin: 0;
+  gap: 8px;
+}
+
+.zt-mcp-settings-section .zt-mcp-service-facts {
+  gap: 0;
+  border-radius: 12px;
+  padding: 0 16px;
+  background: var(--zt-bg-surface);
+  overflow: hidden;
+}
+
+.zt-mcp-service-facts .zt-mcp-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 52px;
+  gap: 16px;
+  padding: 10px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.zt-mcp-service-facts .zt-mcp-row + .zt-mcp-row {
+  border-top: 1px solid var(--zt-border-subtle);
+}
+
+.zt-mcp-service-facts .zt-mcp-row > div {
+  min-width: 0;
+  grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
+}
+
+.zt-mcp-service-facts .zt-mcp-row > div span {
+  margin: 0;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.zt-mcp-service-facts .zt-mcp-row button {
+  min-width: 112px;
+  background: var(--zt-bg-input);
+  border-color: transparent;
+  border-radius: 8px;
+  min-height: 32px;
+  padding: 0 12px;
+}
+
+.zt-mcp-service-facts .zt-mcp-row button.is-copied {
+  color: var(--zt-success);
+  background: var(--zt-success-bg);
+}
+
+.zt-mcp-service-hint {
+  margin: -2px 0 0;
+}
+
+.zt-mcp-settings-section .zt-mcp-tools-panel {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 16px;
+  border-radius: 12px;
+}
+
+.zt-mcp-tools-panel .zt-mcp-tools-toggle {
+  display: flex;
+  flex: 0 1 auto;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 4px;
+}
+
+.zt-mcp-tools-panel .zt-mcp-tools-toggle span:not(:empty) {
+  margin-left: 8px;
+  border-radius: 5px;
+  padding: 2px 7px;
+  background: var(--zt-bg-input);
+  color: var(--zt-text-muted);
+  font-size: var(--zt-font-size-caption);
+}
+
+.zt-mcp-tools-panel .zt-mcp-tools-details {
+  gap: 12px;
+  border: 0;
+  padding: 12px 0 0;
+}
+
+.zt-mcp-catalog-hint {
+  margin: 0;
+}
+
+.zt-mcp-tools-panel .zt-mcp-tool-group {
+  min-width: 0;
+  margin: 0;
+}
+
+.zt-mcp-tools-panel .zt-mcp-tool-item {
+  gap: 20px;
+  padding: 14px 12px;
+  border-bottom: 0;
+  border-top-color: var(--zt-border-subtle);
+}
+
+.zt-mcp-tools-panel .zt-mcp-tool-item > div {
+  min-width: 0;
+  align-items: flex-start;
+}
+
+.zt-mcp-tools-panel .zt-mcp-tool-item code {
+  font-size: var(--zt-font-size-caption);
+}
+
+@media (max-width: 700px) {
+  .zt-mcp-service-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .zt-mcp-service-facts .zt-mcp-row > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .zt-mcp-service-facts .zt-mcp-row > div span {
+    text-align: left;
+  }
+
+  .zt-mcp-tools-panel .zt-mcp-tool-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding-inline: 4px;
+  }
+}

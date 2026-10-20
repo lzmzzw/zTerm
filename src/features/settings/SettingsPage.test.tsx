@@ -444,6 +444,64 @@ describe("SettingsPage", () => {
     view.unmount();
   });
 
+  it("expires copy feedback after the latest copy and keeps it beside the copied field", async () => {
+    vi.useFakeTimers();
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const view = render(
+      <SettingsPage settings={baseSettings} terminalProfiles={[]} shortcutDefinitions={shortcuts}
+        loading={false} error={null} onClose={vi.fn()} onSaveSettings={vi.fn()} onResetSettings={vi.fn()}
+        onDetectTerminalProfiles={vi.fn()} onSetDefaultTerminalProfile={vi.fn()}
+        mcpStatus={{ enabled: true, endpoint: "http://localhost/sample", token: "sample-token" }} />,
+    );
+    try {
+      await click(button(view.container, "MCP"));
+      const endpoint = button(view.container, "复制 Endpoint");
+      const token = button(view.container, "复制 Token");
+      await click(endpoint);
+      expect(endpoint.textContent).toBe("已复制");
+      expect(token.textContent).toBe("复制 Token");
+      expect(writeText).toHaveBeenLastCalledWith("http://localhost/sample");
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      await click(token);
+      expect(endpoint.textContent).toBe("复制 Endpoint");
+      expect(token.textContent).toBe("已复制");
+      expect(writeText).toHaveBeenLastCalledWith("sample-token");
+      await act(async () => { vi.advanceTimersByTime(1000); });
+      expect(token.textContent).toBe("已复制");
+      await act(async () => { vi.advanceTimersByTime(1500); });
+      expect(token.textContent).toBe("复制 Token");
+      expect(view.container.querySelector(".is-copied")).toBeNull();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+      if (descriptor) Object.defineProperty(navigator, "clipboard", descriptor);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
+  it("shows a copy failure instead of a false copied state when clipboard access fails", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error("Denied")) } });
+    const view = render(
+      <SettingsPage settings={baseSettings} terminalProfiles={[]} shortcutDefinitions={shortcuts}
+        loading={false} error={null} onClose={vi.fn()} onSaveSettings={vi.fn()} onResetSettings={vi.fn()}
+        onDetectTerminalProfiles={vi.fn()} onSetDefaultTerminalProfile={vi.fn()}
+        mcpStatus={{ enabled: true, endpoint: "http://localhost/sample" }} />,
+    );
+    try {
+      await click(button(view.container, "MCP"));
+      await click(button(view.container, "复制 Endpoint"));
+      expect(view.container.textContent).toContain("复制失败，请重试。");
+      expect(view.container.querySelector(".is-copied")).toBeNull();
+    } finally {
+      view.unmount();
+      if (descriptor) Object.defineProperty(navigator, "clipboard", descriptor);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
   it("renders the about page as single-line facts and opens GitHub through the system browser", async () => {
     const view = render(
       <SettingsPage

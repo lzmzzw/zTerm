@@ -1,5 +1,5 @@
 // Author: Liz
-import { Bot, LoaderCircle, ShieldCheck } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
@@ -57,15 +57,8 @@ export function AgentCodexPanel({
   return (
     <div className="zt-agent-codex-panel">
       <header className="zt-agent-codex-header">
-        <div className="zt-agent-codex-target">
-          <Bot size={16} aria-hidden="true" />
-          <div>
-            <strong>Codex CLI</strong>
-            <span>关联连接：{activeTargetLabel ?? session?.target_label ?? "尚未选择终端"}</span>
-          </div>
-        </div>
-        <label className={`zt-ai-approval-mode mode-${approvalMode}`}>
-          <ShieldCheck size={14} aria-hidden="true" />
+        <strong className="zt-agent-codex-title">Codex CLI</strong>
+        <label className="zt-ai-approval-mode">
           <span>审批模式</span>
           <ZtSelect
             ariaLabel="审批模式"
@@ -75,6 +68,7 @@ export function AgentCodexPanel({
             onChange={(value) => void onApprovalModeChange(value as McpApprovalMode)}
           />
         </label>
+        <span className="zt-agent-codex-target">关联连接：{activeTargetLabel ?? session?.target_label ?? "尚未选择终端"}</span>
       </header>
 
       {session && runtimeSessionId && loading ? (

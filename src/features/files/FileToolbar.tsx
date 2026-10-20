@@ -30,28 +30,25 @@ export function FileToolbar({
 }: FileToolbarProps) {
   return (
     <div className="zt-file-toolbar">
-      <button type="button" aria-label="刷新文件列表" disabled={disabled || loading} onClick={() => void onRefresh()}>
+      <button type="button" aria-label="刷新文件列表" title="刷新文件列表" disabled={disabled || loading} onClick={() => void onRefresh()}>
         <RefreshCw size={14} aria-hidden="true" />
-        <span>刷新</span>
       </button>
-      <button type="button" aria-label="上级目录" disabled={disabled || loading} onClick={() => void onParent()}>
+      <button type="button" aria-label="上级目录" title="上级目录" disabled={disabled || loading} onClick={() => void onParent()}>
         <ArrowUp size={14} aria-hidden="true" />
       </button>
-      <button type="button" aria-label="新建文件夹" disabled={disabled || loading} onClick={() => void onMkdir()}>
+      <button type="button" aria-label="新建文件夹" title="新建文件夹" disabled={disabled || loading} onClick={() => void onMkdir()}>
         <FolderPlus size={14} aria-hidden="true" />
       </button>
       <button type="button" aria-label="上传" title="上传" disabled={disabled || loading} onClick={() => void onUpload()}>
         <Upload size={14} aria-hidden="true" />
-        <span>上传</span>
       </button>
-      <button type="button" aria-label="下载" disabled={disabled || !hasSelection} onClick={() => void onDownload()}>
+      <button type="button" aria-label="下载" title="下载" disabled={disabled || !hasSelection} onClick={() => void onDownload()}>
         <Download size={14} aria-hidden="true" />
-        <span>下载</span>
       </button>
-      <button type="button" aria-label="重命名" disabled={disabled || !canRename} onClick={() => void onRename()}>
+      <button type="button" aria-label="重命名" title="重命名" disabled={disabled || !canRename} onClick={() => void onRename()}>
         <Edit3 size={14} aria-hidden="true" />
       </button>
-      <button type="button" className="zt-delete-button" aria-label="删除" disabled={disabled || !hasSelection} onClick={() => void onDelete()}>
+      <button type="button" className="zt-delete-button" aria-label="删除" title="删除" disabled={disabled || !hasSelection} onClick={() => void onDelete()}>
         <Trash2 size={14} aria-hidden="true" />
       </button>
     </div>

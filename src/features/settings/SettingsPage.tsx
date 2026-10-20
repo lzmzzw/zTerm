@@ -4,7 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
-import { ChevronDown, ChevronRight, Copy, ExternalLink, Info, Hash, KeyRound, Power, Scale, GitBranch, RefreshCw, Search, Star, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ExternalLink, Search, Star, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import packageJson from "../../../package.json";
@@ -182,7 +182,18 @@ function McpSettings({
   onRotateToken: () => Promise<McpServerStatus> | McpServerStatus;
   onLoadTools: () => Promise<McpToolDefinition[]> | McpToolDefinition[];
 }) {
-  const [localStatus, setLocalStatus] = useState<string | null>(null);
+  const [localStatus, setLocalStatus] = useState<{ message: string; error?: boolean } | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<{ field: "endpoint" | "token"; message: string } | null>(null);
+  useEffect(() => {
+    if (!copyFeedback) return;
+    const timer = window.setTimeout(() => setCopyFeedback(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [copyFeedback]);
+  useEffect(() => {
+    if (!localStatus) return;
+    const timer = window.setTimeout(() => setLocalStatus(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [localStatus]);
   const [toolsExpanded, setToolsExpanded] = useState(false);
   const [tools, setTools] = useState<McpToolDefinition[] | null>(null);
   const [toolsLoading, setToolsLoading] = useState(false);
@@ -197,18 +208,25 @@ function McpSettings({
 
   async function setEnabled(enabled: boolean) {
     await onSetEnabled(enabled, null);
-    setLocalStatus(enabled ? t(language, "mcpServiceStarted") : t(language, "mcpServiceStopped"));
+    setLocalStatus({ message: enabled ? t(language, "mcpServiceStarted") : t(language, "mcpServiceStopped") });
   }
 
   async function rotateToken() {
     await onRotateToken();
-    setLocalStatus(t(language, "mcpTokenRotated"));
+    setLocalStatus({ message: t(language, "mcpTokenRotated") });
   }
 
-  async function copyValue(value: string | null | undefined, message: string) {
+  async function copyValue(value: string | null | undefined, field: "endpoint" | "token", message: string) {
     if (!value) return;
-    await navigator.clipboard?.writeText(value);
-    setLocalStatus(message);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(value);
+      setLocalStatus(null);
+      setCopyFeedback({ field, message });
+    } catch {
+      setCopyFeedback(null);
+      setLocalStatus({ message: language === "enUS" ? "Copy failed. Please retry." : "复制失败，请重试。", error: true });
+    }
   }
 
   async function loadTools() {
@@ -231,22 +249,25 @@ function McpSettings({
 
   return (
     <section className="zt-settings-section zt-mcp-settings-section" aria-label={t(language, "mcpLocalService")}>
-      <div className="zt-settings-actions">
-        <button type="button" disabled={loading} onClick={() => void setEnabled(!status.enabled)}>
-          <Power size={14} aria-hidden="true" />
-          {status.enabled ? t(language, "mcpDisable") : t(language, "mcpEnable")}
-        </button>
-        <button type="button" disabled={loading || !status.enabled} onClick={() => void rotateToken()}>
-          <RefreshCw size={14} aria-hidden="true" />
-          {t(language, "mcpRotateToken")}
-        </button>
-        {localStatus ? <span className="zt-settings-status">{localStatus}</span> : null}
-      </div>
-      <div className="zt-settings-list" aria-label={t(language, "mcpLocalService")}>
-        {!status.enabled ? <div className="zt-empty-line">{t(language, "mcpDisabled")}</div> : null}
-        <div className="zt-empty-line">{t(language, "mcpSingleApprovalHint")}</div>
+      <header className="zt-mcp-service-header">
+        <div className="zt-mcp-service-heading">
+          <strong>{t(language, "mcpLocalService")}</strong>
+          <span className="zt-mcp-service-status" role="status">
+            {status.enabled ? t(language, "mcpServiceStarted") : t(language, "mcpServiceStopped")}
+          </span>
+        </div>
+        <div className="zt-settings-actions">
+          <button type="button" disabled={loading} onClick={() => void setEnabled(!status.enabled)}>
+            {status.enabled ? t(language, "mcpDisable") : t(language, "mcpEnable")}
+          </button>
+          <button type="button" disabled={loading || !status.enabled} onClick={() => void rotateToken()}>
+            {t(language, "mcpRotateToken")}
+          </button>
+        </div>
+      </header>
+      {localStatus?.error ? <ZtInlineError>{localStatus.message}</ZtInlineError> : localStatus ? <span className="zt-settings-status" role="status">{localStatus.message}</span> : null}
+      <div className="zt-settings-list zt-mcp-service-facts" aria-label={t(language, "mcpLocalService")}>
         <div className="zt-settings-row zt-mcp-row">
-          <ExternalLink size={14} aria-hidden="true" />
           <div>
             <strong>{t(language, "mcpEndpoint")}</strong>
             <span>{status.endpoint ?? "-"}</span>
@@ -256,13 +277,14 @@ function McpSettings({
             aria-label={t(language, "mcpCopyEndpoint")}
             title={t(language, "mcpCopyEndpoint")}
             disabled={!status.endpoint}
-            onClick={() => void copyValue(status.endpoint, t(language, "mcpEndpointCopied"))}
+            className={copyFeedback?.field === "endpoint" ? "is-copied" : undefined}
+            onClick={() => void copyValue(status.endpoint, "endpoint", t(language, "mcpEndpointCopied"))}
           >
-            <Copy size={14} aria-hidden="true" />
+            {copyFeedback?.field === "endpoint" ? <Check size={14} aria-hidden="true" /> : null}
+            {copyFeedback?.field === "endpoint" ? (language === "enUS" ? "Copied" : "已复制") : t(language, "mcpCopyEndpoint")}
           </button>
         </div>
         <div className="zt-settings-row zt-mcp-row">
-          <KeyRound size={14} aria-hidden="true" />
           <div>
             <strong>{t(language, "mcpToken")}</strong>
             <span>{status.token ?? "-"}</span>
@@ -272,12 +294,16 @@ function McpSettings({
             aria-label={t(language, "mcpCopyToken")}
             title={t(language, "mcpCopyToken")}
             disabled={!status.token}
-            onClick={() => void copyValue(status.token, t(language, "mcpTokenCopied"))}
+            className={copyFeedback?.field === "token" ? "is-copied" : undefined}
+            onClick={() => void copyValue(status.token, "token", t(language, "mcpTokenCopied"))}
           >
-            <Copy size={14} aria-hidden="true" />
+            {copyFeedback?.field === "token" ? <Check size={14} aria-hidden="true" /> : null}
+            {copyFeedback?.field === "token" ? (language === "enUS" ? "Copied" : "已复制") : t(language, "mcpCopyToken")}
           </button>
         </div>
       </div>
+      <span className="sr-only" role="status">{copyFeedback?.message ?? ""}</span>
+      <p className="zt-mcp-service-hint">{t(language, "mcpSingleApprovalHint")}</p>
       <div className="zt-mcp-tools-panel">
         <div className="zt-mcp-tools-heading">
           <button
@@ -303,6 +329,11 @@ function McpSettings({
         </div>
         {toolsExpanded ? (
           <div id="zt-mcp-tools-details" className="zt-mcp-tools-details">
+            <p className="zt-mcp-catalog-hint">
+              {language === "enUS"
+                ? "View tool names, identifiers and descriptions. Invoke tools through your connected MCP client."
+                : "查看工具名称、标识与用途。工具调用仍通过已连接的 MCP 客户端进行。"}
+            </p>
             {toolsLoading ? <div className="zt-mcp-tools-message">{t(language, "mcpToolsLoading")}</div> : null}
             {toolsError ? (
               <ZtInlineError
@@ -737,44 +768,28 @@ function AboutSettings({ language }: { language: AppLanguage }) {
   return (
     <section className="zt-settings-section zt-settings-about" aria-label={t(language, "about")}>
       <div className="zt-settings-section-body">
-        <div className="zt-settings-about-header">
-          <Info size={18} aria-hidden="true" />
-          <strong>{t(language, "aboutTitle")}</strong>
-          <span className="zt-settings-about-version-badge">v{version}</span>
-        </div>
-        <div className="zt-settings-about-cards">
-          <div className="zt-settings-about-card">
-            <div className="zt-settings-about-card-header">
-              <Hash size={16} aria-hidden="true" />
-              <strong>{t(language, "aboutVersion")}</strong>
-            </div>
-            <span className="zt-settings-about-card-value">v{version}</span>
+        <h3 className="zt-settings-group-title">{t(language, "aboutTitle")}</h3>
+        <div className="zt-settings-list zt-settings-about-facts">
+          <div className="zt-settings-row">
+            <strong>{t(language, "aboutVersion")}</strong>
+            <span>v{version}</span>
           </div>
-          <div className="zt-settings-about-card">
-            <div className="zt-settings-about-card-header">
-              <Scale size={16} aria-hidden="true" />
-              <strong>{t(language, "aboutLicense")}</strong>
-            </div>
-            <span className="zt-settings-about-card-value">{t(language, "aboutLicenseValue")}</span>
+          <div className="zt-settings-row">
+            <strong>{t(language, "aboutLicense")}</strong>
+            <span>{t(language, "aboutLicenseValue")}</span>
           </div>
-          <div className="zt-settings-about-card">
-            <div className="zt-settings-about-card-header">
-              <GitBranch size={16} aria-hidden="true" />
-              <strong>{t(language, "aboutGitHub")}</strong>
-            </div>
-            <span className="zt-settings-about-card-value">{t(language, "aboutGitHubUrl")}</span>
-            <button type="button" className="zt-settings-about-link-btn" onClick={() => void openGitHub()}>
+          <div className="zt-settings-row">
+            <strong>{t(language, "aboutGitHub")}</strong>
+            <span>{t(language, "aboutGitHubUrl")}</span>
+            <button type="button" onClick={() => void openGitHub()}>
               {t(language, "aboutOpen")}
               <ExternalLink size={14} aria-hidden="true" />
             </button>
           </div>
-          <div className="zt-settings-about-card">
-            <div className="zt-settings-about-card-header">
-              <RefreshCw size={16} aria-hidden="true" />
-              <strong>{t(language, "aboutUpdate")}</strong>
-            </div>
-            <span className="zt-settings-about-card-value">{updateStatus ?? t(language, "aboutUpdateIdle")}</span>
-            <button type="button" className="zt-settings-about-check-btn" disabled={checkingUpdate} onClick={() => void checkForUpdates()}>
+          <div className="zt-settings-row">
+            <strong>{t(language, "aboutUpdate")}</strong>
+            <span role="status">{updateStatus ?? t(language, "aboutUpdateIdle")}</span>
+            <button type="button" disabled={checkingUpdate} onClick={() => void checkForUpdates()}>
               {checkingUpdate ? t(language, "aboutUpdateCheckingButton") : t(language, "aboutCheckUpdate")}
             </button>
           </div>

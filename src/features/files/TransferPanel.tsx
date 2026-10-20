@@ -1,5 +1,5 @@
 // Author: Liz
-import { ChevronDown, ChevronRight, ChevronUp, Pause, Play, RotateCcw, Trash2, XCircle } from "lucide-react";
+import { ChevronDown, ChevronRight, Pause, Play, RotateCcw, Trash2, XCircle } from "lucide-react";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 
 import { ZtConfirmDialog, ZtInlineError } from "../../components/ZtUi";
@@ -225,7 +225,7 @@ export function TransferPanel({
           >
             <strong className="zt-transfer-dock-title">传输任务</strong>
             <span className="zt-transfer-dock-count">{activeCount > 0 ? `${activeCount} 个进行中` : `${tasks.length} 个任务`}</span>
-            {collapsed ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+            {collapsed ? <ChevronRight size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
           </button>
           {hasBulkActions ? (
             <div className="zt-transfer-dock-actions" aria-label="传输任务批量操作">
