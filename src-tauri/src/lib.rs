@@ -365,8 +365,11 @@ mod tests {
         let directory = std::env::temp_dir();
         super::register_startup_args(&service, vec!["zterm.exe".into()], Some(&directory)).unwrap();
         assert_eq!(
-            service.take_pending_local_launches().unwrap()[0].working_directory,
-            directory.to_string_lossy()
+            std::fs::canonicalize(
+                &service.take_pending_local_launches().unwrap()[0].working_directory
+            )
+            .unwrap(),
+            std::fs::canonicalize(&directory).unwrap()
         );
         assert!(service.take_pending_launches().unwrap().is_empty());
     }

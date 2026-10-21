@@ -1387,8 +1387,14 @@ mod tests {
             .unwrap());
         let launches = service.take_pending_local_launches().unwrap();
         assert_eq!(launches.len(), 2);
-        assert_eq!(launches[0].working_directory, first.to_string_lossy());
-        assert_eq!(launches[1].working_directory, second.to_string_lossy());
+        assert_eq!(
+            std::fs::canonicalize(&launches[0].working_directory).unwrap(),
+            std::fs::canonicalize(&first).unwrap()
+        );
+        assert_eq!(
+            std::fs::canonicalize(&launches[1].working_directory).unwrap(),
+            std::fs::canonicalize(&second).unwrap()
+        );
         assert_ne!(launches[0].id, launches[1].id);
         assert!(service.take_pending_local_launches().unwrap().is_empty());
         assert!(!service
