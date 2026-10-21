@@ -60,25 +60,25 @@ pub async fn agent_codex_open(
     let target_runtime = state
         .terminal_manager()
         .runtime_info(&target_runtime_session_id)?;
-    if !matches!(
-        target_runtime.kind,
-        RuntimeSessionKind::Ssh | RuntimeSessionKind::SshContainer
-    ) {
-        return Err(AppError::validation(
-            "Codex 侧栏仅可绑定 zTerm 的 SSH 服务器终端",
-        ));
+    if target_runtime.pane_id.starts_with("agent:")
+        || !matches!(
+            target_runtime.kind,
+            RuntimeSessionKind::Local | RuntimeSessionKind::Ssh | RuntimeSessionKind::SshContainer
+        )
+    {
+        return Err(AppError::validation("Codex 侧栏仅可绑定本地或 SSH 终端"));
     }
     let requested_saved_session_id = target_saved_session_id
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
     if requested_saved_session_id.as_deref() != target_runtime.saved_session_id.as_deref() {
-        return Err(AppError::validation("目标 SSH 连接与运行终端绑定不一致"));
+        return Err(AppError::validation("目标连接与运行终端绑定不一致"));
     }
     let saved_session_id = target_runtime.saved_session_id.clone();
     let key = connection_key(
         saved_session_id
             .as_deref()
-            .filter(|_| target_runtime.kind == RuntimeSessionKind::Ssh),
+            .filter(|_| target_runtime.kind != RuntimeSessionKind::SshContainer),
         &target_runtime_session_id,
     );
     let mut shared_session = state.agent_codex_registry.lock(&key).await?;
@@ -103,52 +103,69 @@ pub async fn agent_codex_open(
         .transpose()?
         .unwrap_or(AiApprovalMode::Safe);
 
-    let settings = get_app_settings(state.storage().as_ref())?;
-    let mcp_status = state
-        .mcp_service()
-        .ensure_running(state.storage(), state.ai_tool_service(), settings.mcp.port)
-        .await?;
-    if !mcp_status.enabled {
-        return Err(AppError::ai("zTerm MCP 服务未能启动"));
-    }
-
     let agent_session_id = Uuid::new_v4().to_string();
-    let access = state
-        .mcp_service()
-        .register_agent_binding(AgentMcpBinding {
-            agent_session_id: agent_session_id.clone(),
-            runtime_session_id: target_runtime_session_id.clone(),
-            saved_session_id: saved_session_id.clone(),
-            target_runtime_kind: target_runtime.kind,
-            target_label: target_label.clone(),
-        })?;
+    // Cleanup must always target private artifacts, never the user's home directory.
     let session_root = agent_session_root(&agent_session_id)?;
-    let prepare_session_dir = fs::create_dir_all(&session_root).and_then(|_| {
-        fs::write(
-            session_root.join("AGENTS.md"),
-            agent_instructions(&target_label, saved_session_id.as_deref(), approval_mode),
-        )
-    });
-    if let Err(error) = prepare_session_dir {
-        cleanup_agent_artifacts(&state, &agent_session_id, &session_root);
-        return Err(error.into());
-    }
-    let inherited_mcp_servers = match list_inherited_codex_mcp_servers(&session_root).await {
-        Ok(result) => result,
-        Err(error) => {
-            cleanup_agent_artifacts(&state, &agent_session_id, &session_root);
-            return Err(error);
+    let (command, args, cwd, environment) = if target_runtime.kind == RuntimeSessionKind::Local {
+        let cwd = dirs::home_dir().ok_or_else(|| AppError::ai("无法确定用户主目录"))?;
+        let (command, args) = local_codex_launch_command();
+        let environment = agent_codex_environment(String::new())
+            .into_iter()
+            .filter(|(key, _)| key != AGENT_MCP_TOKEN_ENV)
+            .collect();
+        (command, args, cwd, environment)
+    } else {
+        let settings = get_app_settings(state.storage().as_ref())?;
+        let mcp_status = state
+            .mcp_service()
+            .ensure_running(state.storage(), state.ai_tool_service(), settings.mcp.port)
+            .await?;
+        if !mcp_status.enabled {
+            return Err(AppError::ai("zTerm MCP 服务未能启动"));
         }
-    };
 
-    let (command, args) = codex_launch_command(&access.endpoint, &inherited_mcp_servers);
+        let access = state
+            .mcp_service()
+            .register_agent_binding(AgentMcpBinding {
+                agent_session_id: agent_session_id.clone(),
+                runtime_session_id: target_runtime_session_id.clone(),
+                saved_session_id: saved_session_id.clone(),
+                target_runtime_kind: target_runtime.kind,
+                target_label: target_label.clone(),
+            })?;
+        let prepare_session_dir = fs::create_dir_all(&session_root).and_then(|_| {
+            fs::write(
+                session_root.join("AGENTS.md"),
+                agent_instructions(&target_label, saved_session_id.as_deref(), approval_mode),
+            )
+        });
+        if let Err(error) = prepare_session_dir {
+            cleanup_agent_artifacts(&state, &agent_session_id, &session_root);
+            return Err(error.into());
+        }
+        let inherited_mcp_servers = match list_inherited_codex_mcp_servers(&session_root).await {
+            Ok(result) => result,
+            Err(error) => {
+                cleanup_agent_artifacts(&state, &agent_session_id, &session_root);
+                return Err(error);
+            }
+        };
+
+        let (command, args) = codex_launch_command(&access.endpoint, &inherited_mcp_servers);
+        (
+            command,
+            args,
+            session_root.clone(),
+            agent_codex_environment(access.token),
+        )
+    };
     let opened = match state
         .terminal_manager()
         .open_agent_codex_session(AgentCodexPtyOptions {
             command_path: command,
             args,
-            cwd: session_root.clone(),
-            environment: agent_codex_environment(access.token),
+            cwd,
+            environment,
             pane_id: format!("agent:{key}"),
             title: format!("Codex · {target_label}"),
             cols: 80,
@@ -295,6 +312,18 @@ pub async fn agent_codex_close(
 
 fn sidebar_instructions() -> String {
     format!("{SIDEBAR_TARGET_INSTRUCTIONS} {SIDEBAR_OPERATION_INSTRUCTIONS}")
+}
+
+// Local sessions retain the user's normal Codex configuration and approval policy.
+fn local_codex_launch_command() -> (String, Vec<String>) {
+    if cfg!(windows) {
+        (
+            "cmd.exe".to_string(),
+            ["/D", "/S", "/C", "codex"].map(String::from).to_vec(),
+        )
+    } else {
+        ("codex".to_string(), Vec::new())
+    }
 }
 
 fn codex_launch_command(endpoint: &str, inherited_mcp_servers: &[String]) -> (String, Vec<String>) {
@@ -586,10 +615,22 @@ mod tests {
 
     use super::{
         agent_codex_environment, agent_instructions, background_codex_command,
-        codex_launch_command, parse_codex_mcp_list, required_agent_session_id,
-        sidebar_instructions,
+        codex_launch_command, local_codex_launch_command, parse_codex_mcp_list,
+        required_agent_session_id, sidebar_instructions,
     };
     use crate::models::ai::AiApprovalMode;
+
+    #[test]
+    fn local_codex_preserves_native_configuration_and_approval_policy() {
+        let (command, args) = local_codex_launch_command();
+        if cfg!(windows) {
+            assert_eq!(command, "cmd.exe");
+            assert_eq!(args, ["/D", "/S", "/C", "codex"]);
+        } else {
+            assert_eq!(command, "codex");
+            assert!(args.is_empty());
+        }
+    }
 
     #[cfg(windows)]
     #[test]

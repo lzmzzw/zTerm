@@ -486,7 +486,11 @@ export function AppShell() {
   ]), [sessions, externalSshSessions]);
   const activeAgentRuntimeSessionId =
     activeRuntimeSessionId &&
-    (activePaneTab?.connection_source === "ssh_container" ||
+    (activeRuntimeInfo?.kind === "local" ||
+      activeSavedSession?.type === "local" ||
+      activePaneTab?.connection_source === "default_local" ||
+      activePaneTab?.connection_source === "external_local" ||
+      activePaneTab?.connection_source === "ssh_container" ||
       activePaneTab?.connection_source === "external_ssh" ||
       activeSavedSession?.type === "ssh" ||
       activeRuntimeInfo?.kind === "ssh" ||
@@ -558,7 +562,11 @@ export function AppShell() {
     void bindApprovalModeToSession(mcpApprovalSessionId);
   }, [mcpApprovalSessionId, bindApprovalModeToSession]);
 
-  useActiveAgentTerminalSync(activeAgentRuntimeSessionId);
+  useActiveAgentTerminalSync(
+    activeRuntimeInfo?.kind === "local" || activeSavedSession?.type === "local" ||
+      activePaneTab?.connection_source === "default_local" || activePaneTab?.connection_source === "external_local"
+      ? null : activeAgentRuntimeSessionId,
+  );
 
   useEffect(() => {
     if (previousAgentConnectionKeyRef.current === activeAgentConnectionKey) return;

@@ -28,7 +28,7 @@ and verification commands.
 - Browse SFTP directories, create folders, upload, download, rename, delete, and retry transfers.
 - Capture command history by session or local profile, search it, copy commands, and send commands back to the active terminal.
 - Store connection credentials in the operating system keyring instead of plain SQLite rows.
-- Launch the locally authenticated Codex CLI in the Agent sidebar, with one retained process per terminal tab.
+- Launch the locally authenticated Codex CLI in the Agent sidebar for local and SSH connections. Local connections start in the user home directory with the normal user Codex configuration; SSH connections retain the scoped Visible Terminal Profile.
 - Give sidebar Codex a Visible Terminal Profile: every server command and output stays in zTerm scrollback, while additional saved SSH servers can be opened and operated in new tabs or horizontal/vertical splits.
 - Give external Codex App clients a Headless Profile: native SSH execution and transfers return structured results without opening, reading, or writing terminal scrollback.
 - Use Efficient Approval by default: inspections, transfers, and routine operations run automatically, while genuinely high-risk or irreversible actions are confirmed once in zTerm. Pending approval brings zTerm forward, opens the Agent approval surface, and returns the decision to the original Codex tool call without resubmission.

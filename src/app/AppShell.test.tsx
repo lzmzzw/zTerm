@@ -3359,7 +3359,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("keeps showing the local machine when the active terminal is local", async () => {
+  it("keeps the local monitor and launches sidebar Codex for a local terminal", async () => {
     storeMocks.terminalState.runtimes = {
       "runtime-local": {
         runtime_session_id: "runtime-local",
@@ -3404,6 +3404,18 @@ describe("AppShell", () => {
     });
 
     expect(storeMocks.monitorPanelProps?.target).toEqual(expect.objectContaining({ kind: "local", id: "local-machine" }));
+
+    await act(async () => {
+      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+    expect(vi.mocked(openAgentCodex)).toHaveBeenCalledWith({
+      tabId: "pane-1-tab-1",
+      targetRuntimeSessionId: "runtime-local",
+      targetSavedSessionId: null,
+      targetLabel: "PowerShell",
+    });
+    expect(setActiveAgentTerminal).not.toHaveBeenCalledWith("runtime-local");
 
     view.unmount();
   });
