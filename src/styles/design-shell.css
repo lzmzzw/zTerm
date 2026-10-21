@@ -48,7 +48,7 @@
 .zt-sync-dialog { border-radius: 12px; }
 .zt-sync-channel { border-radius: 8px; border-color: var(--zt-border); background: var(--zt-surface-elevated); }
 .zt-sync-member { border-bottom: 1px solid var(--zt-border-subtle); }
-.zt-xterm-pane { padding: 10px 12px; }
+.zt-xterm-pane { padding: 10px 12px 10px 10px; }
 .zt-settings-page.zt-surface-frame { border-radius: 0; }
 
 /* 栏目操作中心与窗口关闭按钮共用距右边缘 23px 的轴线。 */

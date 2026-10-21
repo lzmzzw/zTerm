@@ -1329,7 +1329,7 @@
 }
 
 .zt-split-divider::after {
-  content: "";
+  content: none;
   position: absolute;
   background: var(--zt-pane-divider);
   pointer-events: none;

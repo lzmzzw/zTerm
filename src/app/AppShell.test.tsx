@@ -1119,7 +1119,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("shows the active SSH connection name in the titlebar", () => {
+  it("keeps the titlebar center blank for SSH", () => {
     storeMocks.sessionState.sessions = [
       {
         id: "ssh-1",
@@ -1154,11 +1154,11 @@ describe("AppShell", () => {
 
     const view = render(<AppShell />);
 
-    expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("生产机");
+    expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("");
     view.unmount();
   });
 
-  it("shows all channel hosts in the titlebar while a channel member is active", () => {
+  it("keeps the titlebar center blank for channels", () => {
     storeMocks.sessionState.sessions = [
       {
         id: "ssh-1", name: "生产机 A", type: "ssh", group_id: null, host: "10.20.30.40", port: 22,
@@ -1192,12 +1192,12 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
 
     expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe(
-      "频道：10.20.30.40、10.20.30.41",
+      "",
     );
     view.unmount();
   });
 
-  it("shows the configured working directory for the active local terminal", () => {
+  it("keeps the titlebar center blank for local directories", () => {
     storeMocks.sessionState.sessions = [
       {
         id: "local-1",
@@ -1233,14 +1233,14 @@ describe("AppShell", () => {
 
     const view = render(<AppShell />);
 
-    expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("D:\\terminalLayout\\zterm");
+    expect(view.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("");
     view.unmount();
 
     storeMocks.terminalState.runtimes = {
       "runtime-local": { runtime_session_id: "runtime-local", kind: "local", title: "项目终端", initial_cwd: "D:\\initial", current_cwd: "D:\\current" },
     };
     const currentView = render(<AppShell />);
-    expect(currentView.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("D:\\current");
+    expect(currentView.container.querySelector('[aria-label="标题栏"]')?.textContent).toBe("");
     currentView.unmount();
   });
 

@@ -456,9 +456,6 @@ export function AppShell() {
       return runtime.title;
     },
   );
-  const activeSyncChannelMember = activePaneTab
-    ? syncChannel?.members.find((member) => member.id === activePaneTab.id) ?? null
-    : null;
   const bindTerminalEvents = useTerminalStore((state) => state.bindTerminalEvents);
   const openTerminal = useTerminalStore((state) => state.openTerminal);
   const openSshContainerTerminal = useTerminalStore((state) => state.openSshContainerTerminal);
@@ -471,15 +468,6 @@ export function AppShell() {
   const activeRuntimeInfo = useTerminalStore((state) =>
     activeRuntimeSessionId ? (state.runtimes[activeRuntimeSessionId] ?? null) : null,
   );
-  const titleBarIsLocalPath = !activeSyncChannelMember &&
-    (activeRuntimeInfo?.kind === "local" || activeSavedSession?.type === "local" || activePaneTab?.connection_source === "default_local");
-  const titleBarCenterContent = activeSyncChannelMember
-    ? `频道：${syncChannel!.members.map((member) => member.host).join("、")}`
-    : titleBarIsLocalPath
-      ? activeRuntimeInfo?.current_cwd?.trim() || activeRuntimeInfo?.initial_cwd?.trim()
-        || activePaneTab?.path?.trim() || activeSavedSession?.local_options?.working_directory?.trim() || null
-      : activeSavedSession?.name?.trim() || activeExternalSshSession?.name?.trim()
-        || activeRuntimeInfo?.title?.trim() || activePaneTab?.title?.trim() || null;
   const terminalSessionLabels = useMemo(() => Object.fromEntries([
     ...sessions.filter((session) => session.type === "ssh").map((session) => [session.id, session.host.trim() || session.name]),
     ...Object.values(externalSshSessions).map((session) => [session.id, session.host.trim() || session.name]),
@@ -1787,7 +1775,7 @@ export function AppShell() {
 
   return (
     <div className={workbenchClassName} onContextMenu={(event) => event.preventDefault()}>
-      <TitleBar centerContent={titleBarCenterContent} centerIsPath={titleBarIsLocalPath} navigation={headerNavigation} actions={headerActions} />
+      <TitleBar navigation={headerNavigation} actions={headerActions} />
 
       {activeLeftTool ? <aside
         className="zt-sidebar zt-sidebar-left zt-left-tools"

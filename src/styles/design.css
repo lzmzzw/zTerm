@@ -8,7 +8,7 @@
 .zt-pane-tabs { background: var(--zt-surface-elevated); }
 .zt-pane-tabs > .zt-terminal-toolbar { background: transparent; }
 .zt-pane-active-indicator { display: none; }
-.zt-pane-tablist { align-items: center; gap: 4px; padding: 0 12px; }
+.zt-pane-tablist { align-items: center; gap: 4px; padding: 0 12px 0 4px; }
 .zt-pane-tab {
   position: relative;
   height: var(--zt-workbar-control-size);
