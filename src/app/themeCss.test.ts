@@ -41,7 +41,7 @@ describe("global dark theme colors", () => {
   });
 
   it("defines shared geometry tokens for cross-module alignment", () => {
-    expect(rootVariable("--zt-titlebar-height")).toBe("48px");
+    expect(rootVariable("--zt-titlebar-height")).toBe("40px");
     expect(rootVariable("--zt-rail-width")).toBe("40px");
     expect(rootVariable("--zt-workbar-height")).toBe("36px");
     expect(rootVariable("--zt-rail-button-size")).toBe("28px");

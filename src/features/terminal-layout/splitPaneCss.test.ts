@@ -102,19 +102,19 @@ describe("split pane css direction mapping", () => {
     expect(panelHeaderActionButtonStyles).toContain("align-items: center");
   });
 
-  it("uses neutral selected surfaces instead of blue-green highlights", () => {
+  it("uses theme accent mixing for selected surfaces in both themes", () => {
     expect(css).toContain("--zt-surface-hover: rgb(255 255 255 / 0.07)");
-    expect(css).toContain("--zt-surface-selected: #393939");
-    expect(css).toContain("--zt-accent-muted: rgb(164 189 219 / 0.1)");
+    expect(css).toContain("--zt-surface-selected: color-mix(in srgb, var(--zt-accent) 16%, var(--zt-surface-elevated))");
+    expect(css).toContain("--zt-accent-muted: rgb(100 169 255 / 0.1)");
     expect(css).toContain("--zt-focus-ring: var(--zt-accent)");
-    expect(css).toContain("--zt-focus-soft: rgb(164 189 219 / 0.18)");
+    expect(css).toContain("--zt-focus-soft: rgb(100 169 255 / 0.18)");
     expect(css).not.toContain("100 210 255");
 
     expect(css).toContain("--zt-surface-hover: rgb(0 0 0 / 0.04)");
-    expect(css).toContain("--zt-surface-selected: #dedede");
-    expect(css).toContain("--zt-accent-muted: rgb(77 108 148 / 0.07)");
+    expect(css).toContain("--zt-surface-selected: color-mix(in srgb, var(--zt-accent) 16%, var(--zt-surface-elevated))");
+    expect(css).toContain("--zt-accent-muted: rgb(8 102 207 / 0.07)");
     expect(css).toContain("--zt-focus-ring: var(--zt-accent)");
-    expect(css).toContain("--zt-focus-soft: rgb(77 108 148 / 0.13)");
+    expect(css).toContain("--zt-focus-soft: rgb(8 102 207 / 0.13)");
     expect(css).not.toContain("10 132 255");
   });
 
@@ -148,7 +148,7 @@ describe("split pane css direction mapping", () => {
     expect(activeTabStyles).not.toContain("rgba(255, 255, 255, 0.28)");
   });
 
-  it("draws a subtle visible divider line for every split without shrinking the drag target", () => {
+  it("hides split divider lines without shrinking the drag target", () => {
     const dividerStyles = ruleBodiesForSelector(".zt-split-divider");
     const dividerLineStyles = ruleBodiesForSelector(".zt-split-divider::after");
     const horizontalDividerLineStyles = ruleBodiesForSelector(".zt-split-pane-horizontal > .zt-split-divider::after");
@@ -163,7 +163,7 @@ describe("split pane css direction mapping", () => {
     expect(dividerStyles).toContain("background: transparent");
     expect(dividerStyles).toContain("touch-action: none");
     expect(dividerStyles).toContain("user-select: none");
-    expect(dividerLineStyles).toContain('content: ""');
+    expect(dividerLineStyles).toContain('content: none');
     expect(dividerLineStyles).toContain("background: var(--zt-pane-divider)");
     expect(horizontalDividerLineStyles).toContain("width: 1px");
     expect(horizontalDividerLineStyles).toContain("height: 100%");
