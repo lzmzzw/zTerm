@@ -119,20 +119,7 @@ impl ExternalLaunchService {
             (args.len() == 1)
                 .then(|| cwd.filter(|path| path.is_absolute() && path.is_dir()))
                 .flatten()
-                .and_then(|path| {
-                    // A normal shortcut starts in the installation directory. Only an
-                    // actual caller directory should override the default home directory.
-                    let resolved = dunce::canonicalize(path).ok()?;
-                    let install_dir = std::env::current_exe().ok().and_then(|exe| {
-                        exe.parent()
-                            .and_then(|parent| dunce::canonicalize(parent).ok())
-                    });
-                    if install_dir.as_ref() == Some(&resolved) {
-                        dirs::home_dir()
-                    } else {
-                        Some(resolved)
-                    }
-                })
+                .and_then(|path| dunce::canonicalize(path).ok())
                 .map(|path| path.to_string_lossy().into_owned())
         });
         let Some(working_directory) = directory else {
@@ -1406,6 +1393,21 @@ mod tests {
         assert!(!service
             .register_local_from_args(["zterm.exe", "--unrelated"], Some(&first))
             .unwrap());
+    }
+
+    #[test]
+    fn resolved_explorer_install_directory_is_not_replaced_by_home() {
+        let executable = std::env::current_exe().unwrap();
+        let directory = executable.parent().unwrap();
+        let service = ExternalLaunchService::default();
+        assert!(service
+            .register_local_from_args(["zterm.exe"], Some(directory))
+            .unwrap());
+        let launches = service.take_pending_local_launches().unwrap();
+        assert_eq!(
+            dunce::canonicalize(&launches[0].working_directory).unwrap(),
+            dunce::canonicalize(directory).unwrap()
+        );
     }
 
     #[test]

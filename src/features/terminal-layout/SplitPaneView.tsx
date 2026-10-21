@@ -7,6 +7,7 @@ import { TerminalPlaceholder } from "../terminal/TerminalPlaceholder";
 import { TerminalSnapshotPane } from "../terminal/TerminalSnapshotPane";
 import { useTerminalStore } from "../terminal/terminalStore";
 import { TerminalToolbar } from "../terminal/TerminalToolbar";
+import { TerminalSplitMenu } from "../terminal/TerminalSplitMenu";
 import { XtermPane } from "../terminal/XtermPane";
 import type { TerminalReplayKind, TerminalReplayOutput, TerminalReplayResult } from "../terminal/terminalReplay";
 import { routeSyncTerminalInput, useSyncInputStore, type TerminalInputSource } from "../terminal/syncInputStore";
@@ -341,6 +342,11 @@ function LeafPane({
   const terminalTabs = getLeafTerminalTabs(root);
   const activeTerminalTab = getActiveTerminalTab(root);
   const activeRuntimeSessionId = activeTerminalTab.runtime_session_id ?? null;
+  const [splitMenu, setSplitMenu] = useState<{ x: number; y: number } | null>(null);
+  const closeSplitMenu = useCallback(() => setSplitMenu(null), []);
+  useEffect(() => {
+    if (!terminalLayoutActive || visualMode !== "normal") closeSplitMenu();
+  }, [closeSplitMenu, terminalLayoutActive, visualMode]);
   const [xtermRuntimeSessionId, setXtermRuntimeSessionId] = useState<string | null>(null);
   const [xtermReplay, setXtermReplay] = useState<{
     data: string;
@@ -659,7 +665,16 @@ function LeafPane({
       onClick={activatePane}
       onFocusCapture={activatePane}
     >
-      <div className="zt-pane-tabs">
+      <div
+        className="zt-pane-tabs"
+        onContextMenu={(event) => {
+          const target = event.target as HTMLElement;
+          if (event.defaultPrevented || target.closest("button, .zt-pane-tab") || dragState || !terminalLayoutActive || visualMode !== "normal") return;
+          event.preventDefault();
+          event.stopPropagation();
+          setSplitMenu({ x: event.clientX, y: event.clientY });
+        }}
+      >
         <div
           ref={tabListRef}
           className={`zt-pane-tablist ${dragState?.targetPaneId === root.id ? "drag-over" : ""}`}
@@ -795,15 +810,21 @@ function LeafPane({
         </div>
         {active ? <span className="zt-pane-active-indicator" aria-hidden="true" /> : null}
         <TerminalToolbar
-          onSplitPane={handleSplitPane}
           onClosePane={handleClosePane}
-          canSplitHorizontal={splitAvailability.horizontal}
-          canSplitVertical={splitAvailability.vertical}
           syncChannelMember={activeSyncChannelMember}
           onLeaveSyncChannel={() => leaveSyncChannel(activeTerminalTab.id)}
           onCloseSyncChannel={closeSyncChannel}
         />
       </div>
+      {splitMenu && terminalLayoutActive && visualMode === "normal" ? (
+        <TerminalSplitMenu
+          x={splitMenu.x}
+          y={splitMenu.y}
+          availability={splitAvailability}
+          onClose={closeSplitMenu}
+          onSplit={handleSplitPane}
+        />
+      ) : null}
       {active && terminalLayoutActive && visualMode === "normal" ? activePaneTools : null}
       {dragState?.sourcePaneId === root.id ? (
         <DragOverlay

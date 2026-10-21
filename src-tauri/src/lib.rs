@@ -11,6 +11,8 @@ pub mod commands;
 #[cfg(windows)]
 mod desktop_compatibility;
 pub mod error;
+#[cfg(windows)]
+mod explorer_launch;
 pub mod models;
 pub mod paths;
 pub mod security;
@@ -22,6 +24,8 @@ pub(crate) mod validation;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    explorer_launch::prepare_working_directory();
     #[cfg(windows)]
     let context = {
         let mut context = tauri::generate_context!();
@@ -377,7 +381,7 @@ mod tests {
     #[test]
     fn crate_metadata_matches_project() {
         assert_eq!(env!("CARGO_PKG_NAME"), "zterm");
-        assert_eq!(env!("CARGO_PKG_VERSION"), "0.6.0");
+        assert_eq!(env!("CARGO_PKG_VERSION"), "0.6.1");
     }
 
     #[test]

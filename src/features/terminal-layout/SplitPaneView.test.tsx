@@ -1451,6 +1451,7 @@ describe("SplitPaneView", () => {
     });
 
     expect(onDuplicatePaneTab).toHaveBeenCalledWith("pane-a", "pane-a-tab-1");
+    expect(document.querySelector('[role="menu"][aria-label="终端分屏"]')).toBeNull();
 
     act(() => {
       tab.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
@@ -1460,7 +1461,7 @@ describe("SplitPaneView", () => {
     view.unmount();
   });
 
-  it("activates the pane that owns the toolbar before splitting from that pane", () => {
+  it("splits from the header context menu in the pane that owns that header", () => {
     const onActivatePane = vi.fn();
     const onSplitPane = vi.fn();
     const root: PaneNode = {
@@ -1483,15 +1484,22 @@ describe("SplitPaneView", () => {
         onClosePane={vi.fn()}
       />,
     );
-    const verticalSplitButtons = view.container.querySelectorAll('[aria-label="纵向分栏"]');
-
     act(() => {
-      (verticalSplitButtons[1] as HTMLButtonElement).click();
+      view.container.querySelectorAll(".zt-pane-tabs")[1].dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: 100, clientY: 20 }),
+      );
+    });
+    const menu = document.querySelector('[role="menu"][aria-label="终端分屏"]');
+    expect(menu).not.toBeNull();
+    expect(view.container.querySelector('[aria-label="纵向分栏"]')).toBeNull();
+    act(() => {
+      (Array.from(menu!.querySelectorAll("button")).find(item => item.textContent === "上下分屏") as HTMLButtonElement).click();
     });
 
     expect(onActivatePane).toHaveBeenCalledWith("pane-b");
     expect(onSplitPane).toHaveBeenCalledWith("vertical");
     expect(onActivatePane.mock.invocationCallOrder[0]).toBeLessThan(onSplitPane.mock.invocationCallOrder[0]);
+    expect(document.querySelector('[role="menu"][aria-label="终端分屏"]')).toBeNull();
     view.unmount();
   });
 

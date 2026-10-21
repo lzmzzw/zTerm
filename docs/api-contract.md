@@ -63,7 +63,7 @@ MCP 采用统一执行/审批/审计底层上的两个工具 Profile。外部 be
 | Command / Event | 入参 / Payload | 返回 | 说明 |
 | --- | --- | --- | --- |
 | `external_launch_take_pending` | 无 | `ExternalSshLaunchEvent[]` | 取走当前进程启动参数解析出的外部一次性 SSH 或 FileZilla 格式 FTP/SFTP 请求；返回值不包含 password、key passphrase 或任何 secret |
-| `external_launch_take_pending_local` | 无 | `{ id, working_directory }[]` | 取走 `--open-local <绝对目录>` 或无参数启动继承调用方目录的请求；仅接受存在的绝对目录，使用默认本地终端打开临时连接，不保存会话或恢复该目录标签；显式参数优先；无参数且调用方目录为安装目录时使用系统用户目录，无效工作目录不创建目录请求 |
+| `external_launch_take_pending_local` | 无 | `{ id, working_directory }[]` | 取走 `--open-local <绝对目录>` 或无参数启动目录请求；仅接受存在的绝对目录，使用默认本地终端打开临时连接，不保存会话或恢复该目录标签；显式参数优先。Windows 无参数启动先读取发起启动的前台资源管理器可见文件视图目录，并在单实例转发前传递；无法识别时保留调用方目录，普通安装目录启动回退到系统用户目录。资源管理器正在浏览安装目录时保留该目录，不在消费请求时重写为用户目录 |
 | `zterm:external-local-launch` | `null` | 事件 | 单实例收到本地目录请求后通知前端重新读取本地启动队列；前端完成布局恢复后处理冷启动队列 |
 | `zterm:external-ssh-launch` | `null` | 事件 | 带外部连接参数的 single-instance 回调完成参数解析和进程内入队后，仅通知已运行前端重新调用 `external_launch_take_pending`；沿用兼容事件名，事件不携带连接信息或 secret |
 

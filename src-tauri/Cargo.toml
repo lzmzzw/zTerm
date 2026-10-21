@@ -1,6 +1,6 @@
 [package]
 name = "zterm"
-version = "0.6.0"
+version = "0.6.1"
 description = "Windows-first Tauri terminal for SSH, SFTP, command history, and AI-assisted operations."
 authors = ["zTerm contributors"]
 edition = "2021"
@@ -38,3 +38,6 @@ tauri-plugin-updater = "2.10.1"
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-single-instance = "2.4.2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", features = ["Win32_System_Com", "Win32_System_Ole", "Win32_System_Variant", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_WindowsAndMessaging"] }
