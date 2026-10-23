@@ -37,10 +37,6 @@
 .zt-session-editor-fields :is(.zt-path-picker,.zt-secret-input) input { border: 0; height: 32px; background: transparent; box-shadow: none; border-radius: 0; }
 .zt-session-editor-fields :is(.zt-path-picker,.zt-secret-input) button { width: 32px; height: 32px; min-height: 32px; padding: 0; border: 0; border-left: 1px solid var(--zt-border); border-radius: 0; background: transparent; }
 .zt-session-editor-fields :is(.zt-path-picker,.zt-secret-input):focus-within { outline: 2px solid var(--zt-focus-ring); outline-offset: 2px; }
-.zt-session-editor-fields .zt-number-input { height: 34px; min-height: 34px; border-radius: 7px; overflow: hidden; }
-.zt-session-editor-fields .zt-number-input input { height: 34px; min-height: 34px; padding-right: 76px; }
-.zt-session-editor-fields .zt-number-input-buttons { display: flex; flex-direction: row-reverse; width: 64px; height: 32px; border-left: 0; background: transparent; }
-.zt-session-editor-fields .zt-number-input-buttons button { width: 32px; height: 32px; min-height: 32px; border: 0; border-left: 1px solid var(--zt-border); border-radius: 0; padding: 0; }
 .zt-session-editor-fields .zt-session-form-section { padding: 0; gap: 16px; background: transparent; border: 0; }
 .zt-session-editor-fields .zt-session-section-heading { display: flex; align-items: center; justify-content: space-between; min-height: 38px; margin-bottom: 6px; }
 .zt-session-editor-fields .zt-session-form-section-title { font-size: 13px; font-weight: 500; }
@@ -94,8 +90,6 @@
  .zt-session-type-tabs button svg { width: 14px; height: 14px; }
  .zt-session-editor-fields .zt-ssh-tunnel-mode-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
-.zt-session-editor-fields .zt-number-input-buttons button:first-child { border-bottom: 0; border-radius: 0; }
-.zt-session-editor-fields .zt-number-input-buttons button:last-child { border-radius: 0; }
 
 .zt-session-modal-backdrop:has(.zt-session-editor-dialog) { padding: 24px; }
 .zt-session-editor-fields .zt-switch-input { width: 1px; height: 1px; min-height: 0; min-width: 0; }

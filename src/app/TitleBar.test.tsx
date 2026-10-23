@@ -1,7 +1,7 @@
 // Author: Liz
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TitleBar } from "./TitleBar";
 
@@ -11,6 +11,9 @@ const tauriWindow = vi.hoisted(() => ({
   isMaximized: vi.fn().mockResolvedValue(false),
   close: vi.fn().mockResolvedValue(undefined),
   startDragging: vi.fn().mockResolvedValue(undefined),
+  isFullscreen: vi.fn().mockResolvedValue(false),
+  setFullscreen: vi.fn().mockResolvedValue(undefined),
+  onResized: vi.fn().mockResolvedValue(() => {}),
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -52,6 +55,7 @@ async function click(element: HTMLElement) {
 }
 
 describe("TitleBar", () => {
+  afterEach(() => vi.unstubAllGlobals());
   it("places Agent actions before the Windows window controls outside the drag region", () => {
     const view = render(<TitleBar actions={<button aria-label="Agent">Agent</button>} />);
     const actions = view.container.querySelector(".zt-titlebar-actions")!;
@@ -68,6 +72,9 @@ describe("TitleBar", () => {
     tauriWindow.isMaximized.mockResolvedValue(false);
     tauriWindow.close.mockClear();
     tauriWindow.startDragging.mockClear();
+    tauriWindow.isFullscreen.mockReset().mockResolvedValue(false);
+    tauriWindow.setFullscreen.mockClear();
+    tauriWindow.onResized.mockReset().mockResolvedValue(() => {});
   });
 
   it("routes window action buttons to the current Tauri window", async () => {
@@ -157,6 +164,51 @@ describe("TitleBar", () => {
         Reflect.deleteProperty(navigator, "platform");
       }
     }
+  });
+
+  it("groups Mac navigation with Agent on the right and traffic lights first in standard order", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "Macintosh" });
+    const unlisten = vi.fn();
+    tauriWindow.onResized.mockResolvedValue(unlisten);
+    const view = render(<TitleBar
+      navigation={<nav aria-label="主导航"><button>会话</button><button>文件传输</button><button>设置</button></nav>}
+      actions={<button>Agent</button>}
+    />);
+    await act(async () => { await Promise.resolve(); });
+    const header = view.container.querySelector("header")!;
+    expect(header.firstElementChild?.classList.contains("zt-window-actions-macos")).toBe(true);
+    expect(Array.from(header.firstElementChild!.querySelectorAll("button")).map((item) => item.getAttribute("aria-label")))
+      .toEqual(["关闭", "最小化", "进入全屏"]);
+    const actions = header.querySelector(".zt-titlebar-actions")!;
+    expect(Array.from(actions.querySelectorAll("button")).map((item) => item.textContent))
+      .toEqual(["会话", "文件传输", "设置", "Agent"]);
+    expect(actions.previousElementSibling?.classList.contains("zt-titlebar-drag-region")).toBe(true);
+    expect(actions.closest("[data-tauri-drag-region]")).toBeNull();
+    await click(button(view.container, "最小化"));
+    await click(button(view.container, "关闭"));
+    expect(tauriWindow.minimize).toHaveBeenCalledOnce();
+    expect(tauriWindow.close).toHaveBeenCalledOnce();
+    view.unmount();
+    expect(unlisten).toHaveBeenCalledOnce();
+  });
+
+  it("enters and exits native Mac fullscreen and synchronizes external window changes", async () => {
+    vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "Macintosh" });
+    const view = render(<TitleBar />);
+    await act(async () => { await Promise.resolve(); });
+    await click(button(view.container, "进入全屏"));
+    expect(tauriWindow.setFullscreen).toHaveBeenLastCalledWith(true);
+    expect(button(view.container, "退出全屏")).toBeDefined();
+    tauriWindow.isFullscreen.mockResolvedValue(true);
+    await click(button(view.container, "退出全屏"));
+    expect(tauriWindow.setFullscreen).toHaveBeenLastCalledWith(false);
+    expect(tauriWindow.toggleMaximize).not.toHaveBeenCalled();
+    await act(async () => {
+      tauriWindow.onResized.mock.calls[0][0]();
+      await Promise.resolve();
+    });
+    expect(button(view.container, "退出全屏")).toBeDefined();
+    view.unmount();
   });
 
   it("renders active connection context in the center and omits it when unavailable", () => {

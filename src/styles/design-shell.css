@@ -14,7 +14,7 @@
 .zt-settings-group > :last-child { border-bottom: 0; }
 .zt-settings-group .zt-select { width: 200px; }
 .zt-settings-group .zt-select-trigger { width: 200px; min-height: 32px; border-color: transparent; background: var(--zt-surface-field); }
-.zt-settings-group .zt-number-input { width: 108px; min-height: 32px; }
+.zt-settings-group .zt-number-input { width: 128px; }
 .zt-theme-segment { display: flex; align-items: center; padding: 3px; width: 270px; border-radius: 8px; background: var(--zt-surface-field); }
 .zt-theme-segment button { flex: 1; padding: 0 10px; height: 28px; min-height: 28px; border: 0; background: transparent; font-size: 12px; font-weight: 400; }
 .zt-theme-segment button[aria-pressed="true"] { background: var(--zt-surface-elevated); color: var(--zt-text-primary); box-shadow: 0 1px 3px #00000018; }

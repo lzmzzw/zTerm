@@ -31,9 +31,9 @@
 .zt-sidebar { background: var(--zt-surface-page); }
 .zt-session-tree { padding: 5px; }
 .zt-right-tools > .zt-tool-panel, .zt-right-tools > .zt-ai-panel { margin: 5px 5px 5px 0; border: 1px solid var(--zt-border); border-radius: 5px; background: var(--zt-surface-sidebar); }
-.zt-window-actions { min-height: 0; align-items: center; padding-right: 4px; gap: 2px; }
-.zt-window-actions button { padding: 0; height: 32px; width: 38px; border-radius: 6px; }
-.zt-window-actions .danger:hover { background: var(--zt-bg-selected); color: var(--zt-text-primary); }
+.zt-window-actions:not(.zt-window-actions-macos) { min-height: 0; align-items: center; padding-right: 4px; gap: 2px; }
+.zt-window-actions:not(.zt-window-actions-macos) button { padding: 0; height: 32px; width: 38px; border-radius: 6px; }
+.zt-window-actions:not(.zt-window-actions-macos) .danger:hover { background: var(--zt-bg-selected); color: var(--zt-text-primary); }
 .zt-select-popover { border-radius: 8px; box-shadow: var(--zt-dialog-shadow); }
 .zt-select-option { margin: 2px 0; border-radius: 5px; }
 .zt-settings-sidebar svg { display: none; }

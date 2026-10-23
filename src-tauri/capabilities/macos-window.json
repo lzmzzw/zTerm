@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "macos-window",
+  "description": "允许 macOS 主窗口通过红黄绿按钮进入和退出全屏。",
+  "windows": ["main"],
+  "platforms": ["macOS"],
+  "permissions": ["core:window:allow-set-fullscreen"]
+}

@@ -1,6 +1,6 @@
 // Author: Liz
 import { Minus, Plus } from "lucide-react";
-import { useCallback, useRef } from "react";
+import { useEffect, useState } from "react";
 
 interface ZtNumberInputProps {
   value: number | null;
@@ -23,73 +23,82 @@ export function ZtNumberInput({
   onChange,
   onClear,
 }: ZtNumberInputProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState(String(value ?? ""));
+  useEffect(() => setText(String(value ?? "")), [value]);
 
-  const clamp = useCallback((v: number) => Math.max(min, Math.min(max, v)), [min, max]);
+  const clamp = (number: number) => Math.max(min, Math.min(max, number));
+  const parsed = /^-?\d+$/.test(text.trim()) ? Number(text) : NaN;
+  const current = Number.isSafeInteger(parsed) ? parsed : (value ?? min);
 
-  const increment = useCallback(() => {
-    onChange(clamp((value ?? 0) + step));
-  }, [value, step, clamp, onChange]);
+  function update(number: number) {
+    const next = clamp(number);
+    setText(String(next));
+    if (next !== value) onChange(next);
+  }
 
-  const decrement = useCallback(() => {
-    onChange(clamp((value ?? 0) - step));
-  }, [value, step, clamp, onChange]);
-
-  const handleInputChange = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
-      if (event.currentTarget.value === "" && onClear) {
-        onClear();
-        return;
-      }
-      const parsed = Number(event.currentTarget.value);
-      if (!Number.isNaN(parsed)) {
-        onChange(clamp(parsed));
-      }
-    },
-    [clamp, onChange, onClear],
-  );
-
-  const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLInputElement>) => {
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        increment();
-      } else if (event.key === "ArrowDown") {
-        event.preventDefault();
-        decrement();
-      }
-    },
-    [increment, decrement],
-  );
+  function commit() {
+    if (!text.trim() && onClear) {
+      setText("");
+      if (value !== null) onClear();
+    } else if (Number.isSafeInteger(parsed)) {
+      update(parsed);
+    } else {
+      setText(String(value ?? ""));
+    }
+  }
 
   return (
     <div className="zt-number-input">
       <input
-        ref={inputRef}
         type="text"
         inputMode="numeric"
         aria-label={ariaLabel}
-        value={value ?? ""}
+        value={text}
         disabled={disabled}
-        onChange={handleInputChange}
-        onKeyDown={handleKeyDown}
+        onChange={(event) => {
+          const next = event.currentTarget.value;
+          setText(next);
+          if (next === "" && onClear) {
+            if (value !== null) onClear();
+            return;
+          }
+          // Keep intermediate text editable; only publish valid values to the form.
+          const number = /^-?\d+$/.test(next.trim()) ? Number(next) : NaN;
+          if (Number.isSafeInteger(number) && number >= min && number <= max) {
+            if (number !== value) onChange(number);
+          }
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+            event.preventDefault();
+            update(current + (event.key === "ArrowUp" ? step : -step));
+          } else if (event.key === "Enter") {
+            event.preventDefault();
+            commit();
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            setText(String(value ?? ""));
+          }
+        }}
       />
       <div className="zt-number-input-buttons">
         <button
           type="button"
-          tabIndex={-1}
-          aria-hidden="true"
-          onClick={increment}
-          disabled={disabled || (value != null && value >= max)}
+          aria-label={`${ariaLabel} +`}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => update(current + step)}
+          disabled={disabled || current >= max}
         >
           <Plus size={14} />
         </button>
         <button
           type="button"
-          tabIndex={-1}
-          aria-hidden="true"
-          onClick={decrement}
-          disabled={disabled || (value != null && value <= min)}
+          aria-label={`${ariaLabel} −`}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => update(current - step)}
+          disabled={disabled || current <= min}
         >
           <Minus size={14} />
         </button>

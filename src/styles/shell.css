@@ -278,41 +278,77 @@
   overflow: hidden;
 }
 
-.zt-titlebar-macos {
-  grid-template-columns: var(--zt-window-actions-width) minmax(0, 1fr) max-content;
-}
-
+.zt-titlebar-macos,
 .zt-titlebar-macos.zt-titlebar-with-navigation {
-  grid-template-columns: var(--zt-window-actions-width) max-content minmax(0, 1fr) max-content;
+  grid-template-columns: 80px minmax(0, 1fr) max-content;
 }
 
 .zt-window-actions-macos {
   justify-content: flex-start;
   align-items: center;
-  gap: 8px;
-  padding-left: 14px;
+  gap: 0;
+  padding: 0 0 0 10px;
 }
 
 .zt-window-actions-macos button {
+  position: relative;
+  width: 20px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #293124;
+  --zt-traffic-light: #28c840;
+}
+
+.zt-window-actions-macos button::before {
+  content: "";
+  position: absolute;
   width: 12px;
   height: 12px;
-  padding: 0;
   border-radius: 50%;
-  background: #28c840;
+  background: var(--zt-traffic-light);
+  box-shadow: inset 0 0 0 1px #00000018;
 }
 
 .zt-window-actions-macos button:nth-child(2) {
-  background: #ffbd2e;
+  --zt-traffic-light: #ffbd2e;
 }
 
 .zt-window-actions-macos button.danger {
-  background: #ff5f57;
+  --zt-traffic-light: #ff5f57;
 }
 
 .zt-window-actions-macos button:hover,
 .zt-window-actions-macos .danger:hover {
-  background: currentColor;
-  color: transparent;
+  background: transparent;
+  color: #293124;
+}
+
+.zt-titlebar-macos .zt-window-actions-macos button svg {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  opacity: 0;
+}
+
+.zt-window-actions-macos:hover button svg,
+.zt-window-actions-macos:focus-within button svg {
+  opacity: 1;
+}
+
+.zt-titlebar-macos .zt-titlebar-actions {
+  gap: 8px;
+  margin-right: 10px;
+}
+
+.zt-titlebar-macos .zt-titlebar-navigation {
+  padding: 0 8px 0 0;
+  border-right: 1px solid var(--zt-border-subtle);
+}
+
+.zt-titlebar-macos .zt-titlebar-center {
+  max-width: calc(100% - 416px);
 }
 
 .zt-container-panel {

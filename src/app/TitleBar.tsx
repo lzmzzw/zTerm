@@ -1,6 +1,6 @@
 // Author: Liz
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, Minus, Square, X } from "lucide-react";
+import { Copy, Maximize2, Minimize2, Minus, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { MouseEvent, ReactNode } from "react";
 import zTermLogoUrl from "../assets/zterm-logo.svg";
@@ -8,6 +8,7 @@ import { isMacOS } from "../lib/platform";
 
 export function TitleBar({ centerContent = null, centerIsPath = false, navigation, actions }: { centerContent?: string | null; centerIsPath?: boolean; navigation?: ReactNode; actions?: ReactNode }) {
   const [maximized, setMaximized] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const macOS = isMacOS();
   const pathSplit = centerIsPath && centerContent ? Math.max(centerContent.lastIndexOf("/"), centerContent.lastIndexOf("\\")) : -1;
 
@@ -15,6 +16,20 @@ export function TitleBar({ centerContent = null, centerIsPath = false, navigatio
     let mounted = true;
     const appWindow = getAppWindow();
     if (!appWindow) return;
+    if (macOS) {
+      let unlisten: (() => void) | undefined;
+      const syncFullscreen = () => {
+        void appWindow.isFullscreen().then((value) => {
+          if (mounted) setFullscreen(value);
+        }).catch(() => undefined);
+      };
+      syncFullscreen();
+      void appWindow.onResized(syncFullscreen).then((stop) => {
+        if (mounted) unlisten = stop;
+        else stop();
+      }).catch(() => undefined);
+      return () => { mounted = false; unlisten?.(); };
+    }
     void appWindow
       .isMaximized()
       .then((value) => {
@@ -24,7 +39,7 @@ export function TitleBar({ centerContent = null, centerIsPath = false, navigatio
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [macOS]);
 
   function startWindowDrag(event: MouseEvent<HTMLElement>) {
     if (event.button !== 0) return;
@@ -42,33 +57,41 @@ export function TitleBar({ centerContent = null, centerIsPath = false, navigatio
     }
   }
 
+  async function toggleFullscreen() {
+    const appWindow = getAppWindow();
+    if (!appWindow) return;
+    const next = !(await appWindow.isFullscreen());
+    await appWindow.setFullscreen(next);
+    setFullscreen(next);
+  }
+
   return (
     <header className={`zt-titlebar ${macOS ? "zt-titlebar-macos" : ""} ${navigation ? "zt-titlebar-with-navigation" : ""}`}>
       {macOS ? (
         <div className="zt-window-actions zt-window-actions-macos" aria-label="窗口操作">
-          <button type="button" aria-label="关闭" title="关闭" className="danger" data-window-action="close" onClick={() => void getAppWindow()?.close()} />
-          <button type="button" aria-label="最小化" title="最小化" data-window-action="minimize" onClick={() => void getAppWindow()?.minimize()} />
+          <button type="button" aria-label="关闭" title="关闭" className="danger" data-window-action="close" onClick={() => void getAppWindow()?.close()}><X size={8} aria-hidden="true" /></button>
+          <button type="button" aria-label="最小化" title="最小化" data-window-action="minimize" onClick={() => void getAppWindow()?.minimize()}><Minus size={8} aria-hidden="true" /></button>
           <button
             type="button"
-            aria-label={maximized ? "恢复" : "全屏切换"}
-            title={maximized ? "恢复" : "全屏切换"}
-            data-window-action={maximized ? "restore" : "maximize"}
-            onClick={() => void toggleMaximize()}
-          />
+            aria-label={fullscreen ? "退出全屏" : "进入全屏"}
+            title={fullscreen ? "退出全屏" : "进入全屏"}
+            data-window-action="fullscreen"
+            onClick={() => void toggleFullscreen()}
+          >{fullscreen ? <Minimize2 size={8} aria-hidden="true" /> : <Maximize2 size={8} aria-hidden="true" />}</button>
         </div>
       ) : null}
-      {navigation ?? (!macOS ? (
+      {!macOS ? (navigation ?? (
         <div className="zt-titlebar-logo-slot" aria-hidden="true">
           <img className="zt-titlebar-logo" src={zTermLogoUrl} alt="zTerm" />
         </div>
-      ) : null)}
+      )) : null}
       <div className="zt-titlebar-drag-region" data-tauri-drag-region onMouseDown={startWindowDrag} />
       {centerContent ? (
         <div className="zt-titlebar-center" title={centerContent} data-tauri-drag-region onMouseDown={startWindowDrag}>
           {pathSplit > 0 ? <><span className="zt-titlebar-path-prefix">{centerContent.slice(0, pathSplit)}</span><span className="zt-titlebar-path-tail">{centerContent.slice(pathSplit)}</span></> : <span className="zt-titlebar-text">{centerContent}</span>}
         </div>
       ) : null}
-      <div className="zt-titlebar-actions">{actions}</div>
+      <div className="zt-titlebar-actions">{macOS ? navigation : null}{actions}</div>
       {!macOS ? <div className="zt-window-actions" aria-label="窗口操作">
         <button
           type="button"

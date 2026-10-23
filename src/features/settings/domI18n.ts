@@ -236,6 +236,8 @@ const exact: Record<string, string> = {
   "已断开": "Disconnected",
   "最小化": "Minimize",
   "全屏切换": "Maximize",
+  "进入全屏": "Enter Full Screen",
+  "退出全屏": "Exit Full Screen",
   "恢复": "Restore",
   "关闭": "Close",
   "SSH 会话": "SSH Session",
