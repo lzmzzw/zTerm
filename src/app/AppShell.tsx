@@ -249,7 +249,6 @@ export function AppShell() {
   const {
     mcpApprovalMode,
     mcpPendingInvocations,
-    agentLoading,
     agentError,
   } = useMcpStore(
     useShallow((state) =>
@@ -257,7 +256,6 @@ export function AppShell() {
         ? {
             mcpApprovalMode: state.approvalMode,
             mcpPendingInvocations: state.pendingInvocations,
-            agentLoading: state.loading,
             agentError: state.error,
           }
         : EMPTY_MCP_PANEL_STATE,
@@ -1954,7 +1952,7 @@ export function AppShell() {
           activeConnectionKey: activeAgentConnectionKey,
           approvalMode: mcpApprovalMode,
           error: agentOpenError ?? agentError,
-          loading: agentLoading || Boolean(activeAgentConnectionKey && agentOpeningConnectionKeys[activeAgentConnectionKey]),
+          loading: Boolean(activeAgentConnectionKey && agentOpeningConnectionKeys[activeAgentConnectionKey]),
           pendingInvocations: mcpPendingInvocations,
           onApprovalModeChange: setApprovalMode,
           onClose: closeActiveAgentCodex,

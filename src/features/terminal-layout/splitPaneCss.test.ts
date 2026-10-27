@@ -226,7 +226,8 @@ describe("split pane css direction mapping", () => {
     expect(nodeListStyles).toContain("user-select: none");
     expect(toolbarStyles).toContain("padding-top: 4px");
     expect(toolbarStyles).toContain("background: var(--zt-bg-sidebar)");
-    expect(searchStyles).toContain("padding: 0 6px 0 5px");
+    expect(searchStyles).toContain("padding: 0 0 0 5px");
+    expect(searchStyles).toContain("grid-template-columns: 18px minmax(0, 1fr) 24px");
   });
 
   it("uses the compact session tree rhythm in connection pickers", () => {

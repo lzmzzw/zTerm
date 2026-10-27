@@ -600,7 +600,7 @@ async fn handle_json_rpc(
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "zTerm Headless", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "这是 zTerm 的外部 Headless Profile。服务器命令通过独立 SSH 执行并返回结构化结果，不打开、不读取也不写入任何终端滚动屏。zTerm 负责最终风险判断与本地 pending 审批；需要确认时原 tools/call 会等待 zTerm 的结果，不要重新提交原操作。若收到 pending，请只用 approval.wait 继续等待同一 invocation_id。"
+            "instructions": "这是 zTerm 的外部 Headless Profile。服务器命令通过独立 SSH 执行并返回结构化结果，不打开、不读取也不写入任何终端滚动屏。审批按目标 SSH 连接的实时模式执行：每次批准逐项确认，高效审批仅确认高风险或不可逆操作，完全自动由外部 AI 决定操作和审批需要，zTerm 不追加风险审批；缺少本地认证输入时仍需在 zTerm 输入。需要确认或输入时原 tools/call 会等待 zTerm 的结果，不要重新提交原操作。若收到 pending，请只用 approval.wait 继续等待同一 invocation_id。"
         }),
         "tools/list" => {
             let tools = mcp_tool_catalog()
@@ -1189,7 +1189,7 @@ async fn handle_agent_json_rpc(
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "zTerm Visible Terminal", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "这是 zTerm 侧栏 Codex CLI 的 Visible Terminal Profile。当前连接、当前标签、激活标签指 zTerm 活动 SSH 终端，不是本机。每次先调用 terminal.list 读取 active_runtime_session_id，再显式指定 runtime_session_id 读写；为 null 时请用户激活 SSH 标签，不探索本机或猜目标。所有服务器命令必须写入可见 SSH 终端并保留在滚动屏；可以列出连接、在标签或新分屏打开其他 SSH 连接，再按 runtime_session_id 操作其滚动屏。不得使用 headless ssh.execute。zTerm 负责最终风险判断与本地 pending 审批；需要确认时原 tools/call 会等待 zTerm 的结果，不要重新提交原操作。"
+            "instructions": "这是 zTerm 侧栏 Codex CLI 的 Visible Terminal Profile。当前连接、当前标签、激活标签指 zTerm 活动 SSH 终端，不是本机。每次先调用 terminal.list 读取 active_runtime_session_id，再显式指定 runtime_session_id 读写；为 null 时请用户激活 SSH 标签，不探索本机或猜目标。所有服务器命令必须写入可见 SSH 终端并保留在滚动屏；可以列出连接、在标签或新分屏打开其他 SSH 连接，再按 runtime_session_id 操作其滚动屏。不得使用 headless ssh.execute。审批按目标 SSH 连接的实时模式执行：每次批准逐项确认，高效审批仅确认高风险或不可逆操作，完全自动由外部 AI 决定操作和审批需要，zTerm 不追加风险审批；缺少本地认证输入时仍需在 zTerm 输入。需要确认或输入时原 tools/call 会等待 zTerm 的结果，不要重新提交原操作。"
         }),
         "ping" => json!({}),
         "tools/list" => json!({

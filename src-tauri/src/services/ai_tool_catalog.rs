@@ -144,8 +144,8 @@ pub(super) fn tool_definitions() -> Vec<AiToolDefinition> {
             "sftp.mkdir",
             "创建 SFTP 目录",
             "创建远程目录",
-            RiskLevel::High,
-            true,
+            RiskLevel::Medium,
+            false,
         ),
         (
             "sftp.upload",
@@ -172,8 +172,8 @@ pub(super) fn tool_definitions() -> Vec<AiToolDefinition> {
             "sftp.rename",
             "SFTP 重命名",
             "重命名远程路径",
-            RiskLevel::High,
-            true,
+            RiskLevel::Medium,
+            false,
         ),
         (
             "ftp.upload",

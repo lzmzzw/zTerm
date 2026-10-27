@@ -27,7 +27,6 @@ export type ZtermToolActionEvent = {
 export const EMPTY_MCP_PANEL_STATE = {
   mcpApprovalMode: "safe" as const,
   mcpPendingInvocations: [],
-  agentLoading: false,
   agentError: null,
 };
 

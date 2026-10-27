@@ -66,8 +66,8 @@
 .zt-agent-codex-title { min-width: 0; white-space: nowrap; }
 .zt-agent-codex-header .zt-ai-approval-mode { display: flex; align-items: center; justify-self: end; max-width: none; gap: 6px; white-space: nowrap; }
 .zt-agent-codex-header .zt-ai-approval-select { flex: 0 0 auto; }
-.zt-agent-codex-terminal { border-radius: 5px; overflow: hidden; background: var(--zt-bg-terminal); min-height: 120px; }
-.zt-agent-codex-approvals { border-top: 1px solid var(--zt-border); padding-top: 10px; max-height: 240px; overflow: auto; }
+.zt-agent-codex-terminal { border-radius: 5px; overflow: hidden; background: var(--zt-bg-terminal); min-height: 0; }
+.zt-agent-codex-approvals { border-top: 1px solid var(--zt-border); padding-top: 10px; }
 .zt-agent-codex-approvals .zt-ai-tool-card { border: 0; border-radius: 0; padding: 5px 0; background: transparent; }
 .zt-agent-codex-approvals button { background: var(--zt-bg-input); color: var(--zt-text-primary); border: 1px solid var(--zt-border); border-radius: 7px; }
 .zt-mcp-tools-panel { margin-top: 16px; border: 1px solid var(--zt-border); border-radius: 9px; padding: 10px 16px; background: var(--zt-bg-surface); }

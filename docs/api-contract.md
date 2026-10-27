@@ -198,17 +198,19 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 
 | Command | 入参 | 返回 | 说明 |
 | --- | --- | --- | --- |
-| `mcp_tool_confirm` | `{ request: AiToolConfirmRequest }` | `AiToolAuditRecord` | 用户确认或拒绝 MCP pending；执行结果写入审计、删除 pending，并唤醒等待该 invocation 的原 MCP 调用 |
-| `mcp_tool_pending` | 无 | `AiToolPendingInvocation[]` | 按创建时间倒序列出待确认 MCP 工具 |
+| `mcp_tool_confirm` | `{ request: AiToolConfirmRequest }` | `AiToolAuditRecord` | 用户确认或拒绝 MCP pending；在阻塞工作线程执行、写审计、删除 pending，并唤醒等待原 MCP 调用；同一 invocation 并发处理拒绝，完成后重复确认复用审计 |
+| `mcp_tool_pending` | 无 | `AiToolPendingInvocation[]` | 在阻塞工作线程按创建时间倒序列出待确认 MCP 工具 |
 | `mcp_tool_audit` | `{ request?: AiToolAuditListRequest }` | `AiToolAuditRecord[]` | 按完成时间倒序列出 MCP 工具审计，默认最多 100 条 |
 | `mcp_connection_approval_mode_get` | `{ savedSessionId }` | `AiConnectionApprovalPolicy` | 读取已保存 SSH 连接的审批模式；未配置时返回 `safe` |
 | `mcp_connection_approval_mode_set` | `{ request: { saved_session_id, approval_mode } }` | `AiConnectionApprovalPolicy` | 保存 SSH 连接级审批模式；拒绝不存在或非 SSH 的连接 |
 
 侧栏 Codex 的 Visible Terminal Profile 中，`sessions.list` 仅返回已保存 SSH 连接；`terminal.list` 返回可见 SSH/SSH Container runtime 及 `active_runtime_session_id`；后者来自主窗口活动分栏标签的内存观测，并在读取时核验仍存在于返回列表，无有效目标为 `null`。侧栏解析“当前连接／当前标签／激活标签”时先读取该字段，再显式指定 runtime；不使用初始绑定或本机 cwd 替代。读取后同一操作固定目标，省略 runtime 的旧绑定行为不变；`terminal.open(saved_session_id, placement?)` 只允许打开已保存 SSH 连接，`placement` 为 `tab`、`split_horizontal` 或 `split_vertical`。`terminal.read` 使用运行期 ring buffer，可读取最近输出或指定 cursor 后的最近增量；`max_chars` 默认 4000，允许正整数预算，实际最多 24000 字符，超出时自动收敛而不报错，响应 `effective_max_chars` 返回实际预算；零、负数及非整数仍拒绝；`terminal.write` 写入后等待输出短暂稳定并返回新 cursor。侧栏不暴露 `ssh.execute`，因此所有服务器命令与输出都进入目标滚动屏。
 
-审批策略按目标已保存 SSH 连接生效：`request_approval`（每次批准）对每次工具调用创建 pending；默认 `safe`（高效审批）自动执行 low/medium 的巡检、传输和常规运维，high/critical 与显式不可逆工具创建 pending；`full_access`（完全自动）免除所有非 secret 输入审批，包括 critical、删除和其他写操作。需要本地 secret 的调用在任何模式下都保持 pending，因为 secret 只能由 zTerm 本地输入。命令型 `terminal.write`/`ssh.execute` 使用脚本内容动态风险分类；`service`、`firewall-cmd`、`iptables` 仅在真实变更子命令出现时提升为 high，只读状态查询不因命令名或输出标题误判。zTerm 仍是最终审批和审计拥有者；侧栏启动参数把 scoped zTerm MCP 设为客户端直接批准，外部 Codex App 也应信任本机 zTerm MCP，避免客户端自身再审批一次。
+审批策略按目标已保存 SSH 连接的当前设置生效：`request_approval`（每次批准）对每次工具调用创建 pending；默认 `safe`（高效审批）自动执行 low/medium 的巡检、传输和常规运维（包括 SFTP 创建目录、重命名），high/critical 与显式不可逆工具创建 pending；`full_access`（完全自动）由外部 AI 根据用户授权决定操作与审批需要，zTerm 不追加风险审批，包括 critical、删除和其他写操作，仍记录执行审计。需要本地 secret 的调用在任何模式下都保持 pending，仅用于取得本地认证输入。侧栏启动参数把 scoped zTerm MCP 设为客户端直接批准，外部 Codex App 也可将本机 zTerm MCP 设为始终允许，避免重复审批。
 
-自动或人工批准执行后写入 `ai_tool_audits`，记录 `affected_domains` 供前端按域刷新 Session、Terminal、History、Transfer 等状态。人工 pending 创建后会唤起 zTerm 主窗口并自动打开 Agent 审批面板；批准、拒绝或执行失败都通过进程内 completion broker 唤醒原 `tools/call`，结构化结果只在内存中短期保留，不写入审计表。表名作为既有 MCP 审计存储继续保留。`terminal.write` 会等待终端输出短暂稳定并返回回读摘要；会话/分组、终端 profile、传输控制、历史、服务器资源快照、SSH 容器列表和 SFTP/FTP 文件操作复用现有 storage/service 入口。
+命令型 `terminal.write`/`ssh.execute` 按可执行命令及参数动态分类，Shell 层忽略注释、输出标题和查询参数中的危险词；复合命令、命令替换及 shell `-c`/`eval` 内的真实操作继续评估。递归删除普通目标为 high，根目录删除及格式化为 critical；两者在高效审批下均需确认。解释器参数中明确的危险载荷继续保守评估。该分类是启发式判断，不能完整解释任意解释器程序、变量生成的命令或全部 Shell 语法。
+
+自动或人工批准执行后写入 `ai_tool_audits`，记录 `affected_domains` 供前端按域刷新 Session、Terminal、History、Transfer 等状态。人工 pending 创建后会唤起 zTerm 主窗口并自动打开 Agent 审批面板；侧栏按项切换待审批队列，详情单独滚动，认证输入与批准/拒绝按钮固定在底部。点击后立即禁用当前调用的按钮并显示处理状态，执行结果返回后移除该项，按域刷新在后台进行；确认 IPC 仍等待实际执行与审计完成才返回成功，不把点击视为执行完成。批准、拒绝或执行失败都通过进程内 completion broker 唤醒原 `tools/call`，结构化结果只在内存中短期保留，不写入审计表。表名作为既有 MCP 审计存储继续保留。`terminal.write` 会等待终端输出短暂稳定并返回回读摘要；会话/分组、终端 profile、传输控制、历史、服务器资源快照、SSH 容器列表和 SFTP/FTP 文件操作复用现有 storage/service 入口。
 
 本机 MCP v1 采用 MCP 2025-11-25 Streamable HTTP，endpoint 固定为 `http://127.0.0.1:<port>/mcp`，默认端口为 `9419`，默认关闭，不提供 stdio sidecar；用户启用后会随 zTerm 启动自动监听。服务验证 `Authorization: Bearer <token>` 和 `Origin`，仅允许无 Origin 或 localhost/127.0.0.1/::1/`tauri://localhost`。当前 JSON-RPC 支持 `initialize`、`tools/list`、`tools/call`；客户端 notification（包括 `notifications/initialized`）返回 HTTP `202 Accepted` 空响应。外部 Headless Profile allowlist 开放 `approval.wait`、`sessions.list/save`、`ssh.execute`、`ssh.upload/download`、`sftp.upload/download`、`ftp.upload/download`、`transfer.list`；对 `terminal.*` 和目录外工具均返回 `-32601`。默认 `tools/call` 最多等待本地审批 10 分钟并直接返回结果；客户端发送 `Prefer: respond-async` 时立即取得 pending receipt，随后以 `approval.wait(invocation_id)` 等待或领取同一次完成结果，不得重放原副作用工具。审批未完成前，相同 MCP 主体、工具和标准化参数的重试复用原 invocation，不新建审批单。所有工具提供非空 input schema，未知参数返回 `-32602`。调用参数包含 `saved_session_id` 时按该连接读取审批策略；Visible Terminal Profile 的 runtime 目标先回溯其 `saved_session_id`。读取和保存操作通过 `structuredContent.result` 返回脱敏结构，不返回 `credential_ref` 或 secret。
 

@@ -58,6 +58,8 @@ interface McpState {
 
 let approvalBindingRequestId = 0;
 let approvalUpdateRequestId = 0;
+let pendingLoadRequestId = 0;
+const confirmingInvocations = new Set<string>();
 let affectedDomainsHandler: AffectedDomainsHandler | null = null;
 
 export function setMcpAffectedDomainsHandler(handler: AffectedDomainsHandler | null) {
@@ -71,12 +73,13 @@ export const useMcpStore = create<McpState>((set, get) => ({
   loading: false,
   error: null,
   async loadPendingInvocations() {
+    const requestId = ++pendingLoadRequestId;
     try {
       const pendingInvocations = await invokeTauri<McpToolPendingInvocation[]>("mcp_tool_pending");
-      set({ pendingInvocations, error: null });
+      if (requestId === pendingLoadRequestId) set({ pendingInvocations, error: null });
       return pendingInvocations;
     } catch (error) {
-      set({ error: unknownErrorMessage(error, "MCP 工具状态加载失败") });
+      if (requestId === pendingLoadRequestId) set({ error: unknownErrorMessage(error, "MCP 工具状态加载失败") });
       return [];
     }
   },
@@ -129,6 +132,8 @@ export const useMcpStore = create<McpState>((set, get) => ({
     }
   },
   async confirmTool(invocationId, approved, secretInputs) {
+    if (confirmingInvocations.has(invocationId)) return;
+    confirmingInvocations.add(invocationId);
     set({ loading: true, error: null });
     try {
       const audit = await invokeTauri<McpToolAuditRecord>("mcp_tool_confirm", {
@@ -139,11 +144,18 @@ export const useMcpStore = create<McpState>((set, get) => ({
           secret_inputs: secretInputs ?? null,
         },
       });
-      await notifyAffectedDomains(audit);
-      const pendingInvocations = await invokeTauri<McpToolPendingInvocation[]>("mcp_tool_pending");
-      set({ pendingInvocations, loading: false });
+      // Discard older pending snapshots before removing the completed invocation.
+      pendingLoadRequestId += 1;
+      set((state) => ({ pendingInvocations: state.pendingInvocations.filter((pending) => pending.id !== invocationId) }));
+      void notifyAffectedDomains(audit).catch((error) => {
+        set({ error: unknownErrorMessage(error, "MCP 工具执行后刷新失败") });
+      });
+      void get().loadPendingInvocations();
     } catch (error) {
-      set({ loading: false, error: unknownErrorMessage(error, "MCP 工具确认失败") });
+      set({ error: unknownErrorMessage(error, "MCP 工具确认失败") });
+    } finally {
+      confirmingInvocations.delete(invocationId);
+      set({ loading: confirmingInvocations.size > 0 });
     }
   },
 }));

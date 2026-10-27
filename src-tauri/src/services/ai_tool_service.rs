@@ -1,6 +1,6 @@
 // Author: Liz
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::Path,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -167,10 +167,39 @@ const COMPLETION_MAX_ENTRIES: usize = 128;
 #[derive(Default)]
 struct AiToolCompletionBroker {
     completed: Mutex<HashMap<String, (Instant, AiToolExecutionOutcome)>>,
+    confirming: Mutex<HashSet<String>>,
     changed: Notify,
 }
 
+struct ConfirmationClaim<'a> {
+    confirming: &'a Mutex<HashSet<String>>,
+    invocation_id: String,
+}
+
+impl Drop for ConfirmationClaim<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut confirming) = self.confirming.lock() {
+            confirming.remove(&self.invocation_id);
+        }
+    }
+}
+
 impl AiToolCompletionBroker {
+    fn claim(&self, invocation_id: &str) -> AppResult<ConfirmationClaim<'_>> {
+        if !self
+            .confirming
+            .lock()
+            .map_err(|_| AppError::ai("工具确认状态锁已损坏"))?
+            .insert(invocation_id.to_string())
+        {
+            return Err(AppError::validation("该操作正在处理，请等待原审批结果"));
+        }
+        Ok(ConfirmationClaim {
+            confirming: &self.confirming,
+            invocation_id: invocation_id.to_string(),
+        })
+    }
+
     fn publish(&self, outcome: AiToolExecutionOutcome) -> AppResult<()> {
         let invocation_id = outcome
             .audit_record
@@ -598,6 +627,13 @@ impl AiToolService {
         request: AiToolConfirmRequest,
     ) -> AppResult<AiToolAuditRecord> {
         let invocation_id = required_text("待确认工具调用 ID", request.invocation_id)?;
+        let _claim = self.completion_broker.claim(&invocation_id)?;
+        if let Some(audit) = get_ai_tool_audit_by_invocation_id(store, &invocation_id)? {
+            // A repeated UI request must never repeat a completed side effect.
+            delete_ai_tool_pending(store, &invocation_id)?;
+            self.completion_broker.changed.notify_waiters();
+            return Ok(audit);
+        }
         let (pending, arguments) = get_ai_tool_pending_state(store, &invocation_id)?;
         let requested_by_mcp = pending.requested_by.as_deref() == Some("mcp");
         let (audit, structured_content) = self.audit_execution(
@@ -2751,5 +2787,208 @@ mod output_snapshot_tests {
         assert_eq!(next.cursor, Some(30_009));
         assert_eq!(next.output.as_deref(), Some("新输出"));
         assert!(!next.truncated);
+    }
+}
+
+#[cfg(test)]
+mod approval_regression_tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    };
+
+    #[derive(Default)]
+    struct CountingWriter(AtomicUsize);
+    impl AiToolCommandWriter for CountingWriter {
+        fn write_terminal(&self, _: &str, _: &str) -> AppResult<()> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    fn request(script: &str) -> AiToolPrepareRequest {
+        AiToolPrepareRequest {
+            tool_id: "terminal.write".into(),
+            arguments: json!({ "runtime_session_id": "test", "data": script }),
+            reason: None,
+            requested_by: Some("mcp".into()),
+            run_id: None,
+            step_id: None,
+        }
+    }
+    fn confirmation(id: &str, approved: bool) -> AiToolConfirmRequest {
+        AiToolConfirmRequest {
+            invocation_id: id.into(),
+            approved,
+            audit_context_json: None,
+            secret_inputs: None,
+        }
+    }
+
+    #[test]
+    fn approval_modes_enforce_actual_command_risk_and_full_access_delegates_all_risks() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let writer = Arc::new(CountingWriter::default());
+        let service = AiToolService::with_writer(writer.clone());
+        for (script, needs_confirmation) in [
+            ("pwd", false),
+            ("grep 'reboot|rm -rf /' /var/log/audit.log", false),
+            ("systemctl stop nginx", true),
+            ("rm -rf /", true),
+        ] {
+            let every = service
+                .execute_if_allowed(&store, request(script), AiApprovalMode::RequestApproval)
+                .unwrap();
+            assert!(every.pending_invocation.is_some(), "{script}");
+            let safe = service
+                .execute_if_allowed(&store, request(script), AiApprovalMode::Safe)
+                .unwrap();
+            assert_eq!(
+                safe.pending_invocation.is_some(),
+                needs_confirmation,
+                "{script}"
+            );
+            let full = service
+                .execute_if_allowed(&store, request(script), AiApprovalMode::FullAccess)
+                .unwrap();
+            assert!(full.pending_invocation.is_none(), "{script}");
+            assert_eq!(
+                full.audit_record.unwrap().status,
+                AiToolInvocationStatus::Succeeded
+            );
+        }
+        assert_eq!(writer.0.load(Ordering::SeqCst), 6);
+        for tool in ["sftp.mkdir", "sftp.rename"] {
+            let definition = tool_definition(tool).unwrap();
+            assert!(!requires_confirmation(
+                tool,
+                AiApprovalMode::Safe,
+                definition.risk_level
+            ));
+        }
+        assert!(requires_confirmation(
+            "sftp.delete",
+            AiApprovalMode::Safe,
+            RiskLevel::Critical
+        ));
+        let (secret, _) = service.build_pending(&store, AiToolPrepareRequest {
+            tool_id: "sessions.save".into(),
+            arguments: json!({"draft": {"name":"Local auth", "type":"ssh", "host":"example.test", "username":"ops", "auth_mode":"password"}}),
+            reason: None, requested_by: Some("mcp".into()), run_id: None, step_id: None,
+        }, AiApprovalMode::FullAccess).unwrap();
+        assert!(secret.requires_secret_input && secret.requires_confirmation);
+    }
+
+    struct BlockingWriter {
+        entered: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+        writes: AtomicUsize,
+    }
+    impl AiToolCommandWriter for BlockingWriter {
+        fn write_terminal(&self, _: &str, _: &str) -> AppResult<()> {
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            self.entered.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn concurrent_confirmation_does_not_replay_or_block_unrelated_rejection() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let writer = Arc::new(BlockingWriter {
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+            writes: AtomicUsize::new(0),
+        });
+        let service = AiToolService::with_writer(writer.clone());
+        let first = service.prepare(&store, request("reboot")).unwrap();
+        let other = service
+            .prepare(&store, request("systemctl stop nginx"))
+            .unwrap();
+        let worker_service = service.clone();
+        let worker_store = store.clone();
+        let id = first.id.clone();
+        let worker = std::thread::spawn(move || {
+            worker_service.confirm(&worker_store, confirmation(&id, true))
+        });
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let duplicate = service.confirm(&store, confirmation(&first.id, true));
+        let rejected = service.confirm(&store, confirmation(&other.id, false));
+        release_tx.send(()).unwrap();
+        let completed = worker.join().unwrap().unwrap();
+        assert!(duplicate.is_err());
+        assert_eq!(rejected.unwrap().status, AiToolInvocationStatus::Rejected);
+        assert_eq!(
+            service
+                .confirm(&store, confirmation(&first.id, true))
+                .unwrap()
+                .id,
+            completed.id
+        );
+        assert_eq!(writer.writes.load(Ordering::SeqCst), 1);
+        assert!(service.list_pending(&store).unwrap().is_empty());
+        assert_eq!(service.list_audit(&store, None).unwrap().len(), 2);
+        // Simulate audit committed but pending cleanup interrupted.
+        upsert_ai_tool_pending(&store, &first, &request("reboot").arguments).unwrap();
+        assert_eq!(
+            service
+                .confirm(&store, confirmation(&first.id, true))
+                .unwrap()
+                .id,
+            completed.id
+        );
+        assert!(service.list_pending(&store).unwrap().is_empty());
+        assert_eq!(writer.writes.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn completed_audit_recovery_cleans_pending_and_wakes_original_mcp_waiter() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let service = AiToolService::with_writer(Arc::new(CountingWriter::default()));
+        let pending = service.prepare(&store, request("reboot")).unwrap();
+        let waiter_service = service.clone();
+        let waiter_store = store.clone();
+        let id = pending.id.clone();
+        let waiter = tokio::spawn(async move {
+            waiter_service
+                .wait_for_mcp_completion(&waiter_store, &id, Duration::from_secs(10))
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+        // Emulate a committed audit followed by an interrupted pending cleanup.
+        let (audit, _) = service
+            .audit_execution(
+                &store,
+                pending.id.clone(),
+                pending.clone(),
+                &request("reboot").arguments,
+                false,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            service
+                .confirm(&store, confirmation(&pending.id, false))
+                .unwrap()
+                .id,
+            audit.id
+        );
+        let outcome = tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome.audit_record.unwrap().id, audit.id);
+        assert!(service.list_pending(&store).unwrap().is_empty());
     }
 }

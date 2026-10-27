@@ -178,12 +178,14 @@ describe("global dark theme colors", () => {
     );
   });
 
-  it("uses stable grid alignment in the file transfer header", () => {
+  it("centers the transfer policy independently of the file transfer header title", () => {
     expect(ruleBodiesForSelector(".zt-file-transfer-dialog-title")).toContain(
       "grid-template-columns: minmax(0, 1fr) auto",
     );
     expect(ruleBodiesForSelector(".zt-file-transfer-policy")).toContain("justify-self: end");
-    expect(ruleBodiesForSelector(".zt-file-transfer-policy")).not.toContain("position: absolute");
+    expect(ruleBodiesForSelector(".zt-file-transfer-policy")).toContain("position: absolute");
+    expect(ruleBodiesForSelector(".zt-file-transfer-policy")).toContain("left: 50%");
+    expect(ruleBodiesForSelector(".zt-file-transfer-policy")).toContain("transform: translate(-50%, -50%)");
   });
 
   it("distinguishes selected file rows from transient hover feedback", () => {

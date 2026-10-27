@@ -1872,11 +1872,11 @@
 
 .zt-agent-codex-approvals {
   display: grid;
-  flex: 0 1 auto;
+  grid-template-rows: minmax(0, 1fr);
+  flex: 0 1 260px;
   min-height: 0;
-  max-height: 35%;
-  gap: 6px;
-  overflow: auto;
+  max-height: 60%;
+  overflow: hidden;
   padding: 8px;
   border-top: 1px solid var(--zt-border);
   background: var(--zt-surface-elevated);
@@ -1905,8 +1905,11 @@
 
 .zt-ai-tool-card {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 6px;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   padding: 8px;
   border: 1px solid var(--zt-border);
   border-radius: var(--zt-radius-control);
@@ -1921,12 +1924,43 @@
 }
 
 .zt-ai-tool-card header,
-.zt-ai-tool-card footer {
+.zt-ai-tool-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
+}
+
+.zt-ai-tool-details {
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.zt-ai-tool-card footer {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--zt-border-subtle);
+}
+
+.zt-ai-tool-queue {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.zt-ai-tool-queue button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  place-items: center;
 }
 
 .zt-ai-tool-card header strong {
@@ -1985,6 +2019,8 @@
 }
 
 .zt-ai-tool-risk-note {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
   line-height: 1.35;
 }
 
@@ -2015,6 +2051,10 @@
 }
 
 .zt-ai-tool-card footer button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   flex: 1;
   height: 28px;
   min-width: 0;

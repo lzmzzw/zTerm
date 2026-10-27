@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::{
-    error::AppResult,
+    error::{AppError, AppResult},
     models::{
         ai::{
             AiConnectionApprovalPolicy, AiConnectionApprovalPolicyUpdateRequest,
@@ -85,18 +85,27 @@ pub async fn mcp_server_set_enabled(
 }
 
 #[tauri::command]
-pub fn mcp_tool_confirm(
+pub async fn mcp_tool_confirm(
     state: State<'_, AppState>,
     request: AiToolConfirmRequest,
 ) -> AppResult<AiToolAuditRecord> {
     let storage = state.storage();
-    state.ai_tool_service().confirm(storage.as_ref(), request)
+    let tools = state.ai_tool_service();
+    // Confirmation may perform blocking SSH/SFTP work; keep it off the WebView thread.
+    tauri::async_runtime::spawn_blocking(move || tools.confirm(storage.as_ref(), request))
+        .await
+        .map_err(|_| AppError::ai("MCP 工具确认任务异常结束"))?
 }
 
 #[tauri::command]
-pub fn mcp_tool_pending(state: State<'_, AppState>) -> AppResult<Vec<AiToolPendingInvocation>> {
+pub async fn mcp_tool_pending(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<AiToolPendingInvocation>> {
     let storage = state.storage();
-    state.ai_tool_service().list_pending(storage.as_ref())
+    let tools = state.ai_tool_service();
+    tauri::async_runtime::spawn_blocking(move || tools.list_pending(storage.as_ref()))
+        .await
+        .map_err(|_| AppError::ai("MCP 工具状态查询任务异常结束"))?
 }
 
 #[tauri::command]

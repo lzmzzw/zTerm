@@ -1,9 +1,10 @@
 // Author: Liz
-import { LoaderCircle } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, LoaderCircle } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
 import { ZtInlineError } from "../../components/ZtUi";
+import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 import { XtermPane } from "../terminal/XtermPane";
 import { useTerminalStore } from "../terminal/terminalStore";
 import type { McpApprovalMode, McpToolSecretInputs } from "./mcpStore";
@@ -37,6 +38,13 @@ export function AgentCodexPanel({
   onRestart: () => Promise<unknown> | unknown;
 }) {
   const [secretInputs, setSecretInputs] = useState<Record<string, string>>({});
+  const [selectedInvocationId, setSelectedInvocationId] = useState<string | null>(null);
+  const [confirmationStates, setConfirmationStates] = useState<Record<string, "approving" | "rejecting">>({});
+  const [confirmationError, setConfirmationError] = useState<string | null>(null);
+  const confirmingInvocations = useRef(new Set<string>());
+  const selectedIndex = Math.max(0, pendingInvocations.findIndex((invocation) => invocation.id === selectedInvocationId));
+  const invocation = pendingInvocations[selectedIndex];
+  const confirmationState = invocation ? confirmationStates[invocation.id] : undefined;
   const runtimeSessionId = session?.runtime.runtime_session_id ?? null;
   const outputChunks = useTerminalStore((state) =>
     runtimeSessionId ? (state.outputChunks[runtimeSessionId] ?? EMPTY_LIVE_OUTPUT_CHUNKS) : EMPTY_LIVE_OUTPUT_CHUNKS,
@@ -53,6 +61,38 @@ export function AgentCodexPanel({
     if (!runtimeSessionId) return undefined;
     return useTerminalStore.getState().beginLiveOutput(runtimeSessionId);
   }, [runtimeSessionId]);
+
+  useEffect(() => {
+    setSelectedInvocationId((current) =>
+      pendingInvocations.some((pending) => pending.id === current) ? current : pendingInvocations[0]?.id ?? null,
+    );
+  }, [pendingInvocations]);
+
+  async function confirmInvocation(approved: boolean) {
+    if (!invocation || confirmingInvocations.current.has(invocation.id)) return;
+    const invocationId = invocation.id;
+    const password = secretInputs[invocationId];
+    confirmingInvocations.current.add(invocationId);
+    setConfirmationStates((current) => ({ ...current, [invocationId]: approved ? "approving" : "rejecting" }));
+    setConfirmationError(null);
+    setSecretInputs((current) => {
+      const next = { ...current };
+      delete next[invocationId];
+      return next;
+    });
+    try {
+      await onConfirmTool(invocationId, approved, approved && invocation.requires_secret_input ? { password } : undefined);
+    } catch (error) {
+      setConfirmationError(unknownErrorMessage(error, "MCP 工具确认失败"));
+    } finally {
+      confirmingInvocations.current.delete(invocationId);
+      setConfirmationStates((current) => {
+        const next = { ...current };
+        delete next[invocationId];
+        return next;
+      });
+    }
+  }
 
   return (
     <div className="zt-agent-codex-panel">
@@ -110,18 +150,30 @@ export function AgentCodexPanel({
           <div className="zt-agent-codex-state">请先选择一个可操作的终端标签页。</div>
         )}
       </div>
-      {pendingInvocations.length > 0 ? (
+      {invocation ? (
         <div className="zt-agent-codex-approvals" aria-label="待审批操作">
-          {pendingInvocations.map((invocation) => (
-            <section key={invocation.id} className={`zt-ai-tool-card risk-${invocation.risk_level}`}>
-              <strong>{invocation.tool_id}</strong>
+          <section key={invocation.id} className={`zt-ai-tool-card risk-${invocation.risk_level}`} aria-busy={Boolean(confirmationState)}>
+            <header>
+              <strong title={invocation.tool_id}>{invocation.tool_id}</strong>
+              {pendingInvocations.length > 1 ? (
+                <nav className="zt-ai-tool-queue" aria-label="切换待审批操作">
+                  <button type="button" aria-label="上一项待审批操作" disabled={selectedIndex === 0} onClick={() => setSelectedInvocationId(pendingInvocations[selectedIndex - 1].id)}><ChevronLeft size={14} /></button>
+                  <span>{selectedIndex + 1} / {pendingInvocations.length}</span>
+                  <button type="button" aria-label="下一项待审批操作" disabled={selectedIndex === pendingInvocations.length - 1} onClick={() => setSelectedInvocationId(pendingInvocations[selectedIndex + 1].id)}><ChevronRight size={14} /></button>
+                </nav>
+              ) : null}
+            </header>
+            <div className="zt-ai-tool-details" tabIndex={0} role="region" aria-label="审批操作详情">
               <div className="zt-ai-tool-summary">
                 {invocation.target_summary ? (
                   <p><span>目标</span><strong>{invocation.target_summary}</strong></p>
                 ) : null}
                 <p><span>参数</span><code>{invocation.arguments_summary}</code></p>
               </div>
-              <span>{invocation.risk_summary || invocation.reason || "Codex 请求操作当前终端"}</span>
+              <p className="zt-ai-tool-risk-note">{invocation.risk_summary || invocation.reason || "Codex 请求操作当前终端"}</p>
+            </div>
+            <footer>
+              {confirmationError ? <ZtInlineError>{confirmationError}</ZtInlineError> : null}
               {invocation.requires_secret_input ? (
                 <label className="zt-ai-tool-secret">
                   <span>{invocation.secret_input_label || "本次操作所需密码"}</span>
@@ -129,29 +181,25 @@ export function AgentCodexPanel({
                     type="password"
                     autoComplete="off"
                     aria-required="true"
+                    disabled={Boolean(confirmationState)}
                     value={secretInputs[invocation.id] ?? ""}
-                    onChange={(event) =>
-                      setSecretInputs((current) => ({ ...current, [invocation.id]: event.currentTarget.value }))
-                    }
+                    onChange={(event) => {
+                      const password = event.currentTarget.value;
+                      setSecretInputs((current) => ({ ...current, [invocation.id]: password }));
+                    }}
                   />
                 </label>
               ) : null}
-              <footer>
+              <div className="zt-ai-tool-actions">
                 <button
                   type="button"
-                  disabled={Boolean(invocation.requires_secret_input) && !secretInputs[invocation.id]?.trim()}
-                  onClick={() =>
-                    void onConfirmTool(
-                      invocation.id,
-                      true,
-                      invocation.requires_secret_input ? { password: secretInputs[invocation.id] } : undefined,
-                    )
-                  }
-                >批准</button>
-                <button type="button" onClick={() => void onConfirmTool(invocation.id, false)}>拒绝</button>
-              </footer>
-            </section>
-          ))}
+                  disabled={Boolean(confirmationState) || (Boolean(invocation.requires_secret_input) && !secretInputs[invocation.id]?.trim())}
+                  onClick={() => void confirmInvocation(true)}
+                >{confirmationState === "approving" ? <><LoaderCircle className="zt-spin" size={14} />执行中...</> : "批准"}</button>
+                <button type="button" disabled={Boolean(confirmationState)} onClick={() => void confirmInvocation(false)}>{confirmationState === "rejecting" ? <><LoaderCircle className="zt-spin" size={14} />拒绝中...</> : "拒绝"}</button>
+              </div>
+            </footer>
+          </section>
         </div>
       ) : null}
 
