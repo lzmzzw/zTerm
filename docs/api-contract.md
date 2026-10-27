@@ -168,7 +168,7 @@ SSH 认证先使用配置的密码、私钥或 agent；密码失败时尝试 key
 | `file_transfer_list` | `{ limit? }` | `TransferTask[]` | 查询全局传输任务列表，包含旧 SFTP 栏和独立文件传输栏任务；当前进程内仍会返回临时连接任务，重启后不返回 |
 | `transfer_list` | `{ savedSessionId?, limit? }` | `TransferTask[]` | 查询传输任务；传入 `savedSessionId` 时只返回旧 SFTP 栏 `sftp_panel` 来源任务，保持当前会话 Dock 兼容；`external:` 任务仅来自当前进程内存 |
 | `transfer_retry` | `{ taskId }` | `TransferTask` | 重试 failed 任务 |
-| `transfer_pause` | `{ taskId }` | `TransferTask` | 暂停当前进程内有控制句柄的 queued/running 任务；没有当前运行期控制句柄时返回 `Validation`，不承诺重启后断点续传 |
+| `transfer_pause` | `{ taskId }` | `TransferTask` | 暂停当前进程内有控制句柄的 queued/running 任务；没有当前运行期控制句柄时返回 `Validation`。跨重启恢复通过失败重试及下述单文件 SFTP 检查点处理 |
 | `transfer_resume` | `{ taskId }` | `TransferTask` | 恢复 paused 任务；没有当前运行期控制句柄时返回 `Validation` |
 | `transfer_cancel` | `{ taskId }` | `TransferTask` | 取消 queued/running/paused 任务，状态写为 `cancelled` |
 | `transfer_delete` | `{ taskId }` | `{ deleted: true }` | 删除任务记录；queued/running/paused 会先取消再删除，已删除任务的迟到事件由前端忽略 |
@@ -224,7 +224,9 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 
 后台文件传输共用有界调度：全局最多 4 个执行，同一规范化 host+port 最多 2 个；跨服务器中转一次性占用两端配额，同一端点去重。本地端不占主机配额，等待任务支持暂停和取消。桌面与 MCP 入队任务遵守相同限制。失败信息含 `SFTP_PUBLISH_OUTCOME_UNKNOWN` 时表示最终发布结果未知，必须先核对目标，不允许直接重试该任务；普通失败重试保持原行为。
 
-SFTP 浏览与批量传输使用独立缓存通道，仍共用 90 秒闲置 TTL 和总容量 8。上传、下载及跨服务器中转先写同目录随机独占 `.partial`，校验源大小/修改时间与复制长度、关闭文件后发布，失败不截断原目标。目录按文件发布，不保证整个目录原子替换。远端覆盖已有文件要求 `posix-rename@openssh.com`；不支持时安全失败，绝不先删除目标。Skip/Rename 用不覆盖发布；本地依赖同目录硬链接，不支持的文件系统安全失败。传输末尾的元数据检查不能替代内容哈希，也不承诺服务器断电持久性。
+SFTP 浏览与批量传输使用独立缓存通道，仍共用 90 秒闲置 TTL 和总容量 8。上传、下载及跨服务器中转先写同目录随机独占 `.partial`，校验源大小/修改时间与复制长度、关闭文件后发布，失败不截断原目标。目录按文件发布，不保证整个目录原子替换。远端覆盖已有普通文件要求 `posix-rename@openssh.com`，并保留目标权限与所有者；不支持时安全失败，绝不先删除目标。符号链接或无法确认类型的覆盖目标明确报错。服务器只允许一个 channel 时，发布通道可使用独立且重新校验主机密钥的连接；已发送的发布不重放。Skip/Rename 用不覆盖发布，Windows 使用同目录 MoveFileEx，Unix 使用同目录硬链接。Windows 覆盖使用 ReplaceFile 保留原目标 DACL，临时文件写入前继承已有普通目标的 DACL；Unix 保留权限。发布期间拒绝取消，避免目标已提交而队列显示取消。传输末尾的元数据检查不能替代内容哈希，也不承诺服务器断电持久性。
+
+持久化的单个普通文件 SFTP 上传/下载支持校验后续传，沿用已有失败重试入口；目录、跨服务器中转、FTP 和临时任务仍从头重试。检查点每 4 MiB 在写入确认后保存，绑定完整路由、源/目标、覆盖策略、源内容 SHA-256 和已确认前缀 SHA-256。重试重新校验源与临时文件，拒绝盲目追加；源为符号链接时沿用完整复制。源完整哈希和远端前缀检查会增加读取，当前远端前缀检查仍扫描整个文件。进入发布前持久化 publishing；进程中断或结果未知时禁止直接重试，需先核对目标。取消会清理已接管的临时文件，但在接管前的源预校验阶段取消可能保留旧检查点；删除队列任务只级联删除本地检查点，不重新连接远端清扫遗留文件。
 
 | Event | Payload | 触发时机 |
 | --- | --- | --- |

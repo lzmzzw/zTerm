@@ -2651,7 +2651,11 @@ fn spawn_ai_file_transfer(
             }
         };
         match queue.get(&task.id) {
-            Ok(current) if current.status == TransferStatus::Cancelled => {}
+            Ok(current)
+                if current.status == TransferStatus::Cancelled
+                    && result.as_ref().is_err_and(|error| {
+                        !error.to_string().contains("SFTP_PUBLISH_OUTCOME_UNKNOWN")
+                    }) => {}
             Ok(_) => match result {
                 Ok(()) => {
                     let _ = queue.mark_done(&task.id);

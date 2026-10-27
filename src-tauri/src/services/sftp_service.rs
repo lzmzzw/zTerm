@@ -25,10 +25,12 @@ use tokio::{
 
 #[path = "transfer_publish.rs"]
 mod transfer_publish;
+#[path = "transfer_resume_io.rs"]
+mod transfer_resume_io;
 pub use transfer_publish::SFTP_PUBLISH_OUTCOME_UNKNOWN;
 use transfer_publish::{
-    local_partial, outcome_unknown, publish_local, remote_partial, sftp_error,
-    validate_local_source, validate_remote_source, RemotePublisher,
+    local_partial, outcome_unknown, preserve_remote_overwrite_metadata, publish_local,
+    remote_partial, sftp_error, validate_local_source, validate_remote_source, RemotePublisher,
 };
 
 #[cfg(test)]
@@ -512,6 +514,10 @@ impl SftpService {
         let local_path = PathBuf::from(required_path(local_path)?);
         let remote_path = validate_destructive_remote_path(remote_path)?;
         let metadata = fs::metadata(&local_path).await?;
+        let resumable_source = fs::symlink_metadata(&local_path)
+            .await?
+            .file_type()
+            .is_file();
         let lease = self
             .cached_sftp_session_for_transfer(session, all_sessions, secrets, control.as_ref())
             .await?;
@@ -519,7 +525,13 @@ impl SftpService {
         let result = async {
             let mut transferred = 0_u64;
             transfer_checkpoint(control.as_ref()).await?;
-            let publisher = RemotePublisher::new(&lease.entry._connection).await?;
+            let (publisher, _publisher_connection) = connect_transfer_publisher(
+                &lease.entry._connection,
+                session,
+                all_sessions,
+                secrets,
+            )
+            .await?;
 
             if metadata.is_dir() {
                 let total_bytes =
@@ -560,20 +572,41 @@ impl SftpService {
                     }
                 }
             } else {
-                transferred = upload_file(
-                    &sftp,
-                    &publisher,
-                    &local_path,
-                    &remote_path,
-                    conflict_policy,
-                    transferred,
-                    control.as_ref(),
-                    &mut on_progress,
-                )
-                .await?;
+                if let Some(context) = control
+                    .as_ref()
+                    .and_then(TransferRunControl::resume_context)
+                    .filter(|_| resumable_source)
+                {
+                    transferred = transfer_resume_io::upload(
+                        &sftp,
+                        &publisher,
+                        &context,
+                        lease.key.as_str(),
+                        &local_path,
+                        &remote_path,
+                        conflict_policy,
+                        control.as_ref(),
+                        &mut on_progress,
+                    )
+                    .await?;
+                } else {
+                    transferred = upload_file(
+                        &sftp,
+                        &publisher,
+                        &local_path,
+                        &remote_path,
+                        conflict_policy,
+                        transferred,
+                        control.as_ref(),
+                        &mut on_progress,
+                    )
+                    .await?;
+                }
             }
 
-            on_progress(progress_update(transferred, None))?;
+            // File publication has already committed; a final UI/storage
+            // notification error must not make it a retryable transfer failure.
+            let _ = on_progress(progress_update(transferred, None));
             Ok(())
         }
         .await;
@@ -651,19 +684,37 @@ impl SftpService {
                     }
                 }
             } else {
-                transferred = download_file(
-                    &sftp,
-                    &remote_path,
-                    &local_path,
-                    conflict_policy,
-                    transferred,
-                    control.as_ref(),
-                    &mut on_progress,
-                )
-                .await?;
+                if let Some(context) = control
+                    .as_ref()
+                    .and_then(TransferRunControl::resume_context)
+                    .filter(|_| metadata.file_type().is_file())
+                {
+                    transferred = transfer_resume_io::download(
+                        &sftp,
+                        &context,
+                        lease.key.as_str(),
+                        &remote_path,
+                        &local_path,
+                        conflict_policy,
+                        control.as_ref(),
+                        &mut on_progress,
+                    )
+                    .await?;
+                } else {
+                    transferred = download_file(
+                        &sftp,
+                        &remote_path,
+                        &local_path,
+                        conflict_policy,
+                        transferred,
+                        control.as_ref(),
+                        &mut on_progress,
+                    )
+                    .await?;
+                }
             }
 
-            on_progress(progress_update(transferred, None))?;
+            let _ = on_progress(progress_update(transferred, None));
             Ok(())
         }
         .await;
@@ -712,7 +763,13 @@ impl SftpService {
         .await?;
         let source_sftp = &source_connection.sftp;
         let destination_sftp = &destination_connection.sftp;
-        let publisher = RemotePublisher::new(&destination_connection.connection).await?;
+        let (publisher, _publisher_connection) = connect_transfer_publisher(
+            &destination_connection.connection,
+            destination_session,
+            destination_all_sessions,
+            secrets,
+        )
+        .await?;
         transfer_checkpoint(control.as_ref()).await?;
         let metadata = source_sftp
             .symlink_metadata(source_path.clone())
@@ -776,7 +833,7 @@ impl SftpService {
             .await?;
         }
 
-        on_progress(progress_update(transferred, None))?;
+        let _ = on_progress(progress_update(transferred, None));
         source_connection.close("sftp remote copy completed").await;
         destination_connection
             .close("sftp remote copy completed")
@@ -1315,6 +1372,75 @@ where
     unreachable!("transfer connection retry loop must return")
 }
 
+struct PublisherConnectionGuard(Option<SshConnectionChain>);
+
+impl Drop for PublisherConnectionGuard {
+    fn drop(&mut self) {
+        if let Some(connection) = self.0.take() {
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                runtime.spawn(async move {
+                    connection.disconnect("sftp publisher complete").await;
+                });
+            }
+            // Without a live runtime, release the owned handles. Do not create
+            // a blocking runtime inside async Drop during runtime shutdown.
+        }
+    }
+}
+
+fn publisher_channel_denied(error: &AppError) -> bool {
+    let AppError::Ssh(message) = error else {
+        return false;
+    };
+    // open_session_channel currently maps russh errors into AppError::Ssh.
+    // Match only the library's exact channel-refusal variants, never arbitrary
+    // transport, authentication, subsystem or host-key validation failures.
+    [
+        russh::ChannelOpenFailure::AdministrativelyProhibited,
+        russh::ChannelOpenFailure::ConnectFailed,
+        russh::ChannelOpenFailure::ResourceShortage,
+    ]
+    .into_iter()
+    .any(|reason| *message == russh::Error::ChannelOpenFailure(reason).to_string())
+}
+
+async fn publisher_with_channel_fallback<T, F, Fut>(
+    initial: AppResult<T>,
+    fallback: F,
+) -> AppResult<T>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = AppResult<T>>,
+{
+    match initial {
+        Err(error) if publisher_channel_denied(&error) => fallback().await,
+        result => result,
+    }
+}
+
+async fn connect_transfer_publisher(
+    connection: &SshConnectionChain,
+    session: &SavedSession,
+    all_sessions: &[SavedSession],
+    secrets: &dyn SshCommandSecretResolver,
+) -> AppResult<(RemotePublisher, PublisherConnectionGuard)> {
+    let initial = RemotePublisher::new(connection)
+        .await
+        .map(|publisher| (publisher, PublisherConnectionGuard(None)));
+    publisher_with_channel_fallback(initial, || async {
+        // MaxSessions=1 can reject the second channel on a healthy transport.
+        // Establish a separately authenticated and host-key-verified chain;
+        // open only its raw publisher channel, not another bulk SFTP session.
+        let execution =
+            build_ssh_command_execution(session, all_sessions, "true".to_string(), secrets)?;
+        let guard = PublisherConnectionGuard(Some(connect_chain(&execution).await?));
+        let publisher =
+            RemotePublisher::new(guard.0.as_ref().expect("publisher owns connection")).await?;
+        Ok((publisher, guard))
+    })
+    .await
+}
+
 async fn connect_sftp_execution(
     execution: crate::services::ssh_command_service::SshCommandExecution,
 ) -> AppResult<ConnectedSftpSession> {
@@ -1357,6 +1483,71 @@ impl ConnectedSftpSession {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn publisher_max_sessions_denial_uses_one_independent_connection_attempt() {
+        use std::cell::Cell;
+        let attempts = Cell::new(0);
+        let denied = crate::error::AppError::ssh(
+            russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed).to_string(),
+        );
+        let result = super::publisher_with_channel_fallback(Err(denied), || async {
+            attempts.set(attempts.get() + 1);
+            Ok("one raw publisher channel")
+        })
+        .await
+        .unwrap();
+        assert_eq!(result, "one raw publisher channel");
+        assert_eq!(attempts.get(), 1);
+
+        let denied = crate::error::AppError::ssh(
+            russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ResourceShortage)
+                .to_string(),
+        );
+        let failed =
+            super::publisher_with_channel_fallback::<(), _, _>(Err(denied.clone()), || async {
+                attempts.set(attempts.get() + 1);
+                Err(denied.clone())
+            })
+            .await;
+        assert_eq!(failed, Err(denied));
+        assert_eq!(
+            attempts.get(),
+            2,
+            "fallback failure must not retry connections or publication"
+        );
+    }
+
+    #[tokio::test]
+    async fn publisher_never_falls_back_on_identity_auth_transport_or_publish_errors() {
+        use crate::error::AppError;
+        for error in [
+            AppError::ssh("SSH 主机密钥校验失败"),
+            AppError::credential("authentication failed"),
+            AppError::ssh("Disconnected"),
+            AppError::sftp("Failed to open channel (ConnectFailed)"),
+            AppError::sftp(super::SFTP_PUBLISH_OUTCOME_UNKNOWN),
+            AppError::ssh(
+                russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::UnknownChannelType)
+                    .to_string(),
+            ),
+        ] {
+            let result =
+                super::publisher_with_channel_fallback::<(), _, _>(Err(error.clone()), || async {
+                    panic!("non-channel error must not open another connection")
+                })
+                .await;
+            assert_eq!(result, Err(error));
+        }
+        assert_eq!(
+            super::publisher_with_channel_fallback(Ok(7), || async {
+                panic!("working shared channel must be reused")
+            })
+            .await
+            .unwrap(),
+            7
+        );
+    }
+
     use super::{
         await_transfer_io, bulk_transfer_sftp_config, delete_local_path, rename_local_path,
         retry_transfer_connection, should_retry_cached_transfer_session_error,
@@ -1443,7 +1634,7 @@ mod tests {
         let build = |jump: &SavedSession| {
             build_ssh_command_execution(
                 &target,
-                &[jump.clone()],
+                std::slice::from_ref(jump),
                 "true".to_string(),
                 &CacheTestSecrets,
             )
@@ -1817,6 +2008,7 @@ where
     let (partial, mut remote) = remote_partial(sftp, remote_path).await?;
     let start = transferred;
     let result = async {
+        preserve_remote_overwrite_metadata(sftp, &partial, remote_path, conflict_policy).await?;
         let mut buffer = vec![0_u8; TRANSFER_BUFFER_SIZE];
         loop {
             transfer_checkpoint(control).await?;
@@ -1845,7 +2037,9 @@ where
         validate_local_source(&before, &local.metadata().await?, copied)?;
         validate_local_source(&before, &fs::metadata(local_path).await?, copied)?;
         finish_remote_partial(&mut remote, copied, control).await?;
+        preserve_remote_overwrite_metadata(sftp, &partial, remote_path, conflict_policy).await?;
         transfer_checkpoint(control).await?;
+        let _publish_guard = control.map(TransferRunControl::begin_publish).transpose()?;
         publisher
             .publish(sftp, &partial, remote_path, conflict_policy)
             .await?;
@@ -1973,6 +2167,7 @@ where
         Ok(transferred) => {
             async {
                 transfer_checkpoint(control).await?;
+                let _publish_guard = control.map(TransferRunControl::begin_publish).transpose()?;
                 publish_local(&partial, local_path, conflict_policy).await?;
                 Ok(transferred)
             }
@@ -1980,7 +2175,7 @@ where
         }
         Err(error) => Err(error),
     };
-    if result.is_err() {
+    if result.as_ref().is_err_and(|error| !outcome_unknown(error)) {
         let _ = fs::remove_file(partial).await;
     }
     result
@@ -2033,6 +2228,13 @@ where
     let (partial, mut destination) = remote_partial(destination_sftp, destination_path).await?;
     let start = transferred;
     let result = async {
+        preserve_remote_overwrite_metadata(
+            destination_sftp,
+            &partial,
+            destination_path,
+            conflict_policy,
+        )
+        .await?;
         let last_activity = Arc::new(Mutex::new(Instant::now()));
         let mut writer = TransferProgressWriter::new(
             &mut destination,
@@ -2074,7 +2276,15 @@ where
             .await
             .map_err(|e| AppError::sftp(e.to_string()))?;
         finish_remote_partial(&mut destination, copied, control).await?;
+        preserve_remote_overwrite_metadata(
+            destination_sftp,
+            &partial,
+            destination_path,
+            conflict_policy,
+        )
+        .await?;
         transfer_checkpoint(control).await?;
+        let _publish_guard = control.map(TransferRunControl::begin_publish).transpose()?;
         publisher
             .publish(
                 destination_sftp,

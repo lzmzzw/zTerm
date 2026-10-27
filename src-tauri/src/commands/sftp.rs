@@ -766,7 +766,6 @@ fn spawn_transfer(
 
         let done = match result {
             Ok(()) => match queue.get(&task.id) {
-                Ok(current) if current.status == TransferStatus::Cancelled => Ok(current),
                 Ok(_) => queue.mark_done(&task.id),
                 Err(crate::error::AppError::NotFound(_)) => {
                     return;
@@ -774,7 +773,12 @@ fn spawn_transfer(
                 Err(error) => Err(error),
             },
             Err(error) => match queue.get(&task.id) {
-                Ok(current) if current.status == TransferStatus::Cancelled => Ok(current),
+                Ok(current)
+                    if current.status == TransferStatus::Cancelled
+                        && !error.to_string().contains("SFTP_PUBLISH_OUTCOME_UNKNOWN") =>
+                {
+                    Ok(current)
+                }
                 Ok(_) => queue.mark_failed(&task.id, &error.to_string()),
                 Err(crate::error::AppError::NotFound(_)) => {
                     return;
@@ -959,7 +963,6 @@ fn spawn_file_transfer(
 
         let done = match result {
             Ok(()) => match queue.get(&task.id) {
-                Ok(current) if current.status == TransferStatus::Cancelled => Ok(current),
                 Ok(_) => queue.mark_done(&task.id),
                 Err(crate::error::AppError::NotFound(_)) => {
                     return;
@@ -967,7 +970,12 @@ fn spawn_file_transfer(
                 Err(error) => Err(error),
             },
             Err(error) => match queue.get(&task.id) {
-                Ok(current) if current.status == TransferStatus::Cancelled => Ok(current),
+                Ok(current)
+                    if current.status == TransferStatus::Cancelled
+                        && !error.to_string().contains("SFTP_PUBLISH_OUTCOME_UNKNOWN") =>
+                {
+                    Ok(current)
+                }
                 Ok(_) => queue.mark_failed(&task.id, &error.to_string()),
                 Err(crate::error::AppError::NotFound(_)) => {
                     return;

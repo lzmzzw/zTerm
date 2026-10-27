@@ -112,6 +112,12 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
             group_name text null
         );
 
+        create table if not exists transfer_resume (
+            task_id text primary key references transfer_tasks(id) on delete cascade,
+            phase text not null check (phase in ('copying', 'publishing')),
+            manifest_json text not null
+        );
+
         create table if not exists credential_records (
             id text primary key,
             name text not null check (length(trim(name)) > 0),

@@ -59,12 +59,35 @@ impl russh_sftp::server::Handler for FileServer {
             attrs: FileAttributes {
                 size: Some(file.len() as u64),
                 mtime: Some(1),
+                permissions: Some(0o100600),
+                uid: Some(1),
+                gid: Some(1),
                 ..Default::default()
             },
         })
     }
     async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
         self.fstat(id, path).await
+    }
+    async fn lstat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
+        self.fstat(id, path).await
+    }
+    async fn setstat(
+        &mut self,
+        id: u32,
+        path: String,
+        attrs: FileAttributes,
+    ) -> Result<Status, Self::Error> {
+        let mut files = self.files.lock().unwrap();
+        let bytes = files.get_mut(&path).ok_or(StatusCode::NoSuchFile)?;
+        if let Some(size) = attrs.size {
+            bytes.resize(size as usize, 0);
+        }
+        assert!(
+            attrs.size.is_none(),
+            "permission updates must never truncate file data"
+        );
+        Ok(ok(id))
     }
     async fn write(
         &mut self,

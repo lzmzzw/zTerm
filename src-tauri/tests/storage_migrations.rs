@@ -51,6 +51,7 @@ fn migrations_create_all_phase_two_tables() {
         "saved_sessions",
         "command_history",
         "transfer_tasks",
+        "transfer_resume",
         "credential_records",
         "ai_connection_approval_policies",
         "ai_tool_pending",
@@ -84,6 +85,7 @@ fn migrations_are_idempotent() {
                 'saved_sessions',
                 'command_history',
                 'transfer_tasks',
+                'transfer_resume',
                 'credential_records',
                 'ai_connection_approval_policies',
                 'ai_tool_pending',
@@ -96,7 +98,7 @@ fn migrations_are_idempotent() {
         )
         .expect("table count query should run");
 
-    assert_eq!(table_count, 14);
+    assert_eq!(table_count, 15);
     assert!(index_exists(
         &connection,
         "idx_session_command_groups_session_sort"
@@ -110,6 +112,28 @@ fn migrations_are_idempotent() {
         &connection,
         "idx_session_command_group_items_group_sort"
     ));
+}
+
+#[test]
+fn existing_database_gains_resume_table_without_changing_transfer_schema() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    run_migrations(&mut connection).unwrap();
+    connection
+        .execute_batch("drop table transfer_resume;")
+        .unwrap();
+    run_migrations(&mut connection).unwrap();
+    assert!(table_exists(&connection, "transfer_resume"));
+    let foreign_key: (String, String, String) = connection
+        .query_row(
+            "select \"table\", \"from\", on_delete from pragma_foreign_key_list('transfer_resume')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        foreign_key,
+        ("transfer_tasks".into(), "task_id".into(), "CASCADE".into())
+    );
 }
 
 #[test]

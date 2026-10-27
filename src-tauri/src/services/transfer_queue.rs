@@ -12,6 +12,8 @@ use std::{
 use tokio::sync::Notify;
 use uuid::Uuid;
 
+use super::transfer_resume::TransferResumeContext;
+
 use crate::{
     error::{AppError, AppResult},
     models::sftp::{
@@ -149,6 +151,23 @@ struct TransferRunControlInner {
     cancelled: AtomicBool,
     notify: Notify,
     paused: AtomicBool,
+    resume_context: Mutex<Option<TransferResumeContext>>,
+    publishing: Mutex<bool>,
+}
+
+pub(crate) struct TransferPublishGuard {
+    inner: Arc<TransferRunControlInner>,
+}
+
+impl Drop for TransferPublishGuard {
+    fn drop(&mut self) {
+        *self
+            .inner
+            .publishing
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = false;
+        self.inner.notify.notify_waiters();
+    }
 }
 
 impl TransferRunControl {
@@ -158,6 +177,8 @@ impl TransferRunControl {
                 cancelled: AtomicBool::new(false),
                 notify: Notify::new(),
                 paused: AtomicBool::new(false),
+                resume_context: Mutex::new(None),
+                publishing: Mutex::new(false),
             }),
         }
     }
@@ -167,15 +188,65 @@ impl TransferRunControl {
         self.inner.notify.notify_waiters();
     }
 
+    pub(crate) fn resume_context(&self) -> Option<TransferResumeContext> {
+        self.inner
+            .resume_context
+            .lock()
+            .ok()
+            .and_then(|context| context.clone())
+    }
+
     pub(crate) fn resume(&self) {
         self.inner.paused.store(false, Ordering::SeqCst);
         self.inner.notify.notify_waiters();
     }
 
     pub(crate) fn cancel(&self) {
+        // Shutdown may request cancellation during commit, but callers must
+        // await an already-sent publish operation instead of dropping it.
+        let _publishing = self
+            .inner
+            .publishing
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        self.set_cancelled();
+    }
+
+    fn set_cancelled(&self) {
         self.inner.cancelled.store(true, Ordering::SeqCst);
         self.inner.paused.store(false, Ordering::SeqCst);
         self.inner.notify.notify_waiters();
+    }
+
+    pub(crate) fn request_cancel(&self) -> AppResult<()> {
+        let publishing = self
+            .inner
+            .publishing
+            .lock()
+            .map_err(|_| AppError::sftp("传输发布状态锁定失败"))?;
+        if *publishing {
+            return Err(AppError::validation("文件正在发布，请等待结果"));
+        }
+        self.set_cancelled();
+        Ok(())
+    }
+
+    pub(crate) fn begin_publish(&self) -> AppResult<TransferPublishGuard> {
+        let mut publishing = self
+            .inner
+            .publishing
+            .lock()
+            .map_err(|_| AppError::sftp("传输发布状态锁定失败"))?;
+        if self.is_cancelled() {
+            return Err(AppError::sftp("传输已取消"));
+        }
+        if *publishing {
+            return Err(AppError::validation("文件正在发布，请等待结果"));
+        }
+        *publishing = true;
+        Ok(TransferPublishGuard {
+            inner: Arc::clone(&self.inner),
+        })
     }
 
     pub async fn checkpoint(&self) -> AppResult<()> {
@@ -541,6 +612,7 @@ impl TransferQueue {
             return Ok(task);
         }
         reject_unknown_publish_retry(&transfers::get_transfer_task(self.store.as_ref(), task_id)?)?;
+        TransferResumeContext::new(Arc::clone(&self.store), task_id).ensure_retryable()?;
         transfers::retry_transfer_task(self.store.as_ref(), task_id)
     }
 
@@ -622,8 +694,17 @@ impl TransferQueue {
             ) {
                 return Err(AppError::validation("只有运行中的传输任务可以取消"));
             }
+            if let Some(control) = self.find_control(task_id)? {
+                control.request_cancel()?;
+            }
             let task = self
                 .update_transient_task(task_id, |task| {
+                    if !matches!(
+                        task.status,
+                        TransferStatus::Queued | TransferStatus::Running | TransferStatus::Paused
+                    ) {
+                        return Err(AppError::validation("只有运行中的传输任务可以取消"));
+                    }
                     task.status = TransferStatus::Cancelled;
                     task.error_message = None;
                     Ok(())
@@ -631,10 +712,17 @@ impl TransferQueue {
                 .ok_or_else(|| {
                     AppError::not_found(format!("transfer task not found: {task_id}"))
                 })?;
-            if let Some(control) = self.find_control(task_id)? {
-                control.cancel();
-            }
             return Ok(task);
+        }
+        let current = transfers::get_transfer_task(self.store.as_ref(), task_id)?;
+        if !matches!(
+            current.status,
+            TransferStatus::Queued | TransferStatus::Running | TransferStatus::Paused
+        ) {
+            return Err(AppError::validation("只有运行中的传输任务可以取消"));
+        }
+        if let Some(control) = self.find_control(task_id)? {
+            control.request_cancel()?;
         }
         let task = transfers::update_transfer_task_status_checked(
             self.store.as_ref(),
@@ -647,9 +735,6 @@ impl TransferQueue {
             ],
             "只有运行中的传输任务可以取消",
         )?;
-        if let Some(control) = self.find_control(task_id)? {
-            control.cancel();
-        }
         Ok(task)
     }
 
@@ -660,7 +745,7 @@ impl TransferQueue {
                 TransferStatus::Queued | TransferStatus::Running | TransferStatus::Paused
             ) {
                 if let Some(control) = self.find_control(task_id)? {
-                    control.cancel();
+                    control.request_cancel()?;
                 }
             }
             self.lock_transient_tasks()?.remove(task_id);
@@ -673,7 +758,7 @@ impl TransferQueue {
             TransferStatus::Queued | TransferStatus::Running | TransferStatus::Paused
         ) {
             if let Some(control) = self.find_control(task_id)? {
-                control.cancel();
+                control.request_cancel()?;
             }
             let _ = transfers::update_transfer_task_status_checked(
                 self.store.as_ref(),
@@ -705,7 +790,24 @@ impl TransferQueue {
     }
 
     pub fn register_control(&self, task_id: &str) -> AppResult<TransferRunControl> {
-        self.control_for(task_id)
+        // Only persistent tasks own durable checkpoints. Transient/external
+        // connections keep their existing lifetime and never create orphan rows.
+        let resume_context = if transfers::get_transfer_task(self.store.as_ref(), task_id).is_ok() {
+            let context = TransferResumeContext::new(Arc::clone(&self.store), task_id);
+            context.ensure_retryable()?;
+            Some(context)
+        } else {
+            None
+        };
+        let control = self.control_for(task_id)?;
+        if let Some(context) = resume_context {
+            *control
+                .inner
+                .resume_context
+                .lock()
+                .map_err(|_| AppError::storage("传输检查点锁定失败"))? = Some(context);
+        }
+        Ok(control)
     }
 
     pub fn unregister_control(&self, task_id: &str) -> AppResult<()> {
@@ -948,6 +1050,80 @@ mod tests {
             host: name.into(),
             port: 22,
         }
+    }
+
+    #[test]
+    fn publish_and_user_cancel_are_mutually_exclusive() {
+        use std::sync::Barrier;
+        for _ in 0..100 {
+            let control = TransferRunControl::new();
+            let barrier = Arc::new(Barrier::new(2));
+            let worker_control = control.clone();
+            let worker_barrier = Arc::clone(&barrier);
+            let worker = std::thread::spawn(move || {
+                worker_barrier.wait();
+                worker_control.request_cancel()
+            });
+            barrier.wait();
+            let publishing = control.begin_publish();
+            let cancelled = worker.join().unwrap();
+            assert_ne!(
+                publishing.is_ok(),
+                cancelled.is_ok(),
+                "exactly one side may win"
+            );
+            if publishing.is_ok() {
+                assert!(!control.is_cancelled());
+            } else {
+                assert!(control.is_cancelled());
+            }
+            drop(publishing);
+        }
+    }
+
+    #[test]
+    fn queue_cancel_during_publish_preserves_running_until_guard_drops() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let session = test_session(&store);
+        let queue = TransferQueue::from_storage(store);
+        for session_id in [session.id.as_str(), "external:publish-guard"] {
+            let task = queue
+                .enqueue(
+                    session_id,
+                    TransferDirection::Upload,
+                    "C:/source",
+                    "/target",
+                    Some(TransferKind::File),
+                    TransferConflictPolicy::Overwrite,
+                    1,
+                )
+                .unwrap();
+            let control = queue.register_control(&task.id).unwrap();
+            queue.mark_running(&task.id).unwrap();
+            let guard = control.begin_publish().unwrap();
+            let error = queue.cancel(&task.id).unwrap_err();
+            assert!(error.to_string().contains("文件正在发布，请等待结果"));
+            assert_eq!(queue.get(&task.id).unwrap().status, TransferStatus::Running);
+            assert!(!control.is_cancelled());
+            drop(guard);
+            assert_eq!(
+                queue.cancel(&task.id).unwrap().status,
+                TransferStatus::Cancelled
+            );
+            assert!(control.begin_publish().is_err());
+        }
+    }
+
+    #[test]
+    fn shutdown_cancel_does_not_invalidate_an_existing_publish_guard() {
+        let control = TransferRunControl::new();
+        let guard = control.begin_publish().unwrap();
+        control.cancel();
+        assert!(control.is_cancelled());
+        assert!(*control.inner.publishing.lock().unwrap());
+        drop(guard);
+        assert!(!*control.inner.publishing.lock().unwrap());
+        assert!(control.begin_publish().is_err());
     }
 
     #[tokio::test]

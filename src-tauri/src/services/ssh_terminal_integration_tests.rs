@@ -728,14 +728,59 @@ fn loopback_known_host_accepts_first_key_and_rejects_changed_key() {
 }
 
 #[cfg(windows)]
+#[test]
+#[ignore = "subprocess-only loopback ProxyCommand relay"]
+fn loopback_proxy_relay_helper() {
+    use std::io::{Read, Write};
+    // libtest's startup lines precede the SSH identification and are valid
+    // pre-identification text. Once this test starts, only raw TCP bytes go to
+    // stdout; never use println! or text decoding inside the relay.
+    let port = std::env::var("ZTERM_TEST_PROXY_PORT")
+        .expect("relay is only launched by its parent test")
+        .parse::<u16>()
+        .unwrap();
+    let mut socket = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    socket.set_nodelay(true).unwrap();
+    let mut upload = socket.try_clone().unwrap();
+    // Dedicated blocking threads avoid the .NET Framework thread pool used
+    // by PowerShell ConsoleStream.CopyToAsync in the previous test fixture.
+    std::thread::spawn(move || {
+        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut upload);
+        let _ = upload.shutdown(std::net::Shutdown::Write);
+    });
+    let mut stdout = std::io::stdout().lock();
+    let mut buffer = [0_u8; 8192];
+    while let Ok(count) = socket.read(&mut buffer) {
+        if count == 0
+            || stdout
+                .write_all(&buffer[..count])
+                .and_then(|_| stdout.flush())
+                .is_err()
+        {
+            break;
+        }
+    }
+    // Avoid libtest's trailing status text on the protocol stream. This is a
+    // dedicated child process; the parent owns its lifetime through the proxy job.
+    std::process::exit(0);
+}
+
+#[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loopback_proxy_command_preserves_native_ssh_zmodem_binary_stream() {
     let server = fixture(false).await;
     let mut session = saved_session(server.port);
-    // An application test-only loopback relay. No real host or user credentials.
-    session.ssh_options.as_mut().unwrap().proxy_command = Some(
-        r#"powershell.exe -NoProfile -NonInteractive -Command "$c=[Net.Sockets.TcpClient]::new('%h',%p);$s=$c.GetStream();$a=[Console]::OpenStandardInput().CopyToAsync($s);$b=$s.CopyToAsync([Console]::OpenStandardOutput());$b.GetAwaiter().GetResult();$c.Dispose()""#.into()
+    let executable = std::env::current_exe().unwrap();
+    let executable = executable.to_str().unwrap();
+    assert!(
+        !executable.contains(['"', '%', '\r', '\n']),
+        "test executable must be safe inside a quoted cmd argument"
     );
+    // SET affects only the child cmd, never the parent's process environment.
+    // Still exercises the production ProxyCommand raw-pipe/process lifecycle.
+    session.ssh_options.as_mut().unwrap().proxy_command = Some(format!(
+        r#"set "ZTERM_TEST_PROXY_PORT=%p" && "{executable}" --exact services::ssh_terminal_service::integration_tests::loopback_proxy_relay_helper --ignored --nocapture --quiet"#
+    ));
     exchange(native(
         spawn_ssh_terminal_with_resolver(&session, 80, 24, &TestSecrets).unwrap(),
     ))

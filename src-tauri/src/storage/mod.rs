@@ -9,4 +9,5 @@ pub mod settings;
 pub mod sqlite;
 pub mod terminal_layout;
 pub mod terminal_profiles;
+pub mod transfer_resume;
 pub mod transfers;

@@ -29,4 +29,5 @@ pub mod terminal_output_flow;
 pub mod terminal_profile_service;
 pub(crate) mod terminal_utf8;
 pub mod transfer_queue;
+pub mod transfer_resume;
 pub mod zmodem_diagnostics;
