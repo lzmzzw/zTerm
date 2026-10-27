@@ -107,6 +107,66 @@ pub fn search_global_command_history(
     search_command_history_for_scope(store, query, None, limit)
 }
 
+/// Completion uses an exact, case-sensitive prefix. Keep the history panel's
+/// contains search separate so its existing matching behavior stays unchanged.
+pub(crate) fn search_command_history_prefix(
+    store: &SqliteStore,
+    prefix: &str,
+    scope_kind: Option<HistoryScopeKind>,
+    scope_id: Option<&str>,
+    limit: Option<usize>,
+) -> AppResult<Vec<CommandHistoryEntry>> {
+    let scope = history_scope_option_from_parts(scope_kind, scope_id)?;
+    if prefix.is_empty() {
+        return Ok(Vec::new());
+    }
+    let limit = clamp_history_limit(limit) as usize;
+    store.with_connection(|connection| {
+        let mut filters = history_filters(scope, None);
+        filters.clauses.push("command collate binary >= ?");
+        filters.params.push(Value::Text(prefix.to_string()));
+        if let Some(upper_bound) = prefix_upper_bound(prefix) {
+            filters.clauses.push("command collate binary < ?");
+            filters.params.push(Value::Text(upper_bound));
+        }
+        let where_clause = filters.where_clause();
+        let sql = format!(
+            "
+            select id, scope_kind, scope_id, runtime_session_id, command, cwd, exit_code,
+                   started_at_ms, finished_at_ms
+            from command_history
+            {where_clause}
+            order by started_at_ms desc, id desc
+            "
+        );
+        let mut statement = connection.prepare(&sql)?;
+        // Apply the limit after deduplication, retaining the latest record for
+        // each command and the existing timestamp/id tie-break order.
+        let entries = collect_deduplicated_history(
+            statement.query_map(params_from_iter(filters.into_params()), map_entry)?,
+            limit,
+        );
+        entries
+    })
+}
+
+// UTF-8 BINARY order follows Unicode scalar order. Increment the rightmost
+// scalar with a successor, then truncate, without producing invalid UTF-8 or
+// a surrogate. An all-MAX prefix needs only the inclusive lower bound.
+fn prefix_upper_bound(prefix: &str) -> Option<String> {
+    for (index, character) in prefix.char_indices().rev() {
+        let next = match character {
+            char::MAX => continue,
+            '\u{d7ff}' => '\u{e000}',
+            value => char::from_u32(value as u32 + 1)?,
+        };
+        let mut upper_bound = prefix[..index].to_string();
+        upper_bound.push(next);
+        return Some(upper_bound);
+    }
+    None
+}
+
 fn search_command_history_for_scope(
     store: &SqliteStore,
     query: Option<String>,
@@ -609,4 +669,192 @@ fn now_ms() -> AppResult<i64> {
         .duration_since(UNIX_EPOCH)
         .map_err(|error| AppError::storage(error.to_string()))?;
     Ok(duration.as_millis() as i64)
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::*;
+
+    fn insert(
+        store: &SqliteStore,
+        kind: HistoryScopeKind,
+        scope_id: &str,
+        command: &str,
+        started_at_ms: i64,
+    ) -> CommandHistoryEntry {
+        insert_command_history(
+            store,
+            CommandHistoryDraft {
+                scope_kind: Some(kind),
+                scope_id: Some(scope_id.to_string()),
+                runtime_session_id: "prefix-test".to_string(),
+                command: command.to_string(),
+                cwd: None,
+                exit_code: None,
+                started_at_ms,
+                finished_at_ms: None,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn history_prefix_filters_before_limit_and_preserves_latest_deduplication() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let kind = HistoryScopeKind::SavedSession;
+        insert(&store, kind, "scope", "git status", 0);
+        insert(&store, kind, "scope", "git stash", 1);
+        let latest = insert(&store, kind, "scope", "git status", 2);
+        for index in 0..550 {
+            insert(
+                &store,
+                kind,
+                "scope",
+                &format!("echo git status {index}"),
+                index + 100,
+            );
+        }
+        insert(&store, kind, "scope", "GIT STATUS", 1000);
+        let entries =
+            search_command_history_prefix(&store, "git s", Some(kind), Some("scope"), Some(2))
+                .unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].id, latest.id);
+        assert_eq!(entries[1].command, "git stash");
+
+        // The ordinary history panel continues to use its contains search.
+        let contains = search_command_history(
+            &store,
+            HistorySearchOptions {
+                query: Some("git s".to_string()),
+                scope_kind: Some(kind),
+                scope_id: Some("scope".to_string()),
+                limit: Some(2),
+                deduplicate: Some(true),
+            },
+        )
+        .unwrap();
+        assert_eq!(contains[0].command, "GIT STATUS");
+        assert!(contains[1].command.starts_with("echo git status"));
+    }
+
+    #[test]
+    fn history_prefix_is_literal_case_sensitive_and_unicode_safe() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let commands = [
+            "部署😀 --dry-run",
+            "部署😁 --dry-run",
+            "écho one",
+            "e\u{301}cho two",
+            "Git status",
+            "git status",
+            "echo %_literal",
+            "echo XXliteral",
+            "\u{d7ff}end",
+            "\u{e000}start",
+            "x\u{10ffff}end",
+            "y start",
+            "\u{10ffff}end",
+            "\u{10ffff}\u{10ffff}end",
+        ];
+        let inserted: Vec<_> = commands
+            .iter()
+            .enumerate()
+            .map(|(index, command)| {
+                insert(
+                    &store,
+                    HistoryScopeKind::LocalProfile,
+                    "profile",
+                    command,
+                    index as i64,
+                )
+            })
+            .collect();
+        for prefix in [
+            "部署😀",
+            "é",
+            "e\u{301}",
+            "Git",
+            "git",
+            "echo %_",
+            "\u{d7ff}",
+            "x\u{10ffff}",
+            "\u{10ffff}",
+            "\u{10ffff}\u{10ffff}",
+        ] {
+            let entries = search_command_history_prefix(&store, prefix, None, None, None).unwrap();
+            let expected: Vec<_> = inserted
+                .iter()
+                .rev()
+                .filter(|entry| entry.command.starts_with(prefix))
+                .cloned()
+                .collect();
+            assert_eq!(entries, expected, "prefix: {prefix:?}");
+        }
+    }
+
+    #[test]
+    fn history_prefix_scopes_and_timestamp_ties_keep_existing_order() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let saved = HistoryScopeKind::SavedSession;
+        let local = HistoryScopeKind::LocalProfile;
+        let first = insert(&store, saved, "shared-id", "git first", 10);
+        let second = insert(&store, saved, "shared-id", "git second", 10);
+        insert(&store, local, "shared-id", "git local", 20);
+        insert(&store, saved, "other-id", "git other", 30);
+        let mut expected = vec![first, second];
+        expected.sort_by(|left, right| right.id.cmp(&left.id));
+        assert_eq!(
+            search_command_history_prefix(&store, "git ", Some(saved), Some("shared-id"), None)
+                .unwrap(),
+            expected
+        );
+        let global = search_command_history_prefix(&store, "git ", None, None, None).unwrap();
+        assert_eq!(global.len(), 4);
+        assert_eq!(global[0].command, "git other");
+        assert_eq!(global[1].command, "git local");
+        assert_eq!(&global[2..], expected);
+        assert!(search_command_history_prefix(&store, "git", Some(saved), None, None).is_err());
+        assert!(
+            search_command_history_prefix(&store, "git", None, Some("shared-id"), None).is_err()
+        );
+    }
+
+    #[test]
+    fn history_prefix_range_queries_use_migrated_indexes() {
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        crate::storage::migrations::run_migrations(&mut connection).unwrap();
+        crate::storage::migrations::run_migrations(&mut connection).unwrap();
+        for (filter, parameters, expected_index) in [
+            (
+                "command collate binary >= ? and command collate binary < ?",
+                vec!["git", "giu"],
+                "idx_command_history_command_prefix",
+            ),
+            (
+                "scope_kind = ? and scope_id = ? and command collate binary >= ? and command collate binary < ?",
+                vec!["saved_session", "scope", "git", "giu"],
+                "idx_command_history_scope_command_prefix",
+            ),
+        ] {
+            let mut statement = connection
+                .prepare(&format!(
+                    "explain query plan
+                     select id, scope_kind, scope_id, runtime_session_id, command, cwd, exit_code,
+                            started_at_ms, finished_at_ms
+                     from command_history where {filter}
+                     order by started_at_ms desc, id desc"
+                ))
+                .unwrap();
+            let plan: Vec<String> = statement
+                .query_map(params_from_iter(parameters), |row| row.get(3))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            assert!(
+                plan.iter().any(|step| step.contains(expected_index) && step.contains("SEARCH")),
+                "expected range search using {expected_index}: {plan:?}"
+            );
+        }
+    }
 }

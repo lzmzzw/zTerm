@@ -24,7 +24,7 @@ use crate::{
         ssh_command_service::SshCommandService,
     },
     storage::{
-        history::{search_command_history, search_global_command_history},
+        history::{search_command_history, search_command_history_prefix},
         sessions::{get_session, list_sessions},
         sqlite::SqliteStore,
     },
@@ -484,25 +484,13 @@ impl CommandCompletionService {
         seen_replacements: &mut HashSet<String>,
         candidates: &mut Vec<CommandCompletionCandidate>,
     ) -> AppResult<()> {
-        let entries = match (scope_kind, scope_id) {
-            (Some(scope_kind), Some(scope_id)) => search_command_history(
-                store,
-                HistorySearchOptions {
-                    query: Some(request.prefix.clone()),
-                    scope_kind: Some(scope_kind),
-                    scope_id: Some(scope_id.to_string()),
-                    limit: Some(HISTORY_SCAN_LIMIT),
-                    deduplicate: Some(true),
-                },
-            )?,
-            (None, None) => search_global_command_history(
-                store,
-                Some(request.prefix.clone()),
-                Some(HISTORY_SCAN_LIMIT),
-                Some(true),
-            )?,
-            _ => return Err(AppError::validation("历史作用域类型和 ID 必须同时提供")),
-        };
+        let entries = search_command_history_prefix(
+            store,
+            &request.prefix,
+            scope_kind,
+            scope_id,
+            Some(HISTORY_SCAN_LIMIT),
+        )?;
         for (index, entry) in entries.into_iter().enumerate() {
             if candidates.len() >= request.limit {
                 break;
@@ -1890,6 +1878,66 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn command_completion_history_prefix_survives_substring_scan_limit() {
+        let store = SqliteStore::open_in_memory().expect("store should open");
+        let insert = |scope_id: &str, command: &str, started_at_ms| {
+            insert_command_history(
+                &store,
+                CommandHistoryDraft {
+                    scope_kind: Some(HistoryScopeKind::SavedSession),
+                    scope_id: Some(scope_id.to_string()),
+                    runtime_session_id: "runtime-prefix".to_string(),
+                    command: command.to_string(),
+                    cwd: None,
+                    exit_code: None,
+                    started_at_ms,
+                    finished_at_ms: None,
+                },
+            )
+            .expect("history insert");
+        };
+        insert("current", "zcustom current", 1);
+        insert("other", "zcustom current", 2);
+        insert("current", "zcustom current", 3);
+        insert("other", "zcustom global", 4);
+        for index in 0..550 {
+            insert(
+                "current",
+                &format!("echo zcustom distraction-{index}"),
+                100 + index,
+            );
+        }
+        insert("current", "ZCUSTOM uppercase", 1000);
+        let service = CommandCompletionService::new();
+        service.register_runtime(
+            "runtime-prefix",
+            RuntimeSessionKind::Ssh,
+            Some("current".to_string()),
+            Some(HistoryScopeKind::SavedSession),
+            Some("current".to_string()),
+        );
+        let candidates = service
+            .suggest(
+                &store,
+                CommandCompletionRequest {
+                    runtime_session_id: "runtime-prefix".to_string(),
+                    input: "zcustom ".to_string(),
+                    cursor: 8,
+                    limit: Some(8),
+                    cwd: None,
+                },
+            )
+            .expect("prefix completion should suggest");
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].replacement_text, "zcustom current");
+        assert_eq!(candidates[0].suffix, "current");
+        assert_eq!(candidates[0].source_label, "当前会话历史");
+        assert_eq!(candidates[1].replacement_text, "zcustom global");
+        assert_eq!(candidates[1].source_label, "全局历史");
+        assert!(candidates[0].score > candidates[1].score);
     }
 
     #[test]

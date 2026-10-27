@@ -190,6 +190,8 @@ pub fn run_migrations(connection: &mut Connection) -> AppResult<()> {
         create index if not exists idx_saved_sessions_type on saved_sessions(type);
         create index if not exists idx_command_history_runtime_time on command_history(runtime_session_id, started_at_ms desc);
         create index if not exists idx_command_history_scope_time on command_history(scope_kind, scope_id, started_at_ms desc);
+        create index if not exists idx_command_history_command_prefix on command_history(command collate binary, started_at_ms desc, id desc);
+        create index if not exists idx_command_history_scope_command_prefix on command_history(scope_kind, scope_id, command collate binary, started_at_ms desc, id desc);
         create index if not exists idx_transfer_tasks_session_status on transfer_tasks(saved_session_id, status);
         create index if not exists idx_credential_records_kind_name on credential_records(kind, name);
         create index if not exists idx_ai_tool_pending_created on ai_tool_pending(created_at_ms desc);
