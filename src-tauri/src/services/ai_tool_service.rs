@@ -2559,7 +2559,7 @@ fn spawn_ai_file_transfer(
         }
     };
     tauri::async_runtime::spawn(async move {
-        let _execution_slot = match queue.acquire_execution_slot(&control).await {
+        let _execution_slot = match queue.acquire_execution_slot(&control, &[&session]).await {
             Ok(slot) => slot,
             Err(_) => {
                 let _ = queue.unregister_control(&task.id);

@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use crate::{
@@ -22,7 +22,123 @@ use crate::{
     time::now_ms,
 };
 
-const MAX_CONCURRENT_TRANSFER_EXECUTIONS: usize = 1;
+const MAX_CONCURRENT_TRANSFER_EXECUTIONS: usize = 4;
+const MAX_CONCURRENT_HOST_TRANSFERS: usize = 2;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct TransferHostKey {
+    host: String,
+    port: u16,
+}
+
+impl TransferHostKey {
+    fn for_session(session: &crate::models::session::SavedSession) -> Option<Self> {
+        use crate::models::session::SessionType;
+        matches!(
+            session.session_type,
+            SessionType::Ssh | SessionType::Sftp | SessionType::Ftp
+        )
+        .then(|| Self {
+            host: session.host.trim().to_ascii_lowercase(),
+            port: session.port,
+        })
+    }
+}
+
+#[derive(Default)]
+struct TransferExecutionState {
+    active: usize,
+    hosts: HashMap<TransferHostKey, usize>,
+}
+
+#[derive(Default)]
+struct TransferExecutionScheduler {
+    state: Mutex<TransferExecutionState>,
+    changed: Notify,
+}
+
+pub(crate) struct TransferExecutionLease {
+    scheduler: Arc<TransferExecutionScheduler>,
+    hosts: Vec<TransferHostKey>,
+}
+
+impl Drop for TransferExecutionLease {
+    fn drop(&mut self) {
+        let mut state = self
+            .scheduler
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.active -= 1;
+        for host in &self.hosts {
+            if let Some(count) = state.hosts.get_mut(host) {
+                *count -= 1;
+                if *count == 0 {
+                    state.hosts.remove(host);
+                }
+            }
+        }
+        drop(state);
+        self.scheduler.changed.notify_waiters();
+    }
+}
+
+impl TransferExecutionScheduler {
+    async fn acquire(
+        self: &Arc<Self>,
+        control: &TransferRunControl,
+        mut hosts: Vec<TransferHostKey>,
+    ) -> AppResult<TransferExecutionLease> {
+        hosts.sort();
+        hosts.dedup();
+        loop {
+            // 在检查状态之前注册两个通知，避免释放名额或取消恰好发生在检查与等待之间。
+            let changed = self.changed.notified();
+            let controlled = control.inner.notify.notified();
+            tokio::pin!(changed, controlled);
+            changed.as_mut().enable();
+            controlled.as_mut().enable();
+            if control.is_cancelled() {
+                return Err(AppError::sftp("传输已取消"));
+            }
+            if !control.is_paused() {
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| AppError::storage("传输执行队列锁定失败"))?;
+                // 两端配额在同一临界区一次性申请，绝不持有一端等待另一端。
+                if state.active < MAX_CONCURRENT_TRANSFER_EXECUTIONS
+                    && hosts.iter().all(|host| {
+                        state.hosts.get(host).copied().unwrap_or(0) < MAX_CONCURRENT_HOST_TRANSFERS
+                    })
+                {
+                    state.active += 1;
+                    for host in &hosts {
+                        *state.hosts.entry(host.clone()).or_default() += 1;
+                    }
+                    drop(state);
+                    let lease = TransferExecutionLease {
+                        scheduler: Arc::clone(self),
+                        hosts,
+                    };
+                    if control.is_cancelled() {
+                        return Err(AppError::sftp("传输已取消"));
+                    }
+                    if control.is_paused() {
+                        hosts = lease.hosts.clone();
+                        drop(lease);
+                        continue;
+                    }
+                    return Ok(lease);
+                }
+            }
+            tokio::select! {
+                _ = &mut changed => {},
+                _ = &mut controlled => {},
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct TransferRunControl {
@@ -96,7 +212,7 @@ impl TransferRunControl {
 #[derive(Clone)]
 pub struct TransferQueue {
     controls: Arc<Mutex<HashMap<String, TransferRunControl>>>,
-    execution_slots: Arc<Semaphore>,
+    execution_slots: Arc<TransferExecutionScheduler>,
     store: Arc<SqliteStore>,
     transient_tasks: Arc<Mutex<HashMap<String, TransferTask>>>,
 }
@@ -105,7 +221,7 @@ impl TransferQueue {
     pub fn from_storage(store: Arc<SqliteStore>) -> Self {
         Self {
             controls: Arc::new(Mutex::new(HashMap::new())),
-            execution_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_TRANSFER_EXECUTIONS)),
+            execution_slots: Arc::new(TransferExecutionScheduler::default()),
             store,
             transient_tasks: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -118,24 +234,13 @@ impl TransferQueue {
     pub(crate) async fn acquire_execution_slot(
         &self,
         control: &TransferRunControl,
-    ) -> AppResult<OwnedSemaphorePermit> {
-        loop {
-            control.checkpoint().await?;
-            let execution_slots = Arc::clone(&self.execution_slots);
-            let permit = tokio::select! {
-                permit = execution_slots.acquire_owned() => permit
-                    .map_err(|_| AppError::storage("传输执行队列已关闭"))?,
-                _ = control.wait_for_state_change() => continue,
-            };
-            if control.is_cancelled() {
-                return Err(AppError::sftp("传输已取消"));
-            }
-            if control.is_paused() {
-                drop(permit);
-                continue;
-            }
-            return Ok(permit);
-        }
+        sessions: &[&crate::models::session::SavedSession],
+    ) -> AppResult<TransferExecutionLease> {
+        let hosts = sessions
+            .iter()
+            .filter_map(|session| TransferHostKey::for_session(session))
+            .collect();
+        self.execution_slots.acquire(control, hosts).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -427,6 +532,7 @@ impl TransferQueue {
             if task.status != TransferStatus::Failed {
                 return Err(AppError::validation("只有失败的传输任务可以重试"));
             }
+            reject_unknown_publish_retry(task)?;
             task.status = TransferStatus::Queued;
             task.transferred_bytes = 0;
             task.error_message = None;
@@ -434,6 +540,7 @@ impl TransferQueue {
         })? {
             return Ok(task);
         }
+        reject_unknown_publish_retry(&transfers::get_transfer_task(self.store.as_ref(), task_id)?)?;
         transfers::retry_transfer_task(self.store.as_ref(), task_id)
     }
 
@@ -753,6 +860,19 @@ fn is_external_session_id(value: &str) -> bool {
     value.starts_with("external:")
 }
 
+fn reject_unknown_publish_retry(task: &TransferTask) -> AppResult<()> {
+    if task
+        .error_message
+        .as_deref()
+        .is_some_and(|message| message.contains("SFTP_PUBLISH_OUTCOME_UNKNOWN"))
+    {
+        return Err(AppError::validation(
+            "目标文件发布结果未知，请先核对目标文件，再决定是否重新传输",
+        ));
+    }
+    Ok(())
+}
+
 fn endpoint_uses_external_session(endpoint: &TransferEndpoint) -> bool {
     endpoint
         .saved_session_id
@@ -775,18 +895,23 @@ mod tests {
     async fn limits_parallel_transfer_executions() {
         let store = Arc::new(SqliteStore::open_in_memory().expect("sqlite store should open"));
         let queue = TransferQueue::from_storage(store);
-        let first = queue
-            .acquire_execution_slot(&TransferRunControl::new())
-            .await
-            .expect("first transfer should start");
+        let mut permits = Vec::new();
+        for _ in 0..4 {
+            permits.push(
+                queue
+                    .acquire_execution_slot(&TransferRunControl::new(), &[])
+                    .await
+                    .unwrap(),
+            );
+        }
         let second_control = TransferRunControl::new();
-        let second = queue.acquire_execution_slot(&second_control);
+        let second = queue.acquire_execution_slot(&second_control, &[]);
         tokio::pin!(second);
 
         assert!(tokio::time::timeout(Duration::from_millis(20), &mut second)
             .await
             .is_err());
-        drop(first);
+        permits.pop();
         let _second = tokio::time::timeout(Duration::from_millis(100), &mut second)
             .await
             .expect("second transfer should start after the slot is released")
@@ -816,6 +941,219 @@ mod tests {
                 .expect("repeat cancel should be safe"),
             0
         );
+    }
+
+    fn host(name: &str) -> super::TransferHostKey {
+        super::TransferHostKey {
+            host: name.into(),
+            port: 22,
+        }
+    }
+
+    #[tokio::test]
+    async fn host_quota_and_atomic_cross_host_reservation_release_all_counts() {
+        let scheduler = Arc::new(super::TransferExecutionScheduler::default());
+        let control = TransferRunControl::new();
+        let first = scheduler.acquire(&control, vec![host("a")]).await.unwrap();
+        let second = scheduler.acquire(&control, vec![host("a")]).await.unwrap();
+        let cross = scheduler.acquire(&control, vec![host("b"), host("a"), host("b")]);
+        tokio::pin!(cross);
+        assert!(tokio::time::timeout(Duration::from_millis(20), &mut cross)
+            .await
+            .is_err());
+        assert!(
+            !scheduler
+                .state
+                .lock()
+                .unwrap()
+                .hosts
+                .contains_key(&host("b")),
+            "waiting for a must not reserve b"
+        );
+        let other = scheduler.acquire(&control, vec![host("b")]).await.unwrap();
+        drop(first);
+        let lease = tokio::time::timeout(Duration::from_millis(100), &mut cross)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            scheduler.state.lock().unwrap().hosts[&host("b")],
+            2,
+            "duplicate endpoint consumes only one quota"
+        );
+        drop((lease, second, other));
+        let state = scheduler.state.lock().unwrap();
+        assert_eq!(state.active, 0);
+        assert!(state.hosts.is_empty(), "idle hosts must not accumulate");
+    }
+
+    #[tokio::test]
+    async fn waiting_transfer_can_pause_resume_cancel_and_abort_without_leaking_slots() {
+        let scheduler = Arc::new(super::TransferExecutionScheduler::default());
+        let control = TransferRunControl::new();
+        control.pause();
+        let waiting = scheduler.acquire(&control, vec![host("a")]);
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+                .await
+                .is_err()
+        );
+        assert_eq!(scheduler.state.lock().unwrap().active, 0);
+        control.resume();
+        let lease = tokio::time::timeout(Duration::from_millis(100), &mut waiting)
+            .await
+            .unwrap()
+            .unwrap();
+        drop(lease);
+
+        let mut occupied = Vec::new();
+        for _ in 0..4 {
+            occupied.push(
+                scheduler
+                    .acquire(&TransferRunControl::new(), vec![])
+                    .await
+                    .unwrap(),
+            );
+        }
+        let cancelled = TransferRunControl::new();
+        let pending = scheduler.acquire(&cancelled, vec![host("cancelled")]);
+        tokio::pin!(pending);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut pending)
+                .await
+                .is_err()
+        );
+        cancelled.cancel();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut pending)
+                .await
+                .unwrap()
+                .is_err()
+        );
+        drop(occupied);
+        let spawned_scheduler = Arc::clone(&scheduler);
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _lease = spawned_scheduler
+                .acquire(&TransferRunControl::new(), vec![host("abort")])
+                .await
+                .unwrap();
+            started.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        ready.await.unwrap();
+        task.abort();
+        let _ = task.await;
+        assert_eq!(scheduler.state.lock().unwrap().active, 0);
+        assert!(scheduler.state.lock().unwrap().hosts.is_empty());
+    }
+
+    fn test_session(store: &SqliteStore) -> crate::models::session::SavedSession {
+        save_session(
+            store,
+            SavedSessionDraft {
+                id: None,
+                name: "quota-test".into(),
+                session_type: SessionType::Ssh,
+                group_id: None,
+                host: "Example.TEST".into(),
+                port: 22,
+                username: "ops".into(),
+                auth_mode: AuthMode::Agent,
+                credential_ref: None,
+                description: None,
+                tags: Vec::new(),
+                sort_order: 0,
+                ssh_options: None,
+                rdp_options: None,
+                local_options: None,
+                ftp_options: None,
+            },
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn sessions_share_host_port_quota_and_local_endpoints_have_no_host_quota() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let session = test_session(&store);
+        let mut other = session.clone();
+        other.id = "another-session".into();
+        other.host = session.host.to_ascii_uppercase();
+        other.session_type = SessionType::Ftp;
+        assert_eq!(
+            super::TransferHostKey::for_session(&session),
+            super::TransferHostKey::for_session(&other)
+        );
+        let queue = TransferQueue::from_storage(store);
+        let control = TransferRunControl::new();
+        let _first = queue
+            .acquire_execution_slot(&control, &[&session])
+            .await
+            .unwrap();
+        let _second = queue
+            .acquire_execution_slot(&control, &[&other])
+            .await
+            .unwrap();
+        assert!(tokio::time::timeout(
+            Duration::from_millis(20),
+            queue.acquire_execution_slot(&control, &[&other])
+        )
+        .await
+        .is_err());
+        other.port = 2121;
+        let _third = queue
+            .acquire_execution_slot(&control, &[&other])
+            .await
+            .unwrap();
+        other.session_type = SessionType::Local;
+        assert!(super::TransferHostKey::for_session(&other).is_none());
+        let _local = queue
+            .acquire_execution_slot(&control, &[&other])
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn retry_rejects_unknown_publish_for_persisted_and_transient_tasks_only() {
+        let store = Arc::new(SqliteStore::open_in_memory().unwrap());
+        let session = test_session(&store);
+        let queue = TransferQueue::from_storage(store);
+        for session_id in [session.id.as_str(), "external:test"] {
+            let task = queue
+                .enqueue(
+                    session_id,
+                    TransferDirection::Upload,
+                    "C:/source",
+                    "/destination",
+                    Some(TransferKind::File),
+                    TransferConflictPolicy::Overwrite,
+                    1,
+                )
+                .unwrap();
+            queue
+                .mark_failed(&task.id, "SFTP_PUBLISH_OUTCOME_UNKNOWN: connection closed")
+                .unwrap();
+            assert!(queue
+                .retry_failed(&task.id)
+                .unwrap_err()
+                .to_string()
+                .contains("先核对目标"));
+            let unchanged = queue.get(&task.id).unwrap();
+            assert_eq!(unchanged.status, TransferStatus::Failed);
+            assert!(unchanged
+                .error_message
+                .unwrap()
+                .contains("SFTP_PUBLISH_OUTCOME_UNKNOWN"));
+            queue
+                .mark_failed(&task.id, "ordinary transfer failure")
+                .unwrap();
+            assert_eq!(
+                queue.retry_failed(&task.id).unwrap().status,
+                TransferStatus::Queued
+            );
+        }
     }
 
     #[test]

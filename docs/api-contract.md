@@ -218,6 +218,8 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 
 ## Events
 
+后台文件传输共用有界调度：全局最多 4 个执行，同一规范化 host+port 最多 2 个；跨服务器中转一次性占用两端配额，同一端点去重。本地端不占主机配额，等待任务支持暂停和取消。桌面与 MCP 入队任务遵守相同限制。失败信息含 `SFTP_PUBLISH_OUTCOME_UNKNOWN` 时表示最终发布结果未知，必须先核对目标，不允许直接重试该任务；普通失败重试保持原行为。
+
 | Event | Payload | 触发时机 |
 | --- | --- | --- |
 | `terminal:data` | `{ runtime_session_id, generation, sequence, data, data_base64 }` | 后端收到终端输出；`data_base64` 保留 PTY 原始字节供 ZMODEM |

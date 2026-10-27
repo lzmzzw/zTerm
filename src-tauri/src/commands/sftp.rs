@@ -693,7 +693,7 @@ fn spawn_transfer(
     let registration = TransferControlRegistration::new(queue.clone(), task.id.clone());
     tauri::async_runtime::spawn(async move {
         let _registration = registration;
-        let _execution_slot = match queue.acquire_execution_slot(&control).await {
+        let _execution_slot = match queue.acquire_execution_slot(&control, &[&session]).await {
             Ok(slot) => slot,
             Err(error) => {
                 match queue.get(&task.id) {
@@ -809,7 +809,14 @@ fn spawn_file_transfer(
     let registration = TransferControlRegistration::new(queue.clone(), task.id.clone());
     tauri::async_runtime::spawn(async move {
         let _registration = registration;
-        let _execution_slot = match queue.acquire_execution_slot(&control).await {
+        let endpoint_sessions = source_session
+            .iter()
+            .chain(destination_session.iter())
+            .collect::<Vec<_>>();
+        let _execution_slot = match queue
+            .acquire_execution_slot(&control, &endpoint_sessions)
+            .await
+        {
             Ok(slot) => slot,
             Err(error) => {
                 match queue.get(&task.id) {
