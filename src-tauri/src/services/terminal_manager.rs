@@ -1,6 +1,6 @@
 // Author: Liz
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io::{Read, Write},
     path::{Path, PathBuf},
     process::Child as ProcessChild,
@@ -34,12 +34,14 @@ use crate::{
 };
 
 const PTY_KILL_REAP_TIMEOUT: Duration = Duration::from_secs(1);
+const OUTPUT_RETAINED_CHARS: usize = 24_000;
+const OUTPUT_CHUNK_BYTES: usize = 4096;
 
 #[derive(Default)]
 pub struct TerminalManager {
     sessions: Mutex<HashMap<String, Arc<RuntimeSession>>>,
     infos: Mutex<HashMap<String, RuntimeSessionInfo>>,
-    output_buffers: Mutex<HashMap<String, OutputBuffer>>,
+    output_buffers: Mutex<HashMap<String, Arc<Mutex<OutputBuffer>>>>,
     output_suppressions: Mutex<HashMap<String, OutputSuppression>>,
 }
 
@@ -87,10 +89,129 @@ struct NativeSshRuntimeState {
 
 #[derive(Default)]
 struct OutputBuffer {
-    data: String,
+    chunks: VecDeque<OutputChunk>,
+    retained_chars: usize,
+    retained_bytes: usize,
     start_cursor: usize,
     end_cursor: usize,
     updated_at_ms: i64,
+}
+
+struct OutputChunk {
+    data: String,
+    // 淘汰首块的一部分时只移动 UTF-8 边界，不搬移仍保留的内容。
+    start: usize,
+    chars: usize,
+}
+
+impl OutputBuffer {
+    fn append(&mut self, mut data: &str) {
+        self.end_cursor = self.end_cursor.saturating_add(data.len());
+        while !data.is_empty() {
+            let capacity = self
+                .chunks
+                .back()
+                .map_or(0, |chunk| OUTPUT_CHUNK_BYTES - chunk.data.len());
+            let mut take = data.len().min(capacity);
+            while !data.is_char_boundary(take) {
+                take -= 1;
+            }
+            if take == 0 {
+                self.chunks.push_back(OutputChunk {
+                    data: String::with_capacity(OUTPUT_CHUNK_BYTES),
+                    start: 0,
+                    chars: 0,
+                });
+                continue;
+            }
+            let part = &data[..take];
+            let chars = part.chars().count();
+            let chunk = self.chunks.back_mut().expect("output chunk exists");
+            chunk.data.push_str(part);
+            chunk.chars += chars;
+            self.retained_chars += chars;
+            self.retained_bytes += take;
+            data = &data[take..];
+            self.trim();
+        }
+        self.start_cursor = self.end_cursor.saturating_sub(self.retained_bytes);
+        self.updated_at_ms = now_ms();
+    }
+
+    fn trim(&mut self) {
+        while self.retained_chars > OUTPUT_RETAINED_CHARS {
+            let excess = self.retained_chars - OUTPUT_RETAINED_CHARS;
+            let first = self.chunks.front_mut().expect("retained output exists");
+            if first.chars <= excess {
+                self.retained_chars -= first.chars;
+                self.retained_bytes -= first.data.len() - first.start;
+                self.chunks.pop_front();
+            } else {
+                let bytes = first.data[first.start..]
+                    .char_indices()
+                    .nth(excess)
+                    .expect("partial chunk remains")
+                    .0;
+                first.start += bytes;
+                first.chars -= excess;
+                self.retained_chars -= excess;
+                self.retained_bytes -= bytes;
+            }
+        }
+    }
+
+    fn read_after(&self, cursor: usize, max_chars: usize) -> OutputRead {
+        let expired = cursor < self.start_cursor;
+        if cursor >= self.end_cursor {
+            return OutputRead {
+                output: String::new(),
+                cursor: self.end_cursor,
+                truncated: expired,
+            };
+        }
+        let mut skip_bytes = cursor.saturating_sub(self.start_cursor);
+        let mut available_chars = 0;
+        let mut parts = Vec::new();
+        for chunk in &self.chunks {
+            let data = &chunk.data[chunk.start..];
+            if skip_bytes >= data.len() {
+                skip_bytes -= data.len();
+                continue;
+            }
+            let suffix = byte_suffix(data, skip_bytes);
+            let chars = if skip_bytes == 0 {
+                chunk.chars
+            } else {
+                suffix.chars().count()
+            };
+            skip_bytes = 0;
+            available_chars += chars;
+            parts.push((suffix, chars));
+        }
+        let mut skip_chars = available_chars.saturating_sub(max_chars);
+        let mut output = String::new();
+        for (part, chars) in parts {
+            if skip_chars >= chars {
+                skip_chars -= chars;
+                continue;
+            }
+            let start = if skip_chars == 0 {
+                0
+            } else {
+                part.char_indices()
+                    .nth(skip_chars)
+                    .expect("output suffix exists")
+                    .0
+            };
+            output.push_str(&part[start..]);
+            skip_chars = 0;
+        }
+        OutputRead {
+            output,
+            cursor: self.end_cursor,
+            truncated: expired || available_chars > max_chars,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -690,16 +811,18 @@ impl TerminalManager {
     }
 
     pub fn record_output(&self, runtime_session_id: &str, data: &str) -> AppResult<()> {
-        let mut buffers = self
+        // 全局锁只负责取得会话缓冲；追加、裁剪和读取都使用各自会话的锁。
+        let buffer = self
             .output_buffers
             .lock()
-            .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?;
-        let buffer = buffers.entry(runtime_session_id.to_string()).or_default();
-        buffer.data.push_str(data);
-        buffer.end_cursor = buffer.end_cursor.saturating_add(data.len());
-        buffer.data = tail_chars(&buffer.data, 24_000);
-        buffer.start_cursor = buffer.end_cursor.saturating_sub(buffer.data.len());
-        buffer.updated_at_ms = now_ms();
+            .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?
+            .entry(runtime_session_id.to_string())
+            .or_default()
+            .clone();
+        buffer
+            .lock()
+            .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?
+            .append(data);
         Ok(())
     }
 
@@ -765,14 +888,13 @@ impl TerminalManager {
     }
 
     pub fn output_cursor(&self, runtime_session_id: &str) -> AppResult<usize> {
-        let buffers = self
-            .output_buffers
+        let Some(buffer) = self.output_buffer(runtime_session_id)? else {
+            return Ok(0);
+        };
+        let buffer = buffer
             .lock()
             .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?;
-        Ok(buffers
-            .get(runtime_session_id)
-            .map(|buffer| buffer.end_cursor)
-            .unwrap_or_default())
+        Ok(buffer.end_cursor)
     }
 
     pub fn output_read_after_cursor(
@@ -781,15 +903,17 @@ impl TerminalManager {
         cursor: usize,
         max_chars: usize,
     ) -> AppResult<OutputRead> {
-        let buffers = self
-            .output_buffers
+        let Some(buffer) = self.output_buffer(runtime_session_id)? else {
+            return Ok(OutputRead {
+                output: String::new(),
+                cursor: 0,
+                truncated: false,
+            });
+        };
+        let buffer = buffer
             .lock()
             .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?;
-        Ok(output_read_after_cursor(
-            buffers.get(runtime_session_id),
-            cursor,
-            max_chars,
-        ))
+        Ok(buffer.read_after(cursor, max_chars))
     }
 
     pub fn output_after_cursor(
@@ -808,13 +932,15 @@ impl TerminalManager {
         runtime_session_id: &str,
         max_chars: usize,
     ) -> AppResult<Option<String>> {
-        let buffers = self
-            .output_buffers
+        let Some(buffer) = self.output_buffer(runtime_session_id)? else {
+            return Ok(None);
+        };
+        let buffer = buffer
             .lock()
             .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?;
-        Ok(buffers
-            .get(runtime_session_id)
-            .map(|buffer| tail_chars(&buffer.data, max_chars)))
+        Ok(Some(
+            buffer.read_after(buffer.start_cursor, max_chars).output,
+        ))
     }
 
     pub fn wait_for_output_after(
@@ -886,13 +1012,25 @@ impl TerminalManager {
     }
 
     fn output_cursor_is_expired(&self, runtime_session_id: &str, cursor: usize) -> AppResult<bool> {
-        let buffers = self
-            .output_buffers
+        let Some(buffer) = self.output_buffer(runtime_session_id)? else {
+            return Ok(false);
+        };
+        let buffer = buffer
             .lock()
             .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?;
-        Ok(buffers
+        Ok(cursor < buffer.start_cursor)
+    }
+
+    fn output_buffer(
+        &self,
+        runtime_session_id: &str,
+    ) -> AppResult<Option<Arc<Mutex<OutputBuffer>>>> {
+        Ok(self
+            .output_buffers
+            .lock()
+            .map_err(|_| AppError::terminal("terminal output lock was poisoned"))?
             .get(runtime_session_id)
-            .is_some_and(|buffer| cursor < buffer.start_cursor))
+            .cloned())
     }
 
     fn runtime_session(&self, runtime_session_id: &str) -> AppResult<Arc<RuntimeSession>> {
@@ -973,34 +1111,7 @@ fn byte_suffix(value: &str, cursor: usize) -> &str {
     }
 }
 
-fn output_read_after_cursor(
-    buffer: Option<&OutputBuffer>,
-    cursor: usize,
-    max_chars: usize,
-) -> OutputRead {
-    let Some(buffer) = buffer else {
-        return OutputRead {
-            output: String::new(),
-            cursor: 0,
-            truncated: false,
-        };
-    };
-    let expired_cursor = cursor < buffer.start_cursor;
-    let suffix = if expired_cursor {
-        buffer.data.as_str()
-    } else if cursor >= buffer.end_cursor {
-        ""
-    } else {
-        byte_suffix(&buffer.data, cursor.saturating_sub(buffer.start_cursor))
-    };
-    let truncated = expired_cursor || suffix.chars().count() > max_chars;
-    OutputRead {
-        output: tail_chars(suffix, max_chars),
-        cursor: buffer.end_cursor,
-        truncated,
-    }
-}
-
+#[cfg(test)]
 fn tail_chars(value: &str, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();
@@ -1110,6 +1221,90 @@ mod tests {
         assert_eq!(tail_chars("abc", 0), "");
         assert_eq!(tail_chars("abc", 5), "abc");
         assert_eq!(tail_chars("a中🚀b", 3), "中🚀b");
+    }
+
+    #[test]
+    fn chunked_output_matches_string_reference_across_unicode_cursor_boundaries() {
+        let mut buffer = super::OutputBuffer::default();
+        let mut retained = String::new();
+        let mut end_cursor = 0usize;
+        for round in 0..64 {
+            let input = "a中🚀\r\n".repeat((round * 97) % 1500);
+            buffer.append(&input);
+            end_cursor += input.len();
+            retained.push_str(&input);
+            retained = tail_chars(&retained, 24_000);
+            let start_cursor = end_cursor - retained.len();
+            assert_eq!(buffer.retained_chars, retained.chars().count());
+            assert_eq!(buffer.retained_bytes, retained.len());
+            assert!(buffer
+                .chunks
+                .iter()
+                .all(|chunk| chunk.data.len() <= super::OUTPUT_CHUNK_BYTES));
+            for cursor in [
+                0,
+                start_cursor,
+                start_cursor + 1,
+                end_cursor / 2,
+                end_cursor.saturating_sub(1),
+                end_cursor,
+                end_cursor + 1,
+            ] {
+                let suffix = if cursor < start_cursor {
+                    retained.as_str()
+                } else {
+                    super::byte_suffix(&retained, cursor - start_cursor)
+                };
+                for max_chars in [0, 1, 17, 24_000, 25_000] {
+                    let read = buffer.read_after(cursor, max_chars);
+                    assert_eq!(
+                        read.output,
+                        tail_chars(suffix, max_chars),
+                        "round {round}, cursor {cursor}, max {max_chars}"
+                    );
+                    assert_eq!(read.cursor, end_cursor);
+                    assert_eq!(
+                        read.truncated,
+                        cursor < start_cursor || suffix.chars().count() > max_chars
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tiny_output_appends_coalesce_and_keep_a_bounded_unicode_tail() {
+        let mut buffer = super::OutputBuffer::default();
+        for _ in 0..30_000 {
+            buffer.append("中");
+        }
+        assert_eq!(buffer.retained_chars, 24_000);
+        assert_eq!(buffer.retained_bytes, 72_000);
+        assert!(
+            buffer.chunks.len() < 20,
+            "small reads must not allocate one chunk per character"
+        );
+        assert_eq!(buffer.read_after(0, 3).output, "中中中");
+    }
+
+    #[test]
+    fn output_buffer_lock_does_not_block_another_session() {
+        use std::sync::{mpsc, Arc};
+        let manager = Arc::new(TerminalManager::default());
+        manager.record_output("locked", "a").unwrap();
+        let buffer = manager.output_buffer("locked").unwrap().unwrap();
+        let locked = buffer.lock().unwrap();
+        let writer = Arc::clone(&manager);
+        let (sent, received) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            writer.record_output("independent", "中").unwrap();
+            sent.send(writer.output_tail("independent", 10).unwrap())
+                .unwrap();
+        });
+        let result = received.recv_timeout(Duration::from_secs(1));
+        drop(locked);
+        worker.join().unwrap();
+        assert_eq!(result.unwrap().as_deref(), Some("中"));
     }
 
     #[test]
