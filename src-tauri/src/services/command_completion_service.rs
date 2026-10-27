@@ -7,6 +7,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "completion_refresh.rs"]
+mod refresh;
+
 use crate::{
     error::{AppError, AppResult},
     models::{
@@ -15,13 +18,17 @@ use crate::{
             CommandCompletionReplacementRange, CommandCompletionRequest,
         },
         history::{HistoryScopeKind, HistorySearchOptions},
-        session::SessionType,
+        session::{SavedSession, SessionType},
         sftp::{FileEntry, FileKind},
         terminal::RuntimeSessionKind,
     },
     services::{
-        credential_service::CredentialService, sftp_service::SftpService,
-        ssh_command_service::SshCommandService,
+        credential_service::CredentialService,
+        sftp_service::SftpService,
+        ssh_command_service::{
+            build_ssh_command_execution, reusable_connection_key_for_execution,
+            SshCommandSecretResolver, SshCommandService,
+        },
     },
     storage::{
         history::{search_command_history, search_command_history_prefix},
@@ -42,6 +49,9 @@ const REMOTE_PATH_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_PATH_ENTRIES: usize = 200;
 const MAX_LOCAL_PATH_SCAN_ENTRIES: usize = 10_000;
 const MAX_REMOTE_PATH_CACHE_KEYS: usize = 128;
+const MAX_REMOTE_COMMAND_CACHE_KEYS: usize = 128;
+const REMOTE_COMMAND_STALE: Duration = Duration::from_secs(300);
+const REMOTE_PATH_STALE: Duration = Duration::from_secs(30);
 const MAX_SYSTEM_COMMANDS: usize = 1500;
 const REMOTE_COMMAND_DISCOVERY_SCRIPT: &str = r#"
 PATH_VALUE=${PATH:-}
@@ -82,9 +92,8 @@ pub struct CommandCompletionService {
 struct CommandCompletionState {
     local_commands: Mutex<Option<CachedCommands>>,
     remote_commands: Mutex<HashMap<String, CachedCommands>>,
-    remote_refresh_inflight: Mutex<HashSet<String>>,
     remote_paths: Mutex<HashMap<String, CachedPathEntries>>,
-    remote_path_refresh_inflight: Mutex<HashSet<String>>,
+    refresh: Arc<refresh::Scheduler>,
     runtimes: Mutex<HashMap<String, RuntimeCompletionContext>>,
 }
 
@@ -100,12 +109,34 @@ struct RuntimeCompletionContext {
 struct CachedCommands {
     commands: Vec<String>,
     expires_at: Instant,
+    stale_until: Instant,
+    route: Option<refresh::Route>,
 }
 
 #[derive(Clone)]
 struct CachedPathEntries {
     entries: Vec<FileEntry>,
     expires_at: Instant,
+    stale_until: Instant,
+    route: Option<refresh::Route>,
+}
+
+struct FingerprintSecrets;
+
+impl SshCommandSecretResolver for FingerprintSecrets {
+    fn secret_for(&self, _: &str) -> AppResult<String> {
+        Ok(String::new())
+    }
+}
+
+fn route_fingerprint(session: &SavedSession, all_sessions: &[SavedSession]) -> AppResult<String> {
+    let execution =
+        build_ssh_command_execution(session, all_sessions, "true".into(), &FingerprintSecrets)?;
+    Ok(
+        reusable_connection_key_for_execution("completion", &execution)
+            .as_str()
+            .to_owned(),
+    )
 }
 
 impl CommandCompletionService {
@@ -153,6 +184,13 @@ impl CommandCompletionService {
             return Ok(Vec::new());
         }
         let context = self.runtime_context(&request.runtime_session_id)?;
+        if context.kind == RuntimeSessionKind::Ssh {
+            if let Some(session_id) = context.saved_session_id.as_deref() {
+                if self.prepare_remote_route(store, session_id).is_err() {
+                    self.inner.refresh.invalidate(session_id);
+                }
+            }
+        }
         let mut candidates = Vec::new();
         let mut seen_replacements = HashSet::new();
         let local = context.kind == RuntimeSessionKind::Local;
@@ -231,20 +269,22 @@ impl CommandCompletionService {
         credential_service: CredentialService,
         saved_session_id: String,
     ) {
-        if saved_session_id.trim().is_empty() || self.remote_cache_is_fresh(&saved_session_id) {
+        let Ok((session, all_sessions, route)) =
+            self.prepare_remote_route(store.as_ref(), &saved_session_id)
+        else {
+            self.inner.refresh.invalidate(&saved_session_id);
+            return;
+        };
+        if self.remote_cache_is_fresh(&saved_session_id) {
             return;
         }
-        if !self.try_mark_remote_refresh(&saved_session_id) {
+        let host = format!("{}:{}", session.host.to_ascii_lowercase(), session.port);
+        let Some(mut probe) = self.inner.refresh.start(&route, &host, "commands") else {
             return;
-        }
+        };
         let service = self.clone();
         tauri::async_runtime::spawn(async move {
             let result: AppResult<Vec<String>> = async {
-                let session = get_session(store.as_ref(), &saved_session_id)?;
-                if session.session_type != SessionType::Ssh {
-                    return Ok(Vec::new());
-                }
-                let all_sessions = list_sessions(store.as_ref())?.sessions;
                 let output = tokio::time::timeout(
                     REMOTE_COMMAND_TIMEOUT,
                     ssh_commands.execute(
@@ -256,21 +296,29 @@ impl CommandCompletionService {
                 )
                 .await
                 .map_err(|_| AppError::ssh("远端命令探测超时"))??;
-                if output.success {
+                if output.success && !output.stdout_truncated {
                     Ok(parse_remote_command_output(
                         &output.stdout,
                         MAX_SYSTEM_COMMANDS,
                     ))
                 } else {
-                    Ok(Vec::new())
+                    Err(AppError::ssh("远端命令探测失败"))
                 }
             }
             .await;
 
             if let Ok(commands) = result {
-                service.store_remote_commands(&saved_session_id, commands);
+                if service.route_still_current(store.as_ref(), &saved_session_id, &route) {
+                    service.inner.refresh.publish(&route, || {
+                        service.store_remote_commands_for_route(
+                            &saved_session_id,
+                            commands,
+                            Some(route.clone()),
+                        )
+                    });
+                    probe.succeeded();
+                }
             }
-            service.finish_remote_refresh(&saved_session_id);
         });
     }
 
@@ -322,21 +370,28 @@ impl CommandCompletionService {
             return;
         };
         let lookup = query.lookup_directory;
+        let Ok((session, all_sessions, route)) =
+            self.prepare_remote_route(store.as_ref(), &saved_session_id)
+        else {
+            self.inner.refresh.invalidate(&saved_session_id);
+            return;
+        };
         let provisional_key = remote_path_cache_key(&saved_session_id, &lookup);
-        if self.remote_path_cache_is_fresh(&provisional_key)
-            || !self.try_mark_remote_path_refresh(&provisional_key)
-        {
+        if self.remote_path_cache_is_fresh(&provisional_key) {
             return;
         }
+        let host = format!("{}:{}", session.host.to_ascii_lowercase(), session.port);
+        let Some(mut probe) = self
+            .inner
+            .refresh
+            .start(&route, &host, &format!("path:{lookup}"))
+        else {
+            return;
+        };
 
         let service = self.clone();
         tauri::async_runtime::spawn(async move {
             let result: AppResult<(String, Vec<FileEntry>)> = async {
-                let session = get_session(store.as_ref(), &saved_session_id)?;
-                if session.session_type != SessionType::Ssh {
-                    return Err(AppError::validation("路径补全只支持 SSH 会话"));
-                }
-                let all_sessions = list_sessions(store.as_ref())?.sessions;
                 let canonical_input = if lookup == "~" || lookup.starts_with("~/") {
                     let home = tokio::time::timeout(
                         REMOTE_PATH_TIMEOUT,
@@ -375,9 +430,19 @@ impl CommandCompletionService {
             .await;
 
             if let Ok((canonical, entries)) = result {
-                service.store_remote_path_entries(&saved_session_id, &lookup, &canonical, entries);
+                if service.route_still_current(store.as_ref(), &saved_session_id, &route) {
+                    service.inner.refresh.publish(&route, || {
+                        service.store_remote_path_entries_for_route(
+                            &saved_session_id,
+                            &lookup,
+                            &canonical,
+                            entries,
+                            Some(route.clone()),
+                        )
+                    });
+                    probe.succeeded();
+                }
             }
-            service.finish_remote_path_refresh(&provisional_key);
         });
     }
 
@@ -453,6 +518,40 @@ impl CommandCompletionService {
             }
             RuntimeSessionKind::SshContainer | RuntimeSessionKind::RdpPlaceholder => Ok(None),
         }
+    }
+
+    fn route_still_current(
+        &self,
+        store: &SqliteStore,
+        saved_session_id: &str,
+        route: &refresh::Route,
+    ) -> bool {
+        match self.prepare_remote_route(store, saved_session_id) {
+            Ok((_, _, current)) => current == *route,
+            Err(_) => {
+                self.inner.refresh.invalidate(saved_session_id);
+                false
+            }
+        }
+    }
+
+    fn prepare_remote_route(
+        &self,
+        store: &SqliteStore,
+        saved_session_id: &str,
+    ) -> AppResult<(SavedSession, Vec<SavedSession>, refresh::Route)> {
+        let session = get_session(store, saved_session_id)?;
+        if session.session_type != SessionType::Ssh {
+            return Err(AppError::validation("远端补全只支持 SSH 会话"));
+        }
+        let all_sessions = list_sessions(store)?.sessions;
+        let fingerprint = route_fingerprint(&session, &all_sessions)?;
+        let route = self
+            .inner
+            .refresh
+            .bind(saved_session_id, fingerprint)
+            .ok_or_else(|| AppError::terminal("补全路由锁不可用"))?;
+        Ok((session, all_sessions, route))
     }
 
     fn runtime_context(&self, runtime_session_id: &str) -> AppResult<RuntimeCompletionContext> {
@@ -731,17 +830,22 @@ impl CommandCompletionService {
         lookup_directory: &str,
     ) -> AppResult<Vec<FileEntry>> {
         let key = remote_path_cache_key(saved_session_id, lookup_directory);
-        let mut cache =
-            self.inner.remote_paths.lock().map_err(|_| {
-                AppError::terminal("command completion path cache lock was poisoned")
-            })?;
-        if let Some(entry) = cache
+        let cached = self
+            .inner
+            .remote_paths
+            .lock()
+            .map_err(|_| AppError::terminal("command completion path cache lock was poisoned"))?
             .get(&key)
-            .filter(|entry| entry.expires_at > Instant::now())
-        {
+            .cloned();
+        if let Some(entry) = cached.filter(|entry| {
+            entry.stale_until > Instant::now()
+                && entry
+                    .route
+                    .as_ref()
+                    .is_none_or(|route| self.inner.refresh.current(route))
+        }) {
             return Ok(entry.entries.clone());
         }
-        cache.remove(&key);
         Ok(Vec::new())
     }
 
@@ -751,37 +855,50 @@ impl CommandCompletionService {
             .lock()
             .ok()
             .and_then(|cache| cache.get(key).cloned())
-            .is_some_and(|entry| entry.expires_at > Instant::now())
+            .is_some_and(|entry| {
+                entry.expires_at > Instant::now()
+                    && entry
+                        .route
+                        .as_ref()
+                        .is_none_or(|route| self.inner.refresh.current(route))
+            })
     }
 
-    fn try_mark_remote_path_refresh(&self, key: &str) -> bool {
-        let Ok(mut inflight) = self.inner.remote_path_refresh_inflight.lock() else {
-            return false;
-        };
-        inflight.insert(key.to_string())
-    }
-
-    fn finish_remote_path_refresh(&self, key: &str) {
-        if let Ok(mut inflight) = self.inner.remote_path_refresh_inflight.lock() {
-            inflight.remove(key);
-        }
-    }
-
+    #[cfg(test)]
     fn store_remote_path_entries(
         &self,
         saved_session_id: &str,
         requested_directory: &str,
         canonical_directory: &str,
+        entries: Vec<FileEntry>,
+    ) {
+        self.store_remote_path_entries_for_route(
+            saved_session_id,
+            requested_directory,
+            canonical_directory,
+            entries,
+            None,
+        );
+    }
+
+    fn store_remote_path_entries_for_route(
+        &self,
+        saved_session_id: &str,
+        requested_directory: &str,
+        canonical_directory: &str,
         mut entries: Vec<FileEntry>,
+        route: Option<refresh::Route>,
     ) {
         sort_path_entries(&mut entries);
         entries.truncate(MAX_PATH_ENTRIES);
         let cached = CachedPathEntries {
             entries,
             expires_at: Instant::now() + REMOTE_PATH_TTL,
+            stale_until: Instant::now() + REMOTE_PATH_TTL + REMOTE_PATH_STALE,
+            route,
         };
         if let Ok(mut cache) = self.inner.remote_paths.lock() {
-            cache.retain(|_, entry| entry.expires_at > Instant::now());
+            cache.retain(|_, entry| entry.stale_until > Instant::now());
             while cache.len() >= MAX_REMOTE_PATH_CACHE_KEYS {
                 let Some(key) = cache.keys().next().cloned() else {
                     break;
@@ -819,6 +936,8 @@ impl CommandCompletionService {
         *cache = Some(CachedCommands {
             commands: commands.clone(),
             expires_at: now + LOCAL_COMMAND_TTL,
+            stale_until: now + LOCAL_COMMAND_TTL,
+            route: None,
         });
         Ok(commands)
     }
@@ -831,14 +950,16 @@ impl CommandCompletionService {
     }
 
     fn remote_commands(&self, saved_session_id: &str) -> AppResult<Vec<String>> {
-        let mut cache = self.remote_command_cache()?;
-        if let Some(entry) = cache
-            .get(saved_session_id)
-            .filter(|entry| entry.expires_at > Instant::now())
-        {
+        let cached = self.remote_command_cache()?.get(saved_session_id).cloned();
+        if let Some(entry) = cached.filter(|entry| {
+            entry.stale_until > Instant::now()
+                && entry
+                    .route
+                    .as_ref()
+                    .is_none_or(|route| self.inner.refresh.current(route))
+        }) {
             return Ok(entry.commands.clone());
         }
-        cache.remove(saved_session_id);
         Ok(Vec::new())
     }
 
@@ -848,34 +969,46 @@ impl CommandCompletionService {
             .lock()
             .ok()
             .and_then(|cache| cache.get(saved_session_id).cloned())
-            .is_some_and(|entry| entry.expires_at > Instant::now())
+            .is_some_and(|entry| {
+                entry.expires_at > Instant::now()
+                    && entry
+                        .route
+                        .as_ref()
+                        .is_none_or(|route| self.inner.refresh.current(route))
+            })
     }
 
-    fn try_mark_remote_refresh(&self, saved_session_id: &str) -> bool {
-        let Ok(mut inflight) = self.inner.remote_refresh_inflight.lock() else {
-            return false;
-        };
-        if inflight.contains(saved_session_id) {
-            return false;
-        }
-        inflight.insert(saved_session_id.to_string());
-        true
-    }
-
-    fn finish_remote_refresh(&self, saved_session_id: &str) {
-        if let Ok(mut inflight) = self.inner.remote_refresh_inflight.lock() {
-            inflight.remove(saved_session_id);
-        }
-    }
-
+    #[cfg(test)]
     fn store_remote_commands(&self, saved_session_id: &str, commands: Vec<String>) {
+        self.store_remote_commands_for_route(saved_session_id, commands, None);
+    }
+
+    fn store_remote_commands_for_route(
+        &self,
+        saved_session_id: &str,
+        commands: Vec<String>,
+        route: Option<refresh::Route>,
+    ) {
         let commands = normalize_command_names(commands, MAX_SYSTEM_COMMANDS);
         if let Ok(mut cache) = self.inner.remote_commands.lock() {
+            cache.retain(|_, entry| entry.stale_until > Instant::now());
+            if !cache.contains_key(saved_session_id) && cache.len() >= MAX_REMOTE_COMMAND_CACHE_KEYS
+            {
+                if let Some(oldest) = cache
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.expires_at)
+                    .map(|(key, _)| key.clone())
+                {
+                    cache.remove(&oldest);
+                }
+            }
             cache.insert(
                 saved_session_id.to_string(),
                 CachedCommands {
                     commands,
                     expires_at: Instant::now() + REMOTE_COMMAND_TTL,
+                    stale_until: Instant::now() + REMOTE_COMMAND_TTL + REMOTE_COMMAND_STALE,
+                    route,
                 },
             );
         }
@@ -1987,16 +2120,169 @@ mod tests {
     }
 
     #[test]
+    fn completion_refresh_caches_have_bounded_stale_and_generation_visibility() {
+        let service = CommandCompletionService::new();
+        let route = service
+            .inner
+            .refresh
+            .bind("session", "route1".into())
+            .unwrap();
+        service.store_remote_commands_for_route(
+            "session",
+            vec!["example".into()],
+            Some(route.clone()),
+        );
+        service.store_remote_path_entries_for_route(
+            "session",
+            "/tmp",
+            "/tmp",
+            vec![path_entry("example", FileKind::File)],
+            Some(route.clone()),
+        );
+        {
+            let mut commands = service.inner.remote_commands.lock().unwrap();
+            commands.get_mut("session").unwrap().expires_at =
+                std::time::Instant::now() - std::time::Duration::from_secs(1);
+            let mut paths = service.inner.remote_paths.lock().unwrap();
+            paths
+                .get_mut(&remote_path_cache_key("session", "/tmp"))
+                .unwrap()
+                .expires_at = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        }
+        assert!(!service.remote_cache_is_fresh("session"));
+        assert!(!service.remote_path_cache_is_fresh(&remote_path_cache_key("session", "/tmp")));
+        assert_eq!(service.remote_commands("session").unwrap(), vec!["example"]);
+        assert_eq!(
+            service
+                .remote_path_entries("session", "/tmp")
+                .unwrap()
+                .len(),
+            1
+        );
+        service
+            .inner
+            .remote_paths
+            .lock()
+            .unwrap()
+            .get_mut(&remote_path_cache_key("session", "/tmp"))
+            .unwrap()
+            .stale_until = std::time::Instant::now();
+        assert!(service
+            .remote_path_entries("session", "/tmp")
+            .unwrap()
+            .is_empty());
+        let current = service
+            .inner
+            .refresh
+            .bind("session", "route2".into())
+            .unwrap();
+        assert!(service.remote_commands("session").unwrap().is_empty());
+        assert!(service
+            .remote_path_entries("session", "/tmp")
+            .unwrap()
+            .is_empty());
+        assert!(!service
+            .inner
+            .refresh
+            .publish(&route, || panic!("obsolete result")));
+        assert!(service.inner.refresh.publish(&current, || service
+            .store_remote_commands_for_route(
+                "session",
+                vec!["current".into()],
+                Some(current.clone())
+            )));
+        service
+            .inner
+            .remote_commands
+            .lock()
+            .unwrap()
+            .get_mut("session")
+            .unwrap()
+            .stale_until = std::time::Instant::now();
+        assert!(service.remote_commands("session").unwrap().is_empty());
+    }
+
+    #[test]
+    fn completion_refresh_command_and_path_caches_are_bounded() {
+        let service = CommandCompletionService::new();
+        for index in 0..140 {
+            service.store_remote_commands(&index.to_string(), vec!["example".into()]);
+            service.store_remote_path_entries(
+                &index.to_string(),
+                "/tmp",
+                "/canonical",
+                vec![path_entry("example", FileKind::File)],
+            );
+        }
+        assert!(service.inner.remote_commands.lock().unwrap().len() <= 128);
+        assert!(service.inner.remote_paths.lock().unwrap().len() <= 128);
+    }
+
+    #[test]
+    fn completion_refresh_rereads_changed_target_and_jump_routes_before_publish() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let mut target_draft = ssh_draft("target");
+        let jump = save_session(&store, ssh_draft("jump")).unwrap();
+        target_draft.ssh_options = Some(crate::models::session::SshOptions {
+            jump_hosts: vec![jump.id.clone()],
+            ..crate::models::session::SshOptions::default()
+        });
+        let target = save_session(&store, target_draft).unwrap();
+        let service = CommandCompletionService::new();
+        let (_, _, old_route) = service.prepare_remote_route(&store, &target.id).unwrap();
+        let mut changed_jump = ssh_draft("jump");
+        changed_jump.id = Some(jump.id);
+        changed_jump.host = "changed.invalid".into();
+        save_session(&store, changed_jump).unwrap();
+        assert!(!service.route_still_current(&store, &target.id, &old_route));
+        assert!(!service
+            .inner
+            .refresh
+            .publish(&old_route, || panic!("old jump route")));
+        let (_, _, new_route) = service.prepare_remote_route(&store, &target.id).unwrap();
+        assert!(service.route_still_current(&store, &target.id, &new_route));
+        let mut changed_target = ssh_draft("target");
+        changed_target.id = Some(target.id.clone());
+        changed_target.port = 2222;
+        save_session(&store, changed_target).unwrap();
+        assert!(!service.route_still_current(&store, &target.id, &new_route));
+    }
+
+    #[test]
     fn command_completion_deduplicates_remote_refresh_inflight_by_session() {
         let service = CommandCompletionService::new();
-
-        assert!(service.try_mark_remote_refresh("session-1"));
-        assert!(!service.try_mark_remote_refresh("session-1"));
-        assert!(service.try_mark_remote_refresh("session-2"));
-
-        service.finish_remote_refresh("session-1");
-
-        assert!(service.try_mark_remote_refresh("session-1"));
+        let first = service
+            .inner
+            .refresh
+            .bind("session-1", "route1".into())
+            .unwrap();
+        let second = service
+            .inner
+            .refresh
+            .bind("session-2", "route2".into())
+            .unwrap();
+        let mut probe = service
+            .inner
+            .refresh
+            .start(&first, "host1", "commands")
+            .unwrap();
+        assert!(service
+            .inner
+            .refresh
+            .start(&first, "host1", "commands")
+            .is_none());
+        assert!(service
+            .inner
+            .refresh
+            .start(&second, "host2", "commands")
+            .is_some());
+        probe.succeeded();
+        drop(probe);
+        assert!(service
+            .inner
+            .refresh
+            .start(&first, "host1", "commands")
+            .is_some());
     }
 
     #[test]
@@ -2225,8 +2511,21 @@ mod tests {
             .remote_path_entries("session-b", "/srv")
             .expect("session-b cache")
             .is_empty());
-        assert!(service.try_mark_remote_path_refresh(&remote_path_cache_key("session-a", "/tmp")));
-        assert!(!service.try_mark_remote_path_refresh(&remote_path_cache_key("session-a", "/tmp")));
+        let route = service
+            .inner
+            .refresh
+            .bind("session-a", "route".into())
+            .unwrap();
+        let _probe = service
+            .inner
+            .refresh
+            .start(&route, "host-a", "path:/tmp")
+            .unwrap();
+        assert!(service
+            .inner
+            .refresh
+            .start(&route, "host-a", "path:/tmp")
+            .is_none());
 
         for index in 0..200 {
             let directory = format!("/cache-{index}");

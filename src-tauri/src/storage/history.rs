@@ -675,6 +675,50 @@ fn now_ms() -> AppResult<i64> {
 mod prefix_tests {
     use super::*;
 
+    #[test]
+    #[ignore = "manual 100k-row history query measurement"]
+    fn history_prefix_large_fixture_benchmark() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        store.write_transaction(|tx| {
+            let mut statement = tx.prepare("insert into command_history(id, scope_kind, scope_id, runtime_session_id, command, started_at_ms) values (?1, 'saved_session', ?2, 'benchmark', ?3, ?4)")?;
+            for index in 0..100_000i64 {
+                let command = if index % 1000 == 0 {
+                    format!("rare-prefix command-{index}")
+                } else {
+                    format!("echo rare-prefix command-{index}")
+                };
+                statement.execute(params![format!("bench-{index:06}"), format!("scope-{}", index / 1000), command, index])?;
+            }
+            Ok(())
+        }).unwrap();
+        let started = std::time::Instant::now();
+        let mut legacy_matches = 0;
+        for _ in 0..20 {
+            legacy_matches = search_global_command_history(
+                &store,
+                Some("rare-prefix".into()),
+                Some(500),
+                Some(true),
+            )
+            .unwrap()
+            .iter()
+            .filter(|entry| entry.command.starts_with("rare-prefix"))
+            .count();
+        }
+        let contains_elapsed = started.elapsed();
+        let started = std::time::Instant::now();
+        let mut prefix_matches = 0;
+        for _ in 0..20 {
+            prefix_matches =
+                search_command_history_prefix(&store, "rare-prefix", None, None, Some(500))
+                    .unwrap()
+                    .len();
+        }
+        eprintln!("100000 rows / 20 queries: contains={contains_elapsed:?} ({legacy_matches} valid candidates); indexed_prefix={:?} ({prefix_matches} valid candidates)", started.elapsed());
+        assert_eq!(legacy_matches, 0);
+        assert_eq!(prefix_matches, 100);
+    }
+
     fn insert(
         store: &SqliteStore,
         kind: HistoryScopeKind,
