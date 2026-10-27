@@ -36,7 +36,9 @@ describe("file transfer dialog styles", () => {
     expect(title).toContain("grid-template-columns: minmax(0, 1fr) auto");
     expect(title).toContain("align-items: center");
     expect(control).toContain("justify-self: end");
-    expect(control).not.toContain("position: absolute");
+    expect(control).toContain("position: absolute");
+    expect(control).toContain("left: 50%");
+    expect(control).toContain("transform: translate(-50%, -50%)");
     expect(control).toContain("height: 30px");
     expect(control).toContain("border: 1px solid var(--zt-border)");
     expect(control).toContain("background: var(--zt-bg-input)");

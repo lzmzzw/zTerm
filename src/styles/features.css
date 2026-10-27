@@ -1412,7 +1412,7 @@
   align-items: center;
   gap: 4px;
   height: 30px;
-  padding: 0 6px 0 5px;
+  padding: 0 0 0 5px;
   border: 1px solid var(--zt-border);
   border-radius: var(--zt-radius-control);
   background: var(--zt-bg-input);
@@ -1470,6 +1470,7 @@
 .zt-session-toolbar .zt-session-search-clear {
   width: 24px;
   height: 24px;
+  transform: translateX(1px);
   padding: 0;
   border: 0;
   background: transparent;
@@ -2198,6 +2199,10 @@
 }
 
 .zt-file-transfer-policy {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: inline-flex;
   align-items: center;
   justify-self: end;
@@ -2207,7 +2212,8 @@
   border-radius: var(--zt-radius-control);
   background: var(--zt-bg-input);
   font-size: var(--zt-font-size-caption);
-  font-weight: 400;
+  font-family: var(--zt-font-ui);
+  font-weight: 500;
 }
 
 .zt-file-transfer-policy-label {
@@ -2231,8 +2237,16 @@
   border-radius: 0;
   background: transparent;
   color: var(--zt-text-primary);
-  font-size: var(--zt-font-size-ui);
+  font-family: inherit;
+  font-size: var(--zt-font-size-caption);
+  font-weight: inherit;
   box-shadow: none;
+}
+
+.zt-select-list[aria-label="文件传输冲突策略"] {
+  font-family: var(--zt-font-ui);
+  font-size: var(--zt-font-size-caption);
+  font-weight: 500;
 }
 
 .zt-file-transfer-policy .zt-select-trigger:hover,

@@ -209,7 +209,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
   const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
   const [renameEntry, setRenameEntry] = useState<{ side: FileTransferSide; entry: FileEntry } | null>(null);
   const [deleteEntries, setDeleteEntries] = useState<{ side: FileTransferSide; entries: FileEntry[] } | null>(null);
-  const [transferDockCollapsed, setTransferDockCollapsed] = useState(false);
+  const [transferDockCollapsed, setTransferDockCollapsed] = useState(true);
   const [transferDockHeight, setTransferDockHeight] = useState<number | null>(null);
   const [transferPreparing, setTransferPreparing] = useState(false);
   const [transferPreparationError, setTransferPreparationError] = useState<string | null>(null);
@@ -572,7 +572,7 @@ export function FileTransferPanel({ language: _language = "zhCN" }: FileTransfer
       </div>
       <TransferPanel
         collapsible
-        defaultCollapsed={false}
+        defaultCollapsed
         tasks={transfers}
         onCancel={cancelTransfer}
         onDelete={deleteTransfer}

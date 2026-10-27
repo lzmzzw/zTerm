@@ -17,6 +17,18 @@ powershell -NoProfile -File scripts/run-cargo-msvc.ps1 clippy --lib -- -D warnin
 
 Windows 测试 runner 为测试可执行文件写入 Common Controls v6 manifest，避免 GUI 依赖的 `TaskDialogIndirect` 入口缺失；正式应用沿用 Tauri 的 manifest。
 
+### 资源管理器启动目录回归
+
+Windows 11 的非活动标签页也可能具有可见的 Shell view，不能仅凭 `IsWindowVisible` 选择目录。启动时捕获前台资源管理器的活动 `ShellTabWindowClass`，再按 `IShellBrowser::GetWindow` 匹配对应标签；无标签宿主的旧版资源管理器沿用窗口与可见性检查。此标签宿主属于 Explorer 实现细节，Windows 更新后应复测。
+
+真实目录识别测试默认忽略。对已观察到的资源管理器窗口设置 `ZTERM_TEST_EXPLORER_HWND`（十进制 HWND）与 `ZTERM_TEST_EXPLORER_DIRECTORY`（当前选中标签的绝对目录），运行：
+
+```powershell
+powershell -NoProfile -File scripts/run-cargo-msvc.ps1 test --lib selected_explorer_tab_resolves_expected_directory -- --ignored
+```
+
+至少在同窗口两个不同目录标签之间切换后分别断言，并检查单标签窗口。该测试验证真实 Shell 目录识别，不替代安装版地址栏输入 `zterm` 后的冷启动、单实例转发及新标签目录验收。
+
 若本机并行编译报告 `failed to mmap`、`os error 1455` 或页面文件不足，可执行 `powershell -NoProfile -File scripts/run-cargo-msvc.ps1 test -j 1` 降低编译并发。先核对资源错误，不因伴随的 crate metadata 错误就认定源码或依赖损坏。
 
 无前端的 PTY 集成测试需模拟终端对 `ESC[6n` 光标位置查询的响应：跨 reader 分片保存匹配状态，每次完整查询均回复 CPR，不假定查询与读取块对齐或仅出现一次。Windows CI 冷启动等待与进程关闭时限分别设置；允许较长的 shell 启动等待，不放宽关闭后子进程必须退出的断言。

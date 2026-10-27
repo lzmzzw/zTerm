@@ -852,7 +852,7 @@ describe("FileTransferPanel", () => {
     reopenedView.unmount();
   });
 
-  it("starts with the standalone transfer task dock expanded", async () => {
+  it("starts with the standalone transfer task dock collapsed and allows expanding it", async () => {
     invokeMock.mockImplementation((command: string) => {
       if (command === "file_transfer_local_roots") return Promise.resolve(["C:\\"]);
       if (command === "sessions_list") return Promise.resolve({ groups: [], sessions: [sshSession()] });
@@ -867,7 +867,10 @@ describe("FileTransferPanel", () => {
     await flushEffects();
     await flushEffects();
 
-    expect(button(view.container, "折叠传输任务")).toBeTruthy();
+    expect(button(view.container, "展开传输任务").getAttribute("aria-expanded")).toBe("false");
+    expect(view.container.querySelector('[aria-label="传输记录筛选"]')).toBeNull();
+    await click(button(view.container, "展开传输任务"));
+    expect(button(view.container, "折叠传输任务").getAttribute("aria-expanded")).toBe("true");
     expect(view.container.querySelector('[aria-label="传输记录筛选"]')).toBeTruthy();
 
     view.unmount();
