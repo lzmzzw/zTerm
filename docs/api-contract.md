@@ -230,6 +230,8 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 
 ## Security Notes
 
+- 原生 SSH 终端、后台 exec、SFTP 及每个跳板共用 `known_hosts` 校验，保留首次连接自动学习；已记录密钥变化（含算法变化）、不可读或无效条目拒绝连接。后台缓存复用时重新检查所有跳板与目标的已验证密钥，删除信任记录后不会通过复用重新学习。支持合法空白、逗号、通配/排除及 OpenSSH 散列主机名；当前不支持的信任标记保持拒绝。
+- 本地 PTY 在初始化失败和 runtime 关闭时幂等终止子进程。Windows 使用 kill-on-close Job 回收已绑定进程树，并只串行化 ConPTY 创建/销毁；Job 绑定失败时降级为直接子进程回收，不保证绑定前已启动的后代被收入 Job。
 - Secret、API Key、密码和私钥片段不得写入 SQLite、文档、日志或 UI 列表；MCP 保存密码连接时，密码只允许经本地确认进入 OS keyring，SQLite 只保存 `credential_ref`。
 - MCP 工具参数摘要、pending 和审计记录必须脱敏；`request_approval`/`safe` 下未审批的写入不得执行；`full_access` 的免审批是用户对该连接的显式策略，仍不能绕过工具 allowlist、目标校验、secret 输入隔离和审计。
 - MCP Bearer token 不写入 SQLite 或审计摘要；Origin 非本机时拒绝。MCP 工具参数不得携带 SSH 密码、私钥正文、API Key 或其他明文 secret。
@@ -243,6 +245,8 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 实时输出去重以片段序号为准：只有实际入队回放时已覆盖的片段可跳过。新到达的空格、重复字符、退格或光标控制序列，即使与旧快照尾部相同，也必须送入 xterm，避免回显与远端输入行错位。
 
 ### 输出消费与背压
+
+终端 reader 按字节过滤 shell history 标记与探测输出，文本快照使用增量 UTF-8 解码。多字节字符跨 read 时只等待文本补齐，原始字节仍立即进入 `data_base64`；因此 `data` 为空的事件也必须消费并 ACK。EOF 未闭合字符只在文本快照中记为替换字符，不向协议流补造字节。
 
 每个有界输出事件携带 `generation` 与递增 `sequence`。前端须在原始 ZMODEM 字节被处理、后台 replay 解析完成且可见终端写入完成后按序 ACK；纯协议数据无需可见渲染。隐藏终端由后台解析消费，关闭终端会唤醒等待中的 reader。每 runtime 未确认原始输出窗口为 256 KiB；Native SSH 队列最多 128 个 8 KiB 分块，保留字节顺序。无窗口的 headless dispatcher 不等待前端。桌面 runtime 首次输出最多等待消费者握手 10 秒，超时以明确原因终止，避免无限积压。
 

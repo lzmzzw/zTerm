@@ -839,6 +839,10 @@ impl SftpService {
         let metadata = SftpSessionMetadata::from_execution(&execution);
         self.cache.prune_if_due();
         if let Some(entry) = self.cache.get(&key) {
+            if let Err(error) = entry._connection.verify_host_keys() {
+                self.cache.remove_key_if_entry(&key, &entry);
+                return Err(error);
+            }
             entry.touch();
             return Ok(CachedSftpLease { key, entry });
         }

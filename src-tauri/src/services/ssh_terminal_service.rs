@@ -748,51 +748,8 @@ impl client::Handler for NativeSshHandler {
 }
 
 fn verify_native_server_key(host: &str, port: u16, key: &PublicKey) -> Result<(), keys::Error> {
-    static LOCK: Mutex<()> = Mutex::new(());
-    let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    #[cfg(not(test))]
-    let path = dirs::home_dir()
-        .ok_or(keys::Error::NoHomeDir)?
-        .join(".ssh")
-        .join("known_hosts");
-    #[cfg(test)]
-    let path = {
-        static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-        PATH.get_or_init(|| {
-            std::env::temp_dir().join(format!("zterm-test-known-hosts-{}", uuid::Uuid::new_v4()))
-        })
-        .clone()
-    };
-    // Do not silently bypass OpenSSH trust markers which this parser does not support.
-    match std::fs::read_to_string(&path) {
-        Ok(content)
-            if content
-                .lines()
-                .any(|line| line.trim_start().starts_with('@')) =>
-        {
-            return Err(
-                std::io::Error::other("known_hosts 包含当前原生 SSH 不支持的信任标记").into(),
-            );
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
-    let recorded = keys::known_hosts::known_host_keys_path(host, port, &path)?;
-    if recorded.is_empty() {
-        keys::known_hosts::learn_known_hosts_path(host, port, key, &path)?;
-    } else if !recorded
-        .iter()
-        .any(|(_, known)| known.key_data() == key.key_data())
-    {
-        // A changed algorithm is still a changed host identity.
-        return Err(keys::Error::KeyChanged {
-            line: recorded[0].0,
-        });
-    }
-    Ok(())
+    super::ssh_host_key::verify_server_key(host, port, key)
 }
-
 async fn connect_native_ssh(
     target: &NativeSshTarget,
     forwarded: tokio_mpsc::Sender<ForwardedTcpip>,

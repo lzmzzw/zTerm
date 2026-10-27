@@ -27,7 +27,7 @@ use tokio::{
 use crate::{
     error::{AppError, AppResult},
     models::session::{AuthMode, SavedSession, SessionType},
-    services::credential_service::CredentialService,
+    services::{credential_service::CredentialService, ssh_host_key::VerifiedHostKey},
     validation::required_text,
 };
 
@@ -466,15 +466,42 @@ impl fmt::Debug for SshCommandAuth {
 }
 
 #[derive(Debug)]
-struct SshCommandHandler;
+struct SshCommandHandler {
+    host: String,
+    port: u16,
+    verified_keys: Arc<Mutex<Vec<VerifiedHostKey>>>,
+}
+
+impl SshCommandHandler {
+    fn new(hop: &SshCommandHop, verified_keys: Arc<Mutex<Vec<VerifiedHostKey>>>) -> Self {
+        Self {
+            host: hop.host.clone(),
+            port: hop.port,
+            verified_keys,
+        }
+    }
+}
 
 impl client::Handler for SshCommandHandler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &PublicKey,
+        server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
+        let verified =
+            VerifiedHostKey::verify(&self.host, self.port, server_public_key).map_err(|error| {
+                russh::Error::IO(std::io::Error::other(format!(
+                    "SSH 主机密钥校验失败: {error}"
+                )))
+            })?;
+        let mut verified_keys = self
+            .verified_keys
+            .lock()
+            .map_err(|_| russh::Error::IO(std::io::Error::other("SSH 主机密钥记录锁不可用")))?;
+        if !verified_keys.contains(&verified) {
+            verified_keys.push(verified);
+        }
         Ok(true)
     }
 }
@@ -482,10 +509,27 @@ impl client::Handler for SshCommandHandler {
 pub(crate) struct SshConnectionChain {
     jumps: Vec<client::Handle<SshCommandHandler>>,
     target: client::Handle<SshCommandHandler>,
+    verified_keys: Arc<Mutex<Vec<VerifiedHostKey>>>,
 }
 
 impl SshConnectionChain {
+    pub(crate) fn verify_host_keys(&self) -> AppResult<()> {
+        let keys = self
+            .verified_keys
+            .lock()
+            .map_err(|_| AppError::ssh("SSH 主机密钥记录锁不可用"))?;
+        if keys.is_empty() {
+            return Err(AppError::ssh("SSH 连接缺少已验证的主机密钥"));
+        }
+        for key in keys.iter() {
+            key.recheck()
+                .map_err(|error| AppError::ssh(format!("SSH 主机密钥校验失败: {error}")))?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn open_session_channel(&self) -> AppResult<russh::Channel<client::Msg>> {
+        self.verify_host_keys()?;
         self.target
             .channel_open_session()
             .await
@@ -813,10 +857,9 @@ async fn execute_on_connection(
     execution: &SshCommandExecution,
 ) -> Result<SshCommandOutput, SshCommandRunError> {
     let mut channel = connection
-        .target
-        .channel_open_session()
+        .open_session_channel()
         .await
-        .map_err(|error| SshCommandRunError::BeforeWrite(russh_error(error)))?;
+        .map_err(SshCommandRunError::BeforeWrite)?;
     channel
         .exec(true, "sh -s")
         .await
@@ -873,34 +916,62 @@ async fn execute_on_connection(
 pub(crate) async fn connect_chain(
     execution: &SshCommandExecution,
 ) -> AppResult<SshConnectionChain> {
+    let verified_keys = Arc::new(Mutex::new(Vec::new()));
     if execution.jumps.is_empty() {
-        let mut target = connect_hop(&execution.target, execution.timeout_seconds).await?;
+        let mut target = connect_hop(
+            &execution.target,
+            execution.timeout_seconds,
+            Arc::clone(&verified_keys),
+        )
+        .await?;
         authenticate(&mut target, &execution.target).await?;
         return Ok(SshConnectionChain {
             jumps: Vec::new(),
             target,
+            verified_keys,
         });
     }
 
     let mut jumps = Vec::new();
-    let mut upstream = connect_hop(&execution.jumps[0], execution.timeout_seconds).await?;
+    let mut upstream = connect_hop(
+        &execution.jumps[0],
+        execution.timeout_seconds,
+        Arc::clone(&verified_keys),
+    )
+    .await?;
     authenticate(&mut upstream, &execution.jumps[0]).await?;
     for jump in execution.jumps.iter().skip(1) {
-        let mut next = connect_hop_through(&upstream, jump, execution.timeout_seconds).await?;
+        let mut next = connect_hop_through(
+            &upstream,
+            jump,
+            execution.timeout_seconds,
+            Arc::clone(&verified_keys),
+        )
+        .await?;
         authenticate(&mut next, jump).await?;
         jumps.push(upstream);
         upstream = next;
     }
-    let mut target =
-        connect_hop_through(&upstream, &execution.target, execution.timeout_seconds).await?;
+    let mut target = connect_hop_through(
+        &upstream,
+        &execution.target,
+        execution.timeout_seconds,
+        Arc::clone(&verified_keys),
+    )
+    .await?;
     authenticate(&mut target, &execution.target).await?;
     jumps.push(upstream);
-    Ok(SshConnectionChain { jumps, target })
+    Ok(SshConnectionChain {
+        jumps,
+        target,
+        verified_keys,
+    })
 }
 
 async fn connect_hop(
     hop: &SshCommandHop,
     timeout_seconds: u64,
+    verified_keys: Arc<Mutex<Vec<VerifiedHostKey>>>,
 ) -> AppResult<client::Handle<SshCommandHandler>> {
     let config = client::Config {
         inactivity_timeout: Some(Duration::from_secs(timeout_seconds)),
@@ -908,13 +979,14 @@ async fn connect_hop(
         ..Default::default()
     };
     let config = Arc::new(config);
+    let handler = SshCommandHandler::new(hop, verified_keys);
     if let Some(proxy_command) = hop.proxy_command.as_ref() {
         let stream = start_proxy_command(proxy_command, hop)?;
-        client::connect_stream(config, stream, SshCommandHandler)
+        client::connect_stream(config, stream, handler)
             .await
             .map_err(russh_error)
     } else {
-        client::connect(config, (hop.host.as_str(), hop.port), SshCommandHandler)
+        client::connect(config, (hop.host.as_str(), hop.port), handler)
             .await
             .map_err(russh_error)
     }
@@ -924,6 +996,7 @@ async fn connect_hop_through(
     upstream: &client::Handle<SshCommandHandler>,
     hop: &SshCommandHop,
     timeout_seconds: u64,
+    verified_keys: Arc<Mutex<Vec<VerifiedHostKey>>>,
 ) -> AppResult<client::Handle<SshCommandHandler>> {
     let channel = upstream
         .channel_open_direct_tcpip(hop.host.clone(), u32::from(hop.port), "127.0.0.1", 0)
@@ -934,9 +1007,13 @@ async fn connect_hop_through(
         keepalive_interval: hop.keepalive_interval_ms.map(Duration::from_millis),
         ..Default::default()
     };
-    client::connect_stream(Arc::new(config), channel.into_stream(), SshCommandHandler)
-        .await
-        .map_err(russh_error)
+    client::connect_stream(
+        Arc::new(config),
+        channel.into_stream(),
+        SshCommandHandler::new(hop, verified_keys),
+    )
+    .await
+    .map_err(russh_error)
 }
 
 async fn authenticate(
@@ -1180,12 +1257,48 @@ fn shell_command(command_line: &str) -> Command {
 mod tests {
     use super::*;
     use crate::models::session::SshOptions;
+    use russh::client::Handler;
 
     struct StaticSecrets;
 
     impl SshCommandSecretResolver for StaticSecrets {
         fn secret_for(&self, credential_ref: &str) -> AppResult<String> {
             Ok(format!("{credential_ref}-secret"))
+        }
+    }
+
+    #[tokio::test]
+    async fn background_handler_checks_identity_and_records_each_hop() {
+        fn key(seed: u8) -> PublicKey {
+            PrivateKey::new(
+                keys::ssh_key::private::Ed25519Keypair::from_seed(&[seed; 32]).into(),
+                "test-only",
+            )
+            .unwrap()
+            .public_key()
+            .clone()
+        }
+        let verified_keys = Arc::new(Mutex::new(Vec::new()));
+        let mut first_hop = SshCommandHandler {
+            host: format!("background-{}.invalid", uuid::Uuid::new_v4()),
+            port: 2222,
+            verified_keys: Arc::clone(&verified_keys),
+        };
+        assert!(first_hop.check_server_key(&key(81)).await.unwrap());
+        // Rekey invokes this callback again without creating another hop.
+        assert!(first_hop.check_server_key(&key(81)).await.unwrap());
+        assert_eq!(verified_keys.lock().unwrap().len(), 1);
+        assert!(first_hop.check_server_key(&key(82)).await.is_err());
+        let mut target = SshCommandHandler {
+            host: format!("target-{}.invalid", uuid::Uuid::new_v4()),
+            port: 22,
+            verified_keys: Arc::clone(&verified_keys),
+        };
+        assert!(target.check_server_key(&key(83)).await.unwrap());
+        let recorded = verified_keys.lock().unwrap();
+        assert_eq!(recorded.len(), 2);
+        for key in recorded.iter() {
+            key.recheck().unwrap();
         }
     }
 

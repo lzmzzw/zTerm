@@ -10,12 +10,13 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use crate::{
     error::{AppError, AppResult},
     models::history::{CommandHistoryDraft, HistoryScopeKind},
+    services::terminal_utf8::find_bytes,
     storage::{history::insert_command_history, sqlite::SqliteStore},
 };
 
 const MAX_COMMAND_LENGTH: usize = 4096;
-const SHELL_HISTORY_MARKER_PREFIX: &str = "\u{1b}]633;ZTermCommand;";
-const SHELL_HISTORY_MARKER_TERMINATOR: char = '\u{7}';
+const SHELL_HISTORY_MARKER_PREFIX: &[u8] = b"\x1b]633;ZTermCommand;";
+const SHELL_HISTORY_MARKER_TERMINATOR: u8 = 7;
 const MAX_SHELL_HISTORY_MARKER_LENGTH: usize = MAX_COMMAND_LENGTH * 6;
 
 #[derive(Default)]
@@ -26,7 +27,7 @@ struct RuntimeInputState {
     pending_cr: bool,
     control_skip: Option<ControlSkipState>,
     shell_integration_enabled: bool,
-    shell_output_buffer: String,
+    shell_output_buffer: Vec<u8>,
 }
 
 #[derive(Clone, Copy)]
@@ -73,7 +74,7 @@ impl CommandHistoryService {
                     pending_cr: false,
                     control_skip: None,
                     shell_integration_enabled: false,
-                    shell_output_buffer: String::new(),
+                    shell_output_buffer: Vec::new(),
                 },
             );
         }
@@ -182,6 +183,16 @@ impl CommandHistoryService {
         runtime_session_id: &str,
         data: &str,
     ) -> AppResult<(String, bool)> {
+        let (visible, changed) = self.consume_output_bytes(runtime_session_id, data.as_bytes())?;
+        Ok((String::from_utf8_lossy(&visible).into_owned(), changed))
+    }
+
+    /// Shell marker 只有 ASCII 边界；先按字节过滤，避免损坏 UTF-8 分片和二进制数据。
+    pub(crate) fn consume_output_bytes(
+        &self,
+        runtime_session_id: &str,
+        data: &[u8],
+    ) -> AppResult<(Vec<u8>, bool)> {
         let mut completed = Vec::new();
         let visible = {
             let mut runtimes = self
@@ -189,12 +200,12 @@ impl CommandHistoryService {
                 .lock()
                 .map_err(|_| AppError::terminal("command history lock was poisoned"))?;
             let Some(state) = runtimes.get_mut(runtime_session_id) else {
-                return Ok((data.to_string(), false));
+                return Ok((data.to_vec(), false));
             };
             if !state.shell_integration_enabled {
-                return Ok((data.to_string(), false));
+                return Ok((data.to_vec(), false));
             }
-            state.shell_output_buffer.push_str(data);
+            state.shell_output_buffer.extend_from_slice(data);
             consume_shell_history_output(state, &mut completed)
         };
 
@@ -209,38 +220,37 @@ impl CommandHistoryService {
 fn consume_shell_history_output(
     state: &mut RuntimeInputState,
     completed: &mut Vec<CompletedCommand>,
-) -> String {
-    let mut visible = String::new();
+) -> Vec<u8> {
+    let mut visible = Vec::new();
     loop {
-        let Some(marker_start) = state.shell_output_buffer.find(SHELL_HISTORY_MARKER_PREFIX) else {
+        let Some(marker_start) =
+            find_bytes(&state.shell_output_buffer, SHELL_HISTORY_MARKER_PREFIX)
+        else {
             let retained = partial_marker_prefix_len(&state.shell_output_buffer);
             let emit_until = state.shell_output_buffer.len().saturating_sub(retained);
-            visible.push_str(&state.shell_output_buffer[..emit_until]);
+            visible.extend_from_slice(&state.shell_output_buffer[..emit_until]);
             state.shell_output_buffer.drain(..emit_until);
             break;
         };
 
-        visible.push_str(&state.shell_output_buffer[..marker_start]);
-        state
-            .shell_output_buffer
-            .drain(..marker_start + SHELL_HISTORY_MARKER_PREFIX.len());
-        let Some(marker_end) = state
-            .shell_output_buffer
-            .find(SHELL_HISTORY_MARKER_TERMINATOR)
+        visible.extend_from_slice(&state.shell_output_buffer[..marker_start]);
+        state.shell_output_buffer.drain(..marker_start);
+        let payload_start = SHELL_HISTORY_MARKER_PREFIX.len();
+        let Some(payload_end) = state.shell_output_buffer[payload_start..]
+            .iter()
+            .position(|byte| *byte == SHELL_HISTORY_MARKER_TERMINATOR)
         else {
-            if state.shell_output_buffer.len() > MAX_SHELL_HISTORY_MARKER_LENGTH {
+            if state.shell_output_buffer.len() - payload_start > MAX_SHELL_HISTORY_MARKER_LENGTH {
                 state.shell_output_buffer.clear();
-            } else {
-                state
-                    .shell_output_buffer
-                    .insert_str(0, SHELL_HISTORY_MARKER_PREFIX);
             }
             break;
         };
 
-        let payload = state.shell_output_buffer[..marker_end].to_string();
+        let marker_end = payload_start + payload_end;
+        let command =
+            decode_shell_history_command(&state.shell_output_buffer[payload_start..marker_end]);
         state.shell_output_buffer.drain(..=marker_end);
-        if let Some(command) = decode_shell_history_command(&payload) {
+        if let Some(command) = command {
             completed.push(CompletedCommand {
                 scope_kind: state.scope_kind,
                 scope_id: state.scope_id.clone(),
@@ -251,7 +261,7 @@ fn consume_shell_history_output(
     visible
 }
 
-fn partial_marker_prefix_len(value: &str) -> usize {
+fn partial_marker_prefix_len(value: &[u8]) -> usize {
     let max_len = value
         .len()
         .min(SHELL_HISTORY_MARKER_PREFIX.len().saturating_sub(1));
@@ -261,7 +271,7 @@ fn partial_marker_prefix_len(value: &str) -> usize {
         .unwrap_or(0)
 }
 
-fn decode_shell_history_command(payload: &str) -> Option<String> {
+fn decode_shell_history_command(payload: &[u8]) -> Option<String> {
     let bytes = BASE64_STANDARD.decode(payload).ok()?;
     let command = String::from_utf8(bytes).ok()?;
     let command = command.trim().to_string();

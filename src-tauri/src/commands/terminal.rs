@@ -28,7 +28,7 @@ use crate::{
         command_history_service::CommandHistoryService, credential_service::read_system_secret,
         external_launch_service::is_external_session_id,
         ssh_command_service::SshCommandSecretResolver, terminal_manager::TerminalManager,
-        terminal_output_dispatcher::TerminalOutputDispatcher,
+        terminal_output_dispatcher::TerminalOutputDispatcher, terminal_utf8::TerminalUtf8Decoder,
     },
     state::AppState,
     storage::{
@@ -635,6 +635,53 @@ pub fn terminal_zmodem_save_file(
     })
 }
 
+#[derive(Default)]
+struct TerminalReaderOutput {
+    snapshot_decoder: TerminalUtf8Decoder,
+    visible_decoder: TerminalUtf8Decoder,
+}
+
+struct TerminalReaderChunk {
+    text: String,
+    bytes: Vec<u8>,
+    history_changed: bool,
+}
+
+impl TerminalReaderOutput {
+    fn consume(
+        &mut self,
+        runtime_session_id: &str,
+        bytes: &[u8],
+        history: &CommandHistoryService,
+        manager: &TerminalManager,
+    ) -> TerminalReaderChunk {
+        let (filtered, history_changed) = history
+            .consume_output_bytes(runtime_session_id, bytes)
+            .unwrap_or_else(|_| (bytes.to_vec(), false));
+        let snapshot = self.snapshot_decoder.decode(&filtered);
+        if !snapshot.is_empty() {
+            let _ = manager.record_output(runtime_session_id, &snapshot);
+        }
+        let visible = manager
+            .visible_output_bytes_after_suppression(runtime_session_id, &filtered)
+            .unwrap_or(filtered);
+        TerminalReaderChunk {
+            text: self.visible_decoder.decode(&visible),
+            bytes: visible,
+            history_changed,
+        }
+    }
+
+    fn finish_snapshot(&mut self, runtime_session_id: &str, manager: &TerminalManager) {
+        let tail = self.snapshot_decoder.finish();
+        if !tail.is_empty() {
+            let _ = manager.record_output(runtime_session_id, &tail);
+        }
+        // 原始字节已发送，前端独立拥有其流式解码状态。不得为 EOF 合成协议字节。
+        let _ = self.visible_decoder.finish();
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_terminal_reader(
     app: AppHandle,
@@ -682,9 +729,14 @@ pub(crate) fn spawn_terminal_reader(
         }
         let mut used_auth_secrets = vec![false; auth_secrets.len()];
         let mut output_stop_message = None;
+        let mut output = TerminalReaderOutput::default();
+        let mut reader_ended = false;
         loop {
             match reader.read(&mut buffer) {
-                Ok(0) => break,
+                Ok(0) => {
+                    reader_ended = true;
+                    break;
+                }
                 Ok(read) => {
                     let Ok(_reader_gate) = finalizer.reader_gate.lock() else {
                         break;
@@ -692,7 +744,6 @@ pub(crate) fn spawn_terminal_reader(
                     if finalizer.is_finalized() {
                         break;
                     }
-                    let raw_data = String::from_utf8_lossy(&buffer[..read]).to_string();
                     if diagnose {
                         read_count += 1;
                         if matches!(read_count, 1 | 4 | 16 | 64 | 256) {
@@ -721,16 +772,15 @@ pub(crate) fn spawn_terminal_reader(
                         }
                     }
                     if let Some(secret) = select_auth_secret_for_prompt(
-                        &raw_data,
+                        &String::from_utf8_lossy(&buffer[..read]),
                         &auth_secrets,
                         &mut used_auth_secrets,
                     ) {
                         let _ = manager.write(&runtime_session_id, &format!("{secret}\r"));
                     }
-                    let (data, history_changed) = history
-                        .consume_output(&runtime_session_id, &raw_data)
-                        .unwrap_or((raw_data.clone(), false));
-                    if history_changed {
+                    let chunk =
+                        output.consume(&runtime_session_id, &buffer[..read], &history, &manager);
+                    if chunk.history_changed {
                         let _ = app.emit(
                             "terminal:history-changed",
                             TerminalHistoryChangedEvent {
@@ -738,18 +788,9 @@ pub(crate) fn spawn_terminal_reader(
                             },
                         );
                     }
-                    let _ = manager.record_output(&runtime_session_id, &data);
-                    let visible_data = manager
-                        .visible_output_after_suppression(&runtime_session_id, &data)
-                        .unwrap_or_else(|_| data.clone());
-                    if !visible_data.is_empty() {
-                        let raw_bytes = if visible_data == raw_data {
-                            buffer[..read].to_vec()
-                        } else {
-                            visible_data.as_bytes().to_vec()
-                        };
+                    if !chunk.bytes.is_empty() {
                         if diagnose {
-                            for header in dispatch_body.consume(&raw_bytes) {
+                            for header in dispatch_body.consume(&chunk.bytes) {
                                 crate::services::zmodem_diagnostics::record_session(
                                     &app,
                                     &runtime_session_id,
@@ -757,7 +798,7 @@ pub(crate) fn spawn_terminal_reader(
                                     &header,
                                 );
                             }
-                            for header in dispatch_observer.consume(&raw_bytes) {
+                            for header in dispatch_observer.consume(&chunk.bytes) {
                                 crate::services::zmodem_diagnostics::record_session(
                                     &app,
                                     &runtime_session_id,
@@ -766,7 +807,7 @@ pub(crate) fn spawn_terminal_reader(
                                 );
                             }
                         }
-                        if !output_dispatcher.push(&runtime_session_id, visible_data, raw_bytes) {
+                        if !output_dispatcher.push(&runtime_session_id, chunk.text, chunk.bytes) {
                             output_stop_message =
                                 output_dispatcher.stop_reason(&runtime_session_id);
                             break;
@@ -774,13 +815,20 @@ pub(crate) fn spawn_terminal_reader(
                     }
                 }
                 Err(error) => {
-                    finalizer.reader_finished.store(true, Ordering::Release);
-                    finalizer.finalize(finalizer.wait_for_exit_code(), Some(error.to_string()));
-                    return;
+                    reader_ended = true;
+                    output_stop_message = Some(error.to_string());
+                    break;
                 }
             }
         }
 
+        if reader_ended {
+            if let Ok(_reader_gate) = finalizer.reader_gate.lock() {
+                if !finalizer.is_finalized() {
+                    output.finish_snapshot(&runtime_session_id, &manager);
+                }
+            }
+        }
         finalizer.reader_finished.store(true, Ordering::Release);
         finalizer.finalize(finalizer.wait_for_exit_code(), output_stop_message);
     });
@@ -1191,6 +1239,125 @@ mod tests {
         ZMODEM_MAX_SINGLE_FILE_BYTES, ZMODEM_MAX_UPLOAD_BATCH_BYTES,
     };
     use crate::models::session::{LocalEnvironmentVariable, LocalOptions};
+
+    fn reader_output_fixture() -> (super::CommandHistoryService, super::TerminalManager) {
+        let store = std::sync::Arc::new(
+            crate::storage::sqlite::SqliteStore::open_in_memory().expect("store should open"),
+        );
+        (
+            super::CommandHistoryService::new(store),
+            super::TerminalManager::default(),
+        )
+    }
+
+    #[test]
+    fn terminal_reader_streams_raw_bytes_without_waiting_for_utf8() {
+        let (history, manager) = reader_output_fixture();
+        let mut output = super::TerminalReaderOutput::default();
+        let input = "提示> 中文🚀\r\n";
+        let mut text = String::new();
+        for byte in input.as_bytes() {
+            let chunk = output.consume("utf8", &[*byte], &history, &manager);
+            assert_eq!(chunk.bytes, vec![*byte]);
+            text.push_str(&chunk.text);
+        }
+        output.finish_snapshot("utf8", &manager);
+        assert_eq!(text, input);
+        assert_eq!(
+            manager.output_tail("utf8", 1024).unwrap().as_deref(),
+            Some(input)
+        );
+
+        // A binary protocol's final byte may resemble a UTF-8 prefix. It must
+        // arrive immediately even when no subsequent read will complete it.
+        let raw = b"**\x18B\xff\xe4";
+        let chunk = output.consume("utf8", raw, &history, &manager);
+        assert_eq!(chunk.bytes, raw);
+        assert_eq!(chunk.text, "**\x18B\u{fffd}");
+        output.finish_snapshot("utf8", &manager);
+        let expected = format!("{input}{}", String::from_utf8_lossy(raw));
+        assert_eq!(manager.output_tail("utf8", 1024).unwrap(), Some(expected));
+    }
+
+    #[test]
+    fn terminal_reader_filters_split_markers_without_corrupting_raw_output() {
+        use crate::{
+            models::history::{HistoryScopeKind, HistorySearchOptions},
+            storage::{history::search_command_history, sqlite::SqliteStore},
+        };
+        use base64::Engine as _;
+        let command = "echo 中文";
+        let marker = format!(
+            "\x1b]633;ZTermCommand;{}\x07",
+            base64::engine::general_purpose::STANDARD.encode(command.as_bytes())
+        );
+        let mut input = "前🚀".as_bytes().to_vec();
+        input.extend_from_slice(marker.as_bytes());
+        input.extend_from_slice("后".as_bytes());
+        input.extend_from_slice(&[0xff, 0xe4]);
+        let mut expected_raw = "前🚀后".as_bytes().to_vec();
+        expected_raw.extend_from_slice(&[0xff, 0xe4]);
+        for split in 0..=input.len() {
+            let store = std::sync::Arc::new(SqliteStore::open_in_memory().unwrap());
+            let history = super::CommandHistoryService::new(std::sync::Arc::clone(&store));
+            history.register_runtime(
+                "marker",
+                None,
+                Some(HistoryScopeKind::LocalProfile),
+                Some("test".into()),
+            );
+            history.enable_shell_integration("marker");
+            let manager = super::TerminalManager::default();
+            let mut output = super::TerminalReaderOutput::default();
+            let mut raw = Vec::new();
+            let mut changes = 0;
+            for bytes in [&input[..split], &input[split..]] {
+                let chunk = output.consume("marker", bytes, &history, &manager);
+                raw.extend(chunk.bytes);
+                changes += usize::from(chunk.history_changed);
+            }
+            output.finish_snapshot("marker", &manager);
+            assert_eq!(raw, expected_raw, "split {split}");
+            assert_eq!(changes, 1);
+            assert_eq!(
+                manager.output_tail("marker", 1024).unwrap(),
+                Some(String::from_utf8_lossy(&expected_raw).into_owned())
+            );
+            let entries = search_command_history(
+                store.as_ref(),
+                HistorySearchOptions {
+                    query: None,
+                    scope_kind: Some(HistoryScopeKind::LocalProfile),
+                    scope_id: Some("test".into()),
+                    limit: None,
+                    deduplicate: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].command, command);
+        }
+    }
+
+    #[test]
+    fn terminal_reader_suppression_preserves_binary_tail_and_full_snapshot() {
+        let (history, manager) = reader_output_fixture();
+        manager.begin_output_suppression("probe", "__END:").unwrap();
+        let mut output = super::TerminalReaderOutput::default();
+        let first = output.consume("probe", b"probe\r\n__EN", &history, &manager);
+        assert!(first.bytes.is_empty());
+        let second = output.consume("probe", b"D:0\r\n\xe4", &history, &manager);
+        assert_eq!(second.bytes, vec![0xe4]);
+        assert!(second.text.is_empty());
+        let third = output.consume("probe", b"\xb8\xad\xff", &history, &manager);
+        assert_eq!(third.bytes, vec![0xb8, 0xad, 0xff]);
+        assert_eq!(third.text, "中\u{fffd}");
+        output.finish_snapshot("probe", &manager);
+        assert_eq!(
+            manager.output_tail("probe", 1024).unwrap().as_deref(),
+            Some("probe\r\n__END:0\r\n中\u{fffd}")
+        );
+    }
 
     #[test]
     fn detects_ssh_password_and_key_prompts() {

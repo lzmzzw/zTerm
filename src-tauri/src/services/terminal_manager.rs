@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use portable_pty::{Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{Child, CommandBuilder, PtySize};
 use uuid::Uuid;
 
 use crate::{
@@ -24,6 +24,7 @@ use crate::{
         terminal_profile::TerminalProfile,
     },
     services::credential_service::read_system_secret,
+    services::pty_process_guard::PtyMasterGuard,
     services::ssh_command_service::SshCommandSecretResolver,
     services::ssh_terminal_service::{
         spawn_ssh_container_terminal_with_resolver, spawn_ssh_terminal_with_resolver,
@@ -73,7 +74,7 @@ struct RdpRuntime {
 }
 
 struct PtyRuntime {
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    master: Mutex<PtyMasterGuard>,
     writer: Mutex<Box<dyn Write + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
 }
@@ -101,7 +102,7 @@ pub struct OutputRead {
 
 struct OutputSuppression {
     end_prefix: String,
-    pending: String,
+    pending: Vec<u8>,
 }
 
 impl TerminalManager {
@@ -714,7 +715,7 @@ impl TerminalManager {
                 runtime_session_id.to_string(),
                 OutputSuppression {
                     end_prefix: end_prefix.to_string(),
-                    pending: String::new(),
+                    pending: Vec::new(),
                 },
             );
         Ok(())
@@ -731,22 +732,34 @@ impl TerminalManager {
         runtime_session_id: &str,
         data: &str,
     ) -> AppResult<String> {
+        let visible =
+            self.visible_output_bytes_after_suppression(runtime_session_id, data.as_bytes())?;
+        Ok(String::from_utf8_lossy(&visible).into_owned())
+    }
+
+    pub(crate) fn visible_output_bytes_after_suppression(
+        &self,
+        runtime_session_id: &str,
+        data: &[u8],
+    ) -> AppResult<Vec<u8>> {
         let mut suppressions = self
             .output_suppressions
             .lock()
             .map_err(|_| AppError::terminal("terminal output suppression lock was poisoned"))?;
         let Some(suppression) = suppressions.get_mut(runtime_session_id) else {
-            return Ok(data.to_string());
+            return Ok(data.to_vec());
         };
 
-        suppression.pending.push_str(data);
+        suppression.pending.extend_from_slice(data);
         let Some(tail_start) =
-            suppression_tail_start(&suppression.pending, &suppression.end_prefix)
+            suppression_tail_start(&suppression.pending, suppression.end_prefix.as_bytes())
         else {
-            suppression.pending = tail_chars(&suppression.pending, 24_000);
-            return Ok(String::new());
+            // 原先的 24,000 字符最多占 96 KiB；按字节约束后不必解码或重编码探测输出。
+            let remove = suppression.pending.len().saturating_sub(24_000 * 4);
+            suppression.pending.drain(..remove);
+            return Ok(Vec::new());
         };
-        let visible = suppression.pending[tail_start..].to_string();
+        let visible = suppression.pending[tail_start..].to_vec();
         suppressions.remove(runtime_session_id);
         Ok(visible)
     }
@@ -1005,10 +1018,12 @@ fn tail_chars(value: &str, max_chars: usize) -> String {
     value[start..].to_string()
 }
 
-fn suppression_tail_start(value: &str, end_prefix: &str) -> Option<usize> {
-    let end_start = value.find(end_prefix)?;
+fn suppression_tail_start(value: &[u8], end_prefix: &[u8]) -> Option<usize> {
+    let end_start = crate::services::terminal_utf8::find_bytes(value, end_prefix)?;
     let after_prefix = end_start + end_prefix.len();
-    let after_line = value[after_prefix..].find('\n')?;
+    let after_line = value[after_prefix..]
+        .iter()
+        .position(|byte| *byte == b'\n')?;
     Some(after_prefix + after_line + 1)
 }
 

@@ -41,7 +41,7 @@ impl TerminalOutputDispatcher {
     }
 
     pub fn push(&self, runtime_session_id: &str, data: String, raw_bytes: Vec<u8>) -> bool {
-        if data.is_empty() {
+        if data.is_empty() && raw_bytes.is_empty() {
             return true;
         }
         // Headless services and unit tests do not have an event consumer. They
@@ -206,7 +206,7 @@ impl TerminalOutputBatcher {
 
     fn flush_runtime(&mut self, runtime_session_id: &str) -> Option<TerminalDataEvent> {
         let pending = self.pending.remove(runtime_session_id)?;
-        if pending.data.is_empty() {
+        if pending.data.is_empty() && pending.raw_bytes.is_empty() {
             return None;
         }
         Some(TerminalDataEvent {
@@ -237,6 +237,42 @@ mod tests {
             generation: 1,
             sequence,
         }
+    }
+
+    #[test]
+    fn terminal_output_dispatcher_delivers_raw_only_chunks_with_ack_metadata() {
+        use std::{
+            sync::{mpsc, Arc},
+            time::Duration,
+        };
+        let (sender, receiver) = mpsc::sync_channel(4);
+        let dispatcher = super::TerminalOutputDispatcher {
+            sender: Some(sender),
+            flow: Arc::new(crate::services::terminal_output_flow::TerminalOutputFlow::default()),
+        };
+        let _lease = dispatcher.open_runtime("raw");
+        assert!(dispatcher.push("raw", String::new(), vec![0xe4]));
+        let message = receiver
+            .recv_timeout(Duration::from_millis(100))
+            .expect("raw-only chunk must not be dropped");
+        let super::TerminalOutputMessage::Output {
+            runtime_session_id,
+            data,
+            raw_bytes,
+            flow,
+        } = message
+        else {
+            panic!("expected output message");
+        };
+        let mut batcher = TerminalOutputBatcher::default();
+        batcher.push(runtime_session_id, data, raw_bytes, flow);
+        let event = batcher
+            .flush_runtime("raw")
+            .expect("raw-only batch must flush");
+        assert_eq!(event.data, "");
+        assert_eq!(event.data_base64, "5A==");
+        assert_eq!(event.sequence, 1);
+        assert!(dispatcher.acknowledge_runtime("raw", event.generation, event.sequence));
     }
 
     #[test]
