@@ -135,7 +135,7 @@ export function AgentCodexPanel({
             streamId={runtimeSessionId}
             liveChunks={outputChunks}
             onLiveChunksQueued={(throughSerial) => discardLiveOutputChunks(runtimeSessionId, throughSerial)}
-            onInput={(data) => void writeTerminal(runtimeSessionId, data)}
+            onInput={(data, metadata) => void writeTerminal(runtimeSessionId, data, metadata?.encoding)}
             onCloseTerminal={() => void onClose()}
             onResize={(cols, rows) => void resizeTerminal(runtimeSessionId, cols, rows)}
             onRestart={() => void onRestart()}

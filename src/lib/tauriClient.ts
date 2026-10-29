@@ -17,6 +17,7 @@ export function invokeTauri<T = void>(command: string, args?: TauriInvokeArgs): 
 
 interface TypedCommandArgs {
   terminal_write: { runtimeSessionId: string; data: string };
+  terminal_write_bytes: { runtimeSessionId: string; data: number[] };
   terminal_resize: { runtimeSessionId: string; cols: number; rows: number };
   terminal_close: { runtimeSessionId: string; releaseExternalSession?: boolean };
   agent_set_active_terminal: { runtimeSessionId: string | null };

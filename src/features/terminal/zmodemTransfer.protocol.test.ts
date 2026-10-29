@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Zmodem from "zmodem.js/src/zmodem_browser";
 
 const local = vi.hoisted(() => ({ invokeTauri: vi.fn(), open: vi.fn() }));
-vi.mock("../../lib/tauriClient", () => ({ invokeTauri: local.invokeTauri }));
+vi.mock("../../lib/tauriClient", () => ({ invokeTauri: local.invokeTauri, invokeTypedTauri: local.invokeTauri }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: local.open }));
 
 import { clearTerminalZmodemControllersForTest, consumeTerminalZmodemData } from "./zmodemTransfer";

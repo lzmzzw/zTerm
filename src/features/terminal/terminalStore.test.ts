@@ -915,6 +915,13 @@ describe("terminalStore", () => {
     expect(useTerminalStore.getState().inputSerialByRuntime["runtime-1"]).toBe(1);
   });
 
+  it("preserves high mouse coordinate bytes without UTF-8 encoding or shell submission", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await useTerminalStore.getState().writeTerminal("runtime-mouse", "\x1b[M \x90\xff", "binary");
+    expect(invokeMock).toHaveBeenCalledWith("terminal_write_bytes", { runtimeSessionId: "runtime-mouse", data: [27, 91, 77, 32, 144, 255] });
+    expect(useTerminalStore.getState().inputSerialByRuntime["runtime-mouse"]).toBeUndefined();
+  });
+
   it("releases the zmodem controller when closing a terminal runtime", async () => {
     invokeMock.mockResolvedValue({ closed: true });
     useTerminalStore.setState({

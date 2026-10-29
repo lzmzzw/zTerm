@@ -1,5 +1,6 @@
 // Author: Liz
 import { invokeTauri } from "../../lib/tauriClient";
+import { writeTerminalBytes } from "./terminalInputApi";
 import { open } from "@tauri-apps/plugin-dialog";
 import Zmodem, {
   type ZmodemDetection,
@@ -617,7 +618,7 @@ function withDefaultDependencies(dependencies: ZmodemTransferDependencies): Zmod
     ...dependencies,
     sendBytes:
       dependencies.sendBytes ??
-      ((runtimeSessionId, data) => invokeTauri("terminal_write_bytes", { runtimeSessionId, data })),
+      writeTerminalBytes,
     selectUploadFiles: dependencies.selectUploadFiles ?? selectUploadFiles,
     selectDownloadDirectory: dependencies.selectDownloadDirectory ?? selectDownloadDirectory,
     readLocalFiles:

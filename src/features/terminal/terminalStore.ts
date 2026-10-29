@@ -1,6 +1,7 @@
 // Author: Liz
 import { create } from "zustand";
 import { reportZmodemDiagnostic } from "./zmodemDiagnostics";
+import { writeTerminalBytes } from "./terminalInputApi";
 import type { HistoryScopeKind } from "../history/types";
 
 import { invokeTauri, invokeTypedTauri, listenTauri, type UnlistenFn } from "../../lib/tauriClient";
@@ -106,7 +107,7 @@ interface TerminalState {
   ) => Promise<void>;
   listSshContainers: (savedSessionId: string) => Promise<SshContainerInfo[]>;
   openDefaultLocalTerminal: (paneId: string, workingDirectory?: string | null) => Promise<RuntimeSessionInfo>;
-  writeTerminal: (runtimeSessionId: string, data: string) => Promise<void>;
+  writeTerminal: (runtimeSessionId: string, data: string, encoding?: "binary") => Promise<void>;
   suggestCompletion: (
     runtimeSessionId: string,
     input: string,
@@ -265,7 +266,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     void ensureTerminalOutputFlow(runtime.runtime_session_id);
     return runtime;
   },
-  async writeTerminal(runtimeSessionId, data) {
+  async writeTerminal(runtimeSessionId, data, encoding) {
+    if (encoding === "binary") {
+      await writeTerminalBytes(runtimeSessionId, Array.from(data, character => character.charCodeAt(0) & 255));
+      return;
+    }
     if (data === "\x03") reportZmodemDiagnostic("frontend-ctrl-c", "", runtimeSessionId);
     const resources = terminalRuntimeResources.acquire(runtimeSessionId);
     await invokeTypedTauri("terminal_write", { runtimeSessionId, data });

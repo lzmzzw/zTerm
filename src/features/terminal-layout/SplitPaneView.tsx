@@ -460,13 +460,13 @@ function LeafPane({
   }, [activeRuntimeSessionId, beginLiveOutput, xtermLive]);
 
   const handleInput = useCallback(
-    (data: string, metadata?: { source: TerminalInputSource }) => {
+    (data: string, metadata?: { source: TerminalInputSource; encoding?: "binary" }) => {
       if (runtime && isInteractiveTerminalRuntime(runtime.kind)) {
         void routeSyncTerminalInput(
           runtime.runtime_session_id,
           data,
           metadata?.source ?? "user",
-          writeTerminal,
+          (runtimeSessionId, value) => writeTerminal(runtimeSessionId, value, metadata?.encoding),
         );
       }
     },

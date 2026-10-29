@@ -42,12 +42,14 @@ const terminalMock = vi.hoisted(() => {
     refresh: ReturnType<typeof vi.fn>;
     cols: number;
     dataListener?: (value: string) => void;
+    binaryListener?: (value: string) => void;
     dispose: ReturnType<typeof vi.fn>;
     focus: ReturnType<typeof vi.fn>;
     getSelection: ReturnType<typeof vi.fn>;
     host?: HTMLElement;
     loadAddon: ReturnType<typeof vi.fn>;
     onData: ReturnType<typeof vi.fn>;
+    onBinary: ReturnType<typeof vi.fn>;
     onCursorMove: ReturnType<typeof vi.fn>;
     onRender: ReturnType<typeof vi.fn>;
     onResize: ReturnType<typeof vi.fn>;
@@ -124,6 +126,10 @@ const terminalMock = vi.hoisted(() => {
       loadAddon,
       onData: vi.fn((listener: (value: string) => void) => {
         instance.dataListener = listener;
+        return disposable();
+      }),
+      onBinary: vi.fn((listener: (value: string) => void) => {
+        instance.binaryListener = listener;
         return disposable();
       }),
       onCursorMove: vi.fn(() => disposable()),
@@ -829,12 +835,25 @@ describe("XtermPane", () => {
 
     await act(async () => {
       terminal.dataListener?.("\x1b[12;40R");
+      terminal.binaryListener?.("\x1b[M \x90\x30");
       await Promise.resolve();
     });
 
     expect(onInput).not.toHaveBeenCalled();
 
     view.unmount();
+  });
+
+  it("forwards legacy mouse reports as bytes without completion or shell input processing", async () => {
+    const onInput = vi.fn();
+    const view = render(<XtermPane data="" onInput={onInput} />);
+    const terminal = terminalMock.instances[0];
+    const report = "\x1b[M \x90\xff";
+    await act(async () => { terminal.binaryListener?.(report); });
+    expect(onInput).toHaveBeenCalledWith(report, { source: "terminal_response", encoding: "binary" });
+    const subscription = terminal.onBinary.mock.results[0].value;
+    view.unmount();
+    expect(subscription.dispose).toHaveBeenCalledOnce();
   });
 
   it("allows an initial live terminal status query to generate a CPR response", async () => {

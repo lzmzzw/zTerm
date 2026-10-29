@@ -62,7 +62,7 @@ interface XtermPaneProps {
   onCwdResolve?: (currentCwd: string | null, target: string | null) => Promise<string | null>;
   onCwdChange?: (cwd: string) => void;
   onDisconnect?: () => void;
-  onInput?: (data: string, metadata?: { source: TerminalInputSource }) => void;
+  onInput?: (data: string, metadata?: { source: TerminalInputSource; encoding?: "binary" }) => void;
   onCloseTerminal?: () => void;
   onReconnect?: () => void;
   onRestart?: () => void;
@@ -527,11 +527,15 @@ export function XtermPane({
     terminal.loadAddon(searchAddon);
     terminal.loadAddon(new WebLinksAddon());
     terminal.open(containerRef.current);
+    const handleBinaryInput = (data: string) => {
+      if (!replayingOutputRef.current) onInputRef.current?.(data, { source: "terminal_response", encoding: "binary" });
+    };
     const selectionScroll = createTerminalSelectionScroll(
       terminal, containerRef.current,
       () => setSelectionHint("Vim 鼠标尚未启用：新建或重连 zTerm 会话可自动配置；当前 Vim 可执行 :set mouse=a。按住 Shift 可临时选择当前终端画面。"),
       handleTerminalInput,
       !applicationMode,
+      handleBinaryInput,
     );
     selectionScrollRef.current = selectionScroll;
     const cwdDisposable = terminal.parser.registerOscHandler(7, (payload) => {
@@ -561,6 +565,7 @@ export function XtermPane({
     searchAddonRef.current = searchAddon;
 
     const inputDisposable = terminal.onData(handleTerminalInput);
+    const binaryInputDisposable = terminal.onBinary(handleBinaryInput);
     const reportTerminalSize = (size: { cols: number; rows: number }) => {
       const previousSize = lastResizeRef.current;
       if (previousSize?.cols === size.cols && previousSize.rows === size.rows) {
@@ -602,6 +607,7 @@ export function XtermPane({
       resizeObserver?.disconnect();
       window.removeEventListener("resize", fit);
       inputDisposable.dispose();
+      binaryInputDisposable.dispose();
       cursorDisposable.dispose();
       ghostWriteDisposable.dispose();
       scrollDisposable.dispose();

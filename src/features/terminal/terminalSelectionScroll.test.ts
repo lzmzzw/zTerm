@@ -88,6 +88,22 @@ describe("terminal selection scrolling", () => {
     f.controller.dispose();
   });
 
+  it("keeps wheel direction when reversing an active legacy mouse drag and preserves coordinate bytes", () => {
+    const f = fixture("alternate", "drag");
+    const binary = vi.fn();
+    f.controller.dispose();
+    const controller = createTerminalSelectionScroll(f.terminal as unknown as Terminal, f.host, f.hint, f.input, true, binary);
+    f.down();
+    document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, buttons: 1, clientX: 810, clientY: 300 }));
+    f.wheel();
+    f.screen.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100 }));
+    const reports = binary.mock.calls.map(call => call[0] as string);
+    expect(reports.map(report => report.charCodeAt(5) - 32)).toEqual([21, 0]);
+    expect(reports.every(report => report.charCodeAt(4) > 100)).toBe(true);
+    expect(f.input).not.toHaveBeenCalled();
+    controller.dispose();
+  });
+
   it("moves the editor cursor by one line per wheel event without a held button", () => {
     const f = fixture("alternate");
     expect(f.wheel().defaultPrevented).toBe(true);

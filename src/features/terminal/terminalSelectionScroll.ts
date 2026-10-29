@@ -8,6 +8,7 @@ export function createTerminalSelectionScroll(
   onMouseSupportRequired: () => void,
   sendInput: (data: string) => void,
   moveCursorOnWheel = true,
+  sendBinaryInput: (data: string) => void = sendInput,
 ) {
   const screen = host.querySelector<HTMLElement>(".xterm-screen");
   const document = host.ownerDocument;
@@ -73,7 +74,7 @@ export function createTerminalSelectionScroll(
       const x = Math.round((column - 0.5) * bounds.width / terminal.cols);
       sendInput(`\x1b[<32;${x};${direction < 0 ? 0 : Math.ceil(bounds.height) + 1}M`);
     } else if (column <= 223 && row <= 223) {
-      sendInput(`\x1b[M${String.fromCharCode(64, column + 32, row + 32)}`);
+      sendBinaryInput(`\x1b[M${String.fromCharCode(64, column + 32, row + 32)}`);
     }
   }
 
