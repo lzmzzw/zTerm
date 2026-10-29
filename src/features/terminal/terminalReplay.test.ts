@@ -5,6 +5,89 @@ import { Terminal } from "@xterm/xterm";
 import { TerminalReplayBuffer } from "./terminalReplay";
 
 describe("TerminalReplayBuffer", () => {
+  it("restores Vim mouse tracking and its negotiated encoding across tab replay", async () => {
+    const replay = new TerminalReplayBuffer(60, 6);
+    const restored = new Terminal({ allowProposedApi: true, cols: 60, rows: 6 });
+    try {
+      await replay.append("\x1b[?1049h\x1b[?1002h\x1b[?1006h\x1b[?1hvim");
+      const output = await replay.replay("");
+      await writeTerminal(restored, output.data);
+      expect(restored.modes.mouseTrackingMode).toBe("drag");
+      expect(restored.modes.applicationCursorKeysMode).toBe(true);
+      expect(output.data).toContain("\x1b[?1006h");
+      await replay.append("\x1b[?1006l\x1b[?1002l\x1b[?1049l\x1b[?1l");
+      const shell = await replay.replay("");
+      await writeTerminal(restored, shell.data);
+      expect(restored.modes.mouseTrackingMode).toBe("none");
+      expect(restored.modes.applicationCursorKeysMode).toBe(false);
+      expect(shell.data).not.toContain("\x1b[?1006h");
+    } finally {
+      replay.dispose();
+      restored.dispose();
+    }
+  });
+
+  it.each([47, 1047, 1049])("restores both screens so exiting a replayed editor (mode %s) reveals the shell", async (mode) => {
+    const replay = new TerminalReplayBuffer(60, 6);
+    const restored = new Terminal({ allowProposedApi: true, cols: 60, rows: 6 });
+    try {
+      await replay.append("shell history\r\nuser@host:~$ vim sample.txt");
+      await replay.append(`\x1b[?${mode}h\x1b[2J\x1b[Heditor file contents\r\nsecond file line`);
+      // Switching to another tab and back rebuilds the visible terminal from replay.
+      const output = await replay.replay("truncated raw output");
+      await writeTerminal(restored, output.data);
+      expect(restored.buffer.active.type).toBe("alternate");
+      expect(restored.buffer.active.getLine(0)?.translateToString(true)).toBe("editor file contents");
+      // A later visit can replay into a terminal that is already in alternate mode.
+      await replay.append("\x1b[2;1Hupdated editor line");
+      await writeTerminal(restored, (await replay.replay("truncated raw output")).data);
+      expect(restored.buffer.active.type).toBe("alternate");
+      expect(restored.buffer.active.getLine(1)?.translateToString(true)).toBe("updated editor line");
+      await writeTerminal(restored, `\x1b[?${mode}l\r\nuser@host:~$ `);
+      expect(restored.buffer.active.type).toBe("normal");
+      const screen = Array.from({ length: restored.rows }, (_, row) => restored.buffer.active.getLine(row)?.translateToString(true)).join("\n");
+      expect(screen).toContain("shell history");
+      expect(screen).toContain("user@host:~$ ");
+      expect(screen).not.toContain("editor file contents");
+      expect(screen).not.toContain("second file line");
+      expect(screen).not.toContain("updated editor line");
+    } finally {
+      restored.dispose();
+      replay.dispose();
+    }
+  });
+
+  it("recognizes alternate-screen entry split across output chunks without a redraw", async () => {
+    const replay = new TerminalReplayBuffer(60, 6);
+    try {
+      const writes = [replay.append("shell\x1b[?10"), replay.append("49heditor")];
+      const output = await replay.replay("truncated raw output");
+      await Promise.all(writes);
+      expect(output.kind).toBe("screen");
+      expect(output.data).toContain("editor");
+    } finally {
+      replay.dispose();
+    }
+  });
+
+  it("replays the shell when the editor exits while its tab is inactive", async () => {
+    const replay = new TerminalReplayBuffer(60, 6);
+    const restored = new Terminal({ allowProposedApi: true, cols: 60, rows: 6 });
+    try {
+      await replay.append("shell history\r\nuser@host:~$ vim sample.txt");
+      await replay.append("\x1b[?1049h\x1b[2J\x1b[Heditor file contents");
+      await writeTerminal(restored, (await replay.replay("")).data);
+      await replay.append("\x1b[?1049l\r\nuser@host:~$ ");
+      await writeTerminal(restored, (await replay.replay("")).data);
+      expect(restored.buffer.active.type).toBe("normal");
+      expect(restored.buffer.active.getLine(0)?.translateToString(true)).toBe("shell history");
+      expect(restored.buffer.active.getLine(2)?.translateToString(true)).toBe("user@host:~$ ");
+    } finally {
+      restored.dispose();
+      replay.dispose();
+    }
+  });
+
   it("serializes a Docker-style multi-line redraw as a complete screen", async () => {
     const replay = new TerminalReplayBuffer(60, 6);
     await Promise.all([

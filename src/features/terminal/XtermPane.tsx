@@ -19,6 +19,7 @@ import { reportZmodemDiagnostic } from "./zmodemDiagnostics";
 import { readClipboardTextWithRetry, sanitizeTerminalPaste } from "./terminalClipboard";
 import { parseOsc7Cwd, parseSimpleCdTarget } from "./terminalCwd";
 import { createTerminalCursorPresentation } from "./terminalCursorPresentation";
+import { createTerminalSelectionScroll } from "./terminalSelectionScroll";
 import {
   createTerminalSemanticHighlighter,
   DIGE_BLACK_SEMANTIC_PALETTE,
@@ -193,6 +194,8 @@ export function XtermPane({
   const cwdResolveGenerationRef = useRef(0);
   const pasteInFlightRef = useRef<Promise<void> | null>(null);
   const [clipboardError, setClipboardError] = useState<string | null>(null);
+  const [selectionHint, setSelectionHint] = useState<string | null>(null);
+  const selectionScrollRef = useRef<ReturnType<typeof createTerminalSelectionScroll> | null>(null);
   const followOutputRef = useRef(followOutput);
   const viewportAtBottomRef = useRef(true);
   const onInputRef = useRef(onInput);
@@ -324,7 +327,17 @@ export function XtermPane({
   useEffect(() => {
     cwdResolveGenerationRef.current += 1;
     cwdRef.current = initialCwd;
+    setSelectionHint(null);
   }, [initialCwd, streamId]);
+
+  useEffect(() => {
+    // Release a drag belonging to the old tab without sending its mouse-up to
+    // the newly bound runtime. This also stops xterm's own history drag timer.
+    const wasReplaying = replayingOutputRef.current;
+    replayingOutputRef.current = true;
+    selectionScrollRef.current?.reset();
+    replayingOutputRef.current = wasReplaying;
+  }, [streamId]);
 
   useEffect(() => {
     const requestId = (completionRequestIdRef.current += 1);
@@ -514,6 +527,13 @@ export function XtermPane({
     terminal.loadAddon(searchAddon);
     terminal.loadAddon(new WebLinksAddon());
     terminal.open(containerRef.current);
+    const selectionScroll = createTerminalSelectionScroll(
+      terminal, containerRef.current,
+      () => setSelectionHint("Vim 鼠标尚未启用：新建或重连 zTerm 会话可自动配置；当前 Vim 可执行 :set mouse=a。按住 Shift 可临时选择当前终端画面。"),
+      handleTerminalInput,
+      !applicationMode,
+    );
+    selectionScrollRef.current = selectionScroll;
     const cwdDisposable = terminal.parser.registerOscHandler(7, (payload) => {
       const cwd = parseOsc7Cwd(payload);
       if (cwd) {
@@ -575,6 +595,8 @@ export function XtermPane({
 
     return () => {
       cancelQueuedOutputWrites();
+      selectionScroll.dispose();
+      selectionScrollRef.current = null;
       cursorPresentationRef.current?.dispose();
       cursorPresentationRef.current = null;
       resizeObserver?.disconnect();
@@ -801,6 +823,7 @@ export function XtermPane({
         onClose={() => setContextMenu(null)}
       />
       {clipboardError ? <ZtInlineError>{clipboardError}</ZtInlineError> : null}
+      {selectionHint ? <div role="status">{selectionHint} <button type="button" onClick={() => setSelectionHint(null)}>关闭提示</button></div> : null}
       <div className="zt-xterm-host" ref={containerRef} />
       {ghostCandidate ? (
         <div className="zt-command-ghost" aria-hidden="true" ref={ghostElementRef}>

@@ -541,6 +541,24 @@ impl TerminalManager {
                 }
             }
         }
+        let user_vim_init = local_options
+            .and_then(|options| {
+                options
+                    .environment
+                    .iter()
+                    .rev()
+                    .find(|variable| variable.name.trim().eq_ignore_ascii_case("VIMINIT"))
+            })
+            .map(|variable| variable.value.clone())
+            .or_else(|| std::env::var("VIMINIT").ok());
+        command.env(
+            "ZTERM_USER_VIMINIT",
+            crate::services::vim_mouse_integration::original_init(user_vim_init),
+        );
+        command.env(
+            "VIMINIT",
+            crate::services::vim_mouse_integration::vim_init(),
+        );
         let pty = crate::services::local_pty_service::spawn_pty_command(command, cols, rows)?;
         let info = RuntimeSessionInfo {
             runtime_session_id: Uuid::new_v4().to_string(),

@@ -79,6 +79,14 @@ Windows 上检测到 WebView2 主版本大于或等于 152 时，zTerm 主窗口
 
 终端数据先经 ZMODEM 处理、后台 replay 解析，再由可见 Xterm 按序写入并确认。前端使用保序 chunk 队列，避免 React 合并更新丢失片段；缓存清理不截断尚未消费的原始协议数据。`rz/sz` 故障事件不直接回显原始二进制，传输失败后清理协议状态和残留发送，详见 API 契约。
 
+标签切换后的屏幕回放必须先恢复普通缓冲区；原会话处于 Vim、less 等备用屏幕时，再进入备用缓冲区恢复应用画面和光标，确保应用退出后显示原 Shell 屏幕。备用屏幕切换依据 xterm 已解析的缓冲区事件识别，支持控制序列跨输出块；回放等待待解析输出完成。`terminalReplay.test.ts` 覆盖 47、1047、1049 模式、重复回放和后台退出，不代替真实 SSH/WebView2 下的复制、跨标签粘贴及退出验收。
+
+普通终端历史沿用 xterm 的越界拖动滚动；左键按住期间，视口滚动后按鼠标位置重新计算选区。备用屏幕中的应用已开启 drag/any 鼠标报告时，左键越界或选中期间滚轮通过持续的边界 LeftDrag 扩展应用选区，不发送会打断 Vim 拖动状态的滚轮报告；边界列交替相差一格以避免静止坐标被应用忽略。按应用协商的默认、SGR 或 SGR pixel 格式编码，不读取文件或把应用内容拼入终端历史。屏幕回放同时恢复鼠标跟踪及编码；松键、失焦、流切换和卸载后结束拖动。
+
+普通终端的备用屏幕未按住左键时，每个垂直滚轮事件发送一个上/下方向键，并遵守应用光标键模式；这使 Vim 插入模式下的光标逐行移动，视口随光标继续展示文件内容，直到文件边界。该策略作用于普通终端内的备用屏幕应用，Agent CLI 面板沿用其原有滚轮行为。普通缓冲区仍滚动终端历史，修饰键滚轮保留原处理。Vim 跨文件屏幕选择依赖 `mouse=a`，新建本地和标准 POSIX SSH 会话自动启用；未开启鼠标时，拖动中的备用屏幕滚轮被阻止并显示提示，避免把本地选区误当成文件选区。
+
+Vim 自动鼠标配置通过会话级 VIMINIT 注入，保留原 VIMINIT，或按平台查找用户 vimrc、EXINIT、exrc，再加载默认配置；在 VimEnter 后启用 mouse=a。不写用户配置文件。普通 SSH 通过 /bin/sh 包装后启动用户登录 shell，不依赖 sshd AcceptEnv；服务器拒绝 exec 请求时回退原 shell；识别为 Windows 的 SSH 服务沿用原 shell，不注入 POSIX 命令。现有会话需重连，本地会话需新建。容器、Windows SSH、受限网关回退、WSL 环境隔离、sudo 清理环境、shell 启动文件覆盖 VIMINIT、Vim 显式 -u/--clean 和 Neovim 不保证自动启用，仍可手动执行 :set mouse=a。
+
 ## Agent CLI 渲染
 
 Windows Agent 子进程通过 `WT_SESSION=zterm-agent-conpty` 兼容标识选择 Codex 的 FullScreen 历史写入策略，`TERM_PROGRAM` 仍为 `zTerm`，不修改父进程环境。已核对 Codex CLI 0.153.4 的 [`ScrollbackStrategy::detect`](https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/tui/src/tui/scrollback.rs)：未识别的终端默认使用局部 DEC 滚动区域，ConPTY 下可能丢弃历史或留下临时 composer 重绘内容。该标识只用于当前上游检测器的兼容，不代表实际运行 Windows Terminal；上游提供明确 ConPTY 能力开关或支持 zTerm 后应改用该入口。升级 CLI 时重验历史编号、重复/空白行、任务结束后的上翻阅读；既有会话需要重开 Agent 才应用新环境，已损坏的历史不会被恢复。

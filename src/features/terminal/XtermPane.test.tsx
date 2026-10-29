@@ -319,6 +319,18 @@ describe("XtermPane", () => {
     delete document.documentElement.dataset.ztTheme;
   });
 
+  it.each([false, true])("routes standalone wheel to cursor movement only for ordinary alternate-screen terminals (Agent=%s)", (applicationMode) => {
+    const onInput = vi.fn();
+    const view = render(<XtermPane applicationMode={applicationMode} onInput={onInput} />);
+    terminalMock.instances[0].buffer.active.type = "alternate";
+    const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 });
+    act(() => view.container.querySelector(".xterm-screen")!.dispatchEvent(wheel));
+    expect(wheel.defaultPrevented).toBe(!applicationMode);
+    if (applicationMode) expect(onInput).not.toHaveBeenCalled();
+    else expect(onInput).toHaveBeenCalledExactlyOnceWith("\x1b[B");
+    view.unmount();
+  });
+
   it("keeps application redraws together with text colors but without cursor-line backgrounds", () => {
     const view = render(<XtermPane applicationMode followOutput />);
     const terminal = terminalMock.instances[0];

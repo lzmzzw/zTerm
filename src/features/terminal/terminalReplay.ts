@@ -1,5 +1,5 @@
 // Author: Liz
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IBuffer, type IDisposable } from "@xterm/xterm";
 
 export type TerminalReplayKind = "raw" | "screen";
 
@@ -21,6 +21,9 @@ export type TerminalReplayResult = TerminalReplayOutput | Promise<TerminalReplay
  */
 export class TerminalReplayBuffer {
   private readonly terminal: Terminal;
+  private readonly bufferChangeDisposable: IDisposable;
+  private readonly mouseModeDisposables: IDisposable[];
+  private mouseEncoding: number | null = null;
   private hasParsedOutput = false;
   private idleWaiters: Array<() => void> = [];
   private pendingWrites: Array<{ data: string; resolve: () => void }> = [];
@@ -37,6 +40,21 @@ export class TerminalReplayBuffer {
       rows: normalizeDimension(rows, DEFAULT_ROWS),
       scrollback: 0,
     });
+    // Observe parsed state rather than matching a whole escape sequence in one
+    // transport chunk: alternate-screen controls can arrive in separate writes.
+    this.bufferChangeDisposable = this.terminal.buffer.onBufferChange(() => {
+      this.requiresScreenSnapshot = true;
+    });
+    this.mouseModeDisposables = ["h", "l"].map((final) => this.terminal.parser.registerCsiHandler(
+      { prefix: "?", final },
+      (params) => {
+        for (const param of params) {
+          if (param !== 1006 && param !== 1016) continue;
+          this.mouseEncoding = final === "h" ? param : null;
+        }
+        return false;
+      },
+    ));
   }
 
   append(data: string): Promise<void> {
@@ -54,12 +72,12 @@ export class TerminalReplayBuffer {
     if (this.terminal.cols === nextCols && this.terminal.rows === nextRows) return;
     this.terminal.resize(nextCols, nextRows);
     if (this.hasParsedOutput && this.requiresScreenSnapshot) {
-      this.screenSnapshot = serializeTerminalScreen(this.terminal);
+      this.screenSnapshot = serializeTerminalScreen(this.terminal, this.mouseEncoding);
     }
   }
 
   replay(rawOutput: string): TerminalReplayResult {
-    if (this.requiresScreenSnapshot && (this.writeInProgress || this.pendingWrites.length > 0)) {
+    if (this.writeInProgress || this.pendingWrites.length > 0) {
       return new Promise<void>((resolve) => this.idleWaiters.push(resolve)).then(() => this.replay(rawOutput));
     }
     if (this.requiresScreenSnapshot && this.hasParsedOutput && this.screenSnapshot) {
@@ -75,6 +93,8 @@ export class TerminalReplayBuffer {
     this.inFlight = null;
     this.writeInProgress = false;
     this.resolveIdleWaiters();
+    this.bufferChangeDisposable.dispose();
+    this.mouseModeDisposables.forEach((disposable) => disposable.dispose());
     this.terminal.dispose();
   }
 
@@ -101,7 +121,7 @@ export class TerminalReplayBuffer {
       this.writeInProgress = false;
       this.hasParsedOutput = true;
       if (this.requiresScreenSnapshot) {
-        this.screenSnapshot = serializeTerminalScreen(this.terminal);
+        this.screenSnapshot = serializeTerminalScreen(this.terminal, this.mouseEncoding);
       }
       pending.resolve();
       this.drainWrites();
@@ -109,14 +129,31 @@ export class TerminalReplayBuffer {
   }
 }
 
-function serializeTerminalScreen(terminal: Terminal) {
-  const buffer = terminal.buffer.active;
+function serializeTerminalScreen(terminal: Terminal, mouseEncoding: number | null) {
+  // Rebuild the shell first, then enter the alternate screen. Painting only the
+  // active text into a normal buffer leaves editor contents behind on exit.
+  const parts = ["\x1b[?1049l", serializeBufferScreen(terminal, terminal.buffer.normal)];
+  if (terminal.buffer.active.type === "alternate") {
+    parts.push("\x1b[?1049h", serializeBufferScreen(terminal, terminal.buffer.alternate));
+  }
+  // A tab rebuild must retain the application's mouse negotiation, otherwise
+  // Vim stops receiving drag/wheel events even though it still owns selection.
+  const trackingModes = { none: 0, x10: 9, vt200: 1000, drag: 1002, any: 1003 };
+  const trackingMode = trackingModes[terminal.modes.mouseTrackingMode];
+  parts.push("\x1b[?9;1000;1002;1003;1006;1016l");
+  if (mouseEncoding) parts.push(`\x1b[?${mouseEncoding}h`);
+  if (trackingMode) parts.push(`\x1b[?${trackingMode}h`);
+  parts.push(`\x1b[?1${terminal.modes.applicationCursorKeysMode ? "h" : "l"}`);
+  return parts.join("");
+}
+
+function serializeBufferScreen(terminal: Terminal, buffer: IBuffer) {
   const rows = terminal.rows;
   const cols = terminal.cols;
   const parts = ["\x1b[2J\x1b[H"];
 
   for (let row = 0; row < rows; row += 1) {
-    const text = buffer.getLine(row)?.translateToString(true) ?? "";
+    const text = buffer.getLine(buffer.baseY + row)?.translateToString(true) ?? "";
     if (!text) continue;
     parts.push(`\x1b[${row + 1};1H${sanitizeScreenText(text)}`);
   }

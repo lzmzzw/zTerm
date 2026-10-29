@@ -22,6 +22,8 @@ struct EchoServer {
     keyboard_prompt: Option<&'static str>,
     allow_none: bool,
     hang_shell: bool,
+    reject_bootstrap: bool,
+    windows_server: bool,
     shell_channels: std::collections::HashSet<ChannelId>,
     opened: Arc<AtomicUsize>,
     execs: Arc<AtomicUsize>,
@@ -68,6 +70,10 @@ impl server::Handler for EchoServer {
         Ok(if self.allow_none {
             server::Auth::Accept
         } else {
+            assert!(
+                !self.windows_server,
+                "Windows servers must retain shell requests"
+            );
             server::Auth::reject()
         })
     }
@@ -139,8 +145,19 @@ impl server::Handler for EchoServer {
         command: &[u8],
         session: &mut server::Session,
     ) -> Result<(), Self::Error> {
-        assert!(String::from_utf8_lossy(command).contains("docker"));
-        self.execs.fetch_add(1, Ordering::SeqCst);
+        let command = String::from_utf8_lossy(command);
+        if command.contains("docker") {
+            self.execs.fetch_add(1, Ordering::SeqCst);
+        } else {
+            assert_eq!(
+                command,
+                crate::services::vim_mouse_integration::ssh_shell_command()
+            );
+            if self.reject_bootstrap {
+                session.channel_failure(channel)?;
+                return Ok(());
+            }
+        }
         self.shell_request(channel, session).await
     }
     async fn data(
@@ -208,7 +225,15 @@ async fn fixture_with_auth(
     keyboard_prompt: Option<&'static str>,
     allow_none: bool,
 ) -> Fixture {
-    fixture_options(reject_auth, password, keyboard_prompt, allow_none, false).await
+    fixture_options(
+        reject_auth,
+        password,
+        keyboard_prompt,
+        allow_none,
+        false,
+        false,
+    )
+    .await
 }
 
 async fn fixture_options(
@@ -217,9 +242,36 @@ async fn fixture_options(
     keyboard_prompt: Option<&'static str>,
     allow_none: bool,
     hang_shell: bool,
+    reject_bootstrap: bool,
+) -> Fixture {
+    fixture_platform_options(
+        reject_auth,
+        password,
+        keyboard_prompt,
+        allow_none,
+        hang_shell,
+        reject_bootstrap,
+        false,
+    )
+    .await
+}
+
+async fn fixture_platform_options(
+    reject_auth: bool,
+    password: &str,
+    keyboard_prompt: Option<&'static str>,
+    allow_none: bool,
+    hang_shell: bool,
+    reject_bootstrap: bool,
+    windows_server: bool,
 ) -> Fixture {
     let key = keys::ssh_key::private::Ed25519Keypair::from_seed(&[19; 32]);
     let config = Arc::new(server::Config {
+        server_id: russh::SshId::Standard(if windows_server {
+            "SSH-2.0-OpenSSH_for_Windows_9.5".into()
+        } else {
+            "SSH-2.0-zterm_loopback".into()
+        }),
         keys: vec![PrivateKey::new(key.into(), "loopback-only").unwrap()],
         auth_rejection_time: Duration::ZERO,
         auth_rejection_time_initial: Some(Duration::ZERO),
@@ -235,6 +287,8 @@ async fn fixture_options(
         keyboard_prompt,
         allow_none,
         hang_shell,
+        reject_bootstrap,
+        windows_server,
         shell_channels: std::collections::HashSet::new(),
         opened: Arc::clone(&opened),
         execs: Arc::clone(&execs),
@@ -322,6 +376,29 @@ fn native(spawn: SshTerminalSpawn) -> NativeSshRuntime {
 #[tokio::test]
 async fn loopback_plain_ssh_preserves_zmodem_and_binary_input_output() {
     let fixture = fixture(false).await;
+    let session = saved_session(fixture.port);
+    exchange(native(
+        spawn_ssh_terminal_with_resolver(&session, 80, 24, &TestSecrets).unwrap(),
+    ))
+    .await;
+    assert_eq!(fixture.opened.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn loopback_restricted_gateway_falls_back_to_shell() {
+    let fixture = fixture_options(false, "loopback-only", None, false, false, true).await;
+    let session = saved_session(fixture.port);
+    exchange(native(
+        spawn_ssh_terminal_with_resolver(&session, 80, 24, &TestSecrets).unwrap(),
+    ))
+    .await;
+    assert_eq!(fixture.opened.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn loopback_windows_server_retains_shell_request() {
+    let fixture =
+        fixture_platform_options(false, "loopback-only", None, false, false, false, true).await;
     let session = saved_session(fixture.port);
     exchange(native(
         spawn_ssh_terminal_with_resolver(&session, 80, 24, &TestSecrets).unwrap(),
@@ -629,7 +706,7 @@ async fn loopback_saved_two_jumps_use_distinct_passwords_and_binary_tunnel() {
 
 #[tokio::test]
 async fn loopback_hanging_shell_close_releases_reader_and_tunnel_listener() {
-    let fixture = fixture_options(false, "loopback-only", None, false, true).await;
+    let fixture = fixture_options(false, "loopback-only", None, false, true, false).await;
     let mut session = saved_session(fixture.port);
     let reserve = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let port = reserve.local_addr().unwrap().port();

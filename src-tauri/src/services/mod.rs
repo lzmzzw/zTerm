@@ -30,4 +30,5 @@ pub mod terminal_profile_service;
 pub(crate) mod terminal_utf8;
 pub mod transfer_queue;
 pub mod transfer_resume;
+pub(crate) mod vim_mouse_integration;
 pub mod zmodem_diagnostics;

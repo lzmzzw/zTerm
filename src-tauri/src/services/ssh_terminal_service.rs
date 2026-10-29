@@ -353,8 +353,14 @@ async fn run_native_ssh_terminal(
         pending: Arc::clone(&auth_pending),
     };
     let setup = async {
-        let (mut handle, jumps) =
-            connect_native_ssh(&target, forward_sender, &mut interaction).await?;
+        let windows_server = Arc::new(AtomicBool::new(false));
+        let (mut handle, jumps) = connect_native_ssh(
+            &target,
+            forward_sender,
+            &mut interaction,
+            Arc::clone(&windows_server),
+        )
+        .await?;
         tokio::time::timeout(
             Duration::from_secs(60),
             authenticate_native_ssh(&mut handle, &target, &mut interaction),
@@ -364,7 +370,7 @@ async fn run_native_ssh_terminal(
         let handle = Arc::new(handle);
         let tunnels =
             NativeTunnels::start(Arc::clone(&handle), &target.tunnels, forward_receiver).await?;
-        let channel = handle.channel_open_session().await.map_err(russh_error)?;
+        let mut channel = handle.channel_open_session().await.map_err(russh_error)?;
         let pty_modes = native_pty_modes();
         channel
             .request_pty(
@@ -378,9 +384,28 @@ async fn run_native_ssh_terminal(
             )
             .await
             .map_err(russh_error)?;
+        if !wait_terminal_startup_reply(&mut channel, &output_sender).await? {
+            return Err(AppError::ssh("SSH 服务器拒绝分配终端"));
+        }
         match startup {
-            NativeSshStartup::Shell => {
+            NativeSshStartup::Shell if windows_server.load(Ordering::SeqCst) => {
                 channel.request_shell(true).await.map_err(russh_error)?;
+            }
+            NativeSshStartup::Shell => {
+                channel
+                    .exec(
+                        true,
+                        crate::services::vim_mouse_integration::ssh_shell_command(),
+                    )
+                    .await
+                    .map_err(russh_error)?;
+                if !wait_terminal_startup_reply(&mut channel, &output_sender).await? {
+                    // Restricted gateways may permit shell requests but reject exec.
+                    channel.request_shell(true).await.map_err(russh_error)?;
+                    if !wait_terminal_startup_reply(&mut channel, &output_sender).await? {
+                        return Err(AppError::ssh("SSH 服务器拒绝启动 shell"));
+                    }
+                }
             }
             NativeSshStartup::Exec(command) => {
                 channel.exec(true, command).await.map_err(russh_error)?;
@@ -480,6 +505,28 @@ async fn run_native_ssh_terminal(
             .await;
     }
     Ok(())
+}
+
+async fn wait_terminal_startup_reply(
+    channel: &mut russh::Channel<client::Msg>,
+    output: &tokio_mpsc::Sender<Vec<u8>>,
+) -> AppResult<bool> {
+    loop {
+        match channel.wait().await {
+            Some(ChannelMsg::Success) => return Ok(true),
+            Some(ChannelMsg::Failure) => return Ok(false),
+            Some(ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. }) => {
+                output
+                    .send(data.to_vec())
+                    .await
+                    .map_err(|_| AppError::ssh("SSH 终端输出已关闭"))?;
+            }
+            Some(ChannelMsg::Close) | None => {
+                return Err(AppError::ssh("SSH 服务器在启动终端时关闭连接"))
+            }
+            _ => {}
+        }
+    }
 }
 
 async fn apply_native_ssh_command(
@@ -708,10 +755,29 @@ struct NativeSshHandler {
     forwarded: tokio_mpsc::Sender<ForwardedTcpip>,
     host: String,
     port: u16,
+    windows_server: Option<Arc<AtomicBool>>,
 }
 
 impl client::Handler for NativeSshHandler {
     type Error = russh::Error;
+
+    async fn channel_open_confirmation(
+        &mut self,
+        _: russh::ChannelId,
+        _: u32,
+        _: u32,
+        session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        if let Some(windows) = &self.windows_server {
+            windows.store(
+                String::from_utf8_lossy(session.remote_sshid())
+                    .to_ascii_lowercase()
+                    .contains("windows"),
+                Ordering::SeqCst,
+            );
+        }
+        Ok(())
+    }
 
     async fn check_server_key(
         &mut self,
@@ -754,6 +820,7 @@ async fn connect_native_ssh(
     target: &NativeSshTarget,
     forwarded: tokio_mpsc::Sender<ForwardedTcpip>,
     interaction: &mut NativeAuthInteraction,
+    windows_server: Arc<AtomicBool>,
 ) -> AppResult<(
     client::Handle<NativeSshHandler>,
     Vec<client::Handle<NativeSshHandler>>,
@@ -769,6 +836,7 @@ async fn connect_native_ssh(
             forwarded,
             host: target.host.clone(),
             port: target.port,
+            windows_server: Some(windows_server),
         };
         let config = Arc::new(config);
         if !target.resolved_jumps.is_empty() {
@@ -801,6 +869,7 @@ async fn connect_native_ssh(
                     forwarded,
                     host: hop.host.clone(),
                     port: hop.port,
+                    windows_server: None,
                 };
                 let mut handle = if let Some(upstream) = jumps.last() {
                     let channel = upstream
