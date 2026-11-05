@@ -1,5 +1,6 @@
 // Author: Liz
-import { Terminal, type IBuffer, type IDisposable } from "@xterm/xterm";
+import { SerializeAddon } from "@xterm/addon-serialize";
+import { Terminal, type IDisposable } from "@xterm/xterm";
 
 export type TerminalReplayKind = "raw" | "screen";
 
@@ -21,6 +22,7 @@ export type TerminalReplayResult = TerminalReplayOutput | Promise<TerminalReplay
  */
 export class TerminalReplayBuffer {
   private readonly terminal: Terminal;
+  private readonly serializer = new SerializeAddon();
   private readonly bufferChangeDisposable: IDisposable;
   private readonly mouseModeDisposables: IDisposable[];
   private mouseEncoding: number | null = null;
@@ -40,6 +42,7 @@ export class TerminalReplayBuffer {
       rows: normalizeDimension(rows, DEFAULT_ROWS),
       scrollback: 0,
     });
+    this.terminal.loadAddon(this.serializer);
     // Observe parsed state rather than matching a whole escape sequence in one
     // transport chunk: alternate-screen controls can arrive in separate writes.
     this.bufferChangeDisposable = this.terminal.buffer.onBufferChange(() => {
@@ -72,7 +75,7 @@ export class TerminalReplayBuffer {
     if (this.terminal.cols === nextCols && this.terminal.rows === nextRows) return;
     this.terminal.resize(nextCols, nextRows);
     if (this.hasParsedOutput && this.requiresScreenSnapshot) {
-      this.screenSnapshot = serializeTerminalScreen(this.terminal, this.mouseEncoding);
+      this.screenSnapshot = serializeTerminalScreen(this.terminal, this.serializer, this.mouseEncoding);
     }
   }
 
@@ -121,7 +124,7 @@ export class TerminalReplayBuffer {
       this.writeInProgress = false;
       this.hasParsedOutput = true;
       if (this.requiresScreenSnapshot) {
-        this.screenSnapshot = serializeTerminalScreen(this.terminal, this.mouseEncoding);
+        this.screenSnapshot = serializeTerminalScreen(this.terminal, this.serializer, this.mouseEncoding);
       }
       pending.resolve();
       this.drainWrites();
@@ -129,13 +132,17 @@ export class TerminalReplayBuffer {
   }
 }
 
-function serializeTerminalScreen(terminal: Terminal, mouseEncoding: number | null) {
+function serializeTerminalScreen(terminal: Terminal, serializer: SerializeAddon, mouseEncoding: number | null) {
   // Rebuild the shell first, then enter the alternate screen. Painting only the
   // active text into a normal buffer leaves editor contents behind on exit.
-  const parts = ["\x1b[?1049l", serializeBufferScreen(terminal, terminal.buffer.normal)];
-  if (terminal.buffer.active.type === "alternate") {
-    parts.push("\x1b[?1049h", serializeBufferScreen(terminal, terminal.buffer.alternate));
-  }
+  // Plain text snapshots discard ANSI attributes. Serialize cells and the active
+  // SGR state so both restored text and subsequent live output keep their colors.
+  // Each serialized buffer assumes an initial default style. The normal buffer
+  // ends by restoring the current SGR, so reset at the addon-generated boundary
+  // before painting the alternate buffer to avoid leaking that style into it.
+  const screen = serializer.serialize({ scrollback: 0, excludeModes: true })
+    .replace("\x1b[?1049h\x1b[H", "\x1b[0m\x1b[?1049h\x1b[H");
+  const parts = ["\x1b[?1049l\x1b[0m\x1b[2J\x1b[H", screen];
   // A tab rebuild must retain the application's mouse negotiation, otherwise
   // Vim stops receiving drag/wheel events even though it still owns selection.
   const trackingModes = { none: 0, x10: 9, vt200: 1000, drag: 1002, any: 1003 };
@@ -145,27 +152,6 @@ function serializeTerminalScreen(terminal: Terminal, mouseEncoding: number | nul
   if (trackingMode) parts.push(`\x1b[?${trackingMode}h`);
   parts.push(`\x1b[?1${terminal.modes.applicationCursorKeysMode ? "h" : "l"}`);
   return parts.join("");
-}
-
-function serializeBufferScreen(terminal: Terminal, buffer: IBuffer) {
-  const rows = terminal.rows;
-  const cols = terminal.cols;
-  const parts = ["\x1b[2J\x1b[H"];
-
-  for (let row = 0; row < rows; row += 1) {
-    const text = buffer.getLine(buffer.baseY + row)?.translateToString(true) ?? "";
-    if (!text) continue;
-    parts.push(`\x1b[${row + 1};1H${sanitizeScreenText(text)}`);
-  }
-
-  const cursorRow = Math.min(Math.max(buffer.cursorY, 0), rows - 1);
-  const cursorColumn = Math.min(Math.max(buffer.cursorX, 0), cols - 1);
-  parts.push(`\x1b[${cursorRow + 1};${cursorColumn + 1}H`);
-  return parts.join("");
-}
-
-function sanitizeScreenText(text: string) {
-  return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
 }
 
 function normalizeDimension(value: number, fallback: number) {

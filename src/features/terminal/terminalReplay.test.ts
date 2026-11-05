@@ -5,6 +5,60 @@ import { Terminal } from "@xterm/xterm";
 import { TerminalReplayBuffer } from "./terminalReplay";
 
 describe("TerminalReplayBuffer", () => {
+  it.each(["\x1b[2K\r", "\x1b[?1049h"])("preserves ANSI colors and styles across screen replay after %j", async (control) => {
+    const replay = new TerminalReplayBuffer(60, 6);
+    const original = new Terminal({ allowProposedApi: true, cols: 60, rows: 6 });
+    const restored = new Terminal({ allowProposedApi: true, cols: 60, rows: 6 });
+    try {
+      const prompt = "\x1b[1;32mubuntu@ubuntu\x1b[0m:\x1b[1;34m~\x1b[0m$ ";
+      const data = prompt + control + prompt + "\r\n"
+        + "\x1b[38;5;202;48;5;24m索引色  \x1b[0m"
+        + "\x1b[38;2;123;45;67;48;2;12;34;56m真彩色 e\u0301\x1b[0m\r\n"
+        + "\x1b[1;2;3;4;5;7;8;9;53mstyles\x1b[0m default"
+        + "\x1b[44m   \x1b[0m\r\n";
+      await replay.append(data);
+      await writeTerminal(original, data);
+      for (let visit = 0; visit < 2; visit += 1) {
+        const output = await replay.replay("truncated raw output");
+        expect(output.kind).toBe("screen");
+        await writeTerminal(restored, output.data);
+        expect(screenCells(restored, "normal")).toEqual(screenCells(original, "normal"));
+        expect(restored.buffer.active.type).toBe(original.buffer.active.type);
+        expect(screenCells(restored, "active")).toEqual(screenCells(original, "active"));
+        expect(restored.buffer.active.cursorX).toBe(original.buffer.active.cursorX);
+        expect(restored.buffer.active.cursorY).toBe(original.buffer.active.cursorY);
+      }
+      replay.resize(70, 8);
+      original.resize(70, 8);
+      restored.resize(70, 8);
+      await writeTerminal(restored, (await replay.replay("")).data);
+      expect(screenCells(restored, "active")).toEqual(screenCells(original, "active"));
+    } finally {
+      replay.dispose();
+      original.dispose();
+      restored.dispose();
+    }
+  });
+
+  it.each(["\x1b[2K\r", "shell\x1b[?1049h"])("restores the current SGR state for live output following replay after %j", async (control) => {
+    const replay = new TerminalReplayBuffer(60, 6);
+    const original = new Terminal({ allowProposedApi: true, cols: 60, rows: 6 });
+    const restored = new Terminal({ allowProposedApi: true, cols: 60, rows: 6 });
+    try {
+      const data = control + "default \x1b[31mred\x1b[0m\x1b[1;38;2;12;34;56m";
+      await replay.append(data);
+      await writeTerminal(original, data);
+      await writeTerminal(restored, (await replay.replay("")).data);
+      await writeTerminal(original, "continued\x1b[0m default");
+      await writeTerminal(restored, "continued\x1b[0m default");
+      expect(screenCells(restored, "active")).toEqual(screenCells(original, "active"));
+    } finally {
+      replay.dispose();
+      original.dispose();
+      restored.dispose();
+    }
+  });
+
   it("restores Vim mouse tracking and its negotiated encoding across tab replay", async () => {
     const replay = new TerminalReplayBuffer(60, 6);
     const restored = new Terminal({ allowProposedApi: true, cols: 60, rows: 6 });
@@ -150,4 +204,20 @@ describe("TerminalReplayBuffer", () => {
 
 function writeTerminal(terminal: Terminal, data: string) {
   return new Promise<void>((resolve) => terminal.write(data, resolve));
+}
+
+function screenCells(terminal: Terminal, name: "normal" | "active") {
+  const buffer = terminal.buffer[name];
+  return Array.from({ length: terminal.rows }, (_, row) =>
+    Array.from({ length: terminal.cols }, (_, column) => {
+      const cell = buffer.getLine(buffer.baseY + row)?.getCell(column);
+      if (!cell) return null;
+      return [
+        cell.getChars(), cell.getWidth(), cell.getFgColorMode(), cell.getFgColor(),
+        cell.getBgColorMode(), cell.getBgColor(), cell.isBold(), cell.isDim(),
+        cell.isItalic(), cell.isUnderline(), cell.isBlink(), cell.isInverse(),
+        cell.isInvisible(), cell.isStrikethrough(), cell.isOverline(),
+      ];
+    }),
+  );
 }
