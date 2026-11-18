@@ -34,6 +34,7 @@ use crate::{
 const DEFAULT_TIMEOUT_SECONDS: u64 = 15;
 const MIN_TIMEOUT_SECONDS: u64 = 1;
 const MAX_TIMEOUT_SECONDS: u64 = 60;
+const HEADLESS_SSH_TIMEOUT_SECONDS: u64 = 60;
 const DEFAULT_OUTPUT_BYTES: usize = 128 * 1024;
 const MIN_OUTPUT_BYTES: usize = 256;
 const MAX_OUTPUT_BYTES: usize = 128 * 1024;
@@ -83,6 +84,19 @@ impl SshCommandService {
     ) -> AppResult<SshCommandOutput> {
         let execution = build_ssh_command_execution(session, all_sessions, script, secrets)?;
         execute_ssh_command_execution(execution).await
+    }
+
+    pub async fn execute_headless(
+        &self,
+        session: &SavedSession,
+        all_sessions: &[SavedSession],
+        script: String,
+        secrets: &dyn SshCommandSecretResolver,
+    ) -> AppResult<SshCommandOutput> {
+        let execution =
+            build_headless_ssh_command_execution(session, all_sessions, script, secrets)?;
+        self.execute_reusable_ssh_command_execution("mcp", execution)
+            .await
     }
 
     pub async fn execute_reusable(
@@ -633,6 +647,17 @@ fn push_unique(values: &mut Vec<String>, value: String) {
     if !value.trim().is_empty() && !values.iter().any(|candidate| candidate == &value) {
         values.push(value);
     }
+}
+
+fn build_headless_ssh_command_execution(
+    session: &SavedSession,
+    all_sessions: &[SavedSession],
+    script: String,
+    secrets: &dyn SshCommandSecretResolver,
+) -> AppResult<SshCommandExecution> {
+    let mut execution = build_ssh_command_execution(session, all_sessions, script, secrets)?;
+    execution.timeout_seconds = HEADLESS_SSH_TIMEOUT_SECONDS;
+    Ok(execution)
 }
 
 pub fn build_ssh_command_execution(
@@ -1323,6 +1348,28 @@ mod tests {
             expand_proxy_command(hop.proxy_command.as_deref().expect("proxy command"), &hop),
             "ssh -W files.example.test:2222 deploy@jump && printf %"
         );
+    }
+
+    #[test]
+    fn headless_execution_uses_sixty_seconds_without_changing_session_timeout() {
+        let mut target = ssh_session("target", "server.example.test", "deploy");
+        target.auth_mode = AuthMode::None;
+
+        for (options, regular_timeout) in [(None, 15), (Some(SshOptions::default()), 10)] {
+            target.ssh_options = options;
+            let regular =
+                build_ssh_command_execution(&target, &[], "true".into(), &StaticSecrets).unwrap();
+            let headless =
+                build_headless_ssh_command_execution(&target, &[], "true".into(), &StaticSecrets)
+                    .unwrap();
+
+            assert_eq!(regular.timeout_seconds, regular_timeout);
+            assert_eq!(headless.timeout_seconds, 60);
+            assert_eq!(
+                headless.target.connect_timeout_ms,
+                regular.target.connect_timeout_ms
+            );
+        }
     }
 
     #[test]

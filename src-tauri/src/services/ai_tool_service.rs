@@ -1199,8 +1199,7 @@ impl AiToolService {
                     return Err(AppError::validation("ssh.execute 只支持 SSH 连接"));
                 }
                 let all_sessions = list_sessions(store)?.sessions;
-                let output = block_on_tool(self.ssh_command_service()?.execute_reusable(
-                    "mcp",
+                let output = block_on_tool(self.ssh_command_service()?.execute_headless(
                     &session,
                     &all_sessions,
                     script,
