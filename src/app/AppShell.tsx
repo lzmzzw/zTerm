@@ -49,8 +49,10 @@ import {
 } from "./appShellModel";
 import { ZtCenteredPageLayout, ZtConfirmDialog, ZtInlineError } from "../components/ZtUi";
 import {
+  agentCliLabels,
   closeAgentCodex,
   openAgentCodex,
+  type AgentCli,
   type AgentCodexSession,
 } from "../features/ai/agentCodexApi";
 import { useActiveAgentTerminalSync } from "../features/ai/useActiveAgentTerminalSync";
@@ -211,7 +213,7 @@ export function AppShell() {
   const agentSessionsRef = useRef<Record<string, AgentCodexSession>>({});
   const agentOpenPromisesRef = useRef<Map<string, Promise<AgentCodexSession | null>>>(new Map());
   const agentStoppingSessionIdsRef = useRef<Set<string>>(new Set());
-  const [agentOpeningConnectionKeys, setAgentOpeningConnectionKeys] = useState<Record<string, true>>({});
+  const [agentOpeningClis, setAgentOpeningClis] = useState<Record<string, AgentCli>>({});
   const [agentOpenError, setAgentOpenError] = useState<string | null>(null);
   const previousAgentConnectionKeyRef = useRef<string | null>(null);
   const [containerPanelState, setContainerPanelState] = useState(EMPTY_CONTAINER_PANEL_STATE);
@@ -483,6 +485,10 @@ export function AppShell() {
       activeRuntimeInfo?.kind === "ssh_container")
       ? activeRuntimeSessionId
       : null;
+  const canStartActiveAgent = Boolean(
+    activeAgentConnectionKey && activeRuntimeSessionId && activePaneTab &&
+      activeRuntimeInfo?.kind !== "rdp_placeholder" && activeSavedSession?.type !== "rdp",
+  );
   const activeAgentTargetLabel = activeAgentRuntimeSessionId
     ? activeSavedSession?.name?.trim()
       || activeExternalSshSession?.name?.trim()
@@ -1205,7 +1211,6 @@ export function AppShell() {
     }
     setAgentOpenError(null);
     setActiveTool("agent");
-    void ensureActiveAgentCodex();
   }
 
   function removeAgentCodexSession(connectionKey: string, expectedSession?: AgentCodexSession) {
@@ -1229,9 +1234,9 @@ export function AppShell() {
     }
   }
 
-  function setAgentConnectionOpening(connectionKey: string, opening: boolean) {
-    setAgentOpeningConnectionKeys((current) => {
-      if (opening) return current[connectionKey] ? current : { ...current, [connectionKey]: true };
+  function setAgentConnectionOpening(connectionKey: string, cli: AgentCli | null) {
+    setAgentOpeningClis((current) => {
+      if (cli) return { ...current, [connectionKey]: cli };
       if (!current[connectionKey]) return current;
       const { [connectionKey]: _removed, ...next } = current;
       return next;
@@ -1248,19 +1253,14 @@ export function AppShell() {
 
   function openAgentCodexForConnection(
     connectionKey: string,
-    request: {
-      tabId: string;
-      targetRuntimeSessionId: string;
-      targetSavedSessionId: string | null;
-      targetLabel: string;
-    },
+    request: Parameters<typeof openAgentCodex>[0],
   ) {
     const existing = agentSessionsRef.current[connectionKey];
     if (existing) return Promise.resolve(existing);
     const opening = agentOpenPromisesRef.current.get(connectionKey);
     if (opening) return opening;
 
-    setAgentConnectionOpening(connectionKey, true);
+    setAgentConnectionOpening(connectionKey, request.cli);
     let operation: Promise<AgentCodexSession | null>;
     operation = openAgentCodex(request)
       .then(async (session) => {
@@ -1283,30 +1283,31 @@ export function AppShell() {
         if (agentOpenPromisesRef.current.get(connectionKey) === operation) {
           agentOpenPromisesRef.current.delete(connectionKey);
         }
-        setAgentConnectionOpening(connectionKey, false);
+        setAgentConnectionOpening(connectionKey, null);
       });
     agentOpenPromisesRef.current.set(connectionKey, operation);
     return operation;
   }
 
-  async function ensureActiveAgentCodex() {
-    if (!activeAgentConnectionKey || !activeRuntimeSessionId || !activePaneTab) {
+  async function startActiveAgent(cli: AgentCli) {
+    if (!canStartActiveAgent || !activeAgentConnectionKey || !activeRuntimeSessionId || !activePaneTab) {
       setAgentOpenError("请先打开一个可操作的终端标签页。");
       return;
     }
-    if (agentSessionsRef.current[activeAgentConnectionKey]) return;
+    if (agentSessionsRef.current[activeAgentConnectionKey] || agentOpenPromisesRef.current.has(activeAgentConnectionKey)) return;
     const connectionKey = activeAgentConnectionKey;
     const request = {
       tabId: activePaneTab.id,
       targetRuntimeSessionId: activeRuntimeSessionId,
       targetSavedSessionId: activeSavedSessionId,
       targetLabel: activeAgentTargetLabel ?? (activePaneTab.title || activeSavedSession?.name || "当前终端"),
+      cli,
     };
     setAgentOpenErrorForConnection(connectionKey, null);
     try {
       await openAgentCodexForConnection(connectionKey, request);
     } catch (error) {
-      setAgentOpenErrorForConnection(connectionKey, unknownErrorMessage(error, "Codex CLI 启动失败"));
+      setAgentOpenErrorForConnection(connectionKey, unknownErrorMessage(error, `${agentCliLabels[cli]} 启动失败`));
     }
   }
 
@@ -1324,9 +1325,10 @@ export function AppShell() {
         targetRuntimeSessionId: activeRuntimeSessionId,
         targetSavedSessionId: activeSavedSessionId,
         targetLabel: activeAgentTargetLabel ?? (activePaneTab.title || activeSavedSession?.name || previousSession.target_label),
+        cli: previousSession.cli,
       });
     } catch (error) {
-      setAgentOpenErrorForConnection(connectionKey, unknownErrorMessage(error, "Codex CLI 重启失败"));
+      setAgentOpenErrorForConnection(connectionKey, unknownErrorMessage(error, `${agentCliLabels[previousSession.cli]} 重启失败`));
     }
   }
 
@@ -1340,7 +1342,7 @@ export function AppShell() {
       removeAgentCodexSession(connectionKey, session);
       if (activeAgentConnectionKeyRef.current === connectionKey) setActiveTool(null);
     } catch (error) {
-      setAgentOpenErrorForConnection(connectionKey, unknownErrorMessage(error, "Codex CLI 关闭失败"));
+      setAgentOpenErrorForConnection(connectionKey, unknownErrorMessage(error, `${agentCliLabels[session.cli]} 关闭失败`));
     }
   }
 
@@ -1952,7 +1954,9 @@ export function AppShell() {
           activeConnectionKey: activeAgentConnectionKey,
           approvalMode: mcpApprovalMode,
           error: agentOpenError ?? agentError,
-          loading: Boolean(activeAgentConnectionKey && agentOpeningConnectionKeys[activeAgentConnectionKey]),
+          openingCli: activeAgentConnectionKey ? agentOpeningClis[activeAgentConnectionKey] ?? null : null,
+          canStart: canStartActiveAgent,
+          onStart: startActiveAgent,
           pendingInvocations: mcpPendingInvocations,
           onApprovalModeChange: setApprovalMode,
           onClose: closeActiveAgentCodex,

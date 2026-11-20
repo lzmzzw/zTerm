@@ -19,7 +19,6 @@ function render(pendingInvocations: AgentPendingInvocation[] = [], onConfirmTool
         activeTargetLabel="生产 SSH"
         approvalMode="safe"
         error={null}
-        loading={false}
         pendingInvocations={pendingInvocations}
         onApprovalModeChange={vi.fn()}
         onClose={vi.fn()}

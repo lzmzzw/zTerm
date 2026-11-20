@@ -3,9 +3,9 @@
 [中文](README.zh-CN.md)
 
 zTerm is a Tauri desktop terminal application for SSH, SFTP, command history,
-server monitoring, and Codex-assisted operations. It is designed for a dense,
+server monitoring, and AI-assisted operations. It is designed for a dense,
 keyboard-friendly workstation layout: sessions on the left, split terminal
-panes in the center, and files/history/monitor/Codex tools on the right.
+panes in the center, and files/history/monitor/Agent tools on the right.
 
 The title bar contains sessions, file transfer, and settings on the left and
 Agent on the right. File transfer and settings open as full pages; their close
@@ -29,18 +29,19 @@ and verification commands.
 - Browse SFTP directories, create folders, upload, download, rename, delete, and retry transfers.
 - Capture command history by session or local profile, search it, copy commands, and send commands back to the active terminal.
 - Store connection credentials in the operating system keyring instead of plain SQLite rows.
-- Launch the locally authenticated Codex CLI in the Agent sidebar for local and SSH connections. Local connections start in the user home directory with the normal user Codex configuration; SSH connections retain the scoped Visible Terminal Profile.
-- Give sidebar Codex a Visible Terminal Profile: every server command and output stays in zTerm scrollback, while additional saved SSH servers can be opened and operated in new tabs or horizontal/vertical splits.
+- Open the Agent sidebar and choose a locally installed and authenticated CLI: Codex or Claude Code. If an Agent is already running for the connection, the sidebar reopens it without starting another process.
+- Agents launched from an SSH or SSH container tab use zTerm's scoped Visible Terminal Profile without manual MCP setup. Server commands and output stay in terminal scrollback; other saved SSH connections can open in new tabs or splits.
 - Give external Codex App clients a Headless Profile: native SSH execution and transfers return structured results without opening, reading, or writing terminal scrollback.
-- Use Efficient Approval by default: inspections, transfers, and routine operations run automatically, while genuinely high-risk or irreversible actions are confirmed once in zTerm. Pending approval brings zTerm forward, opens the Agent approval surface, and returns the decision to the original Codex tool call without resubmission.
+- Use Efficient Approval by default: inspections, transfers, and routine operations run automatically, while genuinely high-risk or irreversible actions are confirmed once in zTerm. Pending approval brings zTerm forward, opens the Agent approval surface, and returns the decision to the original MCP tool call without resubmission.
 - Use Full Automation for trusted personal environments: writes, deletes, and critical commands run without approval and remain audited; only operations that require local secret input still wait for the user.
 - Monitor SSH server CPU, memory, disk, load, uptime, and network traffic snapshots.
 
 RDP sessions open in the Windows system Remote Desktop client. The app
 keeps the session tab for navigation but does not embed or render the remote
 desktop. Model management and built-in model invocation are intentionally
-outside zTerm; the Agent sidebar is implemented entirely by the locally
-authenticated Codex CLI.
+outside zTerm; the Agent sidebar uses the selected CLI's own authentication and
+model configuration. On local terminal tabs, the CLI keeps its normal local
+configuration instead of receiving a zTerm-scoped MCP binding.
 
 Vim mouse initialization applies to new local and reconnected standard POSIX SSH sessions and preserves user initialization. Containers, Windows SSH, restricted gateway fallback, WSL environment isolation, sudo, explicit initialization overrides and shell environment overrides may require `:set mouse=a`. Running Vim instances receive no injected keystrokes.
 

@@ -1899,6 +1899,17 @@
   text-align: center;
 }
 
+.zt-agent-cli-picker {
+  flex-direction: column;
+}
+
+.zt-agent-cli-picker > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
 .zt-agent-codex-state.is-error {
   color: var(--zt-danger);
 }

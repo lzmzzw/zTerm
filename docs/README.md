@@ -1,6 +1,6 @@
 # zTerm 开发文档
 
-zTerm 使用 React 19、TypeScript、Vite 7 和 Tauri 2 / Rust，提供会话管理、分栏终端、文件传输、监控、历史与 Codex 侧栏。产品功能见 [中文说明](../README.zh-CN.md) 或 [English](../README.md)。
+zTerm 使用 React 19、TypeScript、Vite 7 和 Tauri 2 / Rust，提供会话管理、分栏终端、文件传输、监控、历史与 Agent 侧栏。产品功能见 [中文说明](../README.zh-CN.md) 或 [English](../README.md)。
 
 ## 阅读入口
 

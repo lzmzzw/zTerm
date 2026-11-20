@@ -37,13 +37,14 @@ use crate::{
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const MCP_PATH: &str = "/mcp";
 const MCP_TOKEN_ENV_VAR: &str = "ZTERM_MCP_TOKEN";
+pub(crate) const AGENT_MCP_TOKEN_ENV: &str = "ZTERM_AGENT_MCP_TOKEN";
 const MCP_TOKEN_SECRET_REF: &str = "mcp:bearer-token";
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 const MAX_HTTP_BODY_BYTES: usize = 1024 * 1024;
 const MAX_CONSECUTIVE_ACCEPT_ERRORS: u32 = 5;
 const MAX_CONCURRENT_CONNECTIONS: usize = 32;
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const MCP_APPROVAL_WAIT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+pub(crate) const MCP_APPROVAL_WAIT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 pub const DEFAULT_MCP_PORT: u16 = 9419;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1189,7 +1190,7 @@ async fn handle_agent_json_rpc(
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "zTerm Visible Terminal", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "这是 zTerm 侧栏 Codex CLI 的 Visible Terminal Profile。当前连接、当前标签、激活标签指 zTerm 活动 SSH 终端，不是本机。每次先调用 terminal.list 读取 active_runtime_session_id，再显式指定 runtime_session_id 读写；为 null 时请用户激活 SSH 标签，不探索本机或猜目标。所有服务器命令必须写入可见 SSH 终端并保留在滚动屏；可以列出连接、在标签或新分屏打开其他 SSH 连接，再按 runtime_session_id 操作其滚动屏。不得使用 headless ssh.execute。审批按目标 SSH 连接的实时模式执行：每次批准逐项确认，高效审批仅确认高风险或不可逆操作，完全自动由外部 AI 决定操作和审批需要，zTerm 不追加风险审批；缺少本地认证输入时仍需在 zTerm 输入。需要确认或输入时原 tools/call 会等待 zTerm 的结果，不要重新提交原操作。"
+            "instructions": "这是 zTerm Agent 侧栏的 Visible Terminal Profile。当前连接、当前标签、激活标签指 zTerm 活动 SSH 终端，不是本机。每次先调用 terminal.list 读取 active_runtime_session_id，再显式指定 runtime_session_id 读写；为 null 时请用户激活 SSH 标签，不探索本机或猜目标。所有服务器命令必须写入可见 SSH 终端并保留在滚动屏；可以列出连接、在标签或新分屏打开其他 SSH 连接，再按 runtime_session_id 操作其滚动屏。不得使用 headless ssh.execute。审批按目标 SSH 连接的实时模式执行：每次批准逐项确认，高效审批仅确认高风险或不可逆操作，完全自动由外部 AI 决定操作和审批需要，zTerm 不追加风险审批；缺少本地认证输入时仍需在 zTerm 输入。需要确认或输入时原 tools/call 会等待 zTerm 的结果，不要重新提交原操作。"
         }),
         "ping" => json!({}),
         "tools/list" => json!({
@@ -1268,7 +1269,7 @@ async fn handle_agent_json_rpc(
             ) {
                 return Ok(json!({
                     "jsonrpc": "2.0", "id": id,
-                    "error": { "code": -32601, "message": "sidebar Codex may only operate visible zTerm SSH terminals" }
+                    "error": { "code": -32601, "message": "sidebar agents may only operate visible zTerm SSH terminals" }
                 }));
             }
             let mut arguments = params

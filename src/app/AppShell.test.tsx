@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadTerminalLayout, saveTerminalLayout } from "../features/terminal-layout/terminalLayoutPersistence";
 import type { PaneNode, TerminalLayoutDefinition } from "../features/terminal-layout/types";
 import { AppShell } from "./AppShell";
-import { closeAgentCodex, openAgentCodex, setActiveAgentTerminal } from "../features/ai/agentCodexApi";
+import { closeAgentCodex, openAgentCodex, setActiveAgentTerminal, type AgentCli } from "../features/ai/agentCodexApi";
 import { useFileTransferStore } from "../features/files/fileTransferStore";
 import { useSyncInputStore } from "../features/terminal/syncInputStore";
 
@@ -228,13 +228,15 @@ vi.mock("../features/terminal/externalLaunchApi", () => ({
 vi.mock("../features/ai/AgentCodexPanel", () => ({
   AgentCodexPanel: (props: Record<string, unknown>) => {
     storeMocks.aiPanelProps = props;
-    return <section aria-label="AI 面板" />;
+    return <section aria-label="AI 面板">{props.emptyState as ReactNode}</section>;
   },
 }));
 
-vi.mock("../features/ai/agentCodexApi", () => ({
-  openAgentCodex: vi.fn(async (request: { tabId: string; targetRuntimeSessionId: string; targetSavedSessionId: string | null; targetLabel: string }) => ({
+vi.mock("../features/ai/agentCodexApi", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../features/ai/agentCodexApi")>(),
+  openAgentCodex: vi.fn(async (request: { tabId: string; targetRuntimeSessionId: string; targetSavedSessionId: string | null; targetLabel: string; cli: AgentCli }) => ({
     agent_session_id: `agent-${request.tabId}`,
+    cli: request.cli,
     target_runtime_session_id: request.targetRuntimeSessionId,
     target_saved_session_id: request.targetSavedSessionId,
     target_label: request.targetLabel,
@@ -687,6 +689,14 @@ function button(container: HTMLElement, label: string) {
     throw new Error(`Button not found: ${label}`);
   }
   return match as HTMLButtonElement;
+}
+
+async function startAgent(container: HTMLElement, cli: AgentCli = "codex") {
+  const toggle = button(container, "Agent");
+  if (toggle.getAttribute("aria-pressed") !== "true") {
+    await act(async () => toggle.click());
+  }
+  await act(async () => button(container, cli === "claude" ? "Claude Code CLI" : "Codex CLI").click());
 }
 
 function input(container: ParentNode, label: string) {
@@ -1826,6 +1836,43 @@ describe("AppShell", () => {
     view.unmount();
   });
 
+  it("offers both CLIs without launching one until selected, then reopens the running Claude session", async () => {
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
+    const view = render(<AppShell />);
+    const toggle = button(view.container, "Agent");
+
+    await act(async () => toggle.click());
+    expect(button(view.container, "Codex CLI")).toBeTruthy();
+    expect(button(view.container, "Claude Code CLI")).toBeTruthy();
+    expect(openAgentCodex).not.toHaveBeenCalled();
+
+    await startAgent(view.container, "claude");
+    expect(openAgentCodex).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ cli: "claude", targetRuntimeSessionId: "runtime-1" }));
+    expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ cli: "claude" }));
+    await act(async () => toggle.click());
+    await act(async () => toggle.click());
+    expect(openAgentCodex).toHaveBeenCalledTimes(1);
+    expect(view.container.querySelector('.zt-agent-cli-picker')).toBeNull();
+
+    const onRestart = storeMocks.aiPanelProps?.onRestart as () => Promise<void>;
+    await act(async () => onRestart());
+    expect(openAgentCodex).toHaveBeenCalledTimes(2);
+    expect(openAgentCodex).toHaveBeenLastCalledWith(expect.objectContaining({ cli: "claude" }));
+    view.unmount();
+  });
+
+  it("lets the user choose Codex after Claude fails to start", async () => {
+    storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
+    vi.mocked(openAgentCodex).mockRejectedValueOnce(new Error("Claude Code CLI not found"));
+    const view = render(<AppShell />);
+    await startAgent(view.container, "claude");
+    expect(storeMocks.aiPanelProps?.error).toContain("Claude Code CLI not found");
+    await startAgent(view.container);
+    expect(openAgentCodex).toHaveBeenLastCalledWith(expect.objectContaining({ cli: "codex" }));
+    expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ cli: "codex" }));
+    view.unmount();
+  });
+
   it("starts a bound Codex session without capturing target output in the React agent layer", async () => {
     storeMocks.terminalLayoutState.tabs = [
       {
@@ -1856,11 +1903,7 @@ describe("AppShell", () => {
     expect(storeMocks.terminalOutputAccesses).toBe(0);
     expect(storeMocks.captureContext).not.toHaveBeenCalled();
 
-    const agentButton = view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement;
-    await act(async () => {
-      agentButton.click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
 
     expect(storeMocks.terminalOutputAccesses).toBe(0);
     await act(async () => {
@@ -1889,10 +1932,7 @@ describe("AppShell", () => {
     };
     const view = render(<AppShell />);
 
-    await act(async () => {
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
 
     expect(vi.mocked(openAgentCodex)).toHaveBeenCalledWith(expect.objectContaining({
       targetLabel: "生产 SSH",
@@ -1996,10 +2036,7 @@ describe("AppShell", () => {
     storeMocks.terminalLayoutState.tabs = [sharedSshConnectionTerminalLayoutTab()];
     const view = render(<AppShell />);
 
-    await act(async () => {
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
 
     expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(1);
     expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }));
@@ -2073,10 +2110,7 @@ describe("AppShell", () => {
     storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
-    await act(async () => {
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
     await act(async () => {
       (view.container.querySelector('.zt-terminal-tools [aria-label="历史"]') as HTMLButtonElement).click();
       await Promise.resolve();
@@ -2093,10 +2127,7 @@ describe("AppShell", () => {
     storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
-    await act(async () => {
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
     expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(1);
 
     storeMocks.terminalLayoutState.tabs = [
@@ -2114,6 +2145,7 @@ describe("AppShell", () => {
 
     opening.resolve({
       agent_session_id: "agent-opening",
+      cli: "codex",
       target_runtime_session_id: "runtime-1",
       target_saved_session_id: "session-1",
       target_label: "开发机 A",
@@ -2146,10 +2178,7 @@ describe("AppShell", () => {
     storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
-    await act(async () => {
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
 
     storeMocks.terminalLayoutState.tabs = [
       {
@@ -2171,6 +2200,7 @@ describe("AppShell", () => {
 
     opening.resolve({
       agent_session_id: "agent-reopened",
+      cli: "codex",
       target_runtime_session_id: "runtime-1",
       target_saved_session_id: "session-1",
       target_label: "开发机 A",
@@ -2203,10 +2233,7 @@ describe("AppShell", () => {
     storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
-    await act(async () => {
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
     const onRestart = storeMocks.aiPanelProps?.onRestart as () => Promise<void>;
     const onClose = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
     const restartClose = deferred<void>();
@@ -2216,6 +2243,7 @@ describe("AppShell", () => {
       .mockImplementationOnce(() => staleClose.promise);
     vi.mocked(openAgentCodex).mockImplementationOnce(async (request) => ({
       agent_session_id: "agent-restarted",
+      cli: request.cli,
       target_runtime_session_id: request.targetRuntimeSessionId,
       target_saved_session_id: request.targetSavedSessionId,
       target_label: request.targetLabel,
@@ -2260,10 +2288,7 @@ describe("AppShell", () => {
     storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
-    await act(async () => {
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
     const closeFirstConnection = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
     const delayedClose = deferred<void>();
     vi.mocked(closeAgentCodex).mockImplementationOnce(() => delayedClose.promise);
@@ -2283,11 +2308,7 @@ describe("AppShell", () => {
     };
     storeMocks.terminalLayoutState.tabs = [secondConnection];
     view.rerender(<AppShell />);
-    await act(async () => {
-      await Promise.resolve();
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
 
     delayedClose.resolve();
     await act(async () => {
@@ -2303,10 +2324,7 @@ describe("AppShell", () => {
     storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
-    await act(async () => {
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
     expect(storeMocks.terminalState.runtimes).toHaveProperty("agent-runtime-pane-1-tab-1");
 
     storeMocks.terminalState.runtimes = {};
@@ -2326,10 +2344,7 @@ describe("AppShell", () => {
     storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
-    await act(async () => {
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
     const onRestart = storeMocks.aiPanelProps?.onRestart as () => Promise<void>;
 
     await act(async () => {
@@ -2348,6 +2363,7 @@ describe("AppShell", () => {
       targetRuntimeSessionId: "runtime-1",
       targetSavedSessionId: "session-1",
       targetLabel: "开发机 A",
+      cli: "codex",
     });
     expect(storeMocks.aiPanelProps?.session).toEqual(
       expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }),
@@ -2359,10 +2375,7 @@ describe("AppShell", () => {
     storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
-    await act(async () => {
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
     const onClose = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
 
     await act(async () => {
@@ -2382,10 +2395,7 @@ describe("AppShell", () => {
     vi.mocked(closeAgentCodex).mockRejectedValueOnce(new Error("close failed"));
     const view = render(<AppShell />);
 
-    await act(async () => {
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
     const onClose = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
 
     await act(async () => {
@@ -3142,7 +3152,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("hides history for an active RDP placeholder", () => {
+  it("hides SSH tools and does not offer Agent launch on an RDP placeholder", async () => {
     storeMocks.sessionState.sessions = [
       {
         id: "rdp-1",
@@ -3198,6 +3208,9 @@ describe("AppShell", () => {
     const view = render(<AppShell />);
     expect(view.container.querySelector('.zt-terminal-tools [aria-label="历史"]')).toBe(null);
     expect(view.container.querySelector('.zt-terminal-tools [aria-label="SFTP 文件"]')).toBe(null);
+    await clickButton(view.container, "Agent");
+    expect(view.container.querySelector(".zt-agent-cli-picker")).toBeNull();
+    expect(openAgentCodex).not.toHaveBeenCalled();
 
     view.unmount();
   });
@@ -3405,12 +3418,10 @@ describe("AppShell", () => {
 
     expect(storeMocks.monitorPanelProps?.target).toEqual(expect.objectContaining({ kind: "local", id: "local-machine" }));
 
-    await act(async () => {
-      (view.container.querySelector('.zt-titlebar-actions [aria-label="Agent"]') as HTMLButtonElement).click();
-      await Promise.resolve();
-    });
+    await startAgent(view.container);
     expect(vi.mocked(openAgentCodex)).toHaveBeenCalledWith({
       tabId: "pane-1-tab-1",
+      cli: "codex",
       targetRuntimeSessionId: "runtime-local",
       targetSavedSessionId: null,
       targetLabel: "PowerShell",

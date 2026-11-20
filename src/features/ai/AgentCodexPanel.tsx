@@ -1,6 +1,6 @@
 // Author: Liz
 import { ChevronLeft, ChevronRight, LoaderCircle } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { ZtSelect } from "../../components/ZtSelect";
 import { ZtInlineError } from "../../components/ZtUi";
@@ -8,7 +8,7 @@ import { unknownErrorMessage } from "../../lib/unknownErrorMessage";
 import { XtermPane } from "../terminal/XtermPane";
 import { useTerminalStore } from "../terminal/terminalStore";
 import type { McpApprovalMode, McpToolSecretInputs } from "./mcpStore";
-import type { AgentCodexSession, AgentPendingInvocation } from "./agentCodexApi";
+import { agentCliLabels, type AgentCli, type AgentCodexSession, type AgentPendingInvocation } from "./agentCodexApi";
 
 const EMPTY_LIVE_OUTPUT_CHUNKS: never[] = [];
 
@@ -16,7 +16,8 @@ export function AgentCodexPanel({
   session,
   active = true,
   activeTargetLabel,
-  loading,
+  openingCli = null,
+  emptyState,
   error,
   approvalMode,
   pendingInvocations,
@@ -28,7 +29,8 @@ export function AgentCodexPanel({
   session: AgentCodexSession | null;
   active?: boolean;
   activeTargetLabel?: string | null;
-  loading: boolean;
+  openingCli?: AgentCli | null;
+  emptyState?: ReactNode;
   error: string | null;
   approvalMode: McpApprovalMode;
   pendingInvocations: AgentPendingInvocation[];
@@ -46,6 +48,14 @@ export function AgentCodexPanel({
   const invocation = pendingInvocations[selectedIndex];
   const confirmationState = invocation ? confirmationStates[invocation.id] : undefined;
   const runtimeSessionId = session?.runtime.runtime_session_id ?? null;
+  const cli = session?.cli ?? openingCli;
+  const title = cli ? agentCliLabels[cli] : "Agent";
+  const startupState = openingCli ? (
+    <div className="zt-agent-codex-state" role="status"><LoaderCircle className="zt-spin" size={18} />正在启动本机 {agentCliLabels[openingCli]}...</div>
+  ) : null;
+  const errorState = error ? (
+    <div className="zt-agent-codex-state is-error"><ZtInlineError>{error}</ZtInlineError></div>
+  ) : null;
   const outputChunks = useTerminalStore((state) =>
     runtimeSessionId ? (state.outputChunks[runtimeSessionId] ?? EMPTY_LIVE_OUTPUT_CHUNKS) : EMPTY_LIVE_OUTPUT_CHUNKS,
   );
@@ -97,7 +107,7 @@ export function AgentCodexPanel({
   return (
     <div className="zt-agent-codex-panel">
       <header className="zt-agent-codex-header">
-        <strong className="zt-agent-codex-title">Codex CLI</strong>
+        <strong className="zt-agent-codex-title">{title}</strong>
         <label className="zt-ai-approval-mode">
           <span>审批模式</span>
           <ZtSelect
@@ -111,14 +121,7 @@ export function AgentCodexPanel({
         <span className="zt-agent-codex-target">关联连接：{activeTargetLabel ?? session?.target_label ?? "尚未选择终端"}</span>
       </header>
 
-      {session && runtimeSessionId && loading ? (
-        <div className="zt-agent-codex-state"><LoaderCircle className="zt-spin" size={18} />正在启动本机 Codex CLI...</div>
-      ) : null}
-      {session && runtimeSessionId && error ? (
-        <div className="zt-agent-codex-state is-error">
-          <ZtInlineError>{error}</ZtInlineError>
-        </div>
-      ) : null}
+      {errorState}
 
       <div className="zt-agent-codex-terminal">
         {session && runtimeSessionId ? (
@@ -140,15 +143,7 @@ export function AgentCodexPanel({
             onResize={(cols, rows) => void resizeTerminal(runtimeSessionId, cols, rows)}
             onRestart={() => void onRestart()}
           />
-        ) : loading ? (
-          <div className="zt-agent-codex-state"><LoaderCircle className="zt-spin" size={18} />正在启动本机 Codex CLI...</div>
-        ) : error ? (
-          <div className="zt-agent-codex-state is-error">
-            <ZtInlineError>{error}</ZtInlineError>
-          </div>
-        ) : (
-          <div className="zt-agent-codex-state">请先选择一个可操作的终端标签页。</div>
-        )}
+        ) : startupState ?? emptyState}
       </div>
       {invocation ? (
         <div className="zt-agent-codex-approvals" aria-label="待审批操作">
@@ -170,7 +165,7 @@ export function AgentCodexPanel({
                 ) : null}
                 <p><span>参数</span><code>{invocation.arguments_summary}</code></p>
               </div>
-              <p className="zt-ai-tool-risk-note">{invocation.risk_summary || invocation.reason || "Codex 请求操作当前终端"}</p>
+              <p className="zt-ai-tool-risk-note">{invocation.risk_summary || invocation.reason || "Agent 请求操作终端"}</p>
             </div>
             <footer>
               {confirmationError ? <ZtInlineError>{confirmationError}</ZtInlineError> : null}

@@ -236,6 +236,7 @@ impl TerminalManager {
             command.arg(arg);
         }
         command.cwd(&options.cwd);
+        command.env_remove(crate::services::mcp_service::AGENT_MCP_TOKEN_ENV);
         for (name, value) in &options.environment {
             if !name.trim().is_empty() {
                 command.env(name, value);

@@ -4,8 +4,12 @@ import { invokeTauri, invokeTypedTauri } from "../../lib/tauriClient";
 import type { McpApprovalMode, McpToolPendingInvocation } from "./mcpStore";
 import type { RuntimeSessionInfo } from "../terminal/terminalStore";
 
+export const agentCliLabels = { codex: "Codex CLI", claude: "Claude Code CLI" } as const;
+export type AgentCli = keyof typeof agentCliLabels;
+
 export interface AgentCodexSession {
   agent_session_id: string;
+  cli: AgentCli;
   target_runtime_session_id: string;
   target_saved_session_id: string | null;
   target_label: string;
@@ -18,6 +22,7 @@ export async function openAgentCodex(request: {
   targetRuntimeSessionId: string;
   targetSavedSessionId: string | null;
   targetLabel: string;
+  cli: AgentCli;
 }) {
   return invokeTauri<AgentCodexSession>("agent_codex_open", request);
 }

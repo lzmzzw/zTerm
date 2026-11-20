@@ -10,9 +10,27 @@ use crate::{
     models::{ai::AiApprovalMode, terminal::RuntimeSessionInfo},
 };
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentCli {
+    #[default]
+    Codex,
+    Claude,
+}
+
+impl AgentCli {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex CLI",
+            Self::Claude => "Claude Code CLI",
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AgentCodexSession {
     pub agent_session_id: String,
+    pub cli: AgentCli,
     pub target_runtime_session_id: String,
     pub target_saved_session_id: Option<String>,
     pub target_label: String,
@@ -90,6 +108,7 @@ mod tests {
     fn session() -> AgentCodexSession {
         AgentCodexSession {
             agent_session_id: "agent-a".into(),
+            cli: AgentCli::Codex,
             target_runtime_session_id: "ssh-tab-a".into(),
             target_saved_session_id: Some("ssh-a".into()),
             target_label: "SSH A".into(),

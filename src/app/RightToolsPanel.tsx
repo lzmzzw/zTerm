@@ -3,7 +3,7 @@ import { LogIn, Play, Plus, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { AgentCodexPanel } from "../features/ai/AgentCodexPanel";
-import type { AgentCodexSession } from "../features/ai/agentCodexApi";
+import { agentCliLabels, type AgentCli, type AgentCodexSession } from "../features/ai/agentCodexApi";
 import type { McpApprovalMode, McpToolPendingInvocation, McpToolSecretInputs } from "../features/ai/mcpStore";
 import { FileExplorerPanel } from "../features/files/FileExplorerPanel";
 import { TransferPanel } from "../features/files/TransferPanel";
@@ -40,7 +40,9 @@ interface RightToolsPanelProps {
     activeTargetLabel?: string | null;
     approvalMode: McpApprovalMode;
     error: string | null;
-    loading: boolean;
+    openingCli: AgentCli | null;
+    canStart: boolean;
+    onStart: (cli: AgentCli) => Promise<unknown> | unknown;
     pendingInvocations: McpToolPendingInvocation[];
     onApprovalModeChange: (mode: McpApprovalMode) => Promise<unknown> | unknown;
     onClose: () => Promise<unknown> | unknown;
@@ -321,7 +323,7 @@ export function RightToolsPanel({
                   active={active && activeTool === "agent"}
                   approvalMode={agent.approvalMode}
                   pendingInvocations={active ? agent.pendingInvocations : []}
-                  loading={active && agent.loading}
+                  openingCli={active ? agent.openingCli : null}
                   error={active ? agent.error : null}
                   onApprovalModeChange={agent.onApprovalModeChange}
                   onClose={agent.onClose}
@@ -338,7 +340,19 @@ export function RightToolsPanel({
               active={activeTool === "agent"}
               approvalMode={agent.approvalMode}
               pendingInvocations={agent.pendingInvocations}
-              loading={agent.loading}
+              openingCli={agent.openingCli}
+              emptyState={agent.canStart ? (
+                <div className="zt-agent-codex-state zt-agent-cli-picker">
+                  <span>{t(language, "agentChooseCli")}</span>
+                  <div>
+                    {(["codex", "claude"] as const).map((cli) => (
+                      <button key={cli} type="button" className="zt-button zt-button-default" aria-label={agentCliLabels[cli]} onClick={() => void agent.onStart(cli)}>
+                        {agentCliLabels[cli]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : <div className="zt-agent-codex-state">{t(language, "agentNeedsTerminal")}</div>}
               error={agent.error}
               onApprovalModeChange={agent.onApprovalModeChange}
               onClose={agent.onClose}
