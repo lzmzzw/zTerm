@@ -1,114 +1,93 @@
 # zTerm
 
-[English](README.md)
+[English](README.md) · [下载安装](https://github.com/lzmzzw/zTerm/releases/latest) · [开发文档](docs/README.md)
 
-zTerm 是一个基于 Tauri 的桌面终端工作台，面向 SSH、SFTP、命令历史、服务器监控和 AI 辅助运维场景。界面采用高密度终端布局：左侧管理会话，中间使用分栏终端，右侧提供文件、历史、监控和 Agent。
+zTerm 是一个桌面终端工作台。常用 SSH 和本地会话可以保存在同一处，用标签和分屏并排操作，也能直接浏览远程文件、查看服务器资源。需要 AI 辅助时，可在 Agent 侧栏启动本机的 Codex CLI 或 Claude Code CLI。
 
-标题栏左侧提供会话、文件传输和设置入口，右侧提供 Agent 入口。文件传输与设置均以整页打开，点击页面右上角关闭按钮返回工作台。会话分组在展开后的会话栏空白处右键新建；会话栏与右侧工具栏均可从栏目标题右上角关闭。监控、历史、SFTP、容器和隧道工具随连接类型显示在当前激活终端内。开发入口见 [工程文档](docs/README.md)。
+![zTerm 工作台：会话树、终端区与工具面板](assets/screenshots/workbench.png)
 
-![zTerm 工作台](assets/screenshots/workbench.png)
+## 下载安装
 
-## 功能特性
+打开 [GitHub Releases](https://github.com/lzmzzw/zTerm/releases/latest)，在 **Assets** 中按系统和架构选择安装包：Windows x64（NSIS `-setup.exe`）、Linux x64 / Arm64，或 macOS Arm64（Apple 芯片）。`latest.json` 和 `.sig` 文件供更新器使用，不是手动安装包。本文以当前源码为准，最新发布版可能尚未包含部分功能。
 
-- 保存、搜索、分组并打开 SSH/RDP/本地终端会话，以及 FTP/SFTP 文件传输会话。
-- SSH 会话通过系统 OpenSSH 客户端运行，并由 xterm 渲染输入输出。
-- 支持终端标签和横向/纵向分栏；当前分栏布局自动保存，下次启动时恢复，无需命名。
-- 左键拖选终端历史时，可越界拖动或使用滚轮持续扩展选区。zTerm 新建的本地及标准 POSIX SSH 会话会自动启用 Vim `mouse=a`，无需修改配置文件即可跨屏选择文件内容；未按住左键时，每次垂直滚轮让编辑光标上移或下移一行，视口随光标继续显示后续内容，直到文件首尾。该逐行滚轮行为适用于普通终端的备用屏幕应用，不改变 Agent 面板。
-- 启动或关闭标签/分栏后没有打开的连接时，自动使用已配置的默认本地终端建立连接；仍有连接时，新分栏可保持空白。
-- Windows 安装版在文件夹、文件夹空白处和驱动器右键菜单提供“通过zTerm打开”，使用默认本地终端在目标目录打开临时连接。应用已运行时打开新标签；临时连接不保存为会话，也不在重启时恢复。Windows 11 中该入口可能位于“显示更多选项”。
-- Windows 安装版支持在资源管理器地址栏输入 `zterm`：无参数启动继承调用方当前工作目录，以默认本地终端打开临时连接；应用已运行时仍使用本次调用的目录。安装通过 `App Paths` 注册程序名，不修改全局 `PATH`。从快捷方式无参数启动时也会使用快捷方式提供的工作目录。
-- 支持 SFTP 目录浏览、新建目录、上传、下载、重命名、删除和失败重试。
-- 按会话或本地终端 profile 捕获命令历史，支持搜索、复制和重新发送。
-- 连接凭据写入操作系统 keyring，避免以明文保存在 SQLite 中。
-- 展开右侧 Agent 面板，选择启动本机已安装并登录的 Codex CLI 或 Claude Code CLI；当前连接已有运行中的 Agent 时直接恢复，不重复启动。
-- 在 SSH 或 SSH 容器标签启动的 Agent 默认使用 zTerm 的 Visible Terminal Profile，不必手动配置 MCP。服务器命令和输出保留在可见终端滚动屏中；可以在新标签或分屏中打开其他已保存的 SSH 连接。
-- 外部 Codex App 使用 Headless Profile：通过独立 SSH 执行和文件传输返回结构化结果，不打开、读取或写入终端滚动屏。
-- 默认“高效审批”自动放行巡检、文件传输和常规运维，仅真实高风险或不可逆操作在 zTerm 中确认；待审批会唤起 zTerm 并打开 Agent 审批面板，审批结果直接返回原 MCP 工具调用，不需要重新提交命令。
-- “完全自动”适合可信的个人环境：包括写入、删除和 critical 命令在内的操作均免审批执行并保留审计；只有必须在 zTerm 本地输入 secret 的操作仍会等待用户输入。
-- 支持 SSH 服务器 CPU、内存、磁盘、负载、运行时间和网络流量快照监控。
+已安装 zTerm 时，可在**设置 → 关于**检查更新。系统代码签名与更新包校验是两回事，详见[构建与发布](#构建与发布)。
 
-RDP 会话通过 Windows 系统远程桌面客户端在外部窗口中打开；应用保留会话标签用于定位，但不内嵌或渲染远程桌面。侧栏 Agent 使用所选 CLI 自身的登录态和模型配置；zTerm 不提供模型管理或内置模型调用，也不保存或代理 CLI 的账号凭据。从本地终端标签启动时，CLI 保留自己的本地配置，zTerm 不注入专用 MCP。
+## 使用会话
 
-Vim 自动鼠标配置在新建本地或重连标准 POSIX SSH 会话后生效，保留原初始化配置；容器、Windows SSH、受限网关回退、WSL 环境隔离、sudo、显式跳过初始化或 shell 覆盖环境时可手动执行 `:set mouse=a`。现有运行中的 Vim 不会被注入按键。
+1. 从标题栏打开**会话**，在会话树空白处右键新建连接或分组。可保存 SSH、本地终端、RDP、SFTP 和 FTP 会话，之后按名称搜索或从分组中找到它们。
+2. 双击会话打开，或在搜索框按 Enter 打开第一个结果。SSH 和本地会话进入终端标签，SFTP 和 FTP 进入**文件传输**。RDP 仅在 Windows 上使用：zTerm 保留会话标签供切换定位，远程桌面在系统客户端中打开，不嵌入 zTerm。
+3. 用横向或纵向分屏并排摆放终端标签。当前布局会自动保存，下次启动时恢复。没有打开的连接时，zTerm 可打开已配置的默认本地终端。
 
-## 界面截图
+左边是会话树，中间是终端，右边是工具面板。当前分栏的终端内会按连接类型显示历史、SFTP、监控、容器和隧道等入口。**文件传输**和**设置**独立成页，关闭页面即可回到工作台。
 
-![四分屏终端](assets/screenshots/split-terminals.png)
+![标签与分屏终端](assets/screenshots/split-terminals.png)
 
-![文件传输](assets/screenshots/file-transfer.png)
+## Agent 侧栏：Codex CLI 与 Claude Code CLI
 
-![MCP 设置](assets/screenshots/mcp-settings.png)
+先激活本地、SSH 或 SSH 容器终端，再从标题栏打开 **Agent**，选择已安装并登录的 CLI。当前连接已有 Agent 时会回到原来的 CLI，不会重复启动；收起侧栏也不会停止它。可以通过右键菜单重启同一种 CLI，或先关闭再切换。CLI 沿用自己的登录状态和模型设置，zTerm 不管理模型账号，也不直接调用模型。
 
-## 环境要求
+- **SSH 和 SSH 容器标签：**zTerm 自动为本次 CLI 会话配置 **Visible Terminal Profile（可见终端）**。命令和输出留在目标终端的滚动记录里；需要操作其他已保存的 SSH 连接时，可在新标签或分屏中打开它。
+- **本地终端标签：**CLI 沿用自己的本地配置，zTerm 不注入专用 MCP。
+- **外部 MCP 客户端：**在**设置 → MCP**启用本机服务后，可使用 **Headless Profile（无界面）**。SSH 执行与文件传输独立运行，返回结构化结果，不打开终端，也不读写终端滚动记录。服务只监听回环地址，使用 Bearer token 鉴权，默认不随应用启动。
 
-- Node.js `>=22.13`
-- npm
-- Rust stable toolchain
-- 平台对应的 Tauri 系统依赖
+从 SSH 侧栏启动时，Claude Code 使用专用且固定的本地工作目录。首次若出现目录信任提示，请在 CLI 中核对后自行决定；zTerm 不预置信任，也不跳过 Claude Code 的权限检查。这种启动方式不加载用户和项目指令，停用内置工具、Skill 和自动记忆，只加载本次会话的 zTerm MCP。Codex 则使用每次会话独立的工作目录和只读本地沙箱，禁用本地 Shell 工具及其他 MCP。以上限制不适用于从本地终端标签启动的 CLI。
 
-Windows 构建建议使用 `x86_64-pc-windows-msvc` Rust target 和 Visual Studio Build Tools。
+### 连接审批
 
-## 开发命令
+审批使用**目标 SSH 连接当前保存的设置**，与侧栏选择哪种 CLI 无关。
+
+| 模式 | zTerm 如何处理 |
+| --- | --- |
+| 每次批准 | 受该连接策略约束的每次工具调用都要在本地确认。 |
+| 高效审批（默认） | 巡检、传输和常规操作自动执行；高风险或不可逆操作需要确认。风险分类是启发式判断，可能有遗漏。 |
+| 完全自动 | 写入、删除等操作不再由 zTerm 追加风险确认，仅用于可信连接。工具范围仍受限，执行仍留审计记录。 |
+
+需要批准或补充本地认证输入时，zTerm 会打开审批面板。请在那里核对目标和操作，结果会返回原 MCP 调用，不要重发操作。如果客户端先收到待审批回执，用 `approval.wait` 等待同一次调用。任何模式下，缺少的认证信息仍需在本地输入。细节见 [MCP 与审批契约](docs/api-contract.md#agent-侧栏与-mcp-审批)。
+
+## 终端、文件与设置
+
+- **终端：**zTerm 通过原生 SSH 连接，在 xterm 中呈现本地与远程终端。命令历史按会话或本地终端配置保存，可搜索、复制并重新发送。SSH 支持跳板、隧道和容器终端，也可查看 CPU、内存、磁盘、负载、运行时间和网络流量快照。
+- **文件：**可浏览远程目录、新建文件夹、重命名、删除、上传和下载。**文件传输**页并排显示源端与目标端，任务列表可查看进度和重试。敏感连接请用 SFTP：FTP 不加密账号、密码和文件内容。受支持的终端也可使用 `rz`/`sz`，远端须安装 `lrzsz`。
+- **设置：**可调整外观、语言、快捷键、终端配置和默认本地终端。**MCP** 页用于管理本机服务和查看工具目录，工具由已连接的客户端调用。**关于**页可查看版本和检查更新。
+
+![双栏文件传输](assets/screenshots/file-transfer.png)
+
+![MCP 服务设置与工具目录](assets/screenshots/mcp-settings.png)
+
+**Vim 与终端历史。** 在普通终端里，拖出可视区域或按住左键滚动，可继续扩展选区。新开本地会话或重连标准 POSIX SSH 会话后，zTerm 会为 Vim 启用 `mouse=a`，方便跨屏选取文件内容，不改 Vim 配置，也不向正在运行的 Vim 注入按键。在普通终端的备用屏幕中，不按左键使用垂直滚轮时，光标每次移动一行；Agent 侧栏不受影响。容器、Windows SSH、Shell 覆盖初始化等情况下如果未自动启用，可在 Vim 中执行 `:set mouse=a`。完整例外见[工程说明](docs/engineering.md)。
+
+**Windows 资源管理器。** 安装版在文件夹、文件夹空白处和驱动器的右键菜单添加「通过zTerm打开」，Windows 11 中可能位于「显示更多选项」。也可在地址栏输入 `zterm`。安装程序通过 App Paths 注册，不修改全局 `PATH`。zTerm 会在对应目录打开默认本地终端，应用已运行时打开新标签。无参数启动也可沿用调用方的工作目录，包括快捷方式指定的目录；重启后不恢复这种临时会话。
+
+## 开发
+
+需要 Node.js 22.13 或以上、npm、稳定版 Rust，以及对应平台的 [Tauri 系统依赖](https://v2.tauri.app/start/prerequisites/)。Windows 使用 `x86_64-pc-windows-msvc` target 和 Visual Studio C++ Build Tools。
 
 ```bash
-npm install
-npm run dev
-npm run dev:browser
-npm run quality:check
-npm run typecheck
-npm run test:frontend
-npm run build
-```
-
-`npm run dev:browser` 仅用于普通浏览器中的界面开发和视觉回归。它通过 Vite `browser` mode 显式启用轻量 Tauri Mock；默认 `npm run dev`、生产构建和真实 Tauri 运行态均不会启用。Mock 只覆盖启动与只读界面所需命令，原生终端、SSH/SFTP、文件和系统能力仍需在 Tauri/WebView2 中验证。
-
-`npm run quality:check` 检查前端 IPC 单一入口、基础层/feature/app 依赖方向、Tauri command 跨文件重复所有权和无外部引用的导出；`npm run check` 已包含该门禁。
-
-Windows Rust 和 Tauri 检查（仓库根目录）：
-
-```powershell
+npm ci
+npm run check
 npm run version:check
-npm run test:rust
-./scripts/run-cargo-msvc.ps1 fmt --check
-powershell -NoProfile -File scripts/run-cargo-msvc.ps1 clippy --lib -- -D warnings
 ```
 
-其他平台在 `src-tauri` 中运行 `cargo fmt --check` 与 `cargo test`。
+- **桌面开发：**Windows 用 `npm run tauri:dev`，Linux 和 macOS 用 `npm run tauri -- dev`。
+- **浏览器界面开发：**`npm run dev:browser` 显式开启 Vite 的 Tauri Mock，`npm run dev` 启动前端开发服务器但不启用 Mock。Mock 和前端测试不能验收原生终端、SSH/SFTP、系统文件对话框或操作系统集成，这些应在桌面应用中验证。
+- **Rust 检查：**Windows 用 `npm run test:rust`，并通过 MSVC 包装脚本执行格式检查和 Clippy；其他平台进入 `src-tauri` 后运行 `cargo fmt --check` 和 `cargo test`。完整命令和原生验收范围见[工程说明](docs/engineering.md#本地检查)。
 
-桌面安装包构建：
+## 构建与发布
 
-```bash
-npm run tauri:build
-```
+Windows 上，`npm run tauri:build` 生成供本地验证的 NSIS 安装包，不生成 updater 产物；`npm run tauri:release` 使用正式配置生成带 updater 签名的 NSIS 包，需要 `TAURI_SIGNING_PRIVATE_KEY`，但不会发布。两者均不生成 MSI。Linux 和 macOS 的构建依赖及目标参数见 [Release 工作流](.github/workflows/release.yml)。
 
-## 发布
+发布时先用 `npm run version:set -- <version>` 同步版本，再执行 `npm run version:check`，然后推送对应的 `v<version>` tag。GitHub Actions 先运行 **Check**，通过后构建并发布上述四个平台目标的安装包、更新签名和 `latest.json`。
 
-推送版本 tag 后，GitHub Actions 会自动构建 release 产物：
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-发布 workflow 会构建四类目标：
-
-- Windows x64
-- Linux x64
-- Linux Arm64
-- macOS Arm64
-
-未签名的 macOS 和 Windows 产物可能触发系统安全提示。后续可以通过 GitHub Actions 配置 Tauri 签名密钥来补充代码签名。
+| 签名 | 当前发布工作流 |
+| --- | --- |
+| 操作系统代码签名 | Windows NSIS 安装包未做 Authenticode 签名；macOS 使用临时签名（ad hoc），没有 Developer ID 签名，也未公证。系统可能显示安全提示。 |
+| Tauri 更新签名 | 正式更新产物使用 updater 私钥签名，zTerm 用内置公钥校验。它不提供操作系统代码签名或公证。 |
 
 ## 安全说明
 
-不要提交真实主机、用户名、密码、API Key、私钥、token 或 smoke 测试环境文件。本地 Agent 设置、内部项目说明、构建产物、运行时数据库和临时凭据默认会被忽略。
-
-Windows 下可将 `ZTERM_RDP_SIGNING_CERT_THUMBPRINT` 设置为当前用户可用代码签名证书的 40 位 Thumbprint，修改环境变量后需重启 zTerm。zTerm 会在启动 `mstsc.exe` 前调用 `rdpsign.exe`；配置缺失、格式无效或签名失败时保持兼容，继续使用原有未签名 RDP 启动流程。
+- 保存的连接密钥和密码等敏感信息由系统 keyring 管理，不以明文写入 SQLite。原生 SSH 会在首次连接时记录未知主机的密钥，已知密钥发生变化时拒绝连接。新连接请先核对服务器身份。不要将真实主机信息、凭据或 smoke 测试环境文件放入 Git、截图或文档，也不要把密码、私钥或 token 作为 MCP 工具参数传递。
+- Windows RDP 文件签名独立于安装包签名和 updater 签名。将 `ZTERM_RDP_SIGNING_CERT_THUMBPRINT` 设为当前用户可用代码签名证书的 40 位指纹，再重启 zTerm。zTerm 在启动 `mstsc.exe` 前调用 `rdpsign.exe`；配置缺失、无效或签名失败时，仍以未签名的 RDP 文件打开。
 
 ## 许可证
 
-zTerm 使用 GNU General Public License version 3.0 only。详见 [LICENSE](LICENSE)。
-
-第三方说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
-
-工程检查、打包与维护边界见 [工程说明](docs/engineering.md)。
+zTerm 采用 GPL 第 3 版，不适用后续版本（`GPL-3.0-only`）。详见 [LICENSE](LICENSE) 和[第三方声明](THIRD_PARTY_NOTICES.md)。
