@@ -1621,7 +1621,7 @@ describe("XtermPane", () => {
     view.unmount();
   });
 
-  it("shows separated Codex lifecycle actions without clear or search", async () => {
+  it("shows separated CLI lifecycle actions without clear or search", async () => {
     const onCloseTerminal = vi.fn();
     const onRestart = vi.fn();
     const view = render(
@@ -1647,8 +1647,8 @@ describe("XtermPane", () => {
     expect(Array.from(view.container.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())).toEqual([
       "复制",
       "粘贴",
-      "重启 Codex CLI",
-      "关闭 Codex CLI",
+      "重启 CLI",
+      "关闭 CLI",
     ]);
     expect(view.container.querySelectorAll('[role="separator"]')).toHaveLength(1);
 

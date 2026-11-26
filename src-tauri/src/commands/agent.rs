@@ -146,24 +146,24 @@ pub async fn agent_codex_open(
                 target_label: target_label.clone(),
             })?;
         let launch = async {
-            fs::create_dir_all(&session_root)?;
             if let Some(program) = claude_program {
-                Ok((program, claude_sidebar_args(&access.endpoint)))
+                let cwd = claude_sidebar_cwd(AppPaths::default_for_install()?.data_dir())?;
+                Ok((program, claude_sidebar_args(&access.endpoint), cwd))
             } else {
+                fs::create_dir_all(&session_root)?;
                 fs::write(
                     session_root.join("AGENTS.md"),
                     agent_instructions(&target_label, saved_session_id.as_deref(), approval_mode),
                 )?;
                 let inherited_mcp_servers = list_inherited_codex_mcp_servers(&session_root).await?;
-                Ok(codex_launch_command(
-                    &access.endpoint,
-                    &inherited_mcp_servers,
-                ))
+                let (command, args) =
+                    codex_launch_command(&access.endpoint, &inherited_mcp_servers);
+                Ok((command, args, session_root.clone()))
             }
         }
         .await;
         match launch {
-            Ok((command, args)) => (command, args, session_root.clone(), Some(access.token)),
+            Ok((command, args, cwd)) => (command, args, cwd, Some(access.token)),
             Err(error) => {
                 cleanup_agent_artifacts(&state, &agent_session_id, &session_root);
                 return Err(error);
@@ -323,7 +323,7 @@ pub async fn agent_codex_close(
 }
 
 fn sidebar_instructions() -> String {
-    format!("{SIDEBAR_TARGET_INSTRUCTIONS} {SIDEBAR_OPERATION_INSTRUCTIONS}")
+    format!("{SIDEBAR_TARGET_INSTRUCTIONS} {SIDEBAR_OPERATION_INSTRUCTIONS} 本侧栏不是本地工作台任务，不执行工作台登记、知识归档或外部数据工具路由。对用户授权的服务器数据任务，可在已确认的 zTerm 可见 SSH 终端中使用服务器已安装的工具，例如用 spark-sql 操作 Hive；不要求 DBX，也不转到本机直连。目标连接的权限、实时审批和审计仍然适用。")
 }
 
 // Local sessions retain the user's normal Codex configuration and approval policy.
@@ -364,6 +364,14 @@ fn claude_program() -> AppResult<String> {
     Ok("claude".to_string())
 }
 
+// Claude records workspace trust against cwd. Never put the persistent directory
+// in agent-sessions (UUID cleanup), or store per-connection data or tokens in it.
+fn claude_sidebar_cwd(data_dir: &Path) -> AppResult<PathBuf> {
+    let cwd = data_dir.join("claude-sidebar");
+    fs::create_dir_all(&cwd)?;
+    Ok(cwd)
+}
+
 fn claude_sidebar_args(endpoint: &str) -> Vec<String> {
     // Claude expands the environment placeholder in the HTTP header; the bearer
     // never enters argv or a config file. Allow enough time for zTerm approval.
@@ -389,7 +397,7 @@ fn claude_sidebar_args(endpoint: &str) -> Vec<String> {
         "--no-chrome".into(),
         "--disable-slash-commands".into(),
         "--settings".into(),
-        r#"{"disableAllHooks":true,"autoMemoryEnabled":false}"#.into(),
+        r#"{"disableAllHooks":true,"autoMemoryEnabled":false,"claudeMdExcludes":["**/*"]}"#.into(),
         "--append-system-prompt".into(),
         format!(
             "{} 侧栏只使用 zTerm 的可见终端 MCP 工具；Claude Code 可能在工具名中将点号显示为下划线。明确操作其他服务器时，仅可用 sessions.list 查找已保存 SSH 连接，并经 terminal.open 打开可见标签或分屏。不要使用 headless ssh.execute。",
@@ -408,6 +416,12 @@ fn codex_launch_command(endpoint: &str, inherited_mcp_servers: &[String]) -> (St
         "skills.include_instructions=false".to_string(),
         "-c".to_string(),
         "skills.bundled.enabled=false".to_string(),
+        "-c".to_string(),
+        "features.skip_host_skill_discovery=true".to_string(),
+        "-c".to_string(),
+        "features.skill_search=false".to_string(),
+        "-c".to_string(),
+        "features.shell_tool=false".to_string(),
         "-c".to_string(),
         format!(
             "developer_instructions={}",
@@ -704,6 +718,10 @@ mod tests {
         assert!(!args
             .iter()
             .any(|arg| arg == "--dangerously-skip-permissions" || arg == "--bare"));
+        let settings_arg = args.iter().position(|arg| arg == "--settings").unwrap() + 1;
+        let settings: serde_json::Value = serde_json::from_str(&args[settings_arg]).unwrap();
+        assert_eq!(settings["claudeMdExcludes"], serde_json::json!(["**/*"]));
+        assert!(args.iter().any(|arg| arg == "--disable-slash-commands"));
         let config_arg = args.iter().position(|arg| arg == "--mcp-config").unwrap() + 1;
         let config: serde_json::Value = serde_json::from_str(&args[config_arg]).unwrap();
         let servers = config["mcpServers"].as_object().unwrap();
@@ -730,6 +748,21 @@ mod tests {
         assert!(remote
             .iter()
             .any(|(name, value)| name == "ZTERM_AGENT_MCP_TOKEN" && value == "test-token"));
+    }
+
+    #[test]
+    fn claude_workspace_survives_session_cleanup_and_reopen() {
+        let data = std::env::temp_dir().join(format!("zterm-cwd-{}", uuid::Uuid::new_v4()));
+        let cwd = super::claude_sidebar_cwd(&data).unwrap();
+        let sessions = data.join("agent-sessions");
+        let session = sessions.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&session).unwrap();
+        super::remove_agent_session_directory_under_root(&session, &sessions).unwrap();
+        assert!(!session.exists());
+        assert!(cwd.is_dir());
+        assert_eq!(super::claude_sidebar_cwd(&data).unwrap(), cwd);
+        assert_eq!(std::fs::read_dir(cwd).unwrap().count(), 0);
+        std::fs::remove_dir_all(data).unwrap();
     }
 
     #[test]
@@ -893,7 +926,14 @@ mod tests {
         assert!(args
             .iter()
             .any(|arg| arg == "skills.include_instructions=false"));
-        assert!(args.iter().any(|arg| arg == "skills.bundled.enabled=false"));
+        for setting in [
+            "skills.bundled.enabled=false",
+            "features.skip_host_skill_discovery=true",
+            "features.skill_search=false",
+            "features.shell_tool=false",
+        ] {
+            assert!(args.windows(2).any(|pair| pair == ["-c", setting]));
+        }
         assert!(args.windows(2).any(|pair| pair == ["-s", "read-only"]));
         assert!(args.iter().any(|arg| arg.contains("bearer_token_env_var")));
         assert!(args

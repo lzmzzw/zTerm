@@ -900,12 +900,12 @@ function TerminalContextMenu({
           <div className="zt-context-menu-separator" role="separator" />
           {onRestart ? (
             <button type="button" role="menuitem" onClick={onRestart}>
-              重启 Codex CLI
+              重启 CLI
             </button>
           ) : null}
           {onCloseTerminal ? (
             <button type="button" className="zt-delete-button" role="menuitem" onClick={onCloseTerminal}>
-              关闭 Codex CLI
+              关闭 CLI
             </button>
           ) : null}
         </>

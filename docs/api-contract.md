@@ -194,7 +194,12 @@ SSH 新建/编辑 UI 仅允许选择 `password` 或 `key`。密码认证时，�
 
 展开右侧 Agent 面板时，当前连接没有运行中的 Agent 则显示 CLI 选择，不自动启动。当前连接已有 Agent 时恢复其 PTY；收起侧栏不停止进程，重启沿用原 CLI。zTerm 直接启动本机 CLI，使用各自的登录态和模型配置，不提供内置模型请求。
 
-从 SSH 或 SSH 容器标签启动时，两种 CLI 共用 zTerm 的运维指令和 Visible Terminal Profile，不依赖外部 Skill。Codex 在会话 `AGENTS.md` 和 developer instructions 中加载策略，以 `read-only` sandbox 启动，并禁用其他 MCP、bundled Skills、apps 和 plugins。Claude Code 通过 `--append-system-prompt` 加载策略，用 `--strict-mcp-config` 仅接入本次会话的 zTerm MCP，禁用内置工具，以子进程环境变量向 HTTP header 提供 scoped bearer；实际 token 不进入启动参数或配置文件。客户端对 scoped 工具的允许规则不改变 zTerm 的连接级审批。关闭 Agent 后撤销该会话的 MCP 绑定。
+SSH 和 SSH 容器侧栏按 zTerm 的运维规则工作，不要求加载工作台 Skill 或改用 DBX。用户授权后，Agent 可以在已确认的可见 SSH 终端上使用服务器已有的程序，例如用 `spark-sql` 操作 Hive。命令、输出及连接级审批仍由 zTerm 管理。本地标签使用 CLI 的原生配置，不受这些调整影响。
+
+- **Claude Code** 使用 zTerm 数据目录下固定的 `claude-sidebar/` 作为本机工作目录。首次启动可能需要确认该目录；之后复用同一路径和 Claude 自己的信任记录，不预置信任、不跳过权限检查。连接和 token 不写入共享目录。启动时排除用户和项目的指令文件，禁用 Skill、内置工具和自动记忆；保留登录和模型设置，只加载本次会话的 zTerm MCP。
+- **Codex** 继续使用会话专属目录。zTerm 将侧栏规则放入 developer instructions 和会话 `AGENTS.md`；Codex 仍可加载用户级 `AGENTS.md`，其中与侧栏冲突的工作台流程不适用。启动配置禁用外部 Skill 发现和搜索、本地 shell、其他 MCP、apps 和 plugins，并保留只读沙箱。
+
+每个会话独立绑定 MCP，bearer 通过子进程环境变量传递，不进入参数或配置文件。右键「重启 CLI」按当前会话的 CLI 类型重启；「关闭 CLI」关闭该会话并撤销其绑定，不删除 Claude 的固定目录。
 
 | Command | 入参 | 返回 | 说明 |
 | --- | --- | --- | --- |

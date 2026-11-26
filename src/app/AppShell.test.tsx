@@ -1919,7 +1919,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("uses the saved SSH connection name while the Agent session is still opening", async () => {
+  it("reports the selected CLI and uses the saved SSH connection name while the Agent is opening", async () => {
     const opening = deferred<Awaited<ReturnType<typeof openAgentCodex>>>();
     vi.mocked(openAgentCodex).mockImplementationOnce(() => opening.promise);
     storeMocks.sessionState.sessions = [{ id: "session-1", name: "生产 SSH", type: "ssh", host: "10.0.0.1" }];
@@ -1932,13 +1932,15 @@ describe("AppShell", () => {
     };
     const view = render(<AppShell />);
 
-    await startAgent(view.container);
+    await startAgent(view.container, "claude");
 
-    expect(vi.mocked(openAgentCodex)).toHaveBeenCalledWith(expect.objectContaining({
+    expect(openAgentCodex).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      cli: "claude",
       targetLabel: "生产 SSH",
     }));
     expect(storeMocks.aiPanelProps).toEqual(expect.objectContaining({
       activeTargetLabel: "生产 SSH",
+      openingCli: "claude",
       session: null,
     }));
     view.unmount();
@@ -2229,7 +2231,7 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("does not let a concurrent close callback remove the restarted shared Codex session", async () => {
+  it("ignores concurrent and stale close callbacks for a restarting Agent session", async () => {
     storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
@@ -2237,10 +2239,7 @@ describe("AppShell", () => {
     const onRestart = storeMocks.aiPanelProps?.onRestart as () => Promise<void>;
     const onClose = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
     const restartClose = deferred<void>();
-    const staleClose = deferred<void>();
-    vi.mocked(closeAgentCodex)
-      .mockImplementationOnce(() => restartClose.promise)
-      .mockImplementationOnce(() => staleClose.promise);
+    vi.mocked(closeAgentCodex).mockImplementationOnce(() => restartClose.promise);
     vi.mocked(openAgentCodex).mockImplementationOnce(async (request) => ({
       agent_session_id: "agent-restarted",
       cli: request.cli,
@@ -2263,23 +2262,20 @@ describe("AppShell", () => {
     }));
 
     let restarting!: Promise<void>;
-    let closing!: Promise<void>;
     await act(async () => {
       restarting = onRestart();
-      closing = onClose();
+      await onClose();
     });
-    restartClose.resolve();
+    expect(closeAgentCodex).toHaveBeenCalledTimes(1);
+    expect(openAgentCodex).toHaveBeenCalledTimes(1);
     await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
+      restartClose.resolve();
+      await restarting;
     });
-    staleClose.resolve();
-    await act(async () => {
-      await Promise.all([restarting, closing]);
-    });
+    await act(async () => onClose());
 
-    expect(vi.mocked(openAgentCodex)).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(closeAgentCodex)).toHaveBeenCalledTimes(2);
+    expect(openAgentCodex).toHaveBeenCalledTimes(2);
+    expect(closeAgentCodex).toHaveBeenCalledTimes(1);
     expect(storeMocks.aiPanelProps?.session).toEqual(expect.objectContaining({ agent_session_id: "agent-restarted" }));
     view.unmount();
   });
@@ -2371,20 +2367,22 @@ describe("AppShell", () => {
     view.unmount();
   });
 
-  it("closes the active Codex CLI, revokes its MCP binding, and collapses the Agent panel", async () => {
+  it.each(["codex", "claude"] as const)("closes only the active %s CLI and collapses the Agent panel", async (cli) => {
     storeMocks.terminalLayoutState.tabs = [activeTerminalTerminalLayoutTab()];
     const view = render(<AppShell />);
 
-    await startAgent(view.container);
+    await startAgent(view.container, cli);
     const onClose = storeMocks.aiPanelProps?.onClose as () => Promise<void>;
 
     await act(async () => {
       await onClose();
     });
 
-    expect(vi.mocked(closeAgentCodex)).toHaveBeenCalledWith(
-      expect.objectContaining({ agent_session_id: "agent-pane-1-tab-1" }),
+    expect(closeAgentCodex).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ cli, agent_session_id: "agent-pane-1-tab-1", runtime: expect.objectContaining({ runtime_session_id: "agent-runtime-pane-1-tab-1" }) }),
     );
+    expect(openAgentCodex).toHaveBeenCalledTimes(1);
+    expect(storeMocks.terminalState.runtimes).not.toHaveProperty("agent-runtime-pane-1-tab-1");
     expect(view.container.querySelector('[aria-label="AI 面板"]')).toBeNull();
     expect(view.container.querySelector(".zt-workbench")?.classList.contains("zt-workbench-right-collapsed")).toBe(true);
     view.unmount();

@@ -1311,10 +1311,17 @@ export function AppShell() {
     }
   }
 
+  function canManageActiveAgentSession(connectionKey: string, session: AgentCodexSession) {
+    return activeAgentConnectionKeyRef.current === connectionKey &&
+      agentSessionsRef.current[connectionKey] === session &&
+      !agentOpenPromisesRef.current.has(connectionKey) &&
+      !agentStoppingSessionIdsRef.current.has(session.agent_session_id);
+  }
+
   async function restartActiveAgentCodex() {
-    if (!activeAgentConnectionKey || !activeAgentSession || agentOpenPromisesRef.current.has(activeAgentConnectionKey)) return;
     const connectionKey = activeAgentConnectionKey;
     const previousSession = activeAgentSession;
+    if (!connectionKey || !previousSession || !canManageActiveAgentSession(connectionKey, previousSession)) return;
     setAgentOpenErrorForConnection(connectionKey, null);
     try {
       await stopAgentCodexSessionAndForgetRuntime(previousSession);
@@ -1333,9 +1340,9 @@ export function AppShell() {
   }
 
   async function closeActiveAgentCodex() {
-    if (!activeAgentConnectionKey || !activeAgentSession || agentOpenPromisesRef.current.has(activeAgentConnectionKey)) return;
     const connectionKey = activeAgentConnectionKey;
     const session = activeAgentSession;
+    if (!connectionKey || !session || !canManageActiveAgentSession(connectionKey, session)) return;
     setAgentOpenErrorForConnection(connectionKey, null);
     try {
       await stopAgentCodexSessionAndForgetRuntime(session);
